@@ -1,0 +1,8 @@
+alsa-base
+alsa-utils
+isc-dhcp-client
+libcurl3-gnutls
+udisks
+usbmount
+xbmc
+xorg

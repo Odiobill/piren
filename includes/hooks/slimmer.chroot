@@ -1,0 +1,37 @@
+#!/bin/sh
+
+apt-get remove --purge --yes \
+	aptitude \
+	aptitude-common \
+	cron \
+	dmidecode \
+	groff-base \
+	info \
+	install-info \
+	iptables \
+	locales \
+	man-db \
+	manpages \
+	nano \
+	netcat-traditional \
+	rsyslog \
+	traceroute \
+	libboost-iostreams1.49.0 \
+	libboost-iostreams1.50.0 \
+	libcwidget3 \
+	libfs6 \
+	libnfnetlink0 \
+	libsigc++-2.0-0c2a \
+	libxapian22 \
+	libxcursor1 \
+	libpipeline1 \
+	logrotate \
+	x11-apps \
+	x11-session-utils \
+	x11-xserver-utils \
+	x11-xfs-utils \
+	xfonts-utils \
+	xfonts-encodings \
+	xorg-docs-core
+
+apt-get install xinit xserver-xorg-video-all
