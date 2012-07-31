@@ -1,4 +1,5 @@
-piren
+Piren
 =====
 
-Debian based embedded Home-Theater system
+Debian based embedded Home Theater system
+

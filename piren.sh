@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# piren.sh 201207171412
+# piren.sh 201207310115
 # Davide Lucchesi <davide@lucchesi.nl>
 #
 # configure live-build for generating a Piren image in the current directory
@@ -9,22 +9,44 @@
 # line for this script.
 #
 
+# if it is requested a hdd image, remove the installer support to save some
+# extra space.
+CHECK=$(echo "$@" | grep "\-b hdd")
+if [ ! -z "$CHECK" ]; then
+	DI="false"
+else
+	DI="live"
+fi
+
 # standard parameters used for live-build
 #
+
 lb config  \
 	--bootappend-live "hostname=piren username=xbmc"  \
 	--apt-recommends false --apt-indices false  \
 	--memtest none --includes none  \
-	--debian-installer live --debian-installer-gui false  \
+	--debian-installer $DI --debian-installer-gui false  \
 	--archives live.debian.net  \
 	--distribution wheezy --archive-areas "main contrib non-free"  \
 	--iso-application "Piren"  \
 	--iso-publisher "http://piren.org/"  \
 	--iso-volume "Piren" $@
 
+
 # add Piren's includes/hooks/customizations
 #
 cp -r $(dirname $0)/includes/* config/
+
+# if it is requested a hdd image convert to syslinux, add persistence support
+# and remove debian-installer support
+#
+if [ ! -z "$CHECK" ]; then
+	mv config/includes.binary/isolinux config/includes.binary/syslinux
+	sed -i "s/splash/splash persistence/" \
+		config/includes.binary/syslinux/live.cfg
+	> config/includes.binary/syslinux/install.cfg
+	rm -r config/binary_debian-installer
+fi
 
 # remove unwanted packages to make Piren as thin as possible with a hook script
 #
@@ -56,3 +78,5 @@ chmod 755 config/includes.chroot/etc/init.d/xbmc
 # parameters (i.e. "xbmc" as username), and it configures the included init
 # script to be activated as system service
 
+echo "Configuration completed. If no errors are detected, start building with:"
+echo "        lb build 2>&1 | tee build.log"

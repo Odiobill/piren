@@ -17,7 +17,6 @@ apt-get remove --purge --yes \
 	rsyslog \
 	traceroute \
 	libboost-iostreams1.49.0 \
-	libboost-iostreams1.50.0 \
 	libcwidget3 \
 	libfs6 \
 	libnfnetlink0 \
