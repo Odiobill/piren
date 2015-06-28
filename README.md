@@ -1,6 +1,7 @@
 Piren
 =====
 
-- Debian based embedded Home Theater system
+- The home-server solution for geeks
 
-A live, but also installable bare-bone Debian distribution, with the latest XBMC release as the main user interface, that can be easily customized to better suite user needs.
+Piren is a very small Linux distribution built to turn your computer into a Kodi (previously XBMC) media center. It is designed for geeks who already have some experience with Debian, being minimalist while delivering a fully standard software base.
+

@@ -1,82 +1,92 @@
 #!/bin/sh
 #
-# piren.sh 201207310115
-# Davide Lucchesi <davide@lucchesi.nl>
+# piren.sh - 15.6.27
+# Author: Davide Lucchesi <davide@lucchesi.nl>
 #
-# configure live-build for generating a Piren image in the current directory
-#
-# You can provide extra live-build parameters listing them on the command
-# line for this script.
+# You need a Debian system with live-build installed.
 #
 
-# if it is requested a hdd image, remove the installer support to save some
-# extra space.
-CHECK=$(echo "$@" | grep "\-b hdd")
-if [ ! -z "$CHECK" ]; then
-	DI="false"
-else
-	DI="live"
+lb config \
+	--apt-options "--yes --force-yes" \
+	--apt-indices false --apt-recommends false \
+	--debootstrap-options "--variant=minbase" \
+	--firmware-chroot false \
+	--memtest none \
+	--debian-installer live --debian-installer-gui false \
+	--iso-publisher "http://piren.org/" \
+	--iso-volume Piren\ `date +"%y.%_m.%_d" | sed "s/ //"`
+
+echo "\
+	ifupdown \
+	netbase \
+	sudo \
+	udhcpc \
+	user-setup" \
+> config/package-lists/base.list.chroot
+
+echo "\
+	deb-multimedia-keyring \
+	kodi-standalone \
+	libcurl3-gnutls \
+	libegl1-mesa-drivers \
+	libgl1-mesa-dri \
+	mesa-vdpau-drivers \
+	nodm \
+	pulseaudio \
+	xinit \
+	xserver-xorg" \
+> config/package-lists/kodi.list.chroot
+
+echo \
+	"deb http://www.deb-multimedia.org jessie main non-free" \
+> config/archives/deb-multimedia.list.chroot
+
+mkdir -p config/includes.chroot/etc/apt/sources.list.d
+echo \
+	"deb http://www.deb-multimedia.org jessie main non-free" \
+> config/includes.chroot/etc/apt/sources.list.d/deb-multimedia.list
+
+# live
+mkdir -p config/includes.chroot/home/user
+echo "/usr/bin/kodi-standalone" > config/includes.chroot/home/user/.xsession
+
+# installed
+mkdir -p config/includes.chroot/root
+echo "/usr/bin/kodi-standalone" > config/includes.chroot/root/.xsession
+
+mkdir -p config/includes.chroot/etc/default
+cat <<EOF > config/includes.chroot/etc/default/nodm
+NODM_ENABLED=true
+NODM_USER=root
+NODM_FIRST_VT=7
+NODM_XSESSION=/etc/X11/Xsession
+NODM_X_OPTIONS='-nolisten tcp'
+NODM_MIN_SESSION_TIME=60
+EOF
+
+mkdir -p cache/contents.chroot
+
+mkdir -p config/includes.binary/isolinux
+if [ -f "splash.png" ]; then
+	cp splash.png config/includes.binary/isolinux/
 fi
 
-# standard parameters used for live-build
-#
+cat <<EOF > config/includes.binary/isolinux/menu.cfg
+menu hshift 0
+menu width 82
 
-lb config  \
-	--bootappend-live "hostname=piren username=xbmc"  \
-	--apt-recommends false --apt-indices false  \
-	--memtest none --includes none  \
-	--debian-installer $DI --debian-installer-gui false  \
-	--archives live.debian.net  \
-	--distribution wheezy --archive-areas "main contrib non-free"  \
-	--iso-application "Piren"  \
-	--iso-publisher "http://piren.org/"  \
-	--iso-volume "Piren" $@
+menu title Boot menu
+include stdmenu.cfg
+include live.cfg
 
+label install
+	menu label ^Install
+	linux /install/vmlinuz
+	initrd /install/initrd.gz
+	append vga=788  -- quiet
 
-# add Piren's includes/hooks/customizations
-#
-cp -r $(dirname $0)/includes/* config/
+menu clear
+EOF
 
-# if it is requested a hdd image convert to syslinux, add persistence support
-# and remove debian-installer support
-#
-if [ ! -z "$CHECK" ]; then
-	mv config/includes.binary/isolinux config/includes.binary/syslinux
-	sed -i "s/splash/splash persistence/" \
-		config/includes.binary/syslinux/live.cfg
-	> config/includes.binary/syslinux/install.cfg
-	rm -r config/binary_debian-installer
-fi
+lb build 2>&1 | tee build.log
 
-# remove unwanted packages to make Piren as thin as possible with a hook script
-#
-chmod 755 config/hooks/slimmer.chroot
-
-# ensure that /var/tmp will be present on the system once installed
-#
-mkdir -p config/includes.chroot/var/tmp
-chmod ugo+rwxt config/includes.chroot/var/tmp
-
-# same for /var/log/fsck
-mkdir -p config/includes.chroot/var/log/fsck
-
-# define xbmc as default window manager, so the live image starts it up on boot
-#
-mkdir -p config/includes.chroot/usr/bin
-ln -s /usr/bin/xbmc-standalone config/includes.chroot/usr/bin/x-window-manager
-
-# to execute xbmc on boot once Piren is installed, active the init script and
-# reconfigure X to allow anybody to start the environment even if not logged,
-# using the included config/preseed/piren.preseed.chroot for the live image 
-#
-chmod 755 config/includes.chroot/etc/init.d/xbmc
-
-# debian-installer is customized as well using a different pressed file:
-# 	config/binary_debian-installer/preseed.cfg
-#
-# by default, it ensures that the new user name is created with predefined
-# parameters (i.e. "xbmc" as username), and it configures the included init
-# script to be activated as system service
-
-echo "Configuration completed. If no errors are detected, start building with:"
-echo "        lb build 2>&1 | tee build.log"
