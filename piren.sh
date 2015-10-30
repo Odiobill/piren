@@ -40,11 +40,17 @@ echo "\
 echo \
 	"deb http://www.deb-multimedia.org jessie main non-free" \
 > config/archives/deb-multimedia.list.chroot
+echo \
+	"deb http://www.deb-multimedia.org jessie-backports main" \
+>> config/archives/deb-multimedia.list.chroot
 
 mkdir -p config/includes.chroot/etc/apt/sources.list.d
 echo \
 	"deb http://www.deb-multimedia.org jessie main non-free" \
 > config/includes.chroot/etc/apt/sources.list.d/deb-multimedia.list
+echo \
+	"deb http://www.deb-multimedia.org jessie-backports main" \
+>> config/includes.chroot/etc/apt/sources.list.d/deb-multimedia.list
 
 # live
 mkdir -p config/includes.chroot/home/user
