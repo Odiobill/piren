@@ -27,6 +27,7 @@ echo "\
 echo "\
 	deb-multimedia-keyring \
 	kodi-standalone \
+	kodi-pvr-iptvsimple \
 	libcurl3-gnutls \
 	libegl1-mesa-drivers \
 	libgl1-mesa-dri \
