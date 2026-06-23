@@ -2,11 +2,13 @@ import { type IncomingMessage, type ServerResponse, createServer, type Server } 
 import { randomUUID } from "node:crypto";
 import { PiRpcClient, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { piEventToSse, type SseEvent } from "./gateway-bridge.js";
+import { vaultBrowserList, vaultBrowserRead } from "./vault-browser.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 
 export interface GatewayServerOptions {
   target: RpcSpawnTarget;
+  vaultRoot?: string | undefined;
 }
 
 export interface GatewayHandle {
@@ -52,10 +54,12 @@ export class GatewayServer {
   private readonly server: Server;
   private readonly client: PiRpcClient;
   private readonly streams = new Map<string, ChatStream>();
+  private readonly vaultRoot: string | undefined;
   private shuttingDown = false;
 
   constructor(options: GatewayServerOptions) {
     this.client = new PiRpcClient(options.target);
+    this.vaultRoot = options.vaultRoot;
     this.server = createServer((req, res) => {
       void this.handle(req, res);
     });
@@ -95,6 +99,10 @@ export class GatewayServer {
       await this.handleStart(req, res);
     } else if (req.method === "GET" && url.pathname === "/api/chat/stream") {
       await this.handleStream(res, url);
+    } else if (req.method === "GET" && url.pathname === "/api/vault/list") {
+      await this.handleVaultList(res, url);
+    } else if (req.method === "GET" && url.pathname === "/api/vault/read") {
+      await this.handleVaultRead(res, url);
     } else {
       this.writeJson(res, 404, { error: "not found" });
     }
@@ -187,6 +195,52 @@ export class GatewayServer {
     } finally {
       clearInterval(heartbeat);
       res.end();
+    }
+  }
+
+  private async handleVaultList(res: ServerResponse, url: URL): Promise<void> {
+    if (!this.vaultRoot) {
+      this.writeJson(res, 404, { error: "vault browser not configured" });
+      return;
+    }
+    const path = url.searchParams.get("path") || ".";
+    try {
+      const result = await vaultBrowserList(this.vaultRoot, path);
+      this.writeJson(res, 200, result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("Path resolves outside vault")) {
+        this.writeJson(res, 403, { error: msg });
+      } else if (msg.startsWith("ENOENT") || msg.includes("ENOENT")) {
+        this.writeJson(res, 404, { error: "path not found" });
+      } else {
+        this.writeJson(res, 400, { error: msg });
+      }
+    }
+  }
+
+  private async handleVaultRead(res: ServerResponse, url: URL): Promise<void> {
+    if (!this.vaultRoot) {
+      this.writeJson(res, 404, { error: "vault browser not configured" });
+      return;
+    }
+    const path = url.searchParams.get("path");
+    if (!path) {
+      this.writeJson(res, 400, { error: "path is required" });
+      return;
+    }
+    try {
+      const result = await vaultBrowserRead(this.vaultRoot, path);
+      this.writeJson(res, 200, result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("Path resolves outside vault")) {
+        this.writeJson(res, 403, { error: msg });
+      } else if (msg.startsWith("ENOENT") || msg.includes("ENOENT")) {
+        this.writeJson(res, 404, { error: "path not found" });
+      } else {
+        this.writeJson(res, 400, { error: msg });
+      }
     }
   }
 

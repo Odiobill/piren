@@ -198,7 +198,10 @@ export class PiRpcClient {
    * when you need to forward events live instead of collecting them.
    */
   async prompt(message: string): Promise<void> {
-    await this.send({ type: "prompt", message });
+    const response = await this.send({ type: "prompt", message });
+    if (!response.success) {
+      throw new Error(response.error || "prompt rejected");
+    }
   }
 
   /**

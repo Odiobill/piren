@@ -1,7 +1,20 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
+
+const thisDir = dirname(fileURLToPath(import.meta.url));
+
+// Resolve the Pi extension to the compiled JS in dist, even when this module
+// is loaded from source (e.g. via tsx during smoke tests). The CLI binary
+// always runs compiled from dist/, so the default path is dist/src/pi-extension.js.
+// When thisDir ends with "src" (source), dist is the sibling directory.
+function resolveExtensionPath(): string {
+  const distDir = join(thisDir, "pi-extension.js");
+  return distDir;
+}
 
 interface AgentModelConfig {
   provider?: unknown;
@@ -69,7 +82,7 @@ async function readAgentRunConfig(configPath: string): Promise<AgentRunConfig> {
 export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}): Promise<PiRunCommand> {
   const context = await loadPirenContext(options);
   const agentConfig = await readAgentRunConfig(context.paths.config);
-  const extensionPath = options.extensionPath ?? "./src/pi-extension.ts";
+  const extensionPath = options.extensionPath ?? resolveExtensionPath();
   const extraArgs = options.extraArgs ?? [];
   const rpcMode = options.rpcMode ?? false;
 

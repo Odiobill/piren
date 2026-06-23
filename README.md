@@ -4,7 +4,7 @@ Piren is a lightweight, local-first agent layer on top of Pi Coding Agent. It ke
 
 Core thesis: Piren is not only an agent launcher or task queue. It is a knowledge-maintenance harness for a stewarded team of agents, merging LLM-Wiki and Second Brain workflows with explicit multi-agent task execution. Agents should leave structured artifacts that improve future work, while the steward can inspect current project status, decisions, runbooks, concepts, logs, and handoffs directly in the vault.
 
-Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 has started: tracer bullet 1 added a gateway RPC client that spawns Pi in `--mode rpc` and streams a response over strict LF-only JSONL, and tracer bullet 2 added the HTTP/SSE transport (`piren gateway`) on that client, proven against a fake Pi process.
+Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is in progress: tracer bullet 1 added a gateway RPC client that spawns Pi in `--mode rpc` and streams a response over strict LF-only JSONL, tracer bullet 2 added the HTTP/SSE transport (`piren gateway`) on that client, tracer bullet 3 added the read-only vault browser with path-boundary enforcement, and `piren ask` was added as a CLI one-shot wrapper over the same RPC client. All proven against a fake Pi process.
 
 Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
 
@@ -19,8 +19,11 @@ CLI:
 - `piren agents`
 - `piren doctor`
 - `piren setup`
-- `piren run`
+- `piren run` (alias `piren chat`), interactive Pi session
 - `piren worker`, opt-in worker mode that starts Pi with Piren inbox polling enabled
+- `piren gateway` (alias `piren web`), HTTP/SSE gateway that spawns Pi in RPC mode
+- `piren ask "message"`, one-shot CLI prompt over the RPC client with live token streaming
+- `piren clean`, dry-run removal of local Piren state; `--force` to actually delete
 
 Pi extension commands:
 
@@ -86,8 +89,8 @@ npm run smoke
 Expected current baseline:
 
 ```text
-Test Files  17 passed (17)
-Tests       79 passed (79)
+Test Files  20 passed (20)
+Tests       91 passed (91)
 SMOKE PASSED
 ```
 
@@ -202,6 +205,8 @@ PIREN_AGENT=piren node dist/src/cli.js run
 node dist/src/cli.js --agent piren run
 node dist/src/cli.js --vault-root /tmp/piren-vault --agent piren run
 ```
+
+`piren chat` is an alias for `piren run`: same interactive Pi session, same behavior.
 
 For opt-in worker mode, use `worker` instead of `run`:
 
@@ -343,6 +348,49 @@ The bridge lives in `src/gateway-bridge.ts` (`piEventToSse`); the server lives i
 
 The default bind is `127.0.0.1`. Binding to a non-localhost host is possible with `--host`, but the required shared-bootstrap-token auth gate for non-localhost binds is a later tracer bullet; do not expose the gateway on a LAN until that gate lands.
 
+## Read-only vault browser (Phase 3 tracer bullet 3)
+
+The gateway serves a read-only vault browser at two endpoints:
+
+- `GET /api/vault/list?path=...` returns the children of a vault directory as JSON. Dirs first, alpha-sorted, capped at 100 entries, dotfiles hidden. `path` defaults to the vault root when empty or omitted.
+- `GET /api/vault/read?path=...` returns file content as JSON, size-capped at 500 KB. Files over the cap return the first 500 KB plus a truncation notice.
+
+Both routes reuse `resolveVaultPath` from `src/vault-tools.ts` for hard path-boundary enforcement. Path traversal outside the vault root returns 403. No writes, renames, or deletes in v1.
+
+The navigation model: for curated subtrees (Projects, wiki/concepts, wiki/entities, decisions, runbooks), the browser surface prefers rendering `index.md`; for operational directories (inbox, sessions, devices, logs, alerts, outbox) and whenever `index.md` is missing, it falls back to directory listing. Both are served keyed on directory content; the server does not auto-generate index.md.
+
+`vaultRoot` is wired in from the CLI: `piren gateway` loads the Piren context via `loadPirenContext`, then passes `context.vaultRoot` to `GatewayServer` alongside the RPC target. The core logic lives in `src/vault-browser.ts` (`vaultBrowserList`, `vaultBrowserRead`) and the routes are added to `GatewayServer` in `src/gateway-http.ts`.
+
+Tests: `tests/vault-browser.test.ts` exercises list, read, path traversal rejection, and entry capping against a fake fixture vault.
+
+## CLI ask over RPC
+
+`piren ask` sends a single message to a Pi agent over the RPC client and streams tokens live to the terminal. It uses the same `PiRpcClient` as the gateway.
+
+```bash
+node dist/src/cli.js ask "Hello, how are you?"
+PIREN_AGENT=piren node dist/src/cli.js ask "What files are in the vault root?"
+node dist/src/cli.js --agent piren --vault-root /tmp/piren-vault ask "List my inbox tasks"
+```
+
+`ask` is a one-shot: it spawns Pi in `--mode rpc`, streams `text_delta` tokens to stdout as they arrive, and exits after the turn completes. For interactive sessions, use `piren run`. The core logic lives in `src/ask.ts` (`askAgent`) and is wired into the CLI. Tests: `tests/ask.test.ts` against the fake Pi process.
+
+## Clean and uninstall
+
+`piren clean` removes Piren's local state (`~/.config/piren/` and `~/.local/state/piren/`). Dry-run by default:
+
+```bash
+piren clean          # preview what would be removed
+piren clean --force  # actually delete
+```
+
+To fully uninstall:
+
+```bash
+piren clean --force
+npm uninstall -g piren
+```
+
 ## Design boundaries
 
 Piren v1 intentionally stays small:
@@ -354,7 +402,7 @@ Piren v1 intentionally stays small:
 - Pi remains responsible for model/provider auth and settings
 - Phase 1 single-agent hardening is complete: diagnostics, policy checks, setup scaffolding, and stale-agent detection
 - Phase 2 (file-based inbox) is complete: device registration writes heartbeat JSON under `team/<agent>/devices/`, `send_to_agent` creates one pending Markdown task file in the target agent inbox, `task_update_status` updates task status and optional result text, `inbox_list` lists the selected agent's unclaimed inbox tasks, `task_claim` claims a task by filesystem rename, stale claim recovery reclaims `.claimed.<device>.md` files only after the previous device heartbeat expires, `piren worker` enables opt-in worker-mode inbox polling for explicitly allowed local agents, and `flag_steward` creates authoritative steward alert files
-- Phase 3 (external gateway) is in progress: tracer bullet 1 added `buildPiRunCommand({ rpcMode: true })` activating `--mode rpc` with piped stdio plus `PiRpcClient` in `src/gateway-rpc.ts` (separate process, strict LF-only JSONL, drains events until `agent_end`); tracer bullet 2 added the HTTP/SSE transport `piren gateway` (`src/gateway-http.ts` `GatewayServer`, `src/gateway-bridge.ts` `piEventToSse`) with POST-start/GET-stream, proven against a fake Pi process. No WebSocket, no frontend framework.
+- Phase 3 (external gateway) is in progress: tracer bullet 1 added `buildPiRunCommand({ rpcMode: true })` activating `--mode rpc` with piped stdio plus `PiRpcClient` in `src/gateway-rpc.ts` (separate process, strict LF-only JSONL, drains events until `agent_end`); tracer bullet 2 added the HTTP/SSE transport `piren gateway` (`src/gateway-http.ts` `GatewayServer`, `src/gateway-bridge.ts` `piEventToSse`) with POST-start/GET-stream; tracer bullet 3 added the read-only vault browser (`GET /api/vault/list`, `GET /api/vault/read`, core logic in `src/vault-browser.ts`) reusing `resolveVaultPath` for path-boundary enforcement. No WebSocket, no frontend framework.
 - No automatic inbox polling in default interactive sessions
 - No in-process Pi embedding: the gateway always spawns Pi in RPC mode
 - No memory automation yet

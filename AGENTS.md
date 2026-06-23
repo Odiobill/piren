@@ -142,11 +142,11 @@ npm run build
 npm run smoke
 ```
 
-Current baseline after Phase 3 tracer bullet 2:
+Current baseline:
 
 ```text
-Test Files  17 passed (17)
-Tests       79 passed (79)
+Test Files  20 passed (20)
+Tests       91 passed (91)
 SMOKE PASSED
 ```
 
@@ -154,7 +154,7 @@ Smoke and tests must not depend on Davide's real `~/.config/piren/config.yml` un
 
 ## Current implementation surface
 
-Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 is in progress: tracer bullet 1 (RPC client) and tracer bullet 2 (HTTP/SSE transport) are done.
+Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 is in progress: tracer bullets 1 (RPC client), 2 (HTTP/SSE transport), and 3 (read-only vault browser) are done. `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented.
 
 Gateway RPC surface (Phase 3, `src/gateway-rpc.ts`):
 
@@ -177,8 +177,11 @@ Implemented CLI:
 - `piren doctor`
 - `piren setup`
 - `piren run`
+- `piren chat` (alias for run)
 - `piren worker`
 - `piren gateway` (alias `piren web`)
+- `piren ask "message"`
+- `piren clean`
 
 Implemented extension command:
 

@@ -32,6 +32,10 @@ function emit(obj) {
 
 function handle(cmd) {
   if (cmd.type === "prompt") {
+    if (typeof cmd.message === "string" && cmd.message.includes("fail")) {
+      emit({ type: "response", command: "prompt", success: false, id: cmd.id, error: "prompt rejected: fail trigger" });
+      return;
+    }
     emit({ type: "response", command: "prompt", success: true, id: cmd.id });
     emit({ type: "agent_start" });
     emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Hel" } });

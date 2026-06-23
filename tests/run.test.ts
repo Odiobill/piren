@@ -37,7 +37,7 @@ afterEach(async () => {
 
 describe("piren run command construction", () => {
   it("builds a Pi command from compact agent-local model config", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [] });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts" });
 
     expect(command.command).toBe("npx");
     expect(command.args).toEqual([
@@ -56,7 +56,7 @@ describe("piren run command construction", () => {
   it("builds a Pi model flag from expanded provider plus id config", async () => {
     await writeFile(join(agentDir, "config.yml"), "model:\n  provider: anthropic\n  id: claude-sonnet-4-20250514\n  thinking: medium\n");
 
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [] });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts" });
 
     expect(command.args).toContain("anthropic/claude-sonnet-4-20250514:medium");
   });
@@ -76,7 +76,7 @@ describe("piren run command construction", () => {
       ].join("\n"),
     );
 
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: ["--print", "hello"] });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: ["--print", "hello"], extensionPath: "./src/pi-extension.ts" });
 
     expect(command.args).toEqual([
       "pi",
@@ -94,7 +94,7 @@ describe("piren run command construction", () => {
   });
 
   it("builds a worker Pi command that opts into Piren inbox polling without changing interactive run", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], workerMode: true });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], workerMode: true, extensionPath: "./src/pi-extension.ts" });
 
     expect(command.args).toEqual([
       "pi",
@@ -111,7 +111,7 @@ describe("piren run command construction", () => {
   });
 
   it("builds a gateway RPC Pi command that activates --mode rpc with piped stdio", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], rpcMode: true });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], rpcMode: true, extensionPath: "./src/pi-extension.ts" });
 
     expect(command.args).toEqual([
       "pi",
@@ -130,7 +130,7 @@ describe("piren run command construction", () => {
   });
 
   it("keeps interactive run on inherited stdio and omits --mode rpc by default", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [] });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts" });
 
     expect(command.args).not.toContain("rpc");
     expect(command.stdio).toBe("inherit");

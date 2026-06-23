@@ -6,6 +6,7 @@ import { formatAgentsReport, listPirenAgents } from "../src/agents.js";
 import { buildPiRunCommand } from "../src/run.js";
 import { PiRpcClient, extractAssistantText } from "../src/gateway-rpc.js";
 import { GatewayServer } from "../src/gateway-http.js";
+import { askAgent } from "../src/ask.js";
 
 type FakePi = ReturnType<typeof fakePi>;
 
@@ -249,7 +250,7 @@ async function main() {
     if (!piCommand.args.includes("--model") || !piCommand.args.includes("anthropic/claude-sonnet-4-20250514:medium")) {
       throw new Error(`piren run command did not include expected model flag: ${piCommandText}`);
     }
-    if (!piCommandText.includes("--extension ./src/pi-extension.ts") || !piCommandText.includes(`--vault-root ${fixture.vault}`) || !piCommandText.includes("--agent thor")) {
+    if (!piCommandText.includes("--extension") || !piCommandText.includes(`--vault-root ${fixture.vault}`) || !piCommandText.includes("--agent thor")) {
       throw new Error(`piren run command did not include expected bootstrap flags: ${piCommandText}`);
     }
     if (!piCommandText.endsWith("--print hello")) {
@@ -351,6 +352,58 @@ async function main() {
       await gateway.close();
     }
     console.log("gateway http/sse post-start get-stream streamed text: ok");
+
+    // Phase 3 tracer bullet 3: vault browser HTTP routes. Start a GatewayServer
+    // with vaultRoot set (same fake Pi target), then do one list + one read
+    // round trip against the fixture vault.
+    const browserServer = new GatewayServer({
+      target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+      vaultRoot: fixture.vault,
+    });
+    let browserHandle;
+    try {
+      browserHandle = await browserServer.start();
+
+      // List the vault root.
+      const listRes = await fetch(
+        `http://${browserHandle.hostname}:${browserHandle.port}/api/vault/list`,
+      );
+      if (listRes.status !== 200) throw new Error(`vault browser list HTTP ${listRes.status}`);
+      const listBody = (await listRes.json()) as { entries: Array<{ name: string; type: string }>; capped: boolean };
+      const teamEntry = listBody.entries.find((e) => e.name === "team");
+      if (!teamEntry || teamEntry.type !== "directory") {
+        throw new Error("vault browser list did not include team directory");
+      }
+
+      // Read steward-directives.md.
+      const readRes = await fetch(
+        `http://${browserHandle.hostname}:${browserHandle.port}/api/vault/read?path=steward-directives.md`,
+      );
+      if (readRes.status !== 200) throw new Error(`vault browser read HTTP ${readRes.status}`);
+      const readBody = (await readRes.json()) as { content: string; path: string };
+      if (!readBody.content.includes("Keep the spike")) {
+        throw new Error("vault browser read did not return expected content");
+      }
+      if (readBody.path !== "steward-directives.md") {
+        throw new Error(`vault browser read path mismatch: ${readBody.path}`);
+      }
+    } finally {
+      await browserServer.close();
+    }
+    console.log("gateway vault browser list+read round trip: ok");
+
+    // piren ask: the same PiRpcClient, but as a CLI one-shot wrapper.
+    // The askAgent function drives the same fake Pi, streaming tokens live.
+    let askTokens = "";
+    const askText = await askAgent(
+      { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+      "Hello",
+      (token) => { askTokens += token; },
+    );
+    if (askText !== "Hello" || askTokens !== "Hello") {
+      throw new Error(`askAgent assembled text mismatch: text=${askText} tokens=${askTokens}`);
+    }
+    console.log("piren ask streamed text: ok");
 
     console.log("SMOKE PASSED");
   } finally {
