@@ -109,4 +109,30 @@ describe("piren run command construction", () => {
     ]);
     expect(command.env.PIREN_WORKER).toBe("1");
   });
+
+  it("builds a gateway RPC Pi command that activates --mode rpc with piped stdio", async () => {
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], rpcMode: true });
+
+    expect(command.args).toEqual([
+      "pi",
+      "--extension",
+      "./src/pi-extension.ts",
+      "--vault-root",
+      vault,
+      "--agent",
+      "piren",
+      "--model",
+      "anthropic/claude-sonnet-4-20250514:medium",
+      "--mode",
+      "rpc",
+    ]);
+    expect(command.stdio).toBe("pipe");
+  });
+
+  it("keeps interactive run on inherited stdio and omits --mode rpc by default", async () => {
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [] });
+
+    expect(command.args).not.toContain("rpc");
+    expect(command.stdio).toBe("inherit");
+  });
 });

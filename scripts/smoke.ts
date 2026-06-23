@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import extension from "../src/pi-extension.js";
 import { formatAgentsReport, listPirenAgents } from "../src/agents.js";
 import { buildPiRunCommand } from "../src/run.js";
+import { PiRpcClient, extractAssistantText } from "../src/gateway-rpc.js";
 
 type FakePi = ReturnType<typeof fakePi>;
 
@@ -283,6 +284,30 @@ async function main() {
       throw new Error(`worker inbox polling smoke failed: ${workerNotifications.join("\n")}`);
     }
     console.log("worker inbox polling on session_start: ok");
+
+    // Phase 3 tracer bullet 1: a separate process speaks to Pi RPC over strict
+    // LF-only JSONL and returns a streamed response. Here a fake Pi process
+    // stands in for real `pi --mode rpc` so the round-trip needs no model auth.
+    const rpcCommand = await buildPiRunCommand({ cliAgentDir: fixture.agentDir, env: {}, configPath, rpcMode: true });
+    const rpcCommandText = [rpcCommand.command, ...rpcCommand.args].join(" ");
+    if (!rpcCommand.args.includes("--mode") || !rpcCommand.args.includes("rpc") || rpcCommand.stdio !== "pipe") {
+      throw new Error(`gateway RPC command did not activate --mode rpc with piped stdio: ${rpcCommandText}`);
+    }
+    console.log(`piren gateway rpc command: ${rpcCommandText}`);
+
+    const fakePiScript = join(process.cwd(), "tests", "fixtures", "fake-pi-rpc.cjs");
+    const rpcClient = new PiRpcClient({ command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env });
+    try {
+      await rpcClient.start();
+      const rpcEvents = await rpcClient.promptAndWait("Hello");
+      const lastType = rpcEvents[rpcEvents.length - 1]?.type;
+      const rpcText = extractAssistantText(rpcEvents);
+      if (lastType !== "agent_end") throw new Error(`RPC stream did not end with agent_end: ${lastType}`);
+      if (rpcText !== "Hello") throw new Error(`RPC streamed text mismatch: ${rpcText}`);
+    } finally {
+      await rpcClient.stop();
+    }
+    console.log("gateway rpc prompt->agent_end streamed text: ok");
 
     console.log("SMOKE PASSED");
   } finally {

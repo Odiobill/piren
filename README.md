@@ -4,7 +4,7 @@ Piren is a lightweight, local-first agent layer on top of Pi Coding Agent. It ke
 
 Core thesis: Piren is not only an agent launcher or task queue. It is a knowledge-maintenance harness for a stewarded team of agents, merging LLM-Wiki and Second Brain workflows with explicit multi-agent task execution. Agents should leave structured artifacts that improve future work, while the steward can inspect current project status, decisions, runbooks, concepts, logs, and handoffs directly in the vault.
 
-Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation.
+Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 has started with tracer bullet 1: a gateway RPC client that spawns Pi in `--mode rpc` and streams a response over strict LF-only JSONL, proven against a fake Pi process (no HTTP yet).
 
 Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
 
@@ -86,8 +86,8 @@ npm run smoke
 Expected current baseline:
 
 ```text
-Test Files  13 passed (13)
-Tests       56 passed (56)
+Test Files  15 passed (15)
+Tests       67 passed (67)
 SMOKE PASSED
 ```
 
@@ -301,6 +301,27 @@ It reports:
 
 It exits non-zero when any check fails.
 
+## Gateway RPC client (Phase 3 tracer bullet 1)
+
+The gateway is a separate process that drives Pi over RPC. It never imports Pi in-process. Tracer bullet 1 proves the RPC path end to end with no HTTP yet.
+
+`buildPiRunCommand({ rpcMode: true })` constructs the Pi launch command with `--mode rpc` appended and `stdio: "pipe"` instead of `inherit`:
+
+```text
+npx pi --extension ./src/pi-extension.ts --vault-root <vault> --agent <agent> --model <model> --mode rpc
+```
+
+`PiRpcClient` (in `src/gateway-rpc.ts`) takes a spawn target, starts Pi with piped stdio, and speaks strict LF-only JSONL:
+
+- Framing splits on `\n` only, never readline (readline wrongly splits on U+2028/U+2029 that are valid inside JSON strings). See `src/jsonl.ts`.
+- Commands are paired with their ack `response` lines by an assigned `id`.
+- `promptAndWait(message)` subscribes for events before sending the prompt, then drains the stream until `agent_end`.
+- Token deltas are nested inside `message_update.assistantMessageEvent.text_delta`. `extractAssistantText(events)` assembles assistant text from those nested deltas. There is no flat token event.
+
+The client is exercised against a fake Pi process (`tests/fixtures/fake-pi-rpc.cjs`) so the prompt-to-`agent_end` round trip needs no live model auth. The smoke script runs the same round trip plus the `--mode rpc` command construction.
+
+The HTTP/SSE transport, read-only vault browser, model/thinking control, steering, approval gates, and non-localhost token auth are later tracer bullets that build on this client. See `gateway-web-ui.md` for the sequencing and the verified protocol.
+
 ## Design boundaries
 
 Piren v1 intentionally stays small:
@@ -312,6 +333,7 @@ Piren v1 intentionally stays small:
 - Pi remains responsible for model/provider auth and settings
 - Phase 1 single-agent hardening is complete: diagnostics, policy checks, setup scaffolding, and stale-agent detection
 - Phase 2 (file-based inbox) is complete: device registration writes heartbeat JSON under `team/<agent>/devices/`, `send_to_agent` creates one pending Markdown task file in the target agent inbox, `task_update_status` updates task status and optional result text, `inbox_list` lists the selected agent's unclaimed inbox tasks, `task_claim` claims a task by filesystem rename, stale claim recovery reclaims `.claimed.<device>.md` files only after the previous device heartbeat expires, `piren worker` enables opt-in worker-mode inbox polling for explicitly allowed local agents, and `flag_steward` creates authoritative steward alert files
+- Phase 3 (external gateway) has started with the RPC spike: `buildPiRunCommand({ rpcMode: true })` activates `--mode rpc` with piped stdio, and `PiRpcClient` in `src/gateway-rpc.ts` spawns Pi as a separate process, speaks strict LF-only JSONL, and drains streaming events until `agent_end`. No HTTP yet
 - No automatic inbox polling in default interactive sessions
-- No gateway work yet
+- No in-process Pi embedding: the gateway always spawns Pi in RPC mode
 - No memory automation yet

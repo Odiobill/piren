@@ -18,6 +18,7 @@ export interface BuildPiRunCommandOptions extends BootstrapOptions {
   extraArgs?: string[] | undefined;
   extensionPath?: string | undefined;
   workerMode?: boolean | undefined;
+  rpcMode?: boolean | undefined;
 }
 
 export interface PiRunCommand {
@@ -25,6 +26,7 @@ export interface PiRunCommand {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
+  stdio: "inherit" | "pipe";
 }
 
 function normalizeThinking(value: unknown): string | undefined {
@@ -69,6 +71,7 @@ export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}):
   const agentConfig = await readAgentRunConfig(context.paths.config);
   const extensionPath = options.extensionPath ?? "./src/pi-extension.ts";
   const extraArgs = options.extraArgs ?? [];
+  const rpcMode = options.rpcMode ?? false;
 
   const args = [
     "pi",
@@ -88,13 +91,19 @@ export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}):
   if (models) {
     args.push("--models", models);
   }
+  if (rpcMode) {
+    args.push("--mode", "rpc");
+  }
   args.push(...extraArgs);
+
+  const env = options.workerMode ? { ...process.env, PIREN_WORKER: "1" } : process.env;
 
   return {
     command: "npx",
     args,
     cwd: process.cwd(),
-    env: options.workerMode ? { ...process.env, PIREN_WORKER: "1" } : process.env,
+    env,
+    stdio: rpcMode ? "pipe" : "inherit",
   };
 }
 
@@ -103,7 +112,7 @@ export async function spawnPiRun(options: BuildPiRunCommandOptions = {}): Promis
   const child = spawn(command.command, command.args, {
     cwd: command.cwd,
     env: command.env,
-    stdio: "inherit",
+    stdio: command.stdio,
   });
 
   return await new Promise<number>((resolve, reject) => {

@@ -142,11 +142,11 @@ npm run build
 npm run smoke
 ```
 
-Current baseline after Phase 2:
+Current baseline after Phase 3 tracer bullet 1:
 
 ```text
-Test Files  13 passed (13)
-Tests       56 passed (56)
+Test Files  15 passed (15)
+Tests       67 passed (67)
 SMOKE PASSED
 ```
 
@@ -154,7 +154,14 @@ Smoke and tests must not depend on Davide's real `~/.config/piren/config.yml` un
 
 ## Current implementation surface
 
-Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete.
+Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 has started with tracer bullet 1: the gateway RPC client.
+
+Gateway RPC surface (Phase 3, no HTTP yet):
+
+- `buildPiRunCommand({ rpcMode: true })` in `src/run.ts` appends `--mode rpc` and sets `stdio: "pipe"`.
+- `PiRpcClient` in `src/gateway-rpc.ts` spawns Pi in RPC mode, speaks strict LF-only JSONL (`src/jsonl.ts`, no readline), pairs commands with ack responses by id, and drains streaming events until `agent_end`.
+- `extractAssistantText(events)` assembles assistant text from nested `message_update.assistantMessageEvent.text_delta` deltas.
+- Fake Pi process fixture: `tests/fixtures/fake-pi-rpc.cjs`.
 
 Implemented CLI:
 
