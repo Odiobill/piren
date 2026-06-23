@@ -3,8 +3,9 @@ import { type BootstrapOptions, loadPirenContext } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents } from "./agents.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import { initVault } from "./init.js";
-import { spawnPiRun } from "./run.js";
+import { spawnPiRun, buildPiRunCommand } from "./run.js";
 import { formatSetupReport, setupPiren } from "./setup.js";
+import { GatewayServer } from "./gateway-http.js";
 
 function parseArgs(argv: string[]) {
   let agentDir: string | undefined;
@@ -12,6 +13,8 @@ function parseArgs(argv: string[]) {
   let agentName: string | undefined;
   let force = false;
   let apply = false;
+  let port: number | undefined;
+  let host: string | undefined;
   let command = "status";
   const passthroughIndex = argv.indexOf("--");
   const pirenArgs = passthroughIndex === -1 ? argv : argv.slice(0, passthroughIndex);
@@ -32,11 +35,17 @@ function parseArgs(argv: string[]) {
       force = true;
     } else if (arg === "--apply") {
       apply = true;
+    } else if (arg === "--port") {
+      port = Number(pirenArgs[index + 1]);
+      index += 1;
+    } else if (arg === "--host") {
+      host = pirenArgs[index + 1];
+      index += 1;
     } else if (arg && !arg.startsWith("-")) {
       command = arg;
     }
   }
-  return { agentDir, agentName, command, force, vaultRoot, piArgs, apply };
+  return { agentDir, agentName, command, force, vaultRoot, piArgs, apply, port, host };
 }
 
 function bootstrapOptions(parsed: { agentDir?: string | undefined; agentName?: string | undefined; vaultRoot?: string | undefined }): BootstrapOptions {
@@ -48,10 +57,11 @@ function bootstrapOptions(parsed: { agentDir?: string | undefined; agentName?: s
 }
 
 const parsed = parseArgs(process.argv.slice(2));
-const { agentDir, agentName, command, force, vaultRoot, piArgs } = parsed;
+const { agentDir, agentName, command, force, vaultRoot, piArgs, port, host } = parsed;
 
-if (command !== "status" && command !== "agents" && command !== "doctor" && command !== "init" && command !== "run" && command !== "worker" && command !== "setup") {
-  console.error("Usage: piren [init|status|agents|doctor|setup|run|worker] [--vault-root /path/to/vault] [--agent thor] [--agent-dir /path/to/vault/team/agent] [--force] [-- pi-args...]");
+const knownCommands = ["status", "agents", "doctor", "init", "run", "worker", "setup", "gateway", "web"];
+if (!knownCommands.includes(command)) {
+  console.error("Usage: piren [init|status|agents|doctor|setup|run|worker|gateway|web] [--vault-root /path/to/vault] [--agent thor] [--agent-dir /path/to/vault/team/agent] [--port 7317] [--host 127.0.0.1] [--force] [-- pi-args...]");
   process.exit(2);
 }
 
@@ -77,6 +87,23 @@ try {
   } else if (command === "run" || command === "worker") {
     const exitCode = await spawnPiRun({ ...bootstrapOptions(parsed), extraArgs: piArgs, workerMode: command === "worker" });
     process.exit(exitCode);
+  } else if (command === "gateway" || command === "web") {
+    const runCommand = await buildPiRunCommand({ ...bootstrapOptions(parsed), rpcMode: true });
+    const server = new GatewayServer({
+      target: { command: runCommand.command, args: runCommand.args, cwd: runCommand.cwd, env: runCommand.env },
+    });
+    const handle = await server.start(port ?? 7317, host ?? "127.0.0.1");
+    console.log(`Piren gateway listening on http://${handle.hostname}:${handle.port}`);
+    const shutdown = async () => {
+      try {
+        await server.close();
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+      }
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
   } else if (command === "doctor") {
     const report = await doctorPiren(bootstrapOptions(parsed));
     console.log(formatDoctorReport(report));

@@ -4,7 +4,7 @@ Piren is a lightweight, local-first agent layer on top of Pi Coding Agent. It ke
 
 Core thesis: Piren is not only an agent launcher or task queue. It is a knowledge-maintenance harness for a stewarded team of agents, merging LLM-Wiki and Second Brain workflows with explicit multi-agent task execution. Agents should leave structured artifacts that improve future work, while the steward can inspect current project status, decisions, runbooks, concepts, logs, and handoffs directly in the vault.
 
-Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 has started with tracer bullet 1: a gateway RPC client that spawns Pi in `--mode rpc` and streams a response over strict LF-only JSONL, proven against a fake Pi process (no HTTP yet).
+Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 has started: tracer bullet 1 added a gateway RPC client that spawns Pi in `--mode rpc` and streams a response over strict LF-only JSONL, and tracer bullet 2 added the HTTP/SSE transport (`piren gateway`) on that client, proven against a fake Pi process.
 
 Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
 
@@ -86,8 +86,8 @@ npm run smoke
 Expected current baseline:
 
 ```text
-Test Files  15 passed (15)
-Tests       67 passed (67)
+Test Files  17 passed (17)
+Tests       79 passed (79)
 SMOKE PASSED
 ```
 
@@ -322,6 +322,27 @@ The client is exercised against a fake Pi process (`tests/fixtures/fake-pi-rpc.c
 
 The HTTP/SSE transport, read-only vault browser, model/thinking control, steering, approval gates, and non-localhost token auth are later tracer bullets that build on this client. See `gateway-web-ui.md` for the sequencing and the verified protocol.
 
+## Gateway web server (Phase 3 tracer bullet 2)
+
+`piren gateway` (alias `piren web`) starts the HTTP/SSE server on the proven RPC client. It spawns Pi in `--mode rpc` as a separate process, never importing Pi in-process. Default bind is localhost.
+
+```bash
+node dist/src/cli.js gateway
+PIREN_AGENT=piren node dist/src/cli.js gateway
+node dist/src/cli.js --agent piren gateway --port 7317 --host 127.0.0.1
+```
+
+Two endpoints, the POST-start plus GET-stream split:
+
+- `POST /api/chat/start` with JSON `{ "message": "..." }` starts the RPC prompt and returns `{ "stream_id": "..." }` immediately. A missing or empty message returns 400.
+- `GET /api/chat/stream?stream_id=...` opens a long-lived `text/event-stream` and drains bridge-translated events until `done` or `error`. A heartbeat comment is sent every 30 seconds. An unknown stream id returns 404.
+
+SSE event taxonomy for v1: `token` (assistant text deltas, nested inside Pi `message_update.assistantMessageEvent.text_delta`), `tool` (start/end phases), `done` (turn complete), `error` (RPC failure or agent crash). `reasoning`, `approval`, and `queue` are later bullets.
+
+The bridge lives in `src/gateway-bridge.ts` (`piEventToSse`); the server lives in `src/gateway-http.ts` (`GatewayServer`). Both are tested against the fake Pi process so the round trip needs no live model auth. The smoke script runs the same HTTP/SSE round trip.
+
+The default bind is `127.0.0.1`. Binding to a non-localhost host is possible with `--host`, but the required shared-bootstrap-token auth gate for non-localhost binds is a later tracer bullet; do not expose the gateway on a LAN until that gate lands.
+
 ## Design boundaries
 
 Piren v1 intentionally stays small:
@@ -333,7 +354,7 @@ Piren v1 intentionally stays small:
 - Pi remains responsible for model/provider auth and settings
 - Phase 1 single-agent hardening is complete: diagnostics, policy checks, setup scaffolding, and stale-agent detection
 - Phase 2 (file-based inbox) is complete: device registration writes heartbeat JSON under `team/<agent>/devices/`, `send_to_agent` creates one pending Markdown task file in the target agent inbox, `task_update_status` updates task status and optional result text, `inbox_list` lists the selected agent's unclaimed inbox tasks, `task_claim` claims a task by filesystem rename, stale claim recovery reclaims `.claimed.<device>.md` files only after the previous device heartbeat expires, `piren worker` enables opt-in worker-mode inbox polling for explicitly allowed local agents, and `flag_steward` creates authoritative steward alert files
-- Phase 3 (external gateway) has started with the RPC spike: `buildPiRunCommand({ rpcMode: true })` activates `--mode rpc` with piped stdio, and `PiRpcClient` in `src/gateway-rpc.ts` spawns Pi as a separate process, speaks strict LF-only JSONL, and drains streaming events until `agent_end`. No HTTP yet
+- Phase 3 (external gateway) is in progress: tracer bullet 1 added `buildPiRunCommand({ rpcMode: true })` activating `--mode rpc` with piped stdio plus `PiRpcClient` in `src/gateway-rpc.ts` (separate process, strict LF-only JSONL, drains events until `agent_end`); tracer bullet 2 added the HTTP/SSE transport `piren gateway` (`src/gateway-http.ts` `GatewayServer`, `src/gateway-bridge.ts` `piEventToSse`) with POST-start/GET-stream, proven against a fake Pi process. No WebSocket, no frontend framework.
 - No automatic inbox polling in default interactive sessions
 - No in-process Pi embedding: the gateway always spawns Pi in RPC mode
 - No memory automation yet

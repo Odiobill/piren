@@ -78,6 +78,7 @@ export class PiRpcClient {
   private process: ChildProcess | null = null;
   private stopReading: (() => void) | null = null;
   private readonly listeners: RpcEventListener[] = [];
+  private readonly exitListeners: Array<() => void> = [];
   private readonly pending = new Map<string, PendingRequest>();
   private seq = 0;
   private stderr = "";
@@ -108,6 +109,9 @@ export class PiRpcClient {
       if (this.process !== child) return;
       this.exitError = this.createExitError(code, signal);
       this.rejectPending(this.exitError);
+      for (const listener of [...this.exitListeners]) {
+        listener();
+      }
     });
 
     child.once("error", (err) => {
@@ -168,8 +172,33 @@ export class PiRpcClient {
     };
   }
 
+  /**
+   * Subscribe to agent process exits. The listener fires once when the child
+   * exits (normally or via signal), after stderr has been collected. Useful for
+   * surfacing mid-stream crashes as errors to callers that own a stream.
+   */
+  onExit(listener: () => void): () => void {
+    this.exitListeners.push(listener);
+    return () => {
+      const index = this.exitListeners.indexOf(listener);
+      if (index !== -1) {
+        this.exitListeners.splice(index, 1);
+      }
+    };
+  }
+
   getStderr(): string {
     return this.stderr;
+  }
+
+  /**
+   * Send a prompt and resolve once Pi acknowledges it. The ack response arrives
+   * after preflight; it is NOT completion. Streaming events continue to arrive
+   * through `onEvent` until `agent_end`. Use this (rather than `promptAndWait`)
+   * when you need to forward events live instead of collecting them.
+   */
+  async prompt(message: string): Promise<void> {
+    await this.send({ type: "prompt", message });
   }
 
   /**

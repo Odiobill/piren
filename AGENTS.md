@@ -142,11 +142,11 @@ npm run build
 npm run smoke
 ```
 
-Current baseline after Phase 3 tracer bullet 1:
+Current baseline after Phase 3 tracer bullet 2:
 
 ```text
-Test Files  15 passed (15)
-Tests       67 passed (67)
+Test Files  17 passed (17)
+Tests       79 passed (79)
 SMOKE PASSED
 ```
 
@@ -154,14 +154,20 @@ Smoke and tests must not depend on Davide's real `~/.config/piren/config.yml` un
 
 ## Current implementation surface
 
-Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 has started with tracer bullet 1: the gateway RPC client.
+Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 is in progress: tracer bullet 1 (RPC client) and tracer bullet 2 (HTTP/SSE transport) are done.
 
-Gateway RPC surface (Phase 3, no HTTP yet):
+Gateway RPC surface (Phase 3, `src/gateway-rpc.ts`):
 
 - `buildPiRunCommand({ rpcMode: true })` in `src/run.ts` appends `--mode rpc` and sets `stdio: "pipe"`.
-- `PiRpcClient` in `src/gateway-rpc.ts` spawns Pi in RPC mode, speaks strict LF-only JSONL (`src/jsonl.ts`, no readline), pairs commands with ack responses by id, and drains streaming events until `agent_end`.
-- `extractAssistantText(events)` assembles assistant text from nested `message_update.assistantMessageEvent.text_delta` deltas.
+- `PiRpcClient` spawns Pi in RPC mode, speaks strict LF-only JSONL (`src/jsonl.ts`, no readline), pairs commands with ack responses by id, and drains streaming events until `agent_end`.
+- `prompt(message)` sends a prompt and resolves after the ack; `onEvent`/`onExit` deliver live events and process exits. `extractAssistantText(events)` reads nested `message_update.assistantMessageEvent.text_delta`.
 - Fake Pi process fixture: `tests/fixtures/fake-pi-rpc.cjs`.
+
+Gateway HTTP/SSE surface (Phase 3, `src/gateway-http.ts` + `src/gateway-bridge.ts`):
+
+- `piEventToSse(event)` in `src/gateway-bridge.ts` translates Pi events to SSE: `text_delta` -> `token`, `tool_execution_*` -> `tool`, `agent_end` -> `done`. Thinking/approval/queue are deferred.
+- `GatewayServer` in `src/gateway-http.ts` owns one `PiRpcClient`, serves `POST /api/chat/start` (returns `{stream_id}`) and `GET /api/chat/stream?stream_id=...` (drains SSE until done/error, 30s heartbeat). stdlib `http`, no WebSocket.
+- `piren gateway` (alias `piren web`) CLI command with `--port` (default 7317) and `--host` (default 127.0.0.1).
 
 Implemented CLI:
 
@@ -172,6 +178,7 @@ Implemented CLI:
 - `piren setup`
 - `piren run`
 - `piren worker`
+- `piren gateway` (alias `piren web`)
 
 Implemented extension command:
 

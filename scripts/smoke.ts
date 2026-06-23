@@ -5,6 +5,7 @@ import extension from "../src/pi-extension.js";
 import { formatAgentsReport, listPirenAgents } from "../src/agents.js";
 import { buildPiRunCommand } from "../src/run.js";
 import { PiRpcClient, extractAssistantText } from "../src/gateway-rpc.js";
+import { GatewayServer } from "../src/gateway-http.js";
 
 type FakePi = ReturnType<typeof fakePi>;
 
@@ -308,6 +309,48 @@ async function main() {
       await rpcClient.stop();
     }
     console.log("gateway rpc prompt->agent_end streamed text: ok");
+
+    // Phase 3 tracer bullet 2: a real HTTP/SSE round trip on the proven RPC
+    // client. POST /api/chat/start kicks off the turn; GET /api/chat/stream
+    // drains bridge-translated SSE events until done. A fake Pi process stands
+    // in for real `pi --mode rpc` so the round trip needs no model auth.
+    const gateway = new GatewayServer({
+      target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+    });
+    let gatewayHandle;
+    try {
+      gatewayHandle = await gateway.start();
+      const startRes = await fetch(`http://${gatewayHandle.hostname}:${gatewayHandle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "Hello" }),
+      });
+      if (startRes.status !== 200) throw new Error(`gateway start HTTP ${startRes.status}`);
+      const { stream_id } = (await startRes.json()) as { stream_id: string };
+      const streamRes = await fetch(`http://${gatewayHandle.hostname}:${gatewayHandle.port}/api/chat/stream?stream_id=${stream_id}`);
+      if (streamRes.headers.get("content-type") !== "text/event-stream") {
+        throw new Error("gateway stream did not return text/event-stream");
+      }
+      const sseText = await streamRes.text();
+      const tokens: string[] = [];
+      let sawDone = false;
+      for (const block of sseText.split("\n\n")) {
+        if (!block.trim() || block.startsWith(":")) continue;
+        let evt = "";
+        let data = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event: ")) evt = line.slice(7);
+          else if (line.startsWith("data: ")) data = line.slice(6);
+        }
+        if (evt === "token") tokens.push((JSON.parse(data) as { text: string }).text);
+        else if (evt === "done") sawDone = true;
+      }
+      if (!sawDone) throw new Error("gateway SSE stream did not end with done");
+      if (tokens.join("") !== "Hello") throw new Error(`gateway streamed text mismatch: ${tokens.join("")}`);
+    } finally {
+      await gateway.close();
+    }
+    console.log("gateway http/sse post-start get-stream streamed text: ok");
 
     console.log("SMOKE PASSED");
   } finally {

@@ -53,4 +53,32 @@ describe("PiRpcClient prompt flow against a fake Pi process", () => {
     const client = new PiRpcClient(target);
     await expect(client.promptAndWait("nope")).rejects.toThrow();
   });
+
+  it("prompt sends a prompt and resolves after the ack while events keep streaming", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    try {
+      await client.start();
+      const agentEnded = new Promise<void>((resolve) => {
+        client.onEvent((event) => {
+          if (event.type === "agent_end") resolve();
+        });
+      });
+      // prompt resolves after the ack response, before agent_end arrives.
+      await client.prompt("Hello");
+      await agentEnded;
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("onExit fires when the agent process exits", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    await client.start();
+    let exited = false;
+    client.onExit(() => {
+      exited = true;
+    });
+    await client.stop();
+    expect(exited).toBe(true);
+  });
 });
