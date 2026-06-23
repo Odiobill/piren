@@ -187,7 +187,7 @@ Implemented extension tools:
 
 ## Common pitfalls
 
-- This directory is currently not a git repository. Do not rely on git diff/status unless a repository is initialized later.
+- This directory is a git repository. Remote: `https://github.com/Odiobill/piren.git`, default branch `main`. Prefer small, focused commits with clear messages. Do not force-push to `main` or rewrite shared history.
 - `vault_write` with local outbox must not create a missing vault root as authoritative state.
 - Path traversal outside the vault is a hard rejection, not an outbox proposal.
 - `vault_read_cached` is explicit and non-authoritative. Keep `vault_read` authoritative by default.
