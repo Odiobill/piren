@@ -1,0 +1,293 @@
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import extension from "../src/pi-extension.js";
+import { formatAgentsReport, listPirenAgents } from "../src/agents.js";
+import { buildPiRunCommand } from "../src/run.js";
+
+type FakePi = ReturnType<typeof fakePi>;
+
+function fakePi() {
+  const tools: Record<string, any> = {};
+  const commands: Record<string, any> = {};
+  const events: Record<string, Function[]> = {};
+  return {
+    tools,
+    commands,
+    events,
+    registerFlag() {},
+    getFlag() { return undefined; },
+    registerTool(tool: any) { tools[tool.name] = tool; },
+    registerCommand(name: string, command: any) { commands[name] = command; },
+    on(event: string, handler: Function) {
+      events[event] ??= [];
+      events[event].push(handler);
+    },
+  };
+}
+
+async function createFixture() {
+  const root = await mkdtemp(join(tmpdir(), "piren-smoke-"));
+  const vault = join(root, "vault");
+  const agentDir = join(vault, "team", "thor");
+  await mkdir(join(agentDir, "inbox"), { recursive: true });
+  await mkdir(join(agentDir, "outbox"), { recursive: true });
+  await mkdir(join(agentDir, "logs"), { recursive: true });
+  await mkdir(join(agentDir, "sessions"), { recursive: true });
+  await writeFile(join(vault, ".piren-vault"), "");
+  await writeFile(join(vault, "steward-directives.md"), "# Steward Directives\nKeep the spike small and boring.\n");
+  await writeFile(join(agentDir, "SOUL.md"), "# Thor\nYou are Thor for the Piren spike.\n");
+  await writeFile(join(agentDir, "MEMORY.md"), "# Memory\n");
+  await writeFile(join(agentDir, "config.yml"), "model:\n  id: anthropic/claude-sonnet-4-20250514\n  thinking: medium\n");
+  return { root, vault, agentDir };
+}
+
+async function load(label: string, agentDir: string, configPath: string, env: Record<string, string | undefined> = {}): Promise<FakePi> {
+  const pi = fakePi();
+  await extension(pi as any, { cliAgentDir: agentDir, env, configPath });
+  console.log(`${label}: loaded tools=${Object.keys(pi.tools).sort().join(",")} commands=${Object.keys(pi.commands).sort().join(",")}`);
+  return pi;
+}
+
+async function main() {
+  const fixture = await createFixture();
+  const configPath = join(fixture.root, "missing-config.yml");
+  const localCache = join(fixture.root, "local-cache");
+  await mkdir(join(localCache, "team", "thor", "logs"), { recursive: true });
+  await writeFile(join(localCache, "team", "thor", "logs", "cached.md"), "cached smoke copy\n");
+  const env = { PIREN_LOCAL_CACHE_DIR: localCache, PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" };
+  try {
+    const pi = await load("start", fixture.agentDir, configPath, env);
+    console.log(`derived vault_root=${fixture.vault}`);
+    console.log(`derived agent_dir=${fixture.agentDir}`);
+
+    const deviceRecord = JSON.parse(await readFile(join(fixture.vault, "team", "thor", "devices", "heimdall.json"), "utf8"));
+    if (deviceRecord.device_id !== "heimdall" || deviceRecord.hostname !== "heimdall.local" || deviceRecord.status !== "active") {
+      throw new Error("device registration smoke failed");
+    }
+    console.log("device registration team/thor/devices/heimdall.json: ok");
+
+    const statusNotifications: string[] = [];
+    await pi.commands.piren_status.handler([], {
+      ui: {
+        notify(message: string) {
+          statusNotifications.push(message);
+        },
+      },
+    });
+    if (!statusNotifications[0]?.includes("Piren status") || !statusNotifications[0].includes("write_mode: authoritative-vault")) {
+      throw new Error("piren_status smoke failed");
+    }
+    console.log("piren_status command: ok");
+
+    const read = await pi.tools.vault_read.execute("smoke-read", { path: "steward-directives.md" });
+    if (read.isError || !read.content[0].text.includes("Keep the spike")) throw new Error("vault_read smoke failed");
+    console.log("vault_read steward-directives.md: ok");
+
+    const cachedRead = await pi.tools.vault_read_cached.execute("smoke-cached-read", { path: "team/thor/logs/cached.md" });
+    if (cachedRead.isError || cachedRead.content[0].text !== "cached smoke copy\n" || cachedRead.details.authoritative !== false) {
+      throw new Error("vault_read_cached smoke failed");
+    }
+    console.log("vault_read_cached team/thor/logs/cached.md: ok");
+
+    const write = await pi.tools.vault_write.execute("smoke-write", {
+      path: "team/thor/logs/spike-test.md",
+      content: "# Spike Test\nPiren vault_write smoke passed.\n",
+    });
+    if (write.isError) throw new Error(`vault_write smoke failed: ${write.content[0].text}`);
+    const written = await readFile(join(fixture.vault, "team", "thor", "logs", "spike-test.md"), "utf8");
+    if (!written.includes("Piren vault_write smoke passed")) throw new Error("written file did not contain expected content");
+    console.log("vault_write team/thor/logs/spike-test.md: ok");
+
+    const list = await pi.tools.vault_list.execute("smoke-list", { path: "team/thor/logs" });
+    if (list.isError || !list.details.entries.some((entry: any) => entry.path === "team/thor/logs/spike-test.md")) {
+      throw new Error("vault_list smoke failed");
+    }
+    console.log("vault_list team/thor/logs: ok");
+
+    const patch = await pi.tools.vault_patch.execute("smoke-patch", {
+      path: "team/thor/logs/spike-test.md",
+      old_text: "Piren vault_write smoke passed.",
+      new_text: "Piren vault_patch smoke passed.",
+    });
+    if (patch.isError) throw new Error(`vault_patch smoke failed: ${patch.content[0].text}`);
+    const patched = await readFile(join(fixture.vault, "team", "thor", "logs", "spike-test.md"), "utf8");
+    if (!patched.includes("Piren vault_patch smoke passed")) throw new Error("patched file did not contain expected content");
+    console.log("vault_patch team/thor/logs/spike-test.md: ok");
+
+    const appendLog = await pi.tools.vault_append_log.execute("smoke-append-log", {
+      path: "team/thor/logs/activity.md",
+      entry: "Smoke append-log passed.",
+    });
+    if (appendLog.isError) throw new Error(`vault_append_log smoke failed: ${appendLog.content[0].text}`);
+    const activity = await readFile(join(fixture.vault, "team", "thor", "logs", "activity.md"), "utf8");
+    if (!activity.includes("Smoke append-log passed.")) throw new Error("activity log did not contain expected content");
+    console.log("vault_append_log team/thor/logs/activity.md: ok");
+
+    const sessionSummary = await pi.tools.session_write_summary.execute("smoke-session-summary", {
+      title: "Smoke Session",
+      summary: "Piren session summary smoke passed.",
+    });
+    if (sessionSummary.isError) throw new Error(`session_write_summary smoke failed: ${sessionSummary.content[0].text}`);
+    const summaryContent = await readFile(join(fixture.vault, sessionSummary.details.path), "utf8");
+    if (!summaryContent.includes("Piren session summary smoke passed.")) throw new Error("session summary did not contain expected content");
+    console.log("session_write_summary team/thor/sessions: ok");
+
+    const alert = await pi.tools.flag_steward.execute("smoke-flag-steward", {
+      title: "Vault unavailable",
+      body: "Smoke alert asks the steward to inspect vault availability.",
+      severity: "high",
+      notify: true,
+    });
+    if (alert.isError) throw new Error(`flag_steward smoke failed: ${alert.content[0].text}`);
+    const alertContent = await readFile(join(fixture.vault, alert.details.path), "utf8");
+    if (!alertContent.includes("# Vault unavailable") || !alertContent.includes("severity: high") || !alertContent.includes("Smoke alert asks the steward")) {
+      throw new Error("flag_steward alert did not contain expected content");
+    }
+    console.log("flag_steward steward-inbox/alerts: ok");
+
+    const sentTask = await pi.tools.send_to_agent.execute("smoke-send", {
+      to: "thor",
+      title: "Check smoke inbox",
+      body: "Confirm send_to_agent creates one inbox task file.",
+    });
+    if (sentTask.isError) throw new Error(`send_to_agent smoke failed: ${sentTask.content[0].text}`);
+    const taskContent = await readFile(join(fixture.vault, sentTask.details.path), "utf8");
+    if (!taskContent.includes("status: pending") || !taskContent.includes("# Check smoke inbox")) {
+      throw new Error("send_to_agent task did not contain expected content");
+    }
+    console.log("send_to_agent team/thor/inbox: ok");
+
+    const updatedTask = await pi.tools.task_update_status.execute("smoke-task-update", {
+      task_path: sentTask.details.path,
+      status: "completed",
+      result: "Smoke inbox task completed.",
+    });
+    if (updatedTask.isError) throw new Error(`task_update_status smoke failed: ${updatedTask.content[0].text}`);
+    const updatedTaskContent = await readFile(join(fixture.vault, sentTask.details.path), "utf8");
+    if (!updatedTaskContent.includes("status: completed") || !updatedTaskContent.includes("Smoke inbox task completed.")) {
+      throw new Error("task_update_status did not update expected task content");
+    }
+    console.log("task_update_status team/thor/inbox: ok");
+
+    const inboxList = await pi.tools.inbox_list.execute("smoke-inbox-list", {});
+    if (inboxList.isError) throw new Error(`inbox_list smoke failed: ${inboxList.content[0].text}`);
+    if (!inboxList.content[0].text.includes("completed\tCheck smoke inbox") || inboxList.details.tasks.length !== 1) {
+      throw new Error("inbox_list did not report expected task");
+    }
+    console.log("inbox_list team/thor/inbox: ok");
+
+    const claimedTask = await pi.tools.task_claim.execute("smoke-task-claim", {
+      task_path: sentTask.details.path,
+      device_id: "heimdall",
+    });
+    if (claimedTask.isError) throw new Error(`task_claim smoke failed: ${claimedTask.content[0].text}`);
+    if (!claimedTask.details.path.includes(".claimed.heimdall.md") || claimedTask.details.originalPath !== sentTask.details.path) {
+      throw new Error("task_claim did not report expected claimed path");
+    }
+    try {
+      await readFile(join(fixture.vault, sentTask.details.path), "utf8");
+      throw new Error("task_claim left original task path in place");
+    } catch (error) {
+      if (error instanceof Error && error.message === "task_claim left original task path in place") throw error;
+    }
+    console.log("task_claim team/thor/inbox: ok");
+
+    await writeFile(join(fixture.vault, "team", "thor", "devices", "heimdall.json"), JSON.stringify({
+      device_id: "heimdall",
+      hostname: "heimdall.local",
+      priority: 10,
+      status: "active",
+      started_at: "2026-06-22T16:00:00.000Z",
+      last_seen: "2026-06-22T16:00:00.000Z",
+    }, null, 2) + "\n");
+    const reclaimedTask = await pi.tools.task_claim.execute("smoke-task-reclaim", {
+      task_path: claimedTask.details.path,
+      device_id: "thor-laptop",
+      stale_after_ms: 5 * 60 * 1000,
+      now: "2026-06-22T16:10:01.000Z",
+    });
+    if (reclaimedTask.isError) throw new Error(`stale task_claim recovery smoke failed: ${reclaimedTask.content[0].text}`);
+    if (!reclaimedTask.details.path.includes(".claimed.thor-laptop.md") || reclaimedTask.details.originalPath !== claimedTask.details.path) {
+      throw new Error("stale task_claim recovery did not report expected reclaimed path");
+    }
+    try {
+      await readFile(join(fixture.vault, claimedTask.details.path), "utf8");
+      throw new Error("stale task_claim recovery left old claim path in place");
+    } catch (error) {
+      if (error instanceof Error && error.message === "stale task_claim recovery left old claim path in place") throw error;
+    }
+    console.log("stale task_claim recovery via device heartbeat: ok");
+
+    const inboxAfterClaim = await pi.tools.inbox_list.execute("smoke-inbox-list-after-claim", {});
+    if (inboxAfterClaim.isError || inboxAfterClaim.details.tasks.length !== 0) {
+      throw new Error("inbox_list should not show claimed tasks");
+    }
+    console.log("inbox_list after task_claim: ok");
+
+    const outside = await pi.tools.vault_write.execute("smoke-outside", { path: "../outside.md", content: "nope" });
+    if (!outside.isError || !outside.content[0].text.match(/outside vault/i)) throw new Error("outside write was not rejected");
+    console.log("vault_write ../outside.md rejected: ok");
+
+    const reloaded = await load("reload", fixture.agentDir, configPath, env);
+    const reloadRead = await reloaded.tools.vault_read.execute("smoke-reload-read", { path: "steward-directives.md" });
+    if (reloadRead.isError) throw new Error("reload read failed");
+    console.log("reload repeat read: ok");
+
+    const restarted = await load("restart", fixture.agentDir, configPath, env);
+    const restartRead = await restarted.tools.vault_read.execute("smoke-restart-read", { path: "steward-directives.md" });
+    if (restartRead.isError) throw new Error("restart read failed");
+    const restartWrite = await restarted.tools.vault_write.execute("smoke-restart-write", {
+      path: "team/thor/logs/spike-test-restart.md",
+      content: "restart write ok\n",
+    });
+    if (restartWrite.isError) throw new Error("restart write failed");
+    const piCommand = await buildPiRunCommand({ cliAgentDir: fixture.agentDir, env: {}, configPath, extraArgs: ["--print", "hello"] });
+    const piCommandText = [piCommand.command, ...piCommand.args].join(" ");
+    if (!piCommand.args.includes("--model") || !piCommand.args.includes("anthropic/claude-sonnet-4-20250514:medium")) {
+      throw new Error(`piren run command did not include expected model flag: ${piCommandText}`);
+    }
+    if (!piCommandText.includes("--extension ./src/pi-extension.ts") || !piCommandText.includes(`--vault-root ${fixture.vault}`) || !piCommandText.includes("--agent thor")) {
+      throw new Error(`piren run command did not include expected bootstrap flags: ${piCommandText}`);
+    }
+    if (!piCommandText.endsWith("--print hello")) {
+      throw new Error(`piren run command did not forward extra args: ${piCommandText}`);
+    }
+    console.log(`piren run command: ${piCommandText}`);
+
+    const agentsReport = await listPirenAgents({ cliVaultRoot: fixture.vault, configPath });
+    const agentsOutput = formatAgentsReport(agentsReport);
+    if (!agentsOutput.includes("[runnable] thor")) {
+      throw new Error(`piren agents smoke failed: ${agentsOutput}`);
+    }
+    console.log("piren agents listing: ok");
+
+    const workerConfigPath = join(fixture.root, "worker-config.yml");
+    await writeFile(workerConfigPath, "vault_root: " + fixture.vault + "\n" + "allowed_agents:\n" + "  - thor\n");
+    const worker = await load("worker", fixture.agentDir, workerConfigPath, { ...env, PIREN_WORKER: "1" });
+    const workerTask = await worker.tools.send_to_agent.execute("smoke-worker-send", {
+      to: "thor",
+      title: "Worker inbox poll",
+      body: "Worker mode should report this task on session start.",
+    });
+    if (workerTask.isError) throw new Error(`worker send_to_agent smoke failed: ${workerTask.content[0].text}`);
+    const workerNotifications: string[] = [];
+    await worker.events.session_start?.[0]?.({}, {
+      ui: {
+        notify(message: string) {
+          workerNotifications.push(message);
+        },
+      },
+    });
+    if (!workerNotifications.some((message) => message.includes("Worker inbox poll: 1 task(s) available") && message.includes("Worker inbox poll"))) {
+      throw new Error(`worker inbox polling smoke failed: ${workerNotifications.join("\n")}`);
+    }
+    console.log("worker inbox polling on session_start: ok");
+
+    console.log("SMOKE PASSED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+}
+
+await main();

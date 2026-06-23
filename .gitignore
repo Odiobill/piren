@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+.piren-smoke/
+*.log
+
+# Secrets and machine-local config (Piren keeps these outside the repo)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

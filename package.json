@@ -1,0 +1,27 @@
+{
+  "name": "piren",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Piren Phase 0 feasibility spike for Pi Coding Agent",
+  "bin": {
+    "piren": "dist/src/cli.js"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.79.9",
+    "typebox": "^1.0.55",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  }
+}
