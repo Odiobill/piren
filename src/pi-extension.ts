@@ -11,6 +11,7 @@ import { buildPirenStatusReport, formatPirenStatusReport } from "./status.js";
 import { registerDevice } from "./devices.js";
 import { createInboxTask, claimInboxTask, listInboxTasks, updateInboxTaskStatus } from "./inbox.js";
 import { createStewardAlert } from "./alerts.js";
+import { loadVaultSkills, formatSkillsForContext, type VaultSkill } from "./skills.js";
 
 const PIREN_TOOL_NAMES = [
   "vault_read",
@@ -98,8 +99,8 @@ function localCacheDir(context: PirenContext, env: NodeJS.ProcessEnv | Record<st
   return env.PIREN_LOCAL_CACHE_DIR || join(homedir(), ".local", "state", "piren", "cache", context.agentName);
 }
 
-function contextPrompt(context: PirenContext): string {
-  return [
+function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string {
+  const lines = [
     "# Piren Context",
     `agent_name: ${context.agentName}`,
     `agent_dir: ${context.agentDir}`,
@@ -131,7 +132,14 @@ function contextPrompt(context: PirenContext): string {
     "Use inbox_list() only when the steward explicitly asks you to check the inbox,",
     "or when running in worker mode (PIREN_WORKER=1). In a direct conversation,",
     "wait for the steward to direct the work.",
-  ].join("\n");
+  ];
+
+  const skillsSection = formatSkillsForContext(skills);
+  if (skillsSection) {
+    lines.push("", skillsSection);
+  }
+
+  return lines.join("\n");
 }
 
 export default async function pirenExtension(pi: ExtensionAPI, testOptions: BootstrapOptions = {}) {
@@ -168,6 +176,12 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
     hostname: deviceHostname(env),
   });
   const tools = createVaultTools({ vaultRoot: context.vaultRoot, localOutboxDir: outboxDir, localCacheDir: cacheDir });
+
+  // Load vault skills (ADR-0014) at extension startup. Shared skills come from
+  // vault/skills/; agent-specific skills come from team/<agent>/skills/ and
+  // override shared skills with the same name. Skills are injected into the
+  // agent context prompt as available procedures.
+  const { skills } = await loadVaultSkills(context.vaultRoot, context.agentName);
 
   pi.registerTool({
     name: "vault_read",
@@ -466,6 +480,7 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
         toolNames: PIREN_TOOL_NAMES,
         localOutboxDir: outboxDir,
         localCacheDir: cacheDir,
+        skillCount: skills.length,
       });
       ctx.ui.notify(formatPirenStatusReport(report), "info");
     },
@@ -496,7 +511,7 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
   (pi.on as any)("before_agent_start", async () => ({
     message: {
       customType: "piren-context",
-      content: contextPrompt(context),
+      content: contextPrompt(context, skills),
       display: `Piren context loaded for ${context.agentName}`,
       details: {
         agentName: context.agentName,

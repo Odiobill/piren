@@ -83,6 +83,56 @@ async function main() {
     }
     console.log("piren_status command: ok");
 
+    // ADR-0014 vault skills: shared skill in vault/skills/ and agent-specific
+    // skill in team/thor/skills/. Both are injected into the context prompt
+    // and reported in piren_status.
+    await mkdir(join(fixture.vault, "skills"), { recursive: true });
+    await mkdir(join(fixture.vault, "team", "thor", "skills"), { recursive: true });
+    await writeFile(
+      join(fixture.vault, "skills", "check-disk.md"),
+      [
+        "---",
+        "name: check-disk",
+        'description: "Check disk usage and report high partitions."',
+        "---",
+        "",
+        "# Check Disk",
+        "",
+        "1. Run df -h",
+      ].join("\n"),
+    );
+    await writeFile(
+      join(fixture.vault, "team", "thor", "skills", "deploy.md"),
+      [
+        "---",
+        "name: deploy",
+        'description: "Deploy the app to staging."',
+        "---",
+        "",
+        "# Deploy",
+      ].join("\n"),
+    );
+    const skillPi = await load("skills", fixture.agentDir, configPath, env);
+    const skillStatusNotifications: string[] = [];
+    await skillPi.commands.piren_status.handler([], {
+      ui: {
+        notify(message: string) {
+          skillStatusNotifications.push(message);
+        },
+      },
+    });
+    if (!skillStatusNotifications[0]?.includes("skills_loaded: 2")) {
+      throw new Error(`piren_status skills smoke failed: ${skillStatusNotifications[0]}`);
+    }
+    const skillBeforeStart = skillPi.events.before_agent_start?.[0];
+    if (!skillBeforeStart) throw new Error("skills before_agent_start handler not found");
+    const skillResult = await skillBeforeStart();
+    const skillContent = (skillResult as { message: { content: string } }).message.content;
+    if (!skillContent.includes("Available Skills") || !skillContent.includes("check-disk") || !skillContent.includes("deploy")) {
+      throw new Error("context prompt did not include vault skills");
+    }
+    console.log("vault skills loaded into context + status: ok");
+
     const read = await pi.tools.vault_read.execute("smoke-read", { path: "steward-directives.md" });
     if (read.isError || !read.content[0].text.includes("Keep the spike")) throw new Error("vault_read smoke failed");
     console.log("vault_read steward-directives.md: ok");

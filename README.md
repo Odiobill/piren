@@ -89,8 +89,8 @@ npm run smoke
 Expected current baseline:
 
 ```text
-Test Files  32 passed (32)
-Tests       200 passed (200)
+Test Files  33 passed (33)
+Tests       213 passed (213)
 SMOKE PASSED
 ```
 
@@ -404,6 +404,21 @@ The frontend uses these three ways: on load it calls `GET /api/chat/messages` to
 The transcript model stays hybrid per ADR-0011: Pi owns the live transcript and supports resume; the agent writes summaries to `team/<agent>/sessions/` via the existing `session_write_summary` tool. There is no duplicate authority.
 
 Core session-listing logic lives in `src/session-browser.ts` (`listAgentSessions`), which parses session-summary frontmatter (title from the first `# Heading`, `created` from YAML frontmatter) and reuses `resolveVaultPath` for path-boundary enforcement. Tests: `tests/session-browser.test.ts` (5 tests), `tests/gateway-rpc-session.test.ts` (4 tests), `tests/gateway-session-routes.test.ts` (9 tests).
+
+## Vault skills (ADR-0014)
+
+The Piren extension loads reusable procedures (skills) from the vault at startup and injects them into the agent's context prompt. Skills are Markdown files with optional YAML frontmatter, not executable code. The agent follows a skill's steps when the steward asks or when a task matches.
+
+Two skill locations:
+
+- `vault/skills/` - shared skills, available to all agents.
+- `team/<agent>/skills/` - agent-specific skills, available only to that agent. Agent-specific skills override shared skills with the same name.
+
+Each skill is either a loose `.md` file or a directory containing `SKILL.md`. Frontmatter fields: `name` (falls back to filename stem), `description` (one-line summary). The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
+
+The loaded skills appear in the context prompt as an "Available Skills" section with each skill's name, source (shared/agent), description, and full body. `piren_status` reports `skills_loaded: <count>`.
+
+Core logic lives in `src/skills.ts` (`loadVaultSkills`, `formatSkillsForContext`). Tests: `tests/skills.test.ts` (9 tests). The extension wiring is tested in `tests/pi-extension.test.ts` (context injection + status count).
 
 ## Read-only vault browser (Phase 3 tracer bullet 3)
 

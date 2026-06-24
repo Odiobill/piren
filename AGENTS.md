@@ -153,8 +153,8 @@ npm run smoke
 Current baseline:
 
 ```text
-Test Files  32 passed (32)
-Tests       200 passed (200)
+Test Files  33 passed (33)
+Tests       213 passed (213)
 SMOKE PASSED
 ```
 
@@ -218,6 +218,12 @@ Implemented extension tools:
 - `inbox_list()`
 - `task_claim(task_path, device_id?, stale_after_ms?)`
 - `flag_steward(title, body, severity?, notify?)`
+
+Vault skills (ADR-0014, implemented):
+- `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName)` and `formatSkillsForContext(skills)`. Skills are loaded from `vault/skills/` (shared) and `team/<agent>/skills/` (agent-specific, overrides shared on name collision). Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
+- The loaded skills are injected into `contextPrompt` as an "Available Skills" section (name, source, description, full body) so the agent knows the procedures exist and can follow them when the steward asks or when a task matches.
+- `piren_status` reports `skills_loaded: <count>`.
+- Tests: `tests/skills.test.ts` (9 tests), `tests/pi-extension.test.ts` (2 new tests for context injection + 2 for status count).
 
 ## Common pitfalls
 

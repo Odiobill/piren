@@ -306,4 +306,134 @@ describe("Pi extension", () => {
     expect(content).toMatch(/do not.*check.*inbox/i);
     expect(content).toMatch(/only.*steward.*asks|only.*worker.*mode/i);
   });
+
+  it("injects vault skills into the context prompt when skills exist", async () => {
+    const pi = fakePi();
+    const vault = join(root, "vault");
+    await mkdir(join(vault, "skills"), { recursive: true });
+    await writeFile(
+      join(vault, "skills", "check-disk.md"),
+      [
+        "---",
+        "name: check-disk",
+        'description: "Check disk usage and report high partitions."',
+        "---",
+        "",
+        "# Check Disk",
+        "",
+        "1. Run df -h",
+      ].join("\n"),
+    );
+    await mkdir(join(vault, "team", "thor", "skills"), { recursive: true });
+    await writeFile(
+      join(vault, "team", "thor", "skills", "deploy.md"),
+      [
+        "---",
+        "name: deploy",
+        'description: "Deploy the app to staging."',
+        "---",
+        "",
+        "# Deploy",
+      ].join("\n"),
+    );
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const beforeStart = pi.events.before_agent_start?.[0];
+    expect(beforeStart).toBeDefined();
+    const result = await beforeStart?.();
+    expect(result).toBeDefined();
+    const content = (result as { message: { content: string } }).message.content;
+    // Both shared and agent-specific skills appear in the context prompt.
+    expect(content).toContain("Available Skills");
+    expect(content).toContain("check-disk");
+    expect(content).toContain("Check disk usage and report high partitions.");
+    expect(content).toContain("deploy");
+    expect(content).toContain("Deploy the app to staging.");
+  });
+
+  it("omits the skills section when no skills exist", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const beforeStart = pi.events.before_agent_start?.[0];
+    expect(beforeStart).toBeDefined();
+    const result = await beforeStart?.();
+    expect(result).toBeDefined();
+    const content = (result as { message: { content: string } }).message.content;
+    // No skills section when the vault has none.
+    expect(content).not.toContain("Available Skills");
+  });
+
+  it("reports skill count in piren_status when skills are loaded", async () => {
+    const pi = fakePi();
+    const vault = join(root, "vault");
+    await mkdir(join(vault, "skills"), { recursive: true });
+    await writeFile(
+      join(vault, "skills", "check-disk.md"),
+      [
+        "---",
+        "name: check-disk",
+        'description: "Check disk usage."',
+        "---",
+        "",
+        "# Check Disk",
+      ].join("\n"),
+    );
+    await mkdir(join(vault, "team", "thor", "skills"), { recursive: true });
+    await writeFile(
+      join(vault, "team", "thor", "skills", "deploy.md"),
+      [
+        "---",
+        "name: deploy",
+        'description: "Deploy the app."',
+        "---",
+        "",
+        "# Deploy",
+      ].join("\n"),
+    );
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const notifications: Array<{ message: string; level: string }> = [];
+    await pi.commands.piren_status.handler([], {
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+    expect(notifications).toHaveLength(1);
+    // The status report includes the skill count (2: check-disk + deploy).
+    expect(notifications[0]?.message).toContain("skills_loaded: 2");
+  });
+
+  it("reports skills_loaded: 0 in piren_status when no skills exist", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const notifications: Array<{ message: string; level: string }> = [];
+    await pi.commands.piren_status.handler([], {
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+    expect(notifications[0]?.message).toContain("skills_loaded: 0");
+  });
 });

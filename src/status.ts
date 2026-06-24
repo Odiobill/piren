@@ -20,6 +20,7 @@ export interface PirenStatusReport {
   cacheReadMode: PirenCacheReadMode;
   cacheFiles: string[];
   toolNames: string[];
+  skillCount: number;
   degradedReason?: string;
 }
 
@@ -28,6 +29,7 @@ export interface BuildPirenStatusReportOptions {
   toolNames: string[];
   localOutboxDir: string;
   localCacheDir: string;
+  skillCount?: number;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -85,6 +87,7 @@ export async function buildPirenStatusReport(options: BuildPirenStatusReportOpti
   const availability = await checkVaultAvailability(options.context.vaultRoot);
   const cache = await inspectLocalCache(options.localCacheDir);
   const toolNames = [...options.toolNames].sort();
+  const skillCount = options.skillCount ?? 0;
   const base = {
     agentName: options.context.agentName,
     agentDir: options.context.agentDir,
@@ -97,6 +100,7 @@ export async function buildPirenStatusReport(options: BuildPirenStatusReportOpti
     cacheReadMode: cache.cacheReadMode,
     cacheFiles: cache.cacheFiles,
     toolNames,
+    skillCount,
   };
 
   if (availability.available) {
@@ -138,6 +142,7 @@ export function formatPirenStatusReport(report: PirenStatusReport): string {
     `cache_read_mode: ${report.cacheReadMode}`,
     `cache_files: ${report.cacheFiles.length ? report.cacheFiles.join(", ") : "<none>"}`,
     `registered_tools: ${report.toolNames.length ? report.toolNames.join(", ") : "<none>"}`,
+    `skills_loaded: ${report.skillCount}`,
   ];
 
   if (report.degradedReason) {
