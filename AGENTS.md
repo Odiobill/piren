@@ -109,6 +109,14 @@ Do not put `.env` under `team/<agent>/`.
 
 Do not put `AGENTS.md` under `team/<agent>/`. Piren identity is `SOUL.md`. Project `AGENTS.md` files belong in source repositories like this one.
 
+## Integrated web UI scope
+
+The integrated web UI is intentionally minimal per ADR-0012. It is an emergency interface, not a primary workspace. It provides agent selection, chat, steering, approval gates, a read-only vault browser, and a read-only context indicator. It does NOT provide model or thinking controls: those belong in `team/<agent>/config.yml`, the single source of truth. The model/thinking/agent-switch API routes remain available for external integrations. Rich external solutions (Open WebUI-compatible, purpose-built dashboards) can be built on the HTTP API.
+
+## Extensibility
+
+Piren core is minimal. Additional capabilities come from Pi packages (ADR-0013), declared in `~/.config/piren/config.yml` and loaded as additional `--extension` flags. Vault skills (ADR-0014) provide reusable procedures stored in `vault/skills/` and `team/<agent>/skills/`, injected into agent context at startup.
+
 ## Development workflow
 
 Use strict TDD for production behavior changes:
@@ -145,8 +153,8 @@ npm run smoke
 Current baseline:
 
 ```text
-Test Files  20 passed (20)
-Tests       91 passed (91)
+Test Files  32 passed (32)
+Tests       200 passed (200)
 SMOKE PASSED
 ```
 
@@ -154,20 +162,29 @@ Smoke and tests must not depend on Davide's real `~/.config/piren/config.yml` un
 
 ## Current implementation surface
 
-Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 is in progress: tracer bullets 1 (RPC client), 2 (HTTP/SSE transport), and 3 (read-only vault browser) are done. `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented.
+Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 is in progress: tracer bullets 1 (RPC client), 2 (HTTP/SSE transport), 3 (read-only vault browser), 4 (model/thinking control, agent switching, context indicator), 5 (steering and approval gates), 6 (auth token gate for non-localhost binds), 7 (web UI frontend with static file serving), and 8 (session resume and abort) are done. `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented.
 
 Gateway RPC surface (Phase 3, `src/gateway-rpc.ts`):
 
 - `buildPiRunCommand({ rpcMode: true })` in `src/run.ts` appends `--mode rpc` and sets `stdio: "pipe"`.
 - `PiRpcClient` spawns Pi in RPC mode, speaks strict LF-only JSONL (`src/jsonl.ts`, no readline), pairs commands with ack responses by id, and drains streaming events until `agent_end`.
 - `prompt(message)` sends a prompt and resolves after the ack; `onEvent`/`onExit` deliver live events and process exits. `extractAssistantText(events)` reads nested `message_update.assistantMessageEvent.text_delta`.
-- Fake Pi process fixture: `tests/fixtures/fake-pi-rpc.cjs`.
+- `getState()`, `getAvailableModels()`, `setModel(provider, modelId)`, `setThinkingLevel(level)` reach through to Pi's native RPC capabilities. Exported types: `RpcSessionState`, `RpcAvailableModels`, `RpcModel`.
+- `steer(message)` and `followUp(message)` interrupt or queue after the current run. `respondToUiRequest(id, response)` writes an `extension_ui_response` to stdin via `writeRaw()` (no ack is sent back). Exported type: `ExtensionUiResponse`.
+- `abort()` stops the active turn mid-stream (emits `agent_end`, draining active streams). `getMessages()` returns the full transcript of the current session (`RpcMessages`). `switchSession(sessionPath)` resumes a past session and returns `{cancelled}` (`RpcSessionSwitch`). Exported types: `RpcMessages`, `RpcSessionSwitch`.
+- Fake Pi process fixture: `tests/fixtures/fake-pi-rpc.cjs` (handles prompt, get_state, get_available_models, set_model, set_thinking_level, steer, follow_up, extension_ui_response, abort, get_messages, switch_session; emits queue_update after prompt and extension_ui_request on "approve").
 
 Gateway HTTP/SSE surface (Phase 3, `src/gateway-http.ts` + `src/gateway-bridge.ts`):
 
-- `piEventToSse(event)` in `src/gateway-bridge.ts` translates Pi events to SSE: `text_delta` -> `token`, `tool_execution_*` -> `tool`, `agent_end` -> `done`. Thinking/approval/queue are deferred.
-- `GatewayServer` in `src/gateway-http.ts` owns one `PiRpcClient`, serves `POST /api/chat/start` (returns `{stream_id}`) and `GET /api/chat/stream?stream_id=...` (drains SSE until done/error, 30s heartbeat). stdlib `http`, no WebSocket.
-- `piren gateway` (alias `piren web`) CLI command with `--port` (default 7317) and `--host` (default 127.0.0.1).
+- `piEventToSse(event)` in `src/gateway-bridge.ts` translates Pi events to SSE: `text_delta` -> `token`, `tool_execution_*` -> `tool`, `agent_end` -> `done`, `model_changed` -> `model_changed`, `thinking_level_changed` -> `thinking_changed`, `queue_update` -> `queue`, `extension_ui_request` (confirm/select/input) -> `approval`.
+- `GatewayServer` in `src/gateway-http.ts` owns one `PiRpcClient`, serves `POST /api/chat/start` (returns `{stream_id}`, optional `mode` for steer/follow_up) and `GET /api/chat/stream?stream_id=...` (drains SSE until done/error, 30s heartbeat). stdlib `http`, no WebSocket.
+- Model/thinking/state routes: `GET /api/chat/models`, `GET /api/chat/state`, `POST /api/chat/model`, `POST /api/chat/thinking`.
+- Agent switching routes: `GET /api/chat/agents` (returns `{agents, current}`), `POST /api/chat/switch` (validates runnable set, swaps the PiRpcClient, closes old streams). Enforces the local runnable-agent policy.
+- Steering/approval routes: `POST /api/chat/approve` (responds to extension_ui_request via `client.respondToUiRequest`).
+- Session resume/abort routes (tracer bullet 8): `POST /api/chat/abort` (aborts the active turn), `GET /api/chat/messages` (current transcript), `POST /api/chat/resume` (resumes a past session, returns `{cancelled}`), `GET /api/chat/sessions` (lists vault session summaries from `src/session-browser.ts` `listAgentSessions`, newest-first, for the current agent).
+- Auth token gate (tracer bullet 6): `src/gateway-auth.ts` provides `isLocalhostBind`, `isBearerAuthorized` (constant-time), `assertAuthGate` (fail-closed on non-localhost without token), `generateToken`, and `resolveGatewayToken` (CLI `--token` > `PIREN_TOKEN` env > `~/.config/piren/gateway-token` file > auto-generate). `GatewayServer` gained an optional `authToken` option: `GET /api/auth/info` is public and reports `{authRequired}`; all other `/api/*` routes require `Authorization: Bearer *** or return 401. The CLI auto-generates and prints a token on first non-localhost run. Tests: `tests/gateway-auth.test.ts`, `tests/gateway-auth-routes.test.ts`.
+- Static file serving + web UI (frontend): `GatewayServer` gained an optional `publicDir` option. `GET /` serves `index.html`; other GET requests serve static files by relative path with MIME detection. API routes always take priority. Path traversal rejected via `relative()` check (defense-in-depth). The `public/` directory contains `index.html`, `style.css`, `app.js` (vanilla JS, no framework, no build step). The build script copies `public/` to `dist/public/`. The CLI resolves `publicDir` via `import.meta.url` (same pattern as the extension path). Tests: `tests/gateway-static.test.ts`.
+- `piren gateway` (alias `piren web`) CLI command with `--port` (default 7317), `--host` (default 127.0.0.1), and `--token`; wires `runnableAgents`, `initialAgent`, `targetBuilder`, `authToken`, and `publicDir` from `listPirenAgents`, `buildPiRunCommand`, `resolveGatewayToken`, and `resolvePublicDir`.
 
 Implemented CLI:
 

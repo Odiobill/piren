@@ -50,6 +50,26 @@ export function piEventToSse(event: RpcEvent): SseEvent | null {
       const messages = Array.isArray(event.messages) ? event.messages : [];
       return { type: "done", data: { messages } };
     }
+    case "model_changed": {
+      return { type: "model_changed", data: { model: event.model } };
+    }
+    case "thinking_level_changed": {
+      return { type: "thinking_changed", data: { level: event.level } };
+    }
+    case "queue_update": {
+      const steering = Array.isArray(event.steering) ? event.steering : [];
+      const followUp = Array.isArray(event.followUp) ? event.followUp : [];
+      return { type: "queue", data: { steering, followUp } };
+    }
+    case "extension_ui_request": {
+      // Forward confirm/select/input to the browser as approval events.
+      // Other methods (notify, setStatus, editor, etc.) are deferred.
+      if (event.method === "confirm" || event.method === "select" || event.method === "input") {
+        const { type: _type, ...rest } = event;
+        return { type: "approval", data: { ...rest } };
+      }
+      return null;
+    }
     default:
       return null;
   }

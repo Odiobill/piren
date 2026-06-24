@@ -7,13 +7,12 @@ import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 
-// Resolve the Pi extension to the compiled JS in dist, even when this module
-// is loaded from source (e.g. via tsx during smoke tests). The CLI binary
-// always runs compiled from dist/, so the default path is dist/src/pi-extension.js.
-// When thisDir ends with "src" (source), dist is the sibling directory.
+// Resolve the Pi extension relative to this module's location so it works
+// whether the CLI runs from compiled dist/ (npm global install) or from
+// source via tsx during smoke tests. Overridable via the `extensionPath`
+// option so tests can inject a repo-relative path.
 function resolveExtensionPath(): string {
-  const distDir = join(thisDir, "pi-extension.js");
-  return distDir;
+  return join(thisDir, "pi-extension.js");
 }
 
 interface AgentModelConfig {

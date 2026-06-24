@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Piren Gateway</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Auth overlay (shown when authRequired is true) -->
+  <div id="auth-overlay" class="overlay hidden">
+    <div class="overlay-content">
+      <div class="overlay-logo">Piren</div>
+      <p class="overlay-subtitle">Enter the gateway auth token</p>
+      <input type="password" id="auth-token-input" placeholder="Token" autocomplete="off">
+      <button id="auth-submit">Connect</button>
+      <p id="auth-error" class="error-text"></p>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <span class="logo">Piren</span>
+      </div>
+
+      <div class="sidebar-section">
+        <label for="agent-select">Agent</label>
+        <div class="select-row">
+          <select id="agent-select"></select>
+          <button id="agent-switch-btn" class="icon-btn" title="Switch agent">&#x21bb;</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <button id="vault-browser-btn" class="full-btn">Vault Browser</button>
+      </div>
+
+      <div class="sidebar-section sidebar-sessions">
+        <label>Past Sessions</label>
+        <div id="session-list" class="session-list">
+          <div class="session-empty">Loading...</div>
+        </div>
+      </div>
+
+      <div id="context-indicator" class="sidebar-section context-indicator">
+        <span id="context-text">Connecting...</span>
+      </div>
+    </aside>
+
+    <!-- Main chat area -->
+    <main id="main">
+      <div id="messages"></div>
+
+      <!-- Steering queue indicator -->
+      <div id="queue-indicator" class="queue-indicator hidden">
+        <span id="queue-text"></span>
+      </div>
+
+      <!-- Approval gate panel -->
+      <div id="approval-panel" class="approval-panel hidden">
+        <div class="approval-content">
+          <h3 id="approval-title">Approval Required</h3>
+          <p id="approval-message"></p>
+          <div id="approval-input-group" class="hidden">
+            <input type="text" id="approval-input" placeholder="Enter value">
+          </div>
+          <div class="approval-buttons">
+            <button id="approval-confirm" class="btn-green">Confirm</button>
+            <button id="approval-cancel" class="btn-red">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Composer -->
+      <div id="composer">
+        <textarea id="message-input" placeholder="Send a message..." rows="1"></textarea>
+        <div class="composer-buttons">
+          <button id="send-btn" title="Send">Send</button>
+          <button id="steer-btn" class="btn-secondary" title="Interrupt and steer">Steer</button>
+          <button id="followup-btn" class="btn-secondary" title="Queue after current turn">Follow-up</button>
+          <button id="abort-btn" class="btn-red" title="Stop the active turn">Abort</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Vault browser panel -->
+    <div id="vault-panel" class="panel hidden">
+      <div class="panel-header">
+        <h3>Vault Browser</h3>
+        <button id="vault-close" class="icon-btn" title="Close">&#x2715;</button>
+      </div>
+      <div id="vault-breadcrumb" class="vault-breadcrumb"></div>
+      <div id="vault-list" class="vault-list"></div>
+      <div id="vault-content" class="vault-content hidden">
+        <pre id="vault-content-pre"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

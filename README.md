@@ -4,7 +4,7 @@ Piren is a lightweight, local-first agent layer on top of Pi Coding Agent. It ke
 
 Core thesis: Piren is not only an agent launcher or task queue. It is a knowledge-maintenance harness for a stewarded team of agents, merging LLM-Wiki and Second Brain workflows with explicit multi-agent task execution. Agents should leave structured artifacts that improve future work, while the steward can inspect current project status, decisions, runbooks, concepts, logs, and handoffs directly in the vault.
 
-Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is in progress: tracer bullet 1 added a gateway RPC client that spawns Pi in `--mode rpc` and streams a response over strict LF-only JSONL, tracer bullet 2 added the HTTP/SSE transport (`piren gateway`) on that client, tracer bullet 3 added the read-only vault browser with path-boundary enforcement, and `piren ask` was added as a CLI one-shot wrapper over the same RPC client. All proven against a fake Pi process.
+Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is in progress: tracer bullet 1 added a gateway RPC client that spawns Pi in `--mode rpc` and streams a response over strict LF-only JSONL, tracer bullet 2 added the HTTP/SSE transport (`piren gateway`) on that client, tracer bullet 3 added the read-only vault browser with path-boundary enforcement, tracer bullets 4 and 5 added model/thinking control, agent switching, steering, and approval gates, tracer bullet 6 added the auth token gate for non-localhost binds, and `piren ask` was added as a CLI one-shot wrapper over the same RPC client. All proven against a fake Pi process.
 
 Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
 
@@ -89,8 +89,8 @@ npm run smoke
 Expected current baseline:
 
 ```text
-Test Files  20 passed (20)
-Tests       91 passed (91)
+Test Files  32 passed (32)
+Tests       200 passed (200)
 SMOKE PASSED
 ```
 
@@ -346,7 +346,64 @@ SSE event taxonomy for v1: `token` (assistant text deltas, nested inside Pi `mes
 
 The bridge lives in `src/gateway-bridge.ts` (`piEventToSse`); the server lives in `src/gateway-http.ts` (`GatewayServer`). Both are tested against the fake Pi process so the round trip needs no live model auth. The smoke script runs the same HTTP/SSE round trip.
 
-The default bind is `127.0.0.1`. Binding to a non-localhost host is possible with `--host`, but the required shared-bootstrap-token auth gate for non-localhost binds is a later tracer bullet; do not expose the gateway on a LAN until that gate lands.
+The default bind is `127.0.0.1`. On localhost, auth is optional for friction-free local development. Binding to a non-localhost host (LAN exposure) requires a shared bootstrap token; if none is found, the gateway auto-generates one, persists it to `~/.config/piren/gateway-token`, and prints it to the console once. See the Auth section below.
+
+## Gateway auth token gate (Phase 3 tracer bullet 6)
+
+A shared bootstrap token gates the gateway. On localhost (the default bind), auth is optional for friction-free local development. On any non-localhost bind, the token is required and the gateway refuses to start without one.
+
+Token resolution priority: `--token` CLI flag > `PIREN_TOKEN` env var > `~/.config/piren/gateway-token` file > auto-generate (non-localhost only). If auto-generated on first run, the token is printed to the console once and persisted to `~/.config/piren/gateway-token` (mode 0o600).
+
+```bash
+# Localhost, no token needed (friction-free dev):
+node dist/src/cli.js gateway
+
+# LAN exposure: auto-generates and prints a token:
+node dist/src/cli.js gateway --host 0.0.0.0
+
+# Provide a token explicitly:
+node dist/src/cli.js gateway --host 0.0.0.0 --token my-secret
+PIREN_TOKEN=my-secret node dist/src/cli.js gateway --host 0.0.0.0
+```
+
+Transport is plain `Authorization: Bearer *** on API requests. When a token is configured, all `/api/*` routes except `GET /api/auth/info` require a matching Bearer header or return 401. The token comparison is constant-time (XOR accumulator) to prevent timing attacks. `GET /api/auth/info` is always public and returns `{authRequired: boolean}` so the frontend knows whether to prompt.
+
+The static frontend stores the token in memory and attaches it to fetch calls. Finer per-user identity, login pages, and passkeys are deferred.
+
+## Web UI (Phase 3 frontend, minimal per ADR-0012)
+
+The gateway serves a vanilla JS web UI (no framework, no build step) from the `public/` directory. When you start `piren gateway`, point a browser at `http://127.0.0.1:7317/` (or your `--port`).
+
+The integrated UI is intentionally minimal. It is an emergency interface for when there is no SSH or other gateway available, not a primary workspace. Rich external solutions can be built on the HTTP API.
+
+The UI provides:
+
+- **Agent selection**: switch between runnable agents (enforced by local installation policy).
+- **Chat with streaming**: send messages, see tokens stream live via SSE, tool execution cards, and error display.
+- **Steering and follow-up**: interrupt a running turn with Steer, or queue a follow-up message.
+- **Approval gates**: when the agent requests confirmation, an approval panel appears with Confirm/Cancel buttons.
+- **Vault browser**: browse vault directories and read files read-only, with path-boundary enforcement.
+- **Read-only context indicator**: shows current model, thinking level, streaming status, and message count as static text sourced from `get_state`. Not editable from the UI.
+- **Auth**: when a token is configured, an auth overlay prompts for the token on load. The token is stored in memory and attached to all API requests.
+
+The UI does **not** provide model selection, thinking level control, or any configuration that belongs in `team/<agent>/config.yml`. The vault is the single source of truth. The model/thinking/agent-switch API routes remain available for external integrations.
+
+Static file serving is built into `GatewayServer` via the `publicDir` option. API routes always take priority over static files. The build step copies `public/` to `dist/public/` so the path resolves correctly whether running from source (tsx) or compiled (dist).
+
+## Session resume and abort (Phase 3 tracer bullet 8)
+
+The gateway exposes four session-management routes built on Pi's native RPC capabilities (`abort`, `get_messages`, `switch_session`):
+
+- `POST /api/chat/abort` aborts the active turn mid-stream. The abort RPC command emits `agent_end`, which drains any active SSE stream so it closes cleanly. Returns `{ok: true}`. There is no dedicated abort stream: the outcome is observed on the existing stream bound to the active turn.
+- `GET /api/chat/messages` returns the full transcript of the current Pi session as `{messages: [...]}`. Used to repopulate the chat view after a browser refresh so the steward reattaches to prior context. Message shapes are provider-specific.
+- `POST /api/chat/resume` with JSON `{sessionPath: "..."}` resumes a past Pi session by its on-disk path. Returns `{cancelled: boolean}` so the frontend can fall back gracefully when Pi could not resume the requested session. A missing or empty `sessionPath` returns 400.
+- `GET /api/chat/sessions` lists past session summaries from the vault under `team/<currentAgent>/sessions/` as `{agent, sessions: [{name, path, title, created, bytes, mtimeMs}]}`. These are the agent's recorded conversations (written by `session_write_summary`), newest-first. Requires both `vaultRoot` and a current agent; returns 404 otherwise.
+
+The frontend uses these three ways: on load it calls `GET /api/chat/messages` to repopulate the transcript (so a browser refresh reattaches to context) and `GET /api/chat/sessions` to fill the sidebar session list; the composer has an Abort button that calls `POST /api/chat/abort` to stop a runaway turn.
+
+The transcript model stays hybrid per ADR-0011: Pi owns the live transcript and supports resume; the agent writes summaries to `team/<agent>/sessions/` via the existing `session_write_summary` tool. There is no duplicate authority.
+
+Core session-listing logic lives in `src/session-browser.ts` (`listAgentSessions`), which parses session-summary frontmatter (title from the first `# Heading`, `created` from YAML frontmatter) and reuses `resolveVaultPath` for path-boundary enforcement. Tests: `tests/session-browser.test.ts` (5 tests), `tests/gateway-rpc-session.test.ts` (4 tests), `tests/gateway-session-routes.test.ts` (9 tests).
 
 ## Read-only vault browser (Phase 3 tracer bullet 3)
 
@@ -402,7 +459,7 @@ Piren v1 intentionally stays small:
 - Pi remains responsible for model/provider auth and settings
 - Phase 1 single-agent hardening is complete: diagnostics, policy checks, setup scaffolding, and stale-agent detection
 - Phase 2 (file-based inbox) is complete: device registration writes heartbeat JSON under `team/<agent>/devices/`, `send_to_agent` creates one pending Markdown task file in the target agent inbox, `task_update_status` updates task status and optional result text, `inbox_list` lists the selected agent's unclaimed inbox tasks, `task_claim` claims a task by filesystem rename, stale claim recovery reclaims `.claimed.<device>.md` files only after the previous device heartbeat expires, `piren worker` enables opt-in worker-mode inbox polling for explicitly allowed local agents, and `flag_steward` creates authoritative steward alert files
-- Phase 3 (external gateway) is in progress: tracer bullet 1 added `buildPiRunCommand({ rpcMode: true })` activating `--mode rpc` with piped stdio plus `PiRpcClient` in `src/gateway-rpc.ts` (separate process, strict LF-only JSONL, drains events until `agent_end`); tracer bullet 2 added the HTTP/SSE transport `piren gateway` (`src/gateway-http.ts` `GatewayServer`, `src/gateway-bridge.ts` `piEventToSse`) with POST-start/GET-stream; tracer bullet 3 added the read-only vault browser (`GET /api/vault/list`, `GET /api/vault/read`, core logic in `src/vault-browser.ts`) reusing `resolveVaultPath` for path-boundary enforcement. No WebSocket, no frontend framework.
+- Phase 3 (external gateway) is in progress: tracer bullet 1 added `buildPiRunCommand({ rpcMode: true })` activating `--mode rpc` with piped stdio plus `PiRpcClient` in `src/gateway-rpc.ts` (separate process, strict LF-only JSONL, drains events until `agent_end`); tracer bullet 2 added the HTTP/SSE transport `piren gateway` (`src/gateway-http.ts` `GatewayServer`, `src/gateway-bridge.ts` `piEventToSse`) with POST-start/GET-stream; tracer bullet 3 added the read-only vault browser (`GET /api/vault/list`, `GET /api/vault/read`, core logic in `src/vault-browser.ts`) reusing `resolveVaultPath` for path-boundary enforcement; tracer bullets 4 and 5 added model/thinking control, agent switching, steering, and approval gates; tracer bullet 6 added the auth token gate (`src/gateway-auth.ts`) for non-localhost binds with constant-time Bearer token matching. No WebSocket, no frontend framework.
 - No automatic inbox polling in default interactive sessions
 - No in-process Pi embedding: the gateway always spawns Pi in RPC mode
 - No memory automation yet

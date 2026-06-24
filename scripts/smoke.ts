@@ -405,6 +405,304 @@ async function main() {
     }
     console.log("piren ask streamed text: ok");
 
+    // Phase 3 tracer bullet 4: model/thinking/state routes and agent switching.
+    // Reuse the fake Pi target. The gateway owns one client; the new routes
+    // reach through it to Pi's native RPC capabilities.
+    const modelServer = new GatewayServer({
+      target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+      runnableAgents: ["piren", "thor"],
+      initialAgent: "piren",
+      targetBuilder: async () => ({ command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env }),
+    });
+    let modelHandle;
+    try {
+      modelHandle = await modelServer.start();
+
+      // GET /api/chat/models
+      const modelsRes = await fetch(`http://${modelHandle.hostname}:${modelHandle.port}/api/chat/models`);
+      if (modelsRes.status !== 200) throw new Error(`models HTTP ${modelsRes.status}`);
+      const modelsBody = (await modelsRes.json()) as { models: Array<{ id: string }> };
+      if (modelsBody.models.length === 0) throw new Error("models list is empty");
+
+      // GET /api/chat/state
+      const stateRes = await fetch(`http://${modelHandle.hostname}:${modelHandle.port}/api/chat/state`);
+      if (stateRes.status !== 200) throw new Error(`state HTTP ${stateRes.status}`);
+      const stateBody = (await stateRes.json()) as { sessionId: string };
+      if (stateBody.sessionId !== "fake-session") throw new Error("state sessionId mismatch");
+
+      // POST /api/chat/model
+      const setModelRes = await fetch(`http://${modelHandle.hostname}:${modelHandle.port}/api/chat/model`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "anthropic", modelId: "claude-sonnet-4-20250514" }),
+      });
+      if (setModelRes.status !== 200) throw new Error(`set model HTTP ${setModelRes.status}`);
+
+      // POST /api/chat/thinking
+      const thinkingRes = await fetch(`http://${modelHandle.hostname}:${modelHandle.port}/api/chat/thinking`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ level: "medium" }),
+      });
+      if (thinkingRes.status !== 200) throw new Error(`set thinking HTTP ${thinkingRes.status}`);
+
+      // GET /api/chat/agents
+      const agentsRes = await fetch(`http://${modelHandle.hostname}:${modelHandle.port}/api/chat/agents`);
+      if (agentsRes.status !== 200) throw new Error(`agents HTTP ${agentsRes.status}`);
+      const agentsBody = (await agentsRes.json()) as { agents: string[]; current: string };
+      if (agentsBody.agents.length !== 2 || agentsBody.current !== "piren") {
+        throw new Error(`agents body mismatch: ${JSON.stringify(agentsBody)}`);
+      }
+
+      // POST /api/chat/switch
+      const switchRes = await fetch(`http://${modelHandle.hostname}:${modelHandle.port}/api/chat/switch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent: "thor" }),
+      });
+      if (switchRes.status !== 200) throw new Error(`switch HTTP ${switchRes.status}`);
+      const switchBody = (await switchRes.json()) as { agent: string; switched: boolean };
+      if (switchBody.agent !== "thor" || !switchBody.switched) {
+        throw new Error(`switch body mismatch: ${JSON.stringify(switchBody)}`);
+      }
+
+      // Verify the switch took effect.
+      const agentsAfter = await fetch(`http://${modelHandle.hostname}:${modelHandle.port}/api/chat/agents`);
+      const agentsAfterBody = (await agentsAfter.json()) as { current: string };
+      if (agentsAfterBody.current !== "thor") throw new Error("agent did not switch to thor");
+    } finally {
+      await modelServer.close();
+    }
+    console.log("gateway model/state/thinking/agents/switch round trip: ok");
+
+    // Phase 3 tracer bullet 5: steering and approval gates.
+    const steerServer = new GatewayServer({
+      target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+    });
+    let steerHandle;
+    try {
+      steerHandle = await steerServer.start();
+
+      // Start a normal prompt.
+      const startRes = await fetch(`http://${steerHandle.hostname}:${steerHandle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "Hello" }),
+      });
+      if (startRes.status !== 200) throw new Error(`start HTTP ${startRes.status}`);
+
+      // Send a steer.
+      const steerRes = await fetch(`http://${steerHandle.hostname}:${steerHandle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "wait", mode: "steer" }),
+      });
+      if (steerRes.status !== 200) throw new Error(`steer HTTP ${steerRes.status}`);
+
+      // Send a follow-up.
+      const followRes = await fetch(`http://${steerHandle.hostname}:${steerHandle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "then do this", mode: "follow_up" }),
+      });
+      if (followRes.status !== 200) throw new Error(`follow_up HTTP ${followRes.status}`);
+
+      // Invalid mode is rejected.
+      const badModeRes = await fetch(`http://${steerHandle.hostname}:${steerHandle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "hi", mode: "bogus" }),
+      });
+      if (badModeRes.status !== 400) throw new Error(`bad mode HTTP ${badModeRes.status}`);
+
+      // Approval: start a prompt that triggers an extension_ui_request, then
+      // respond to it via the approve route.
+      const approveStartRes = await fetch(`http://${steerHandle.hostname}:${steerHandle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "please approve this action" }),
+      });
+      if (approveStartRes.status !== 200) throw new Error(`approve-start HTTP ${approveStartRes.status}`);
+
+      const approveRes = await fetch(`http://${steerHandle.hostname}:${steerHandle.port}/api/chat/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "ui-req-smoke", confirmed: true }),
+      });
+      if (approveRes.status !== 200) throw new Error(`approve HTTP ${approveRes.status}`);
+    } finally {
+      await steerServer.close();
+    }
+    console.log("gateway steer/follow_up/approve round trip: ok");
+
+    // Phase 3 tracer bullet 6: auth token gate. A server with a configured
+    // authToken rejects unauthenticated API requests (401), accepts requests
+    // with the correct Bearer token, exposes authRequired via a public
+    // /api/auth/info route, and does not enforce auth when no token is set.
+    const authServer = new GatewayServer({
+      target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+      authToken: "smoke-secret-token",
+    });
+    let authHandle;
+    try {
+      authHandle = await authServer.start();
+
+      // /api/auth/info is public and reports authRequired=true.
+      const infoRes = await fetch(`http://${authHandle.hostname}:${authHandle.port}/api/auth/info`);
+      if (infoRes.status !== 200) throw new Error(`auth info HTTP ${infoRes.status}`);
+      const infoBody = (await infoRes.json()) as { authRequired: boolean };
+      if (!infoBody.authRequired) throw new Error("auth info did not report authRequired=true");
+
+      // Unauthenticated request is rejected.
+      const unauthRes = await fetch(`http://${authHandle.hostname}:${authHandle.port}/api/chat/state`);
+      if (unauthRes.status !== 401) throw new Error(`unauthenticated state HTTP ${unauthRes.status}`);
+
+      // Wrong token is rejected.
+      const wrongRes = await fetch(`http://${authHandle.hostname}:${authHandle.port}/api/chat/state`, {
+        headers: { authorization: "Bearer " + "wrong" },
+      });
+      if (wrongRes.status !== 401) throw new Error(`wrong-token state HTTP ${wrongRes.status}`);
+
+      // Correct token is accepted.
+      const okRes = await fetch(`http://${authHandle.hostname}:${authHandle.port}/api/chat/state`, {
+        headers: { authorization: "Bearer " + "smoke-secret-token" },
+      });
+      if (okRes.status !== 200) throw new Error(`authenticated state HTTP ${okRes.status}`);
+    } finally {
+      await authServer.close();
+    }
+    console.log("gateway auth token gate round trip: ok");
+
+    // No-token localhost server does not enforce auth.
+    const openServer = new GatewayServer({
+      target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+    });
+    try {
+      const openHandle = await openServer.start();
+      const openInfo = await fetch(`http://${openHandle.hostname}:${openHandle.port}/api/auth/info`);
+      const openInfoBody = (await openInfo.json()) as { authRequired: boolean };
+      if (openInfoBody.authRequired) throw new Error("open server reported authRequired=true");
+      const openState = await fetch(`http://${openHandle.hostname}:${openHandle.port}/api/chat/state`);
+      if (openState.status !== 200) throw new Error(`open state HTTP ${openState.status}`);
+    } finally {
+      await openServer.close();
+    }
+    console.log("gateway no-token localhost open access: ok");
+
+    // Phase 3 frontend: static file serving. The gateway serves index.html
+    // at GET / and other static assets by relative path with MIME detection.
+    // API routes take priority over static files.
+    const staticServer = new GatewayServer({
+      target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+      publicDir: join(process.cwd(), "public"),
+    });
+    try {
+      const staticHandle = await staticServer.start();
+
+      // GET / serves index.html
+      const indexRes = await fetch(`http://${staticHandle.hostname}:${staticHandle.port}/`);
+      if (indexRes.status !== 200) throw new Error(`index HTTP ${indexRes.status}`);
+      if (!indexRes.headers.get("content-type")?.includes("text/html")) {
+        throw new Error("index did not return text/html");
+      }
+      const indexBody = await indexRes.text();
+      if (!indexBody.includes("Piren Gateway")) throw new Error("index.html did not contain expected title");
+
+      // GET /app.js serves JavaScript
+      const jsRes = await fetch(`http://${staticHandle.hostname}:${staticHandle.port}/app.js`);
+      if (jsRes.status !== 200) throw new Error(`app.js HTTP ${jsRes.status}`);
+      if (!jsRes.headers.get("content-type")?.includes("javascript")) {
+        throw new Error("app.js did not return javascript content-type");
+      }
+
+      // API routes still take priority over static files
+      const apiRes = await fetch(`http://${staticHandle.hostname}:${staticHandle.port}/api/auth/info`);
+      if (apiRes.status !== 200) throw new Error(`api over static HTTP ${apiRes.status}`);
+    } finally {
+      await staticServer.close();
+    }
+    console.log("gateway static file serving: ok");
+
+    // Phase 3 tracer bullet 8: session resume and abort. The RPC client gained
+    // abort/getMessages/switchSession; the gateway exposes them as POST
+    // /api/chat/abort, GET /api/chat/messages, POST /api/chat/resume, and
+    // GET /api/chat/sessions (vault summaries for the current agent).
+    const sessionVault = join(fixture.root, "session-vault");
+    await mkdir(join(sessionVault, "team", "thor", "sessions"), { recursive: true });
+    await writeFile(
+      join(sessionVault, "team", "thor", "sessions", "20260623T090000Z-smoke.md"),
+      [
+        "---",
+        "type: session-summary",
+        "agent: thor",
+        "created: 2026-06-23T09:00:00.000Z",
+        "---",
+        "",
+        "# Smoke Session",
+        "",
+        "Session resume smoke.",
+      ].join("\n"),
+    );
+    const sessionServer = new GatewayServer({
+      target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
+      vaultRoot: sessionVault,
+      runnableAgents: ["thor"],
+      initialAgent: "thor",
+    });
+    let sessionHandle;
+    try {
+      sessionHandle = await sessionServer.start();
+
+      // GET /api/chat/sessions lists vault summaries for the current agent.
+      const sessionsRes = await fetch(`http://${sessionHandle.hostname}:${sessionHandle.port}/api/chat/sessions`);
+      if (sessionsRes.status !== 200) throw new Error(`sessions HTTP ${sessionsRes.status}`);
+      const sessionsBody = (await sessionsRes.json()) as { agent: string; sessions: Array<{ name: string }> };
+      if (sessionsBody.agent !== "thor" || sessionsBody.sessions.length === 0) {
+        throw new Error(`sessions body mismatch: ${JSON.stringify(sessionsBody)}`);
+      }
+
+      // GET /api/chat/messages returns the current transcript.
+      const messagesRes = await fetch(`http://${sessionHandle.hostname}:${sessionHandle.port}/api/chat/messages`);
+      if (messagesRes.status !== 200) throw new Error(`messages HTTP ${messagesRes.status}`);
+      const messagesBody = (await messagesRes.json()) as { messages: unknown[] };
+      if (!Array.isArray(messagesBody.messages) || messagesBody.messages.length === 0) {
+        throw new Error("messages list is empty");
+      }
+
+      // POST /api/chat/resume resumes a session and reports cancelled=false.
+      const resumeRes = await fetch(`http://${sessionHandle.hostname}:${sessionHandle.port}/api/chat/resume`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionPath: "/fake/session.jsonl" }),
+      });
+      if (resumeRes.status !== 200) throw new Error(`resume HTTP ${resumeRes.status}`);
+      const resumeBody = (await resumeRes.json()) as { cancelled: boolean };
+      if (resumeBody.cancelled) throw new Error("resume reported cancelled unexpectedly");
+
+      // POST /api/chat/abort aborts the active turn. Start one first.
+      const abortStartRes = await fetch(`http://${sessionHandle.hostname}:${sessionHandle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "Hello" }),
+      });
+      if (abortStartRes.status !== 200) throw new Error(`abort-start HTTP ${abortStartRes.status}`);
+      const abortRes = await fetch(`http://${sessionHandle.hostname}:${sessionHandle.port}/api/chat/abort`, {
+        method: "POST",
+      });
+      if (abortRes.status !== 200) throw new Error(`abort HTTP ${abortRes.status}`);
+
+      // Missing sessionPath is rejected.
+      const badResumeRes = await fetch(`http://${sessionHandle.hostname}:${sessionHandle.port}/api/chat/resume`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (badResumeRes.status !== 400) throw new Error(`bad resume HTTP ${badResumeRes.status}`);
+    } finally {
+      await sessionServer.close();
+    }
+    console.log("gateway session resume+abort round trip: ok");
+
     console.log("SMOKE PASSED");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

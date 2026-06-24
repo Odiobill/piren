@@ -59,13 +59,90 @@ describe("piEventToSse bridge translation", () => {
   it("returns null for internal and untranslated events", () => {
     const cases: RpcEvent[] = [
       { type: "agent_start" },
-      { type: "queue_update", steering: [], followUp: [] },
+      { type: "extension_ui_request", id: "x", method: "notify", message: "hi" },
       { type: "something_unknown" },
     ];
 
     for (const event of cases) {
       expect(piEventToSse(event)).toBeNull();
     }
+  });
+
+  it("translates a model_changed event into a model_changed SSE event", () => {
+    const event: RpcEvent = {
+      type: "model_changed",
+      model: { provider: "anthropic", id: "claude-sonnet-4-20250514" },
+    };
+
+    expect(piEventToSse(event)).toEqual({
+      type: "model_changed",
+      data: { model: { provider: "anthropic", id: "claude-sonnet-4-20250514" } },
+    });
+  });
+
+  it("translates a thinking_level_changed event into a thinking_changed SSE event", () => {
+    const event: RpcEvent = { type: "thinking_level_changed", level: "medium" };
+
+    expect(piEventToSse(event)).toEqual({
+      type: "thinking_changed",
+      data: { level: "medium" },
+    });
+  });
+
+  it("translates a queue_update event into a queue SSE event", () => {
+    const event: RpcEvent = {
+      type: "queue_update",
+      steering: ["hold on"],
+      followUp: ["and then this"],
+    };
+
+    expect(piEventToSse(event)).toEqual({
+      type: "queue",
+      data: { steering: ["hold on"], followUp: ["and then this"] },
+    });
+  });
+
+  it("translates an extension_ui_request confirm into an approval SSE event", () => {
+    const event: RpcEvent = {
+      type: "extension_ui_request",
+      id: "req-1",
+      method: "confirm",
+      title: "Proceed?",
+      message: "Run vault_write?",
+    };
+
+    expect(piEventToSse(event)).toEqual({
+      type: "approval",
+      data: { id: "req-1", method: "confirm", title: "Proceed?", message: "Run vault_write?" },
+    });
+  });
+
+  it("translates an extension_ui_request select into an approval SSE event", () => {
+    const event: RpcEvent = {
+      type: "extension_ui_request",
+      id: "req-2",
+      method: "select",
+      title: "Pick one",
+      options: ["a", "b"],
+    };
+
+    const result = piEventToSse(event);
+    expect(result?.type).toBe("approval");
+    expect(result?.data).toMatchObject({ id: "req-2", method: "select", options: ["a", "b"] });
+  });
+
+  it("translates an extension_ui_request input into an approval SSE event", () => {
+    const event: RpcEvent = {
+      type: "extension_ui_request",
+      id: "req-3",
+      method: "input",
+      title: "Enter a value",
+      placeholder: "...",
+    };
+
+    const result = piEventToSse(event);
+    expect(result?.type).toBe("approval");
+    expect(result?.data).toMatchObject({ id: "req-3", method: "input", placeholder: "..." });
   });
 
   it("ensures agent_end without messages still yields an array", () => {

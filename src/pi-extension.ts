@@ -125,6 +125,12 @@ function contextPrompt(context: PirenContext): string {
     "- task_claim(task_path, device_id?, stale_after_ms?)",
     "- inbox_list()",
     "All vault paths resolve relative to vault_root and traversal outside the vault is rejected.",
+    "",
+    "## Inbox Behavior",
+    "Do not check the inbox automatically at the start of a direct conversation.",
+    "Use inbox_list() only when the steward explicitly asks you to check the inbox,",
+    "or when running in worker mode (PIREN_WORKER=1). In a direct conversation,",
+    "wait for the steward to direct the work.",
   ].join("\n");
 }
 

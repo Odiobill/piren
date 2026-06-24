@@ -287,4 +287,23 @@ describe("Pi extension", () => {
     expect(cached.details.cached).toBe(true);
     expect(cached.details.authoritative).toBe(false);
   });
+
+  it("injects a context prompt that tells the agent not to auto-check the inbox in direct conversations", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const beforeStart = pi.events.before_agent_start?.[0];
+    expect(beforeStart).toBeDefined();
+    const result = await beforeStart?.();
+    expect(result).toBeDefined();
+    const content = (result as { message: { content: string } }).message.content;
+    // The context prompt must tell the agent not to auto-check the inbox
+    // in direct (non-worker) conversations. The steward must ask explicitly.
+    expect(content).toMatch(/do not.*check.*inbox/i);
+    expect(content).toMatch(/only.*steward.*asks|only.*worker.*mode/i);
+  });
 });
