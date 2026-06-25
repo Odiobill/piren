@@ -60,7 +60,7 @@ describe("Pi extension", () => {
     expect(deviceRecord.status).toBe("active");
     expect(deviceRecord.last_seen).toBeTruthy();
 
-    expect(Object.keys(pi.tools).sort()).toEqual(["decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "send_to_agent", "session_write_summary", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
+    expect(Object.keys(pi.tools).sort()).toEqual(["decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
     expect(pi.commands.piren_status).toBeDefined();
 
     const notifications: Array<{ message: string; level: string }> = [];
@@ -74,7 +74,7 @@ describe("Pi extension", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.level).toBe("info");
     expect(notifications[0]?.message).toContain("Piren status");
-    expect(notifications[0]?.message).toContain("registered_tools: decision_record, flag_steward, inbox_list, project_append_log, project_status, send_to_agent, session_write_summary, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
+    expect(notifications[0]?.message).toContain("registered_tools: decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
     expect(notifications[0]?.message).toContain("write_mode: authoritative-vault");
 
     const alert = await pi.tools.flag_steward.execute("call-alert", {
@@ -225,6 +225,38 @@ describe("Pi extension", () => {
     expect(adrContent).toContain("## Context");
     expect(adrContent).toContain("## Decision");
     expect(adrContent).toContain("## Consequences");
+
+    const handoff = await pi.tools.project_update_handoff.execute("call-handoff", {
+      project: "Piren",
+      content: "# Handoff\n\nContinue with cron.\n",
+    });
+    expect(handoff.isError).toBeUndefined();
+    expect(handoff.content[0].text).toContain("Updated project handoff Projects/Piren/handoff-prompt.md");
+    const handoffContent = await readFile(join(vault, "Projects", "Piren", "handoff-prompt.md"), "utf8");
+    expect(handoffContent).toContain("Continue with cron.");
+
+    const runbook = await pi.tools.runbook_write.execute("call-runbook", {
+      project: "Piren",
+      title: "Gateway Recovery",
+      content: "Restart the gateway and inspect logs.",
+    });
+    expect(runbook.isError).toBeUndefined();
+    expect(runbook.content[0].text).toContain("Wrote runbook Projects/Piren/runbooks/gateway-recovery.md");
+    const runbookContent = await readFile(join(vault, "Projects", "Piren", "runbooks", "gateway-recovery.md"), "utf8");
+    expect(runbookContent).toContain("# Gateway Recovery");
+    expect(runbookContent).toContain("Restart the gateway");
+
+    const candidate = await pi.tools.skill_candidate_write.execute("call-skill-candidate", {
+      name: "release-checklist",
+      description: "Verify a Piren release candidate.",
+      body: "Run tests, typecheck, build, and smoke.",
+      scope: "Piren",
+    });
+    expect(candidate.isError).toBeUndefined();
+    expect(candidate.content[0].text).toContain("Wrote skill candidate Projects/Piren/skill-candidates/release-checklist.md");
+    const candidateContent = await readFile(join(vault, "Projects", "Piren", "skill-candidates", "release-checklist.md"), "utf8");
+    expect(candidateContent).toContain("status: candidate");
+    expect(candidateContent).toContain("Run tests, typecheck, build, and smoke.");
 
     const missing = await pi.tools.project_status.execute("call-missing", { project: "NoSuchProject" });
     expect(missing.isError).toBeUndefined();

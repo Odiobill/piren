@@ -12,7 +12,14 @@ import { registerDevice } from "./devices.js";
 import { createInboxTask, claimInboxTask, listInboxTasks, updateInboxTaskStatus } from "./inbox.js";
 import { createStewardAlert } from "./alerts.js";
 import { loadVaultSkills, formatSkillCatalogForContext, type VaultSkill } from "./skills.js";
-import { projectStatus, projectAppendLog, decisionRecord } from "./knowledge.js";
+import {
+  projectStatus,
+  projectAppendLog,
+  decisionRecord,
+  projectUpdateHandoff,
+  runbookWrite,
+  skillCandidateWrite,
+} from "./knowledge.js";
 
 const PIREN_TOOL_NAMES = [
   "vault_read",
@@ -32,6 +39,9 @@ const PIREN_TOOL_NAMES = [
   "project_status",
   "project_append_log",
   "decision_record",
+  "project_update_handoff",
+  "runbook_write",
+  "skill_candidate_write",
 ];
 
 function textResult(text: string, details: unknown = {}) {
@@ -134,14 +144,19 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "- project_status(project)",
     "- project_append_log(project, entry)",
     "- decision_record(project, id, title, context, decision, consequences?, alternatives?)",
+    "- project_update_handoff(project, content)",
+    "- runbook_write(project, title, content)",
+    "- skill_candidate_write(name, description, body, scope?)",
     "All vault paths resolve relative to vault_root and traversal outside the vault is rejected.",
     "",
     "## Knowledge Lifecycle",
     "After non-trivial work, leave a durable artifact so future sessions do not rediscover it.",
     "Use project_status to read a project's current state, project_append_log for chronological",
-    "project log entries, and decision_record for architecture decisions. Update the minimum",
+    "project log entries, decision_record for architecture decisions, project_update_handoff",
+    "for fresh-session continuity, runbook_write for repeated operations, and",
+    "skill_candidate_write for reviewable reusable procedures. Update the minimum",
     "useful artifact, not everything. Raw traces are evidence; project docs and ADRs are",
-    "synthesized truth.",
+    "synthesized truth. Skill candidates are drafts, not active skills until promoted.",
     "",
     "## Inbox Behavior",
     "Do not check the inbox automatically at the start of a direct conversation.",
@@ -602,6 +617,85 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
         if (params.alternatives !== undefined) adrOptions.alternatives = params.alternatives;
         const result = await decisionRecord(adrOptions);
         return textResult(`Wrote ADR ${result.path} (${result.bytes} bytes, atomic)`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "project_update_handoff",
+    label: "Project Update Handoff",
+    description: "Update Projects/<project>/handoff-prompt.md with the next-session handoff. This is explicit and inspectable, not hidden memory mutation.",
+    parameters: Type.Object({
+      project: Type.String({ description: "Project name, matching the directory under Projects/" }),
+      content: Type.String({ description: "Full Markdown content for the handoff prompt" }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const result = await projectUpdateHandoff({
+          vaultRoot: context.vaultRoot,
+          project: params.project,
+          content: params.content,
+        });
+        return textResult(`Updated project handoff ${result.path} (${result.bytes} bytes, atomic)`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "runbook_write",
+    label: "Runbook Write",
+    description: "Write a reviewed operational runbook under Projects/<project>/runbooks/<slug>.md.",
+    parameters: Type.Object({
+      project: Type.String({ description: "Project name, matching the directory under Projects/" }),
+      title: Type.String({ description: "Runbook title" }),
+      content: Type.String({ description: "Runbook Markdown body" }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const result = await runbookWrite({
+          vaultRoot: context.vaultRoot,
+          project: params.project,
+          title: params.title,
+          content: params.content,
+        });
+        return textResult(`Wrote runbook ${result.path} (${result.bytes} bytes, atomic)`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "skill_candidate_write",
+    label: "Skill Candidate Write",
+    description: "Draft a reusable procedure as a reviewable skill candidate. Candidates are not active skills until promoted.",
+    parameters: Type.Object({
+      name: Type.String({ description: "Candidate skill name, lowercase with dashes or underscores" }),
+      description: Type.String({ description: "One-line candidate description" }),
+      body: Type.String({ description: "Candidate skill Markdown body" }),
+      scope: Type.Optional(Type.String({ description: "Optional project name for a project-scoped candidate. Omit for shared skill-candidates/." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const candidateOptions = {
+          vaultRoot: context.vaultRoot,
+          name: params.name,
+          description: params.description,
+          body: params.body,
+        } as {
+          vaultRoot: string;
+          name: string;
+          description: string;
+          body: string;
+          scope?: string;
+        };
+        if (params.scope !== undefined) candidateOptions.scope = params.scope;
+        const result = await skillCandidateWrite(candidateOptions);
+        return textResult(`Wrote skill candidate ${result.path} (${result.bytes} bytes, atomic)`, result);
       } catch (error) {
         return errorResult(error);
       }

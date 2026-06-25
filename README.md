@@ -12,7 +12,7 @@ Piren is a lightweight, local-first agent layer on top of Pi Coding Agent. It ke
 
 Core thesis: Piren is not only an agent launcher or task queue. It is a knowledge-maintenance harness for a stewarded team of agents, merging LLM-Wiki and Second Brain workflows with explicit multi-agent task execution. Agents should leave structured artifacts that improve future work, while the steward can inspect current project status, decisions, runbooks, concepts, logs, and handoffs directly in the vault.
 
-Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is complete through tracer bullet 11: session resume and abort, Telegram and Discord transports, and an OpenAI-compatible `/api/v1/chat/completions` endpoint for external integrations. The web UI is minimal per ADR-0012 (no model/thinking controls in the UI, API routes kept for external integrations). Vault skills (ADR-0014 + ADR-0017) load shared and agent-specific procedure catalogs into the startup context, with full bodies available through `skill_read(name)`. Pi package extensibility (ADR-0013) lets installations declare npm packages that export Pi extensions, loaded as additional `--extension` flags. All proven against a fake Pi process.
+Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is complete through tracer bullet 11: session resume and abort, Telegram and Discord transports, and an OpenAI-compatible `/api/v1/chat/completions` endpoint for external integrations. The web UI is minimal per ADR-0012 (no model/thinking controls in the UI, API routes kept for external integrations). Vault skills (ADR-0014 + ADR-0017) load shared and agent-specific procedure catalogs into the startup context, with full bodies available through `skill_read(name)`. Pi package extensibility (ADR-0013) lets installations declare npm packages that export Pi extensions, loaded as additional `--extension` flags. ADR-0018 inspectable self-improvement tools are implemented through explicit handoff, runbook, and skill-candidate writes. All proven against a fake Pi process.
 
 Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
 
@@ -73,8 +73,11 @@ Extension tools:
 - `project_status(project)`: reads a project's current title, status, and updated date from `Projects/<project>/index.md` frontmatter (read-only)
 - `project_append_log(project, entry)`: appends a timestamped Markdown entry to `Projects/<project>/log.md`, attributed to the current agent
 - `decision_record(project, id, title, context, decision, consequences?, alternatives?)`: writes one ADR under `Projects/<project>/decisions/ADR-<id>-<slug>.md` (id must be a 4-digit number)
+- `project_update_handoff(project, content)`: updates `Projects/<project>/handoff-prompt.md` with explicit next-session context
+- `runbook_write(project, title, content)`: writes an operational runbook under `Projects/<project>/runbooks/<slug>.md`
+- `skill_candidate_write(name, description, body, scope?)`: drafts a reviewable skill candidate under `skill-candidates/` or `Projects/<scope>/skill-candidates/`; candidates are not active skills until promoted
 
-Knowledge lifecycle tools (Phase 4) let agents leave durable artifacts after non-trivial work, per the ADR-0010 thesis: `project_status` reads current project state, `project_append_log` records chronological project history, and `decision_record` captures architecture decisions.
+Knowledge lifecycle tools (Phase 4) let agents leave durable artifacts after non-trivial work, per the ADR-0010 thesis: `project_status` reads current project state, `project_append_log` records chronological project history, `decision_record` captures architecture decisions, `project_update_handoff` refreshes next-session continuity, `runbook_write` captures repeated operations, and `skill_candidate_write` drafts reusable procedures for steward review.
 
 Degraded write handling:
 
@@ -108,7 +111,7 @@ Expected current baseline:
 
 ```text
 Test Files  47 passed (47)
-Tests       287 passed (287)
+Tests       292 passed (292)
 SMOKE PASSED
 ```
 

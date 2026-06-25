@@ -154,7 +154,7 @@ Current baseline:
 
 ```text
 Test Files  47 passed (47)
-Tests       287 passed (287)
+Tests       292 passed (292)
 SMOKE PASSED
 ```
 
@@ -241,6 +241,9 @@ Implemented extension tools:
 - `project_status(project)`
 - `project_append_log(project, entry)`
 - `decision_record(project, id, title, context, decision, consequences?, alternatives?)`
+- `project_update_handoff(project, content)`
+- `runbook_write(project, title, content)`
+- `skill_candidate_write(name, description, body, scope?)`
 
 Vault skills (ADR-0014 + ADR-0017, implemented):
 - `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName)` and `formatSkillCatalogForContext(skills)`. Skills are loaded from `vault/skills/` (shared) and `team/<agent>/skills/` (agent-specific, overrides shared on name collision). Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
@@ -257,10 +260,11 @@ Pi package extensibility (ADR-0013, implemented):
 - `piren_status` reports declared packages as `packages: <list>` (or `packages: <none>`). The `PirenStatusReport` and `BuildPirenStatusReportOptions` gained `packages`; the status builder falls back to `context.packages`.
 - Tests: `tests/packages.test.ts` (5 tests), `tests/run.test.ts` (3 new for package extension flags), `tests/doctor.test.ts` (3 new for package validation), `tests/pi-extension.test.ts` (2 new for status reporting).
 
-Phase 4 knowledge lifecycle tools (ADR-0015, implemented):
+Phase 4 knowledge lifecycle tools (ADR-0015 + ADR-0018, implemented):
 - `src/knowledge.ts` exports `projectStatus(options)` (read `Projects/<project>/index.md` frontmatter, returns `{project, path, available, title, status, updated}`), `projectAppendLog(options)` (append to `Projects/<project>/log.md` with agent attribution, uses the existing `vaultAppendLog` core), and `decisionRecord(options)` (write `ADR-<id>-<slug>.md` under `Projects/<project>/decisions/` with standard ADR structure). Project names are validated to reject `/`, `\`, and `..`. ADR id must match `^\d{4}$`. Optional `consequences` and `alternatives` sections are included only when provided (built with conditional assignment for `exactOptionalPropertyTypes`).
-- Registered as `project_status`, `project_append_log`, and `decision_record` extension tools. The context prompt gains a "Knowledge Lifecycle" section guiding agents to leave durable artifacts after non-trivial work.
-- Tests: `tests/knowledge.test.ts` (9 tests), `tests/pi-extension.test.ts` (+1 extension test exercising all three tools, context prompt assertions). Smoke covers all three tools.
+- ADR-0018 inspectable self-improvement tools are also implemented in `src/knowledge.ts`: `projectUpdateHandoff(options)` writes `Projects/<project>/handoff-prompt.md`, `runbookWrite(options)` writes `Projects/<project>/runbooks/<slug>.md` with runbook frontmatter, and `skillCandidateWrite(options)` writes reviewable drafts under `skill-candidates/<name>.md` or `Projects/<scope>/skill-candidates/<name>.md`. Skill candidates are not active skills until promoted.
+- Registered as `project_status`, `project_append_log`, `decision_record`, `project_update_handoff`, `runbook_write`, and `skill_candidate_write` extension tools. The context prompt gains a "Knowledge Lifecycle" section guiding agents to leave durable artifacts after non-trivial work.
+- Tests: `tests/knowledge.test.ts` (14 tests), `tests/pi-extension.test.ts` (extension coverage for all knowledge tools, context prompt assertions). Smoke covers all six knowledge/self-improvement tools.
 
 ## Common pitfalls
 

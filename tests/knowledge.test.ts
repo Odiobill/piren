@@ -2,7 +2,14 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { projectStatus, projectAppendLog, decisionRecord } from "../src/knowledge.js";
+import {
+  projectStatus,
+  projectAppendLog,
+  decisionRecord,
+  projectUpdateHandoff,
+  runbookWrite,
+  skillCandidateWrite,
+} from "../src/knowledge.js";
 
 let root: string;
 let vault: string;
@@ -169,5 +176,85 @@ describe("Phase 4 knowledge lifecycle: decision_record", () => {
         decision: "dec",
       }),
     ).rejects.toThrow(/invalid.*id/i);
+  });
+});
+
+describe("ADR-0018 inspectable self-improvement tools", () => {
+  it("updates a project handoff prompt under Projects/<project>/handoff-prompt.md", async () => {
+    const result = await projectUpdateHandoff({
+      vaultRoot: vault,
+      project: "Piren",
+      content: "# Next Session\n\nImplement vault-backed cron next.\n",
+    });
+
+    expect(result.path).toBe("Projects/Piren/handoff-prompt.md");
+    expect(result.bytes).toBeGreaterThan(0);
+    expect(result.atomic).toBe(true);
+
+    const content = await readFile(join(vault, "Projects", "Piren", "handoff-prompt.md"), "utf8");
+    expect(content).toBe("# Next Session\n\nImplement vault-backed cron next.\n");
+  });
+
+  it("writes a project runbook with frontmatter under Projects/<project>/runbooks/", async () => {
+    const result = await runbookWrite({
+      vaultRoot: vault,
+      project: "Piren",
+      title: "Gateway Recovery",
+      content: "1. Restart the gateway.\n2. Check logs.\n",
+      now: () => new Date("2026-06-25T12:00:00.000Z"),
+    });
+
+    expect(result.path).toBe("Projects/Piren/runbooks/gateway-recovery.md");
+    expect(result.created).toBe("2026-06-25T12:00:00.000Z");
+
+    const content = await readFile(join(vault, "Projects", "Piren", "runbooks", "gateway-recovery.md"), "utf8");
+    expect(content).toContain('title: "Gateway Recovery"');
+    expect(content).toContain("type: runbook");
+    expect(content).toContain("# Gateway Recovery");
+    expect(content).toContain("Restart the gateway.");
+  });
+
+  it("writes a shared skill candidate without activating it as a skill", async () => {
+    const result = await skillCandidateWrite({
+      vaultRoot: vault,
+      name: "cron-debugging",
+      description: "Debug Piren cron job ownership and run records.",
+      body: "1. Inspect job files.\n2. Inspect run records.\n",
+      now: () => new Date("2026-06-25T12:30:00.000Z"),
+    });
+
+    expect(result.path).toBe("skill-candidates/cron-debugging.md");
+    expect(result.created).toBe("2026-06-25T12:30:00.000Z");
+
+    const content = await readFile(join(vault, "skill-candidates", "cron-debugging.md"), "utf8");
+    expect(content).toContain("name: cron-debugging");
+    expect(content).toContain("status: candidate");
+    expect(content).toContain("Debug Piren cron job ownership");
+    expect(content).toContain("Inspect job files.");
+  });
+
+  it("writes a project-scoped skill candidate under Projects/<project>/skill-candidates/", async () => {
+    const result = await skillCandidateWrite({
+      vaultRoot: vault,
+      name: "release-checklist",
+      description: "Verify a Piren release candidate.",
+      body: "Run tests, typecheck, build, and smoke.\n",
+      scope: "Piren",
+      now: () => new Date("2026-06-25T13:00:00.000Z"),
+    });
+
+    expect(result.path).toBe("Projects/Piren/skill-candidates/release-checklist.md");
+    const content = await readFile(join(vault, result.path), "utf8");
+    expect(content).toContain("scope: Piren");
+    expect(content).toContain("Run tests, typecheck, build, and smoke.");
+  });
+
+  it("rejects traversal through project and skill candidate names", async () => {
+    await expect(
+      projectUpdateHandoff({ vaultRoot: vault, project: "../outside", content: "bad" }),
+    ).rejects.toThrow(/invalid project name/i);
+    await expect(
+      skillCandidateWrite({ vaultRoot: vault, name: "../bad", description: "bad", body: "bad" }),
+    ).rejects.toThrow(/invalid skill candidate name/i);
   });
 });

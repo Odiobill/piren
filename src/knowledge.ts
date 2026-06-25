@@ -265,3 +265,172 @@ export async function decisionRecord(options: DecisionRecordOptions): Promise<De
     created,
   };
 }
+
+export interface ProjectUpdateHandoffOptions {
+  vaultRoot: string;
+  project: string;
+  content: string;
+  now?: () => Date;
+}
+
+export interface ArtifactWriteResult {
+  path: string;
+  absolutePath: string;
+  bytes: number;
+  atomic: true;
+  created: string;
+}
+
+export interface ProjectUpdateHandoffResult {
+  path: string;
+  absolutePath: string;
+  bytes: number;
+  atomic: true;
+}
+
+export interface RunbookWriteOptions {
+  vaultRoot: string;
+  project: string;
+  title: string;
+  content: string;
+  now?: () => Date;
+}
+
+export interface SkillCandidateWriteOptions {
+  vaultRoot: string;
+  name: string;
+  description: string;
+  body: string;
+  scope?: string;
+  now?: () => Date;
+}
+
+const SKILL_CANDIDATE_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
+function assertNonEmpty(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${label} is required`);
+  }
+  return trimmed;
+}
+
+function assertValidSkillCandidateName(name: string): void {
+  if (!SKILL_CANDIDATE_NAME_PATTERN.test(name) || name.includes("..") || name.includes("/") || name.includes("\\")) {
+    throw new Error(`Invalid skill candidate name: ${name}`);
+  }
+}
+
+function yamlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+async function writeAuthoritative(options: { vaultRoot: string; path: string; content: string; now?: () => Date; label: string }) {
+  const toolOptions: { vaultRoot: string; now?: () => Date } = { vaultRoot: options.vaultRoot };
+  if (options.now !== undefined) toolOptions.now = options.now;
+  const tools = createVaultTools(toolOptions);
+  const result = await tools.vaultWrite(options.path, options.content);
+  if (!("path" in result)) {
+    throw new Error(`${options.label} was queued instead of written authoritatively: ${result.reason}`);
+  }
+  return result;
+}
+
+export async function projectUpdateHandoff(options: ProjectUpdateHandoffOptions): Promise<ProjectUpdateHandoffResult> {
+  assertValidProjectName(options.project);
+  if (!options.content.trim()) {
+    throw new Error("Project handoff content is required");
+  }
+  const path = `Projects/${options.project}/handoff-prompt.md`;
+  const writeOptions: { vaultRoot: string; path: string; content: string; now?: () => Date; label: string } = {
+    vaultRoot: options.vaultRoot,
+    path,
+    content: options.content,
+    label: "Project handoff",
+  };
+  if (options.now !== undefined) writeOptions.now = options.now;
+  const result = await writeAuthoritative(writeOptions);
+  return {
+    path: result.path,
+    absolutePath: result.absolutePath,
+    bytes: result.bytes,
+    atomic: true,
+  };
+}
+
+export async function runbookWrite(options: RunbookWriteOptions): Promise<ArtifactWriteResult> {
+  assertValidProjectName(options.project);
+  const title = assertNonEmpty(options.title, "Runbook title");
+  const body = assertNonEmpty(options.content, "Runbook content");
+  const now = options.now ?? (() => new Date());
+  const created = now().toISOString();
+  const slug = slugifyTitle(title);
+  const path = `Projects/${options.project}/runbooks/${slug}.md`;
+  const content = [
+    "---",
+    `title: ${yamlString(title)}`,
+    "type: runbook",
+    `project: ${yamlString(options.project)}`,
+    `created: ${created.slice(0, 10)}`,
+    `updated: ${created.slice(0, 10)}`,
+    "tags: [piren, runbook]",
+    "---",
+    "",
+    `# ${title}`,
+    "",
+    body,
+    "",
+  ].join("\n");
+  const result = await writeAuthoritative({ vaultRoot: options.vaultRoot, path, content, now, label: "Runbook" });
+  return {
+    path: result.path,
+    absolutePath: result.absolutePath,
+    bytes: result.bytes,
+    atomic: true,
+    created,
+  };
+}
+
+export async function skillCandidateWrite(options: SkillCandidateWriteOptions): Promise<ArtifactWriteResult> {
+  assertValidSkillCandidateName(options.name);
+  const description = assertNonEmpty(options.description, "Skill candidate description");
+  const body = assertNonEmpty(options.body, "Skill candidate body");
+  const scope = options.scope?.trim();
+  if (scope !== undefined && scope !== "") {
+    assertValidProjectName(scope);
+  }
+  const now = options.now ?? (() => new Date());
+  const created = now().toISOString();
+  const path = scope ? `Projects/${scope}/skill-candidates/${options.name}.md` : `skill-candidates/${options.name}.md`;
+  const frontmatter = [
+    "---",
+    `name: ${options.name}`,
+    `description: ${yamlString(description)}`,
+    "status: candidate",
+    "type: skill-candidate",
+    `created: ${created.slice(0, 10)}`,
+    `updated: ${created.slice(0, 10)}`,
+  ];
+  if (scope) frontmatter.push(`scope: ${scope}`);
+  frontmatter.push("---");
+  const content = [
+    ...frontmatter,
+    "",
+    `# ${options.name}`,
+    "",
+    description,
+    "",
+    "## Candidate Body",
+    "",
+    body,
+    "",
+  ].join("\n");
+  const result = await writeAuthoritative({ vaultRoot: options.vaultRoot, path, content, now, label: "Skill candidate" });
+  return {
+    path: result.path,
+    absolutePath: result.absolutePath,
+    bytes: result.bytes,
+    atomic: true,
+    created,
+  };
+}

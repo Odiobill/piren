@@ -258,6 +258,42 @@ async function main() {
     }
     console.log("decision_record Projects/Piren/decisions: ok");
 
+    const handoffResult = await pi.tools.project_update_handoff.execute("smoke-handoff", {
+      project: "Piren",
+      content: "# Handoff\n\nContinue with vault-backed cron.\n",
+    });
+    if (handoffResult.isError) throw new Error(`project_update_handoff smoke failed: ${handoffResult.content[0].text}`);
+    const handoffContent = await readFile(join(fixture.vault, "Projects", "Piren", "handoff-prompt.md"), "utf8");
+    if (!handoffContent.includes("Continue with vault-backed cron.")) {
+      throw new Error("handoff prompt did not contain expected content");
+    }
+    console.log("project_update_handoff Projects/Piren/handoff-prompt.md: ok");
+
+    const runbookResult = await pi.tools.runbook_write.execute("smoke-runbook", {
+      project: "Piren",
+      title: "Gateway Recovery",
+      content: "Restart the gateway and inspect logs.",
+    });
+    if (runbookResult.isError) throw new Error(`runbook_write smoke failed: ${runbookResult.content[0].text}`);
+    const runbookContent = await readFile(join(fixture.vault, "Projects", "Piren", "runbooks", "gateway-recovery.md"), "utf8");
+    if (!runbookContent.includes("# Gateway Recovery") || !runbookContent.includes("Restart the gateway")) {
+      throw new Error("runbook did not contain expected content");
+    }
+    console.log("runbook_write Projects/Piren/runbooks: ok");
+
+    const candidateResult = await pi.tools.skill_candidate_write.execute("smoke-skill-candidate", {
+      name: "release-checklist",
+      description: "Verify a Piren release candidate.",
+      body: "Run tests, typecheck, build, and smoke.",
+      scope: "Piren",
+    });
+    if (candidateResult.isError) throw new Error(`skill_candidate_write smoke failed: ${candidateResult.content[0].text}`);
+    const candidateContent = await readFile(join(fixture.vault, "Projects", "Piren", "skill-candidates", "release-checklist.md"), "utf8");
+    if (!candidateContent.includes("status: candidate") || !candidateContent.includes("Run tests, typecheck, build, and smoke.")) {
+      throw new Error("skill candidate did not contain expected content");
+    }
+    console.log("skill_candidate_write Projects/Piren/skill-candidates: ok");
+
     const sentTask = await pi.tools.send_to_agent.execute("smoke-send", {
       to: "thor",
       title: "Check smoke inbox",
