@@ -10,6 +10,8 @@
 
 Piren is a lightweight, local-first agent runtime on top of [Pi Coding Agent](https://pi.dev/). It keeps agent identity, operational state, logs, sessions, task exchange, skills, cron jobs, and cumulative project knowledge in an inspectable Markdown vault.
 
+💡 **Philosophy:** Piren does not try to replace the core agent engine. It builds on the right foundation, Pi Coding Agent, then adds the missing local-first runtime layer: inspectable state, vault-native knowledge, explicit tools, gateways, and edge-device operations.
+
 Piren exists for stewarded teams of local agents: small enough for edge and homelab devices, explicit enough to debug from a terminal, and transparent enough that Obsidian can be the source of truth. It borrows self-improvement ideas from larger agent systems, but keeps them reviewable: agents write visible vault artifacts instead of hidden memory mutations.
 
 Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
