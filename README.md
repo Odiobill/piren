@@ -114,4 +114,4 @@ npm run smoke
 
 ## License
 
-License is not declared yet. Treat the repository as private/pre-release until a license is added.
+Piren is released under the MIT License. See [LICENSE](LICENSE).
