@@ -2,7 +2,7 @@ import { type IncomingMessage, type ServerResponse, createServer, type Server } 
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { resolve, relative, join, extname } from "node:path";
-import { PiRpcClient, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
+import { PiRpcClient, extractAssistantText, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { piEventToSse, type SseEvent } from "./gateway-bridge.js";
 import { vaultBrowserList, vaultBrowserRead } from "./vault-browser.js";
 import { listAgentSessions } from "./session-browser.js";
@@ -206,6 +206,8 @@ export class GatewayServer {
       await this.handleResume(req, res);
     } else if (req.method === "GET" && url.pathname === "/api/chat/sessions") {
       await this.handleSessions(res);
+    } else if (req.method === "POST" && url.pathname === "/api/v1/chat/completions") {
+      await this.handleOpenAiChatCompletions(req, res);
     } else if (req.method === "GET" && url.pathname === "/api/vault/list") {
       await this.handleVaultList(res, url);
     } else if (req.method === "GET" && url.pathname === "/api/vault/read") {
@@ -385,6 +387,152 @@ export class GatewayServer {
     } catch (err) {
       this.writeJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  private async handleOpenAiChatCompletions(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readJsonBody(req);
+    if (body === null) {
+      this.writeJson(res, 400, { error: "invalid JSON body" });
+      return;
+    }
+
+    const messages = (body as { messages?: unknown }).messages;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      this.writeJson(res, 400, { error: "messages array is required" });
+      return;
+    }
+
+    const prompt = this.openAiMessagesToPrompt(messages);
+    if (prompt.trim() === "") {
+      this.writeJson(res, 400, { error: "at least one message with text content is required" });
+      return;
+    }
+
+    try {
+      const requestedStream = (body as { stream?: unknown }).stream;
+      if (requestedStream === true) {
+        await this.handleOpenAiChatCompletionsStream(res, prompt, body);
+        return;
+      }
+
+      const events = await this.client.promptAndWait(prompt);
+      const content = extractAssistantText(events).trim();
+      const requestedModel = (body as { model?: unknown }).model;
+      const model = typeof requestedModel === "string" && requestedModel.trim() !== "" ? requestedModel : "piren/default";
+      this.writeJson(res, 200, {
+        id: `chatcmpl-${randomUUID()}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content },
+            finish_reason: "stop",
+          },
+        ],
+      });
+    } catch (err) {
+      this.writeJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private openAiMessagesToPrompt(messages: unknown[]): string {
+    const parts: string[] = [];
+    for (const item of messages) {
+      if (typeof item !== "object" || item === null) continue;
+      const record = item as { role?: unknown; content?: unknown };
+      const role = typeof record.role === "string" && record.role.trim() !== "" ? record.role : "user";
+      const content = this.openAiContentToText(record.content);
+      if (content.trim() !== "") {
+        parts.push(`${role}: ${content}`);
+      }
+    }
+    return parts.join("\n");
+  }
+
+  private async handleOpenAiChatCompletionsStream(res: ServerResponse, prompt: string, body: Record<string, unknown>): Promise<void> {
+    const requestedModel = body.model;
+    const model = typeof requestedModel === "string" && requestedModel.trim() !== "" ? requestedModel : "piren/default";
+    const id = `chatcmpl-${randomUUID()}`;
+    const created = Math.floor(Date.now() / 1000);
+
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    res.flushHeaders?.();
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        res.write("data: [DONE]\n\n");
+        res.end();
+        resolve();
+      };
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        unsubscribe();
+        res.write(`data: ${JSON.stringify({ error: { message: error.message } })}\n\n`);
+        res.write("data: [DONE]\n\n");
+        res.end();
+        resolve();
+      };
+      const unsubscribe = this.client.onEvent((event) => {
+        const delta = this.openAiTextDeltaFromEvent(event);
+        if (delta !== null) {
+          res.write(`data: ${JSON.stringify({
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
+          })}\n\n`);
+        }
+        if (event.type === "agent_end") {
+          res.write(`data: ${JSON.stringify({
+            id,
+            object: "chat.completion.chunk",
+            created,
+            model,
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          })}\n\n`);
+          finish();
+        }
+      });
+      this.client.prompt(prompt).catch((err) => fail(err instanceof Error ? err : new Error(String(err))));
+    });
+  }
+
+  private openAiTextDeltaFromEvent(event: RpcEvent): string | null {
+    if (event.type !== "message_update") return null;
+    const inner = event.assistantMessageEvent;
+    if (typeof inner !== "object" || inner === null) return null;
+    const record = inner as { type?: unknown; delta?: unknown };
+    if (record.type === "text_delta" && typeof record.delta === "string") {
+      return record.delta;
+    }
+    return null;
+  }
+
+  private openAiContentToText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    const parts: string[] = [];
+    for (const part of content) {
+      if (typeof part === "object" && part !== null) {
+        const record = part as { type?: unknown; text?: unknown };
+        if ((record.type === undefined || record.type === "text") && typeof record.text === "string") {
+          parts.push(record.text);
+        }
+      }
+    }
+    return parts.join("\n");
   }
 
   private async handleState(res: ServerResponse): Promise<void> {

@@ -202,21 +202,19 @@ export async function loadVaultSkills(vaultRoot: string, agentName: string): Pro
 }
 
 /**
- * Format the loaded skills as a context-prompt section. Lists each skill's
- * name, description, source, and full body. Returns an empty string when no
- * skills are loaded.
+ * Format the loaded skills as a compact context-prompt catalog. This is the
+ * ADR-0017 lazy-loading startup shape: names and metadata only, never full
+ * skill bodies.
  */
-export function formatSkillsForContext(skills: VaultSkill[]): string {
+export function formatSkillCatalogForContext(skills: VaultSkill[]): string {
   if (skills.length === 0) return "";
-  const lines = ["## Available Skills", "Follow these procedures when the steward asks or when a task matches:"];
+  const lines = [
+    "## Available Skills",
+    "Skills are loaded lazily. When a task matches a skill, call skill_read(name) before acting. Do not load every skill speculatively.",
+  ];
   for (const skill of skills) {
-    lines.push("");
-    lines.push(`### ${skill.name} (${skill.source})`);
-    if (skill.description) {
-      lines.push(skill.description);
-    }
-    lines.push("");
-    lines.push(skill.body);
+    const description = skill.description ? `: ${skill.description}` : "";
+    lines.push(`- ${skill.name}${description} Source: ${skill.source}. Path: ${skill.path}`);
   }
   return lines.join("\n");
 }

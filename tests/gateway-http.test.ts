@@ -91,4 +91,61 @@ describe("GatewayServer HTTP/SSE transport against a fake Pi process", () => {
       await server.close();
     }
   });
+
+  it("returns an OpenAI-compatible non-streaming chat completion", async () => {
+    const server = new GatewayServer({ target: fakePiTarget() });
+    try {
+      const handle = await server.start();
+      const res = await fetch(`http://${handle.hostname}:${handle.port}/api/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "piren/default",
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        object: string;
+        choices: Array<{ index: number; message: { role: string; content: string }; finish_reason: string }>;
+      };
+      expect(body.object).toBe("chat.completion");
+      expect(body.choices).toEqual([
+        { index: 0, message: { role: "assistant", content: "Hello" }, finish_reason: "stop" },
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("streams OpenAI-compatible chat completion chunks", async () => {
+    const server = new GatewayServer({ target: fakePiTarget() });
+    try {
+      const handle = await server.start();
+      const res = await fetch(`http://${handle.hostname}:${handle.port}/api/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "piren/default",
+          stream: true,
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      const text = await res.text();
+      const dataLines = text
+        .split("\n")
+        .filter((line) => line.startsWith("data: "))
+        .map((line) => line.slice("data: ".length));
+      expect(dataLines[dataLines.length - 1]).toBe("[DONE]");
+      const chunks = dataLines.slice(0, -1).map((line) => JSON.parse(line) as { object: string; choices: Array<{ delta: { content?: string } }> });
+      expect(chunks.every((chunk) => chunk.object === "chat.completion.chunk")).toBe(true);
+      expect(chunks.map((chunk) => chunk.choices[0]?.delta.content ?? "").join("")).toBe("Hello");
+    } finally {
+      await server.close();
+    }
+  });
 });

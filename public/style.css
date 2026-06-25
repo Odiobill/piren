@@ -47,11 +47,10 @@ body {
 }
 
 .overlay-logo {
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--text-bright);
-  letter-spacing: -0.02em;
-  margin-bottom: 0.5rem;
+  display: block;
+  width: min(280px, 78vw);
+  height: auto;
+  margin: 0 auto 0.5rem;
 }
 
 .overlay-subtitle {
@@ -116,10 +115,10 @@ body {
 }
 
 .logo {
-  font-size: 1.3rem;
-  font-weight: 700;
-  color: var(--text-bright);
-  letter-spacing: -0.02em;
+  display: block;
+  width: 138px;
+  height: auto;
+  margin-left: -0.35rem;
 }
 
 .sidebar-section {

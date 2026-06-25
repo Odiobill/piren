@@ -84,9 +84,9 @@ async function main() {
     }
     console.log("piren_status command: ok");
 
-    // ADR-0014 vault skills: shared skill in vault/skills/ and agent-specific
-    // skill in team/thor/skills/. Both are injected into the context prompt
-    // and reported in piren_status.
+    // ADR-0017 lazy vault skills: shared skill in vault/skills/ and agent-specific
+    // skill in team/thor/skills/. The startup prompt gets only a compact catalog;
+    // full bodies are loaded explicitly with skill_read(name).
     await mkdir(join(fixture.vault, "skills"), { recursive: true });
     await mkdir(join(fixture.vault, "team", "thor", "skills"), { recursive: true });
     await writeFile(
@@ -129,10 +129,21 @@ async function main() {
     if (!skillBeforeStart) throw new Error("skills before_agent_start handler not found");
     const skillResult = await skillBeforeStart();
     const skillContent = (skillResult as { message: { content: string } }).message.content;
-    if (!skillContent.includes("Available Skills") || !skillContent.includes("check-disk") || !skillContent.includes("deploy")) {
-      throw new Error("context prompt did not include vault skills");
+    if (!skillContent.includes("Available Skills") || !skillContent.includes("check-disk") || !skillContent.includes("deploy") || !skillContent.includes("skill_read(name)")) {
+      throw new Error("context prompt did not include lazy vault skill catalog");
     }
-    console.log("vault skills loaded into context + status: ok");
+    if (skillContent.includes("# Check Disk") || skillContent.includes("Run df -h") || skillContent.includes("# Deploy")) {
+      throw new Error("context prompt included full skill bodies instead of catalog only");
+    }
+    const skillList = await skillPi.tools.skill_list.execute("smoke-skill-list", {});
+    if (skillList.isError || skillList.details.skills.length !== 2 || !skillList.content[0].text.includes("check-disk")) {
+      throw new Error("skill_list smoke failed");
+    }
+    const skillRead = await skillPi.tools.skill_read.execute("smoke-skill-read", { name: "check-disk" });
+    if (skillRead.isError || !skillRead.content[0].text.includes("# Check Disk") || !skillRead.content[0].text.includes("Run df -h")) {
+      throw new Error("skill_read smoke failed");
+    }
+    console.log("vault skills lazy catalog + skill_read + status: ok");
 
     const read = await pi.tools.vault_read.execute("smoke-read", { path: "steward-directives.md" });
     if (read.isError || !read.content[0].text.includes("Keep the spike")) throw new Error("vault_read smoke failed");

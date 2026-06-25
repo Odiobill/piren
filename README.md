@@ -1,10 +1,18 @@
 # Piren
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="public/piren-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="public/piren-logo-light.svg">
+    <img alt="Piren animated logo" src="public/piren-logo-light.svg" width="420">
+  </picture>
+</p>
+
 Piren is a lightweight, local-first agent layer on top of Pi Coding Agent. It keeps agent identity, memory, logs, sessions, task exchange, and cumulative project knowledge in an inspectable Markdown vault.
 
 Core thesis: Piren is not only an agent launcher or task queue. It is a knowledge-maintenance harness for a stewarded team of agents, merging LLM-Wiki and Second Brain workflows with explicit multi-agent task execution. Agents should leave structured artifacts that improve future work, while the steward can inspect current project status, decisions, runbooks, concepts, logs, and handoffs directly in the vault.
 
-Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is complete through tracer bullet 8 (session resume and abort). The web UI is minimal per ADR-0012 (no model/thinking controls in the UI, API routes kept for external integrations). Vault skills (ADR-0014) load shared and agent-specific procedures into the context prompt. Pi package extensibility (ADR-0013) lets installations declare npm packages that export Pi extensions, loaded as additional `--extension` flags. All proven against a fake Pi process.
+Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is complete through tracer bullet 11: session resume and abort, Telegram and Discord transports, and an OpenAI-compatible `/api/v1/chat/completions` endpoint for external integrations. The web UI is minimal per ADR-0012 (no model/thinking controls in the UI, API routes kept for external integrations). Vault skills (ADR-0014 + ADR-0017) load shared and agent-specific procedure catalogs into the startup context, with full bodies available through `skill_read(name)`. Pi package extensibility (ADR-0013) lets installations declare npm packages that export Pi extensions, loaded as additional `--extension` flags. All proven against a fake Pi process.
 
 Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
 
@@ -22,6 +30,9 @@ CLI:
 - `piren run` (alias `piren chat`), interactive Pi session
 - `piren worker`, opt-in worker mode that starts Pi with Piren inbox polling enabled
 - `piren gateway` (alias `piren web`), HTTP/SSE gateway that spawns Pi in RPC mode
+- `piren telegram`, Telegram bot transport using local allowlisted chat ids and per-chat agent routing
+- `piren discord`, Discord bot transport using guild/channel allowlists, per-conversation agent routing, and a WebSocket gateway client
+- OpenAI-compatible `POST /api/v1/chat/completions` route on `piren gateway` for external integrations
 - `piren ask "message"`, one-shot CLI prompt over the RPC client with live token streaming
 - `piren clean`, dry-run removal of local Piren state; `--force` to actually delete
 
@@ -57,6 +68,8 @@ Extension tools:
 - `task_claim(task_path, device_id?, stale_after_ms?)`: claims a selected-agent inbox task by renaming it to `.claimed.<device>.md`; `device_id` defaults to the sanitized hostname. If `task_path` is already claimed, `stale_after_ms` enables recovery only when the previous claiming device record under `team/<agent>/devices/<device>.json` has an expired `last_seen` heartbeat
 - `inbox_list()`: lists the selected local agent's unclaimed inbox tasks without claiming or mutating them
 - `flag_steward(title, body, severity?, notify?)`: creates one authoritative Markdown alert file under `steward-inbox/alerts/` for steward attention
+- `skill_list()`: lists available vault skills as a compact catalog without full bodies
+- `skill_read(name)`: loads the full Markdown body for one listed vault skill
 - `project_status(project)`: reads a project's current title, status, and updated date from `Projects/<project>/index.md` frontmatter (read-only)
 - `project_append_log(project, entry)`: appends a timestamped Markdown entry to `Projects/<project>/log.md`, attributed to the current agent
 - `decision_record(project, id, title, context, decision, consequences?, alternatives?)`: writes one ADR under `Projects/<project>/decisions/ADR-<id>-<slug>.md` (id must be a 4-digit number)
@@ -94,8 +107,8 @@ npm run smoke
 Expected current baseline:
 
 ```text
-Test Files  35 passed (35)
-Tests       236 passed (236)
+Test Files  47 passed (47)
+Tests       287 passed (287)
 SMOKE PASSED
 ```
 
@@ -156,6 +169,11 @@ excluded_agents:
 packages:
   - "@piren/web-search"
   - "@piren/git-tools"
+telegram:
+  bot_token: "123456:telegram-bot-token"
+  allowed_chat_ids:
+    - 123456789
+  default_agent: piren
 ```
 
 Do not put `allowed_agents` in `team/<agent>/config.yml`. Agent-local config is for runtime preferences such as model and polling.
@@ -414,9 +432,101 @@ The transcript model stays hybrid per ADR-0011: Pi owns the live transcript and 
 
 Core session-listing logic lives in `src/session-browser.ts` (`listAgentSessions`), which parses session-summary frontmatter (title from the first `# Heading`, `created` from YAML frontmatter) and reuses `resolveVaultPath` for path-boundary enforcement. Tests: `tests/session-browser.test.ts` (5 tests), `tests/gateway-rpc-session.test.ts` (4 tests), `tests/gateway-session-routes.test.ts` (9 tests).
 
-## Vault skills (ADR-0014)
+## Telegram transport (Phase 3 tracer bullet 9, first slice)
 
-The Piren extension loads reusable procedures (skills) from the vault at startup and injects them into the agent's context prompt. Skills are Markdown files with optional YAML frontmatter, not executable code. The agent follows a skill's steps when the steward asks or when a task matches.
+`piren telegram` starts a Telegram bot transport over the same `PiRpcClient` used by the web gateway and `ask`. It is a separate gateway transport, not one hardcoded bot per Piren agent. Per ADR-0016, the Telegram bot identity belongs to the platform, while each allowlisted chat keeps one active Piren agent selected from the local runnable set.
+
+Local installation config:
+
+```yaml
+telegram:
+  bot_token: "123456:telegram-bot-token"
+  allowed_chat_ids:
+    - 123456789
+  default_agent: piren
+```
+
+Run it with:
+
+```bash
+node dist/src/cli.js telegram
+```
+
+Initial chat commands:
+
+- `/start`: readiness/help message
+- `/agents`: list runnable Piren agents and the active agent for the chat
+- `/agent <name>`: switch the active Piren agent for this chat, enforcing local runnable-agent policy
+- `/whoami`: show the active Piren agent
+- `/abort`: abort the active Pi RPC turn for this chat, if any
+
+Plain chat messages are forwarded to the active chat session's `PiRpcClient.promptAndWait()`, and assistant text deltas are sent back as one or more Telegram messages, split to respect Telegram's sendMessage length limit (`chunkTelegramMessage` in `src/telegram-transport.ts`). `TransportSessionManager` in `src/transport-session-manager.ts` owns one RPC client per transport conversation and selected agent. `TelegramTransport`, the minimal Bot API long-polling adapter, and `runTelegramPolling` live in `src/telegram-transport.ts`. Tests: `tests/transport-session-manager.test.ts`, `tests/telegram-transport.test.ts`, `tests/telegram-bot-api.test.ts`, `tests/telegram-polling.test.ts`, `tests/telegram-chunking.test.ts`.
+
+`piren doctor` reports a `telegram` check only when a `telegram:` block is present in local config: it warns on a missing `bot_token`, empty `allowed_chat_ids`, or a `default_agent` outside the runnable set. A normal doctor run on an installation without Telegram config is unaffected. Tests: `tests/doctor-telegram.test.ts`.
+
+## Discord transport (Phase 3 tracer bullet 10)
+
+`piren discord` starts a Discord bot transport. Like Telegram, it reuses the same `PiRpcClient` and `TransportSessionManager` and is a separate gateway transport, not one hardcoded bot per Piren agent. Per ADR-0016, the Discord bot identity belongs to the platform, while each allowlisted guild+channel (plus optional thread) conversation keeps one active Piren agent selected from the local runnable set.
+
+Discord uses a WebSocket gateway client connection (the Piren process dials out to `wss://gateway.discord.gg`). This is categorically different from the web UI's SSE-plus-POST model (ADR-0012): the WebSocket is a platform-mandated *client* connection to Discord, not a WebSocket *server* added to Piren. It uses the native `WebSocket` (Node >= 22), so no new npm dependency is required.
+
+Local installation config:
+
+```yaml
+discord:
+  bot_token: "your-discord-bot-token"
+  application_id: "123456789012345678"
+  install_url: "https://discord.com/oauth2/authorize?client_id=..."
+  allowed_guild_ids:
+    - "111"
+  allowed_channel_ids:
+    - "222"
+  default_agent: piren
+```
+
+The operator creates the Discord application/bot in the Developer Portal, uses Discord's generated install link to add it to a server, then stores the bot token and optional install URL in local config. No OAuth login, account linking, or Piren user identity mapping in v1.
+
+Run it with:
+
+```bash
+node dist/src/cli.js discord
+```
+
+Chat commands (mirror Telegram):
+
+- `/start`: readiness/help message
+- `/agents`: list runnable Piren agents and the active agent for the conversation
+- `/agent <name>`: switch the active Piren agent, enforcing local runnable-agent policy
+- `/whoami`: show the active Piren agent
+- `/abort`: abort the active Pi RPC turn for this conversation, if any
+
+Plain chat messages are forwarded to the active conversation's `PiRpcClient.promptAndWait()`, and assistant text deltas are sent back as one or more Discord messages, split to respect Discord's 2000-char message limit (`chunkDiscordMessage`, reusing the Telegram chunker with `DISCORD_MESSAGE_LIMIT = 2000`). `DiscordTransport`, the `DiscordBotApiHttpClient` REST adapter, `runDiscordGateway` (the WebSocket gateway loop), and `createNativeDiscordGatewaySocket` live in `src/discord-transport.ts`. Tests: `tests/discord-transport.test.ts`, `tests/discord-bot-api.test.ts`, `tests/discord-gateway.test.ts`, `tests/discord-chunking.test.ts`.
+
+`piren doctor` reports a `discord` check only when a `discord:` block is present in local config: it warns on a missing `bot_token`, empty `allowed_guild_ids` or `allowed_channel_ids`, or a `default_agent` outside the runnable set. A normal doctor run on an installation without Discord config is unaffected. Tests: `tests/doctor-discord.test.ts`.
+
+## OpenAI-compatible chat completions API (Phase 3 tracer bullet 11)
+
+`piren gateway` exposes `POST /api/v1/chat/completions` for Open WebUI and other OpenAI-compatible clients. This is an API surface for external integrations, not a built-in web UI configuration surface. The integrated Piren web UI remains minimal per ADR-0012.
+
+Request shape:
+
+```json
+{
+  "model": "piren/default",
+  "messages": [
+    { "role": "user", "content": "Hello" }
+  ],
+  "stream": false
+}
+```
+
+Non-streaming responses return an OpenAI-style `chat.completion` object with `choices[0].message.content` assembled from Pi RPC assistant text deltas. Streaming requests (`"stream": true`) return `text/event-stream` frames in OpenAI chunk format (`data: {...}\n\n`) and finish with `data: [DONE]`. The route reuses the existing `GatewayServer` and `PiRpcClient`, so it inherits the same Bearer auth gate as all other `/api/*` routes when a gateway token is configured.
+
+Core logic lives in `src/gateway-http.ts`; tests live in `tests/gateway-http.test.ts` (non-streaming and streaming paths against the fake Pi RPC process).
+
+## Vault skills (ADR-0014 + ADR-0017)
+
+The Piren extension loads reusable procedures (skills) from the vault at startup. Skills are Markdown files with optional YAML frontmatter, not executable code. To keep startup prompts small, Piren injects only a compact skill catalog into the agent's context. Full skill bodies are loaded explicitly with `skill_read(name)` when the task matches a skill.
 
 Two skill locations:
 
@@ -425,9 +535,9 @@ Two skill locations:
 
 Each skill is either a loose `.md` file or a directory containing `SKILL.md`. Frontmatter fields: `name` (falls back to filename stem), `description` (one-line summary). The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
 
-The loaded skills appear in the context prompt as an "Available Skills" section with each skill's name, source (shared/agent), description, and full body. `piren_status` reports `skills_loaded: <count>`.
+The startup prompt's "Available Skills" section includes each skill's name, source (shared/agent), description, and vault-relative path, but not the full body. `skill_list()` returns the same compact catalog. `skill_read(name)` returns the selected full skill body. `piren_status` reports `skills_loaded: <count>`.
 
-Core logic lives in `src/skills.ts` (`loadVaultSkills`, `formatSkillsForContext`). Tests: `tests/skills.test.ts` (9 tests). The extension wiring is tested in `tests/pi-extension.test.ts` (context injection + status count).
+Core logic lives in `src/skills.ts` (`loadVaultSkills`, `formatSkillCatalogForContext`). Tests: `tests/skills.test.ts` (10 tests). The extension wiring is tested in `tests/pi-extension.test.ts` (lazy catalog injection, `skill_list`, `skill_read`, and status count).
 
 ## Pi package extensibility (ADR-0013)
 
@@ -514,7 +624,7 @@ Piren v1 intentionally stays small:
 - Pi remains responsible for model/provider auth and settings
 - Phase 1 single-agent hardening is complete: diagnostics, policy checks, setup scaffolding, and stale-agent detection
 - Phase 2 (file-based inbox) is complete: device registration writes heartbeat JSON under `team/<agent>/devices/`, `send_to_agent` creates one pending Markdown task file in the target agent inbox, `task_update_status` updates task status and optional result text, `inbox_list` lists the selected agent's unclaimed inbox tasks, `task_claim` claims a task by filesystem rename, stale claim recovery reclaims `.claimed.<device>.md` files only after the previous device heartbeat expires, `piren worker` enables opt-in worker-mode inbox polling for explicitly allowed local agents, and `flag_steward` creates authoritative steward alert files
-- Phase 3 (external gateway) is in progress: tracer bullet 1 added `buildPiRunCommand({ rpcMode: true })` activating `--mode rpc` with piped stdio plus `PiRpcClient` in `src/gateway-rpc.ts` (separate process, strict LF-only JSONL, drains events until `agent_end`); tracer bullet 2 added the HTTP/SSE transport `piren gateway` (`src/gateway-http.ts` `GatewayServer`, `src/gateway-bridge.ts` `piEventToSse`) with POST-start/GET-stream; tracer bullet 3 added the read-only vault browser (`GET /api/vault/list`, `GET /api/vault/read`, core logic in `src/vault-browser.ts`) reusing `resolveVaultPath` for path-boundary enforcement; tracer bullets 4 and 5 added model/thinking control, agent switching, steering, and approval gates; tracer bullet 6 added the auth token gate (`src/gateway-auth.ts`) for non-localhost binds with constant-time Bearer token matching. No WebSocket, no frontend framework.
+- Phase 3 (external gateway) is implemented through tracer bullet 11: RPC client, HTTP/SSE gateway, read-only vault browser, model/thinking API routes, agent switching, steering, approval gates, auth token gate, minimal static web UI, session resume/abort, Telegram and Discord transports, and OpenAI-compatible `POST /api/v1/chat/completions`. The web UI stays SSE plus POST with no frontend framework; Discord uses a platform-mandated dial-out WebSocket client only.
 - No automatic inbox polling in default interactive sessions
 - No in-process Pi embedding: the gateway always spawns Pi in RPC mode
 - No memory automation yet

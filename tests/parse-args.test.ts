@@ -105,5 +105,7 @@ describe("parseArgs: preserved behavior", () => {
     expect(KNOWN_COMMANDS).toContain("ask");
     expect(KNOWN_COMMANDS).toContain("chat");
     expect(KNOWN_COMMANDS).toContain("gateway");
+    expect(KNOWN_COMMANDS).toContain("telegram");
+    expect(KNOWN_COMMANDS).toContain("discord");
   });
 });

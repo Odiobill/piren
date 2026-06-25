@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
-import { type BootstrapOptions, type LocalPirenConfig, resolveAgentDir } from "./bootstrap.js";
+import { type BootstrapOptions, type LocalPirenConfig, type TelegramLocalConfig, type DiscordLocalConfig, resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
@@ -142,6 +142,83 @@ function checkPackages(packages: string[], resolver: PackageEntryResolver): Doct
   return { id: "packages", status: "ok", message: `All ${packages.length} declared package(s) installed: ${packages.join(", ")}.` };
 }
 
+/**
+ * Validate Telegram transport config for `piren doctor`.
+ *
+ * Returns null when no telegram config is declared at all, so a normal doctor
+ * run never depends on Telegram being configured. When a telegram block is
+ * present, it warns on a missing bot_token or empty allowed_chat_ids, and on a
+ * default_agent that is not in the runnable set.
+ */
+export function checkTelegramConfig(
+  config: TelegramLocalConfig | undefined,
+  runnableAgents: string[] = [],
+): DoctorCheck | null {
+  if (config === undefined) return null;
+  const hasBlock = "bot_token" in config || "allowed_chat_ids" in config || "default_agent" in config;
+  if (!hasBlock) return null;
+
+  const hasToken = typeof config.bot_token === "string" && config.bot_token.trim() !== "";
+  const chatIds = Array.isArray(config.allowed_chat_ids) ? config.allowed_chat_ids : [];
+
+  if (!hasToken) {
+    return { id: "telegram", status: "warn", message: "telegram config is present but telegram.bot_token is missing or empty." };
+  }
+  if (chatIds.length === 0) {
+    return { id: "telegram", status: "warn", message: "telegram.bot_token is set but telegram.allowed_chat_ids is empty. No chats are authorized." };
+  }
+  if (config.default_agent !== undefined && config.default_agent.trim() !== "") {
+    if (runnableAgents.length > 0 && !runnableAgents.includes(config.default_agent)) {
+      return { id: "telegram", status: "warn", message: `telegram.default_agent '${config.default_agent}' is not in the runnable agent set (${runnableAgents.join(", ")}).` };
+    }
+  }
+  return { id: "telegram", status: "ok", message: `Telegram configured with ${chatIds.length} allowlisted chat(s).` };
+}
+
+/**
+ * Validate Discord transport config for `piren doctor`.
+ *
+ * Returns null when no discord config is declared at all, so a normal doctor
+ * run never depends on Discord being configured. When a discord block is
+ * present, it warns on a missing bot_token, empty guild/channel allowlists, or
+ * a default_agent outside the runnable set.
+ */
+export function checkDiscordConfig(
+  config: DiscordLocalConfig | undefined,
+  runnableAgents: string[] = [],
+): DoctorCheck | null {
+  if (config === undefined) return null;
+  const hasBlock =
+    "bot_token" in config ||
+    "allowed_guild_ids" in config ||
+    "allowed_channel_ids" in config ||
+    "allowed_thread_ids" in config ||
+    "default_agent" in config ||
+    "application_id" in config ||
+    "install_url" in config;
+  if (!hasBlock) return null;
+
+  const hasToken = typeof config.bot_token === "string" && config.bot_token.trim() !== "";
+  const guildIds = Array.isArray(config.allowed_guild_ids) ? config.allowed_guild_ids : [];
+  const channelIds = Array.isArray(config.allowed_channel_ids) ? config.allowed_channel_ids : [];
+
+  if (!hasToken) {
+    return { id: "discord", status: "warn", message: "discord config is present but discord.bot_token is missing or empty." };
+  }
+  if (guildIds.length === 0) {
+    return { id: "discord", status: "warn", message: "discord.bot_token is set but discord.allowed_guild_ids is empty. No guilds are authorized." };
+  }
+  if (channelIds.length === 0) {
+    return { id: "discord", status: "warn", message: "discord.bot_token is set but discord.allowed_channel_ids is empty. No channels are authorized." };
+  }
+  if (config.default_agent !== undefined && config.default_agent.trim() !== "") {
+    if (runnableAgents.length > 0 && !runnableAgents.includes(config.default_agent)) {
+      return { id: "discord", status: "warn", message: `discord.default_agent '${config.default_agent}' is not in the runnable agent set (${runnableAgents.join(", ")}).` };
+    }
+  }
+  return { id: "discord", status: "ok", message: `Discord configured with ${guildIds.length} guild(s) and ${channelIds.length} channel(s) allowlisted.` };
+}
+
 async function readProjectPackageJson(): Promise<{ dependencies?: Record<string, string> }> {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -195,6 +272,12 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
 
   const packagesCheck = checkPackages(packages, resolver);
   if (packagesCheck) checks.push(packagesCheck);
+
+  const telegramCheck = checkTelegramConfig(config.telegram, allowedAgents);
+  if (telegramCheck) checks.push(telegramCheck);
+
+  const discordCheck = checkDiscordConfig(config.discord, allowedAgents);
+  if (discordCheck) checks.push(discordCheck);
 
   let agentDir: string;
   try {

@@ -44,6 +44,8 @@ export const KNOWN_COMMANDS = [
   "setup",
   "gateway",
   "web",
+  "telegram",
+  "discord",
   "ask",
   "chat",
   "clean",

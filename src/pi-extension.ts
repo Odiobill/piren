@@ -11,7 +11,7 @@ import { buildPirenStatusReport, formatPirenStatusReport } from "./status.js";
 import { registerDevice } from "./devices.js";
 import { createInboxTask, claimInboxTask, listInboxTasks, updateInboxTaskStatus } from "./inbox.js";
 import { createStewardAlert } from "./alerts.js";
-import { loadVaultSkills, formatSkillsForContext, type VaultSkill } from "./skills.js";
+import { loadVaultSkills, formatSkillCatalogForContext, type VaultSkill } from "./skills.js";
 import { projectStatus, projectAppendLog, decisionRecord } from "./knowledge.js";
 
 const PIREN_TOOL_NAMES = [
@@ -27,6 +27,8 @@ const PIREN_TOOL_NAMES = [
   "task_update_status",
   "task_claim",
   "inbox_list",
+  "skill_list",
+  "skill_read",
   "project_status",
   "project_append_log",
   "decision_record",
@@ -148,7 +150,7 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "wait for the steward to direct the work.",
   ];
 
-  const skillsSection = formatSkillsForContext(skills);
+  const skillsSection = formatSkillCatalogForContext(skills);
   if (skillsSection) {
     lines.push("", skillsSection);
   }
@@ -483,6 +485,41 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
       } catch (error) {
         return errorResult(error);
       }
+    },
+  });
+
+  pi.registerTool({
+    name: "skill_list",
+    label: "Skill List",
+    description: "List available Piren vault skills as a compact catalog. Full skill bodies are loaded with skill_read(name).",
+    parameters: Type.Object({}),
+    async execute() {
+      const catalog = skills.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        source: skill.source,
+        path: skill.path,
+      }));
+      return textResult(formatSkillCatalogForContext(skills) || "No skills available.", { skills: catalog });
+    },
+  });
+
+  pi.registerTool({
+    name: "skill_read",
+    label: "Skill Read",
+    description: "Read the full body of one available Piren vault skill by name. Use this when a task matches a listed skill.",
+    parameters: Type.Object({
+      name: Type.String({ description: "Skill name from skill_list" }),
+    }),
+    async execute(_toolCallId, params) {
+      const skill = skills.find((entry) => entry.name === params.name);
+      if (!skill) {
+        return errorResult(new Error(`Unknown skill: ${params.name}`));
+      }
+      const text = [`# ${skill.name}`, `Source: ${skill.source}`, `Path: ${skill.path}`];
+      if (skill.description) text.push(`Description: ${skill.description}`);
+      text.push("", skill.body);
+      return textResult(text.join("\n"), skill);
     },
   });
 

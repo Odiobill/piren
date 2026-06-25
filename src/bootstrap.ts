@@ -11,6 +11,22 @@ export interface BootstrapOptions {
   configPath?: string | undefined;
 }
 
+export interface TelegramLocalConfig {
+  bot_token?: string;
+  allowed_chat_ids?: Array<number | string>;
+  default_agent?: string;
+}
+
+export interface DiscordLocalConfig {
+  bot_token?: string;
+  application_id?: string;
+  install_url?: string;
+  allowed_guild_ids?: Array<number | string>;
+  allowed_channel_ids?: Array<number | string>;
+  allowed_thread_ids?: Array<number | string>;
+  default_agent?: string;
+}
+
 export interface LocalPirenConfig {
   agent_dir?: string;
   vault_root?: string;
@@ -18,6 +34,8 @@ export interface LocalPirenConfig {
   allowed_agents?: string[];
   excluded_agents?: string[];
   packages?: string[];
+  telegram?: TelegramLocalConfig;
+  discord?: DiscordLocalConfig;
   provider?: string;
   model?: string;
 }

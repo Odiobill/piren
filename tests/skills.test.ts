@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { loadVaultSkills } from "../src/skills.js";
+import { formatSkillCatalogForContext, loadVaultSkills } from "../src/skills.js";
 
 async function makeVault(): Promise<{ vault: string; cleanup: () => Promise<void> }> {
   const root = await mkdtemp(join(tmpdir(), "piren-skills-"));
@@ -239,5 +239,35 @@ describe("loadVaultSkills", () => {
     } finally {
       await cleanup();
     }
+  });
+
+  it("formats a catalog-only context section without full skill bodies", () => {
+    const catalog = formatSkillCatalogForContext([
+      {
+        name: "check-disk",
+        description: "Check disk usage and report high partitions.",
+        body: "# Check Disk\n\n1. Run df -h\n2. Report partitions above threshold.",
+        source: "shared",
+        path: "skills/check-disk.md",
+      },
+      {
+        name: "deploy",
+        description: "Deploy the app to staging.",
+        body: "# Deploy\n\nSecret deployment procedure body should be loaded lazily.",
+        source: "agent",
+        path: "team/thor/skills/deploy.md",
+      },
+    ]);
+
+    expect(catalog).toContain("Available Skills");
+    expect(catalog).toContain("check-disk");
+    expect(catalog).toContain("Check disk usage and report high partitions.");
+    expect(catalog).toContain("Source: shared");
+    expect(catalog).toContain("Path: skills/check-disk.md");
+    expect(catalog).toContain("deploy");
+    expect(catalog).toContain("Source: agent");
+    expect(catalog).not.toContain("# Check Disk");
+    expect(catalog).not.toContain("Run df -h");
+    expect(catalog).not.toContain("Secret deployment procedure body");
   });
 });
