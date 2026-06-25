@@ -14,7 +14,7 @@ Piren is a lightweight, local-first agent runtime on top of [Pi Coding Agent](ht
 
 Piren exists for stewarded teams of local agents: small enough for edge and homelab devices, explicit enough to debug from a terminal, and transparent enough that Obsidian can be the source of truth. It borrows self-improvement ideas from larger agent systems, but keeps them reviewable: agents write visible vault artifacts instead of hidden memory mutations.
 
-Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
+Pi runtime policy: Piren prefers a `pi` binary already available on `PATH`. If none is found, it falls back to `npx --yes -p @earendil-works/pi-coding-agent@latest pi`.
 
 ## Five-minute quickstart
 
@@ -96,7 +96,7 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren is pre-RC. Phase 3 gateway surfaces are implemented: minimal web UI, Telegram, Discord, and OpenAI-compatible chat completions. Phase 4 RC features implemented so far include Pi package extensibility, lazy vault skills, knowledge lifecycle tools, inspectable self-improvement tools, and vault-backed cron.
 
-Current verification baseline: 48 test files, 321 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing.
+Current verification baseline: 48 test files, 325 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing.
 
 Known limitations before RC:
 

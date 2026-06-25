@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
 
@@ -33,7 +33,16 @@ export interface BuildPiRunCommandOptions extends BootstrapOptions {
   workerMode?: boolean | undefined;
   rpcMode?: boolean | undefined;
   packageResolver?: PackageEntryResolver | undefined;
+  piCommandResolver?: PiCommandResolver | undefined;
 }
+
+export interface PiCommandTarget {
+  command: string;
+  argsPrefix: string[];
+  source: "path" | "npx-latest";
+}
+
+export type PiCommandResolver = (env?: NodeJS.ProcessEnv | Record<string, string | undefined>) => Promise<PiCommandTarget>;
 
 export interface PiRunCommand {
   command: string;
@@ -80,6 +89,34 @@ async function readAgentRunConfig(configPath: string): Promise<AgentRunConfig> {
   return parsed as AgentRunConfig;
 }
 
+async function executableExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function defaultPiCommandResolver(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): Promise<PiCommandTarget> {
+  const pathValue = env.PATH ?? process.env.PATH ?? "";
+  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
+    if (await executableExists(join(dir, "pi"))) {
+      return { command: "pi", argsPrefix: [], source: "path" };
+    }
+  }
+  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
+    if (await executableExists(join(dir, "npx"))) {
+      return {
+        command: "npx",
+        argsPrefix: ["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"],
+        source: "npx-latest",
+      };
+    }
+  }
+  throw new Error("Neither pi nor npx was found on PATH.");
+}
+
 export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}): Promise<PiRunCommand> {
   const context = await loadPirenContext(options);
   const agentConfig = await readAgentRunConfig(context.paths.config);
@@ -87,9 +124,11 @@ export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}):
   const extraArgs = options.extraArgs ?? [];
   const rpcMode = options.rpcMode ?? false;
   const resolver = options.packageResolver ?? defaultPackageResolver;
+  const piCommandResolver = options.piCommandResolver ?? defaultPiCommandResolver;
+  const piCommand = await piCommandResolver(options.env);
 
   const args = [
-    "pi",
+    ...piCommand.argsPrefix,
     "--extension",
     extensionPath,
     "--vault-root",
@@ -123,7 +162,7 @@ export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}):
   const env = options.workerMode ? { ...process.env, PIREN_WORKER: "1" } : process.env;
 
   return {
-    command: "npx",
+    command: piCommand.command,
     args,
     cwd: process.cwd(),
     env,

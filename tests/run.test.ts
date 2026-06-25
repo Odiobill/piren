@@ -1,13 +1,20 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildPiRunCommand } from "../src/run.js";
+import { buildPiRunCommand, defaultPiCommandResolver, type PiCommandTarget } from "../src/run.js";
 
 let root: string;
 let vault: string;
 let agentDir: string;
 let configPath: string;
+
+const localPi = async (): Promise<PiCommandTarget> => ({ command: "pi", argsPrefix: [], source: "path" });
+const npxLatestPi = async (): Promise<PiCommandTarget> => ({
+  command: "npx",
+  argsPrefix: ["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"],
+  source: "npx-latest",
+});
 
 async function makeFixture(agentConfig: string) {
   root = await mkdtemp(join(tmpdir(), "piren-run-"));
@@ -35,13 +42,42 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
+describe("Pi command resolver", () => {
+  it("prefers a local pi binary on PATH", async () => {
+    const bin = join(root, "bin-pi");
+    await mkdir(bin, { recursive: true });
+    const pi = join(bin, "pi");
+    await writeFile(pi, "#!/bin/sh\n");
+    await chmod(pi, 0o755);
+
+    const target = await defaultPiCommandResolver({ PATH: bin });
+
+    expect(target).toEqual({ command: "pi", argsPrefix: [], source: "path" });
+  });
+
+  it("falls back to explicit latest npx package invocation when pi is not on PATH", async () => {
+    const bin = join(root, "bin-npx");
+    await mkdir(bin, { recursive: true });
+    const npx = join(bin, "npx");
+    await writeFile(npx, "#!/bin/sh\n");
+    await chmod(npx, 0o755);
+
+    const target = await defaultPiCommandResolver({ PATH: bin });
+
+    expect(target).toEqual({
+      command: "npx",
+      argsPrefix: ["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"],
+      source: "npx-latest",
+    });
+  });
+});
+
 describe("piren run command construction", () => {
   it("builds a Pi command from compact agent-local model config", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts" });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi });
 
-    expect(command.command).toBe("npx");
+    expect(command.command).toBe("pi");
     expect(command.args).toEqual([
-      "pi",
       "--extension",
       "./src/pi-extension.ts",
       "--vault-root",
@@ -53,10 +89,18 @@ describe("piren run command construction", () => {
     ]);
   });
 
+  it("falls back to latest Pi through explicit npx package invocation when no local pi binary is resolved", async () => {
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: npxLatestPi });
+
+    expect(command.command).toBe("npx");
+    expect(command.args.slice(0, 4)).toEqual(["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"]);
+    expect(command.args).toContain("--vault-root");
+  });
+
   it("builds a Pi model flag from expanded provider plus id config", async () => {
     await writeFile(join(agentDir, "config.yml"), "model:\n  provider: anthropic\n  id: claude-sonnet-4-20250514\n  thinking: medium\n");
 
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts" });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi });
 
     expect(command.args).toContain("anthropic/claude-sonnet-4-20250514:medium");
   });
@@ -76,10 +120,9 @@ describe("piren run command construction", () => {
       ].join("\n"),
     );
 
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: ["--print", "hello"], extensionPath: "./src/pi-extension.ts" });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: ["--print", "hello"], extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi });
 
     expect(command.args).toEqual([
-      "pi",
       "--extension",
       "./src/pi-extension.ts",
       "--vault-root",
@@ -94,10 +137,9 @@ describe("piren run command construction", () => {
   });
 
   it("builds a worker Pi command that opts into Piren inbox polling without changing interactive run", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], workerMode: true, extensionPath: "./src/pi-extension.ts" });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], workerMode: true, extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi });
 
     expect(command.args).toEqual([
-      "pi",
       "--extension",
       "./src/pi-extension.ts",
       "--vault-root",
@@ -111,10 +153,9 @@ describe("piren run command construction", () => {
   });
 
   it("builds a gateway RPC Pi command that activates --mode rpc with piped stdio", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], rpcMode: true, extensionPath: "./src/pi-extension.ts" });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], rpcMode: true, extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi });
 
     expect(command.args).toEqual([
-      "pi",
       "--extension",
       "./src/pi-extension.ts",
       "--vault-root",
@@ -130,7 +171,7 @@ describe("piren run command construction", () => {
   });
 
   it("keeps interactive run on inherited stdio and omits --mode rpc by default", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts" });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi });
 
     expect(command.args).not.toContain("rpc");
     expect(command.stdio).toBe("inherit");
@@ -140,7 +181,7 @@ describe("piren run command construction", () => {
     await writeFile(configPath, "vault_root: " + vault + "\n" + "allowed_agents:\n" + "  - piren\n" + "packages:\n" + '  - "@piren/web-search"\n' + '  - "@piren/git-tools"\n');
     const fakeResolver = (name: string) => "/fake/node_modules/" + name + "/dist/index.js";
 
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", packageResolver: fakeResolver });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", packageResolver: fakeResolver, piCommandResolver: localPi });
 
     // Core extension loads first, then package extensions in declared order.
     const extensionArgs = command.args.reduce<string[]>((acc, arg, i) => {
@@ -161,7 +202,7 @@ describe("piren run command construction", () => {
       return "/fake/node_modules/" + name + "/index.js";
     };
 
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", packageResolver: fakeResolver });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", packageResolver: fakeResolver, piCommandResolver: localPi });
 
     const extensionArgs = command.args.reduce<string[]>((acc, arg, i) => {
       if (arg === "--extension") acc.push(command.args[i + 1] ?? "");
@@ -174,7 +215,7 @@ describe("piren run command construction", () => {
   });
 
   it("omits extra --extension flags when no packages are declared", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts" });
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi });
 
     const extensionCount = command.args.filter((arg) => arg === "--extension").length;
     expect(extensionCount).toBe(1);

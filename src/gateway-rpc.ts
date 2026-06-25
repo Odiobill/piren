@@ -3,7 +3,7 @@ import { createJsonlLineReader, serializeJsonLine } from "./jsonl.js";
 
 /**
  * Spawn target for the RPC client. In production this is produced by
- * `buildPiRunCommand({ rpcMode: true })` (npx pi --mode rpc ...). In tests it
+ * `buildPiRunCommand({ rpcMode: true })` (pi --mode rpc ..., or explicit npx latest fallback). In tests it
  * points at a fake Pi process so the client can be exercised without live
  * model auth.
  */

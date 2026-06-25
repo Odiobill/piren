@@ -2,10 +2,13 @@ import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { doctorPiren, formatDoctorReport } from "../src/doctor.js";
+import { doctorPiren, formatDoctorReport, type PiRuntimeCheck } from "../src/doctor.js";
 import { initVault } from "../src/init.js";
 
 let root: string;
+
+const localPiRuntime = async (): Promise<PiRuntimeCheck> => ({ source: "path", version: "0.80.2" });
+const npxPiRuntime = async (): Promise<PiRuntimeCheck> => ({ source: "npx-latest" });
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "piren-doctor-"));
@@ -19,7 +22,7 @@ describe("Piren doctor", () => {
     const configPath = join(root, "config.yml");
     await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     expect(report.ok).toBe(true);
     expect(report.agentName).toBe("thor");
@@ -29,8 +32,21 @@ describe("Piren doctor", () => {
       expect.objectContaining({ id: "runnable-agent-policy", status: "ok" }),
       expect.objectContaining({ id: "vault-layout", status: "ok" }),
       expect.objectContaining({ id: "agent-files", status: "ok" }),
-      expect.objectContaining({ id: "pi-compatibility", status: "ok" }),
+      expect.objectContaining({ id: "pi-runtime", status: "ok", message: expect.stringContaining("PATH") }),
     ]));
+  });
+
+  it("reports npx latest fallback as ok when no local pi runtime is found", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: npxPiRuntime });
+
+    expect(report.ok).toBe(true);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ id: "pi-runtime", status: "ok", message: expect.stringContaining("latest") }),
+    );
   });
 
   it("reports missing required agent files without creating them", async () => {

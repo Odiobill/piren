@@ -15,7 +15,6 @@
     "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.79.9",
     "typebox": "^1.0.55",
     "yaml": "^2.8.1"
   },

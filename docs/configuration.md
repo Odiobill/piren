@@ -95,6 +95,8 @@ Piren translates this to Pi-native `--model` and `--models` flags. Provider cred
 
 ## Package extensions
 
+Piren itself does not pin Pi as a package dependency. At runtime it prefers `pi` on `PATH`; if missing, it uses `npx --yes -p @earendil-works/pi-coding-agent@latest pi`. `piren doctor` reports which route will be used.
+
 Additional Pi extensions are declared in local config:
 
 ```yaml

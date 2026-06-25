@@ -1,8 +1,9 @@
+import { execFile } from "node:child_process";
 import { access, readdir, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
+import { defaultPiCommandResolver } from "./run.js";
 import { type BootstrapOptions, type LocalPirenConfig, type TelegramLocalConfig, type DiscordLocalConfig, resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
 
@@ -27,10 +28,18 @@ export interface DoctorReport {
 
 export interface DoctorPirenOptions extends BootstrapOptions {
   packageResolver?: PackageEntryResolver | undefined;
+  piRuntimeChecker?: PiRuntimeChecker | undefined;
 }
 
+export interface PiRuntimeCheck {
+  source: "path" | "npx-latest" | "unavailable";
+  version?: string | undefined;
+  error?: string | undefined;
+}
+
+export type PiRuntimeChecker = (env?: NodeJS.ProcessEnv | Record<string, string | undefined>) => Promise<PiRuntimeCheck>;
+
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
-const EXPECTED_PI_VERSION = "0.79.9";
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -219,37 +228,42 @@ export function checkDiscordConfig(
   return { id: "discord", status: "ok", message: `Discord configured with ${guildIds.length} guild(s) and ${channelIds.length} channel(s) allowlisted.` };
 }
 
-async function readProjectPackageJson(): Promise<{ dependencies?: Record<string, string> }> {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    join(process.cwd(), "package.json"),
-    join(moduleDir, "..", "package.json"),
-    join(moduleDir, "..", "..", "package.json"),
-  ];
-
-  let lastError: unknown;
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(await readFile(candidate, "utf8")) as { dependencies?: Record<string, string> };
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError;
+function execFileText(command: string, args: string[]): Promise<string> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(command, args, { timeout: 5000 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolvePromise(String(stdout || stderr).trim());
+    });
+  });
 }
 
-async function checkPiCompatibility(): Promise<DoctorCheck> {
+export async function defaultPiRuntimeChecker(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): Promise<PiRuntimeCheck> {
   try {
-    const packageJson = await readProjectPackageJson();
-    const version = packageJson.dependencies?.["@earendil-works/pi-coding-agent"];
-    if (version === EXPECTED_PI_VERSION) {
-      return { id: "pi-compatibility", status: "ok", message: `@earendil-works/pi-coding-agent is pinned to ${EXPECTED_PI_VERSION}.` };
+    const target = await defaultPiCommandResolver(env);
+    if (target.source === "path") {
+      const version = await execFileText(target.command, ["--version"]);
+      return { source: "path", version };
     }
-    return { id: "pi-compatibility", status: "warn", message: `Expected @earendil-works/pi-coding-agent ${EXPECTED_PI_VERSION}, found ${version ?? "<not installed>"}.` };
+    return { source: "npx-latest" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { id: "pi-compatibility", status: "warn", message: `Could not inspect package.json: ${message}` };
+    return { source: "unavailable", error: message };
   }
+}
+
+async function checkPiRuntime(checker: PiRuntimeChecker, env?: NodeJS.ProcessEnv | Record<string, string | undefined>): Promise<DoctorCheck> {
+  const runtime = await checker(env);
+  if (runtime.source === "path") {
+    const versionText = runtime.version ? ` version ${runtime.version}` : "";
+    return { id: "pi-runtime", status: "ok", message: `Pi binary found on PATH${versionText}.` };
+  }
+  if (runtime.source === "npx-latest") {
+    return { id: "pi-runtime", status: "ok", message: "No local pi binary found on PATH. Piren will use npx --yes -p @earendil-works/pi-coding-agent@latest pi." };
+  }
+  return { id: "pi-runtime", status: "warn", message: `Could not verify Pi runtime: ${runtime.error ?? "unknown error"}.` };
 }
 
 export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<DoctorReport> {
@@ -259,6 +273,7 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
   const excludedAgents = normalizeStringArray(config.excluded_agents);
   const packages = normalizeStringArray(config.packages);
   const resolver = options.packageResolver ?? defaultPackageResolver;
+  const piRuntimeChecker = options.piRuntimeChecker ?? defaultPiRuntimeChecker;
   const checks: DoctorCheck[] = [];
 
   const policyGap = checkPolicyGap(allowedAgents, config.vault_root === undefined ? undefined : resolve(config.vault_root));
@@ -285,7 +300,7 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     checks.push({ id: "bootstrap", status: "fail", message });
-    checks.push(await checkPiCompatibility());
+    checks.push(await checkPiRuntime(piRuntimeChecker, options.env));
     return { ok: false, allowedAgents, excludedAgents, packages, checks };
   }
 
@@ -304,7 +319,7 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
     checks.push({ id: "vault-layout", status: "fail", message });
   }
 
-  checks.push(await checkPiCompatibility());
+  checks.push(await checkPiRuntime(piRuntimeChecker, options.env));
 
   const report: DoctorReport = {
     ok: checks.every((check) => check.status !== "fail"),

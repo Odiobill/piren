@@ -59,7 +59,7 @@ Keep Piren v1 boring:
 - One file per task.
 - Append-only logs where practical.
 - External gateway later, through a separate RPC process.
-- Pinned Pi compatibility.
+- Pi runtime compatibility detection, with local `pi` preferred and explicit latest npx fallback.
 - No hidden memory mutation.
 
 Do not add default automatic inbox polling to interactive `piren run`. Polling belongs only to opt-in worker mode:
@@ -154,7 +154,7 @@ Current baseline:
 
 ```text
 Test Files  48 passed (48)
-Tests       321 passed (321)
+Tests       325 passed (325)
 SMOKE PASSED
 ```
 
