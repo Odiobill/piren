@@ -153,8 +153,8 @@ npm run smoke
 Current baseline:
 
 ```text
-Test Files  47 passed (47)
-Tests       292 passed (292)
+Test Files  48 passed (48)
+Tests       321 passed (321)
 SMOKE PASSED
 ```
 
@@ -244,6 +244,10 @@ Implemented extension tools:
 - `project_update_handoff(project, content)`
 - `runbook_write(project, title, content)`
 - `skill_candidate_write(name, description, body, scope?)`
+- `cron_list()`
+- `cron_claim(job_path, device_id?, stale_after_ms?)`
+- `cron_record_run(job_path, status, result, started_at, finished_at)`
+- `cron_runs(job_id?)`
 
 Vault skills (ADR-0014 + ADR-0017, implemented):
 - `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName)` and `formatSkillCatalogForContext(skills)`. Skills are loaded from `vault/skills/` (shared) and `team/<agent>/skills/` (agent-specific, overrides shared on name collision). Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
@@ -265,6 +269,12 @@ Phase 4 knowledge lifecycle tools (ADR-0015 + ADR-0018, implemented):
 - ADR-0018 inspectable self-improvement tools are also implemented in `src/knowledge.ts`: `projectUpdateHandoff(options)` writes `Projects/<project>/handoff-prompt.md`, `runbookWrite(options)` writes `Projects/<project>/runbooks/<slug>.md` with runbook frontmatter, and `skillCandidateWrite(options)` writes reviewable drafts under `skill-candidates/<name>.md` or `Projects/<scope>/skill-candidates/<name>.md`. Skill candidates are not active skills until promoted.
 - Registered as `project_status`, `project_append_log`, `decision_record`, `project_update_handoff`, `runbook_write`, and `skill_candidate_write` extension tools. The context prompt gains a "Knowledge Lifecycle" section guiding agents to leave durable artifacts after non-trivial work.
 - Tests: `tests/knowledge.test.ts` (14 tests), `tests/pi-extension.test.ts` (extension coverage for all knowledge tools, context prompt assertions). Smoke covers all six knowledge/self-improvement tools.
+
+Vault-backed cron (ADR-0019, implemented):
+- `src/cron.ts` is the pure scheduling + coordination core, callable directly from tests without Pi auth. It exports `parseSchedule` (five-field cron strings and interval syntax `30m`/`6h`/`1d`), `isScheduleDue` (interval elapsed-time logic and cron field matching with once-per-minute dedup), `readCronJob`/`listCronJobs` (frontmatter parsing of `id`, `agent`, `schedule`, `enabled`, `device_policy`, `stale_after_seconds`, `last_run`, `last_claimed_by` plus the `# Prompt` body; shared `cron/jobs/` and agent-scoped `team/<agent>/cron/jobs/`), `selectOwningDevice` (highest-priority, lowest-number selection among eligible active devices, restricted by `device_policy.allowed_devices`), `listActiveDevices` (reads `team/<agent>/devices/*.json` heartbeats, filters stale), `claimCronJob` (atomic rename to `.claimed.<device>.md` with `last_claimed_by` injected and stale recovery via device heartbeats), `recordCronRun` (writes inspectable run records under `cron/runs/` or `team/<agent>/cron/runs/`, restores the unclaimed job with `last_run` set and the stale claim line removed), and `listCronRuns` (run history newest-first, optional `job_id` filter).
+- Registered as `cron_list`, `cron_claim`, `cron_record_run`, and `cron_runs` extension tools. `cron_record_run` trusts the device id encoded in the claimed path rather than the runtime hostname. The context prompt gains a \"Vault-Backed Cron\" section. Secrets never belong in cron job files.
+- Worker mode (`PIREN_WORKER=1`, locally-allowed agent only) surfaces due jobs owned by this device via active-device-priority, but does NOT auto-run them: it notifies the agent, which claims and records runs via the tools so every run is inspectable. Default cron device staleness is 5 minutes, overridable via `PIREN_CRON_STALE_MS`. No UI, no leases, no central DB in RC.
+- Tests: `tests/cron.test.ts` (26 tests covering scheduling, due detection, job I/O, device ownership, active-device discovery, atomic claiming with stale recovery, run records, and run history), `tests/pi-extension.test.ts` (3 cron extension tests: full lifecycle, worker surfacing does-not-auto-run, context prompt). Smoke covers cron_list/claim/record_run/runs.
 
 ## Common pitfalls
 

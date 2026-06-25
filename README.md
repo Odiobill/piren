@@ -76,8 +76,14 @@ Extension tools:
 - `project_update_handoff(project, content)`: updates `Projects/<project>/handoff-prompt.md` with explicit next-session context
 - `runbook_write(project, title, content)`: writes an operational runbook under `Projects/<project>/runbooks/<slug>.md`
 - `skill_candidate_write(name, description, body, scope?)`: drafts a reviewable skill candidate under `skill-candidates/` or `Projects/<scope>/skill-candidates/`; candidates are not active skills until promoted
+- `cron_list()`: lists unclaimed, enabled cron jobs from `cron/jobs/` and `team/<agent>/cron/jobs/`, marking each as due or idle
+- `cron_claim(job_path, device_id?, stale_after_ms?)`: atomically claims one cron job for this device by renaming it to `.claimed.<device>.md`
+- `cron_record_run(job_path, status, result, started_at, finished_at)`: writes an inspectable run record under `cron/runs/` (or `team/<agent>/cron/runs/`) and restores the unclaimed job with `last_run` set
+- `cron_runs(job_id?)`: lists cron run records newest-first, optionally filtered by job id (read-only)
 
 Knowledge lifecycle tools (Phase 4) let agents leave durable artifacts after non-trivial work, per the ADR-0010 thesis: `project_status` reads current project state, `project_append_log` records chronological project history, `decision_record` captures architecture decisions, `project_update_handoff` refreshes next-session continuity, `runbook_write` captures repeated operations, and `skill_candidate_write` drafts reusable procedures for steward review.
+
+Vault-backed cron (ADR-0019) adds file-backed, inspectable scheduled work: cron job files live as Markdown under `cron/jobs/` (shared) or `team/<agent>/cron/jobs/` (agent-scoped), with frontmatter `id`, `agent`, `schedule` (five-field cron or interval like `30m`), `enabled`, optional `device_policy`, and a `# Prompt` body. Worker mode (`PIREN_WORKER=1`, locally-allowed agent only) surfaces due jobs owned by this device via active-device-priority but does not auto-run them; the agent claims and records runs via `cron_claim` + `cron_record_run`. Run records land under `cron/runs/`. No UI, no leases, no central database, and secrets never belong in cron job files.
 
 Degraded write handling:
 
