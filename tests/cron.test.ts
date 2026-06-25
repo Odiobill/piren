@@ -1,5 +1,131 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isScheduleDue, parseSchedule } from "../src/cron.js";
+import { listCronJobs, readCronJob } from "../src/cron.js";
+
+let root: string;
+let vault: string;
+
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), "piren-cron-io-"));
+  vault = join(root, "vault");
+  await mkdir(join(vault, "cron", "jobs"), { recursive: true });
+  await mkdir(join(vault, "team", "piren", "cron", "jobs"), { recursive: true });
+  await writeFile(join(vault, ".piren-vault"), "");
+});
+
+afterEach(async () => rm(root, { recursive: true, force: true }));
+
+function sharedJob(name: string, body: string): string {
+  return [
+    "---",
+    `id: ${name}`,
+    'agent: "piren"',
+    `schedule: "0 7 * * *"`,
+    "enabled: true",
+    "device_policy:",
+    "  mode: highest_priority",
+    "  allowed_devices:",
+    "    - heimdall",
+    "    - pi4-office",
+    "stale_after_seconds: 120",
+    "---",
+    "",
+    "# Prompt",
+    "",
+    body,
+    "",
+  ].join("\n");
+}
+
+describe("ADR-0019 cron job file reading", () => {
+  it("reads a shared cron job file and parses its frontmatter and prompt", async () => {
+    await writeFile(join(vault, "cron", "jobs", "nightly-digest.md"), sharedJob("nightly-digest", "Summarize project logs."));
+
+    const job = await readCronJob({ vaultRoot: vault, path: "cron/jobs/nightly-digest.md", now: () => new Date("2026-06-25T07:00:00Z") });
+
+    expect(job.id).toBe("nightly-digest");
+    expect(job.agent).toBe("piren");
+    expect(job.schedule.raw).toBe("0 7 * * *");
+    expect(job.enabled).toBe(true);
+    expect(job.path).toBe("cron/jobs/nightly-digest.md");
+    expect(job.scope).toBe("shared");
+    expect(job.prompt).toContain("Summarize project logs.");
+    expect(job.devicePolicy.mode).toBe("highest_priority");
+    expect(job.devicePolicy.allowedDevices).toEqual(["heimdall", "pi4-office"]);
+    expect(job.staleAfterSeconds).toBe(120);
+  });
+
+  it("reads an agent-scoped cron job and marks its scope as the agent name", async () => {
+    await writeFile(
+      join(vault, "team", "piren", "cron", "jobs", "check-github.md"),
+      [
+        "---",
+        'id: check-github',
+        'agent: "piren"',
+        'schedule: "15m"',
+        "enabled: true",
+        "---",
+        "",
+        "# Prompt",
+        "",
+        "Check open PRs.",
+        "",
+      ].join("\n"),
+    );
+
+    const job = await readCronJob({ vaultRoot: vault, path: "team/piren/cron/jobs/check-github.md", now: () => new Date("2026-06-25T07:00:00Z") });
+
+    expect(job.scope).toBe("piren");
+    expect(job.schedule.kind).toBe("interval");
+    expect(job.devicePolicy.mode).toBe("highest_priority");
+    expect(job.devicePolicy.allowedDevices).toEqual([]);
+    expect(job.staleAfterSeconds).toBeUndefined();
+  });
+});
+
+describe("ADR-0019 cron job listing", () => {
+  it("lists shared and agent-scoped jobs together, skipping claimed files", async () => {
+    await writeFile(join(vault, "cron", "jobs", "nightly-digest.md"), sharedJob("nightly-digest", "Summarize logs."));
+    await writeFile(
+      join(vault, "team", "piren", "cron", "jobs", "check-github.md"),
+      [
+        "---",
+        "id: check-github",
+        'agent: "piren"',
+        'schedule: "15m"',
+        "enabled: true",
+        "---",
+        "",
+        "# Prompt",
+        "",
+        "Check open PRs.",
+        "",
+      ].join("\n"),
+    );
+    // A claimed job in flight should be skipped from the pending list.
+    await writeFile(
+      join(vault, "cron", "jobs", "in-flight.claimed.heimdall.md"),
+      sharedJob("in-flight", "Should be skipped while claimed."),
+    );
+
+    const result = await listCronJobs({ vaultRoot: vault, agentName: "piren", now: () => new Date("2026-06-25T07:00:00Z") });
+
+    const ids = result.jobs.map((job) => job.id).sort();
+    expect(ids).toEqual(["check-github", "nightly-digest"]);
+    const shared = result.jobs.find((job) => job.id === "nightly-digest");
+    expect(shared?.scope).toBe("shared");
+    const scoped = result.jobs.find((job) => job.id === "check-github");
+    expect(scoped?.scope).toBe("piren");
+  });
+
+  it("returns an empty job list when neither directory exists", async () => {
+    const result = await listCronJobs({ vaultRoot: vault, agentName: "ghost", now: () => new Date("2026-06-25T07:00:00Z") });
+    expect(result.jobs).toEqual([]);
+  });
+});
 
 describe("ADR-0019 cron schedule parsing", () => {
   it("parses a five-field cron string into a schedule", () => {
