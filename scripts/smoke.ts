@@ -294,6 +294,63 @@ async function main() {
     }
     console.log("skill_candidate_write Projects/Piren/skill-candidates: ok");
 
+    // ADR-0019: vault-backed cron. A shared job file is listed as due, claimed
+    // atomically, run with an inspectable run record, restored with last_run
+    // set, and visible in cron_runs history. Secrets never go in job files.
+    await mkdir(join(fixture.vault, "cron", "jobs"), { recursive: true });
+    await writeFile(
+      join(fixture.vault, "cron", "jobs", "smoke-digest.md"),
+      [
+        "---",
+        "id: smoke-digest",
+        'agent: "thor"',
+        'schedule: "0 7 * * *"',
+        "enabled: true",
+        "---",
+        "",
+        "# Prompt",
+        "",
+        "Summarize smoke project logs.",
+        "",
+      ].join("\n"),
+    );
+    const cronList = await pi.tools.cron_list.execute("smoke-cron-list", {});
+    if (cronList.isError || !cronList.details.jobs.some((j: any) => j.id === "smoke-digest")) {
+      throw new Error(`cron_list smoke failed: ${cronList.content[0].text}`);
+    }
+    console.log("cron_list cron/jobs: ok");
+
+    const cronClaim = await pi.tools.cron_claim.execute("smoke-cron-claim", { job_path: "cron/jobs/smoke-digest.md", device_id: "heimdall" });
+    if (cronClaim.isError) throw new Error(`cron_claim smoke failed: ${cronClaim.content[0].text}`);
+    if (cronClaim.details.path !== "cron/jobs/smoke-digest.claimed.heimdall.md") {
+      throw new Error(`cron_claim did not report expected claimed path: ${cronClaim.details.path}`);
+    }
+    console.log("cron_claim cron/jobs: ok");
+
+    const cronRecord = await pi.tools.cron_record_run.execute("smoke-cron-record", {
+      job_path: cronClaim.details.path,
+      status: "completed",
+      result: "Smoke cron digest produced.",
+      started_at: "2026-06-25T07:00:05.000Z",
+      finished_at: "2026-06-25T07:00:42.000Z",
+    });
+    if (cronRecord.isError) throw new Error(`cron_record_run smoke failed: ${cronRecord.content[0].text}`);
+    const cronRunContent = await readFile(join(fixture.vault, cronRecord.details.runPath), "utf8");
+    if (!cronRunContent.includes("status: completed") || !cronRunContent.includes("device: heimdall") || !cronRunContent.includes("Smoke cron digest produced.")) {
+      throw new Error("cron run record did not contain expected content");
+    }
+    const cronRestored = await readFile(join(fixture.vault, "cron", "jobs", "smoke-digest.md"), "utf8");
+    if (!cronRestored.includes("last_run: 2026-06-25T07:00:42.000Z")) {
+      throw new Error("cron job was not restored with last_run set");
+    }
+    console.log("cron_record_run cron/runs: ok");
+
+    const cronRuns = await pi.tools.cron_runs.execute("smoke-cron-runs", {});
+    if (cronRuns.isError || !cronRuns.details.runs.some((r: any) => r.jobId === "smoke-digest")) {
+      throw new Error(`cron_runs smoke failed: ${cronRuns.content[0].text}`);
+    }
+    console.log("cron_runs history: ok");
+
     const sentTask = await pi.tools.send_to_agent.execute("smoke-send", {
       to: "thor",
       title: "Check smoke inbox",

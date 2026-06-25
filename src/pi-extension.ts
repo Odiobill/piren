@@ -20,6 +20,17 @@ import {
   runbookWrite,
   skillCandidateWrite,
 } from "./knowledge.js";
+import {
+  listCronJobs,
+  listCronRuns,
+  claimCronJob,
+  recordCronRun,
+  selectOwningDevice,
+  listActiveDevices,
+  isScheduleDue,
+  type CronSchedule,
+  type IsScheduleDueOptions,
+} from "./cron.js";
 
 const PIREN_TOOL_NAMES = [
   "vault_read",
@@ -42,6 +53,10 @@ const PIREN_TOOL_NAMES = [
   "project_update_handoff",
   "runbook_write",
   "skill_candidate_write",
+  "cron_list",
+  "cron_claim",
+  "cron_record_run",
+  "cron_runs",
 ];
 
 function textResult(text: string, details: unknown = {}) {
@@ -68,6 +83,16 @@ function formatList(entries: { path: string; type: string; bytes?: number }[]): 
 function formatInboxTasks(tasks: { status: string; title: string; path: string; updated: string }[]): string {
   if (tasks.length === 0) return "No inbox tasks.";
   return tasks.map((task) => `${task.status}\t${task.title}\t${task.path}\tupdated=${task.updated}`).join("\n");
+}
+
+function formatCronJobs(jobs: { id: string; scope: string; schedule: string; agent: string; enabled: boolean; path: string }[], dueIds: Set<string>): string {
+  if (jobs.length === 0) return "No cron jobs.";
+  return jobs.map((job) => `${dueIds.has(job.id) ? "due" : "idle"}\t${job.id}\t${job.scope}\t${job.schedule}\t${job.agent}\t${job.path}`).join("\n");
+}
+
+function formatCronRuns(runs: { status: string; jobId: string; device: string; startedAt: string; path: string }[]): string {
+  if (runs.length === 0) return "No cron runs.";
+  return runs.map((run) => `${run.status}\t${run.jobId}\t${run.device}\t${run.startedAt}\t${run.path}`).join("\n");
 }
 
 function defaultDeviceId(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): string {
@@ -115,6 +140,28 @@ function localCacheDir(context: PirenContext, env: NodeJS.ProcessEnv | Record<st
   return env.PIREN_LOCAL_CACHE_DIR || join(homedir(), ".local", "state", "piren", "cache", context.agentName);
 }
 
+// Default staleness for cron device heartbeats. A device whose last_seen is
+// older than this is treated as offline and its claims are recoverable. Mirrors
+// the inbox stale-claim principle; overridable per-job via stale_after_seconds.
+const DEFAULT_CRON_STALE_MS = 5 * 60 * 1000;
+
+function cronStaleAfterMs(env: NodeJS.ProcessEnv | Record<string, string | undefined>): number {
+  const envValue = env.PIREN_CRON_STALE_MS;
+  if (envValue !== undefined && envValue.trim() !== "") {
+    const parsed = Number(envValue);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_CRON_STALE_MS;
+}
+
+// Build isScheduleDue options respecting exactOptionalPropertyTypes: lastRun
+// is omitted (never passed as explicit undefined) when the job has no last run.
+function jobIsDue(job: { schedule: CronSchedule; lastRun?: Date }, now: Date): boolean {
+  const options: IsScheduleDueOptions = { schedule: job.schedule, now };
+  if (job.lastRun !== undefined) options.lastRun = job.lastRun;
+  return isScheduleDue(options);
+}
+
 function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string {
   const lines = [
     "# Piren Context",
@@ -147,6 +194,10 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "- project_update_handoff(project, content)",
     "- runbook_write(project, title, content)",
     "- skill_candidate_write(name, description, body, scope?)",
+    "- cron_list()",
+    "- cron_claim(job_path, stale_after_ms?)",
+    "- cron_record_run(job_path, status, result, started_at, finished_at)",
+    "- cron_runs(job_id?)",
     "All vault paths resolve relative to vault_root and traversal outside the vault is rejected.",
     "",
     "## Knowledge Lifecycle",
@@ -163,6 +214,13 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "Use inbox_list() only when the steward explicitly asks you to check the inbox,",
     "or when running in worker mode (PIREN_WORKER=1). In a direct conversation,",
     "wait for the steward to direct the work.",
+    "",
+    "## Vault-Backed Cron (ADR-0019)",
+    "Scheduled work is file-backed and inspectable. cron_list() shows due jobs,",
+    "cron_claim() atomically claims one for this device, cron_record_run() writes",
+    "an inspectable run record and restores the job, and cron_runs(job_id?) shows",
+    "history. Do not run cron jobs automatically in a direct conversation; worker",
+    "mode surfaces due jobs. Secrets never belong in cron job files.",
   ];
 
   const skillsSection = formatSkillCatalogForContext(skills);
@@ -702,6 +760,137 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
     },
   });
 
+  // --- Vault-backed cron (ADR-0019) -------------------------------------
+  // These tools are inspectable and available in any session, but the worker
+  // surfacing (session_start below) is the only path that runs jobs
+  // automatically. In a direct conversation the agent should only use them when
+  // the steward asks.
+
+  pi.registerTool({
+    name: "cron_list",
+    label: "Cron List",
+    description: "List unclaimed, enabled cron jobs from cron/jobs/ and team/<agent>/cron/jobs/, marking each as due or idle based on its schedule and last run.",
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        const now = new Date();
+        const result = await listCronJobs({ vaultRoot: context.vaultRoot, agentName: context.agentName, now: () => now });
+        const dueIds = new Set<string>();
+        for (const job of result.jobs) {
+          if (jobIsDue(job, now)) {
+            dueIds.add(job.id);
+          }
+        }
+        const compact = result.jobs.map((job) => ({
+          id: job.id,
+          scope: job.scope,
+          schedule: job.schedule.describe(),
+          agent: job.agent,
+          enabled: job.enabled,
+          path: job.path,
+          due: dueIds.has(job.id),
+        }));
+        return textResult(formatCronJobs(compact, dueIds), { jobs: compact });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "cron_claim",
+    label: "Cron Claim",
+    description: "Atomically claim one cron job for this device by renaming it to a .claimed.<device>.md path. Worker-mode coordination primitive; do not call automatically in direct conversations.",
+    parameters: Type.Object({
+      job_path: Type.String({ description: "Job file path relative to vault root, under cron/jobs/ or team/<agent>/cron/jobs/" }),
+      device_id: Type.Optional(Type.String({ description: "Claiming device id, lowercase kebab-case. Defaults to sanitized hostname." })),
+      stale_after_ms: Type.Optional(Type.Number({ description: "If the job is already claimed, reclaim it only when the previous device heartbeat is older than this many milliseconds." })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const claimOptions = {
+          vaultRoot: context.vaultRoot,
+          jobPath: params.job_path,
+          deviceId: params.device_id || defaultDeviceId(),
+          agentName: context.agentName,
+        } as {
+          vaultRoot: string;
+          jobPath: string;
+          deviceId: string;
+          agentName: string;
+          staleAfterMs?: number;
+        };
+        if (params.stale_after_ms !== undefined) claimOptions.staleAfterMs = params.stale_after_ms;
+        const result = await claimCronJob(claimOptions);
+        return textResult(`Claimed cron job ${result.originalPath} as ${result.path}`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "cron_record_run",
+    label: "Cron Record Run",
+    description: "Write an inspectable cron run record under cron/runs/ or team/<agent>/cron/runs/ and restore the unclaimed job with last_run updated. Use status 'completed' or 'failed'.",
+    parameters: Type.Object({
+      job_path: Type.String({ description: "The CLAIMED job path returned by cron_claim, e.g. cron/jobs/x.claimed.<device>.md" }),
+      status: Type.String({ description: "Run status: completed or failed" }),
+      result: Type.String({ description: "Run result summary / output text" }),
+      started_at: Type.String({ description: "ISO timestamp when the run started" }),
+      finished_at: Type.String({ description: "ISO timestamp when the run finished" }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const status = params.status as "completed" | "failed";
+        if (status !== "completed" && status !== "failed") {
+          throw new Error("status must be 'completed' or 'failed'");
+        }
+        // The claiming device is encoded in the claimed path
+        // (jobs/<id>.claimed.<device>.md); trust it rather than the runtime
+        // hostname so the run record reflects who actually claimed the job.
+        const deviceMatch = params.job_path.match(/\.claimed\.([a-z][a-z0-9-]*)\.md$/i);
+        const deviceId = deviceMatch?.[1] ?? defaultDeviceId();
+        const result = await recordCronRun({
+          vaultRoot: context.vaultRoot,
+          jobPath: params.job_path,
+          agentName: context.agentName,
+          deviceId,
+          status,
+          result: params.result,
+          startedAt: new Date(params.started_at),
+          finishedAt: new Date(params.finished_at),
+        });
+        return textResult(`Recorded cron run ${result.runPath} and restored job ${result.restoredJobPath}`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "cron_runs",
+    label: "Cron Runs",
+    description: "List cron run records newest-first across cron/runs/ and team/<agent>/cron/runs/. Optionally filter by job_id. Read-only.",
+    parameters: Type.Object({
+      job_id: Type.Optional(Type.String({ description: "Optional job id to filter run records" })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const listOptions = { vaultRoot: context.vaultRoot, agentName: context.agentName } as {
+          vaultRoot: string;
+          agentName: string;
+          jobId?: string;
+        };
+        if (params.job_id !== undefined) listOptions.jobId = params.job_id;
+        const result = await listCronRuns(listOptions);
+        return textResult(formatCronRuns(result.runs), { runs: result.runs });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
   pi.registerCommand("piren_status", {
     description: "Show Piren agent, vault, runnable-agent policy, packages, tools, and degraded write mode",
     handler: async (_args, ctx) => {
@@ -736,6 +925,37 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
       void poll();
     }, await pollIntervalMs(context, env));
     interval.unref?.();
+
+    // ADR-0019: surface due cron jobs this device should own. Worker mode reads
+    // job files, checks due-ness and active-device-priority ownership, and
+    // notifies the agent. It does not auto-run jobs; the agent claims and runs
+    // them via cron_claim + cron_record_run so every run is inspectable.
+    const surfaceCron = async () => {
+      try {
+        const now = new Date();
+        const staleMs = cronStaleAfterMs(env);
+        const jobsResult = await listCronJobs({ vaultRoot: context.vaultRoot, agentName: context.agentName, now: () => now });
+        const devices = await listActiveDevices({ vaultRoot: context.vaultRoot, agentName: context.agentName, staleAfterMs: staleMs, now: () => now });
+        const owned: string[] = [];
+        for (const job of jobsResult.jobs) {
+          if (!jobIsDue(job, now)) continue;
+          const ownedResult = selectOwningDevice({ devicePolicy: job.devicePolicy, activeDevices: devices.devices, deviceId: device.deviceId });
+          if (ownedResult.owns) owned.push(`${job.id}\t${job.scope}\t${job.schedule.describe()}\t${job.path}`);
+        }
+        if (owned.length > 0) {
+          ctx.ui.notify(`Worker cron: ${owned.length} due job(s) owned by this device\n${owned.join("\n")}\nUse cron_claim then cron_record_run to execute.`, "info");
+        } else {
+          ctx.ui.notify("Worker cron: no due jobs owned by this device.", "info");
+        }
+      } catch (error) {
+        ctx.ui.notify(`Worker cron surface failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    };
+    await surfaceCron();
+    const cronInterval = setInterval(() => {
+      void surfaceCron();
+    }, await pollIntervalMs(context, env));
+    cronInterval.unref?.();
   });
 
   (pi.on as any)("before_agent_start", async () => ({

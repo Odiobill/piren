@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isScheduleDue, parseSchedule } from "../src/cron.js";
-import { claimCronJob, listCronJobs, listActiveDevices, recordCronRun, readCronJob, selectOwningDevice } from "../src/cron.js";
+import { claimCronJob, listCronJobs, listActiveDevices, listCronRuns, recordCronRun, readCronJob, selectOwningDevice } from "../src/cron.js";
 
 let root: string;
 let vault: string;
@@ -351,6 +351,37 @@ describe("ADR-0019 cron run record and last_run update", () => {
     expect(runContent).toContain("could not reach the model provider");
     // Even on failure the job is restored so it can be retried next cycle.
     await expect(readFile(join(vault, "cron", "jobs", "nightly-digest.md"), "utf8")).resolves.toBeDefined();
+  });
+});
+
+describe("ADR-0019 cron run history listing", () => {
+  it("lists run records newest-first across shared and agent-scoped run dirs", async () => {
+    await mkdir(join(vault, "cron", "runs"), { recursive: true });
+    await mkdir(join(vault, "team", "piren", "cron", "runs"), { recursive: true });
+    await writeFile(
+      join(vault, "cron", "runs", "20260624T070005000Z-nightly-digest.md"),
+      ["---", "job_id: nightly-digest", "agent: piren", "device: heimdall", "status: completed", "started_at: 2026-06-24T07:00:05.000Z", "finished_at: 2026-06-24T07:00:42.000Z", "---", "", "# Old run", "", "Yesterday summary.", ""].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "piren", "cron", "runs", "20260625T070005000Z-check-github.md"),
+      ["---", "job_id: check-github", "agent: piren", "device: heimdall", "status: completed", "started_at: 2026-06-25T07:00:05.000Z", "finished_at: 2026-06-25T07:00:10.000Z", "---", "", "# Today run", "", "3 open PRs.", ""].join("\n"),
+    );
+
+    const result = await listCronRuns({ vaultRoot: vault, agentName: "piren" });
+
+    expect(result.runs.map((r) => r.jobId)).toEqual(["check-github", "nightly-digest"]);
+    const newest = result.runs[0];
+    expect(newest?.status).toBe("completed");
+    expect(newest?.path).toBe("team/piren/cron/runs/20260625T070005000Z-check-github.md");
+  });
+
+  it("filters run records by job_id when provided", async () => {
+    await mkdir(join(vault, "cron", "runs"), { recursive: true });
+    await writeFile(join(vault, "cron", "runs", "20260624T070005000Z-nightly-digest.md"), ["---", "job_id: nightly-digest", "agent: piren", "device: heimdall", "status: completed", "started_at: 2026-06-24T07:00:05.000Z", "finished_at: 2026-06-24T07:00:42.000Z", "---", "", "x", ""].join("\n"));
+    await writeFile(join(vault, "cron", "runs", "20260625T070005000Z-other.md"), ["---", "job_id: other", "agent: piren", "device: heimdall", "status: failed", "started_at: 2026-06-25T07:00:05.000Z", "finished_at: 2026-06-25T07:00:08.000Z", "---", "", "y", ""].join("\n"));
+
+    const result = await listCronRuns({ vaultRoot: vault, agentName: "piren", jobId: "nightly-digest" });
+    expect(result.runs.map((r) => r.jobId)).toEqual(["nightly-digest"]);
   });
 });
 

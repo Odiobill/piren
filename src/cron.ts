@@ -767,3 +767,86 @@ export async function listCronJobs(options: ListCronJobsOptions): Promise<ListCr
   jobs.sort((a, b) => a.id.localeCompare(b.id) || a.path.localeCompare(b.path));
   return { agentName: options.agentName, jobs };
 }
+
+// ---------------------------------------------------------------------------
+// Run history listing
+// ---------------------------------------------------------------------------
+
+export interface CronRunSummary {
+  jobId: string;
+  path: string;
+  absolutePath: string;
+  agent: string;
+  device: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export interface ListCronRunsOptions {
+  vaultRoot: string;
+  agentName: string;
+  /** When set, only return runs whose job_id matches. */
+  jobId?: string;
+}
+
+export interface ListCronRunsResult {
+  agentName: string;
+  runs: CronRunSummary[];
+}
+
+function parseRunFrontmatter(content: string, path: string): Record<string, string> {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  if (!match) {
+    throw new Error(`Cron run is missing frontmatter: ${path}`);
+  }
+  const fields: Record<string, string> = {};
+  for (const line of (match[1] ?? "").split("\n")) {
+    const lineMatch = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (lineMatch) fields[lineMatch[1] ?? ""] = lineMatch[2] ?? "";
+  }
+  return fields;
+}
+
+/**
+ * Read run records from cron/runs/ (shared) and team/<agent>/cron/runs/
+ * (scoped), newest-first. Missing directories contribute an empty list.
+ * Malformed run records are skipped, not fatal. Optionally filter by job_id.
+ */
+export async function listCronRuns(options: ListCronRunsOptions): Promise<ListCronRunsResult> {
+  const root = resolve(options.vaultRoot);
+  const directories = [sharedRunsPath(root), agentRunsPath(root, options.agentName)];
+  const runs: CronRunSummary[] = [];
+  for (const directory of directories) {
+    if (!(await pathExists(directory))) continue;
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const absolutePath = join(directory, entry.name);
+      const vaultPath = relative(root, absolutePath);
+      try {
+        const content = await readFile(absolutePath, "utf8");
+        const fields = parseRunFrontmatter(content, vaultPath);
+        const jobId = fields.job_id ?? "";
+        if (!jobId) continue;
+        if (options.jobId !== undefined && jobId !== options.jobId) continue;
+        runs.push({
+          jobId,
+          path: vaultPath,
+          absolutePath,
+          agent: fields.agent ?? "",
+          device: fields.device ?? "",
+          status: fields.status ?? "",
+          startedAt: fields.started_at ?? "",
+          finishedAt: fields.finished_at ?? "",
+        });
+      } catch {
+        // Skip unreadable run records.
+      }
+    }
+  }
+  // Newest-first by started_at, then path for stable ordering. Files are named
+  // <compactTimestamp>-<jobId>.md, so the startedAt timestamp sorts correctly.
+  runs.sort((a, b) => (a.startedAt > b.startedAt ? -1 : a.startedAt < b.startedAt ? 1 : b.path.localeCompare(a.path)));
+  return { agentName: options.agentName, runs };
+}

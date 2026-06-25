@@ -60,7 +60,7 @@ describe("Pi extension", () => {
     expect(deviceRecord.status).toBe("active");
     expect(deviceRecord.last_seen).toBeTruthy();
 
-    expect(Object.keys(pi.tools).sort()).toEqual(["decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
+    expect(Object.keys(pi.tools).sort()).toEqual(["cron_claim", "cron_list", "cron_record_run", "cron_runs", "decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
     expect(pi.commands.piren_status).toBeDefined();
 
     const notifications: Array<{ message: string; level: string }> = [];
@@ -74,7 +74,7 @@ describe("Pi extension", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.level).toBe("info");
     expect(notifications[0]?.message).toContain("Piren status");
-    expect(notifications[0]?.message).toContain("registered_tools: decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
+    expect(notifications[0]?.message).toContain("registered_tools: cron_claim, cron_list, cron_record_run, cron_runs, decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
     expect(notifications[0]?.message).toContain("write_mode: authoritative-vault");
 
     const alert = await pi.tools.flag_steward.execute("call-alert", {
@@ -630,5 +630,103 @@ describe("Pi extension", () => {
       },
     });
     expect(notifications[0]?.message).toContain("packages: <none>");
+  });
+});
+
+describe("Pi extension cron tools (ADR-0019)", () => {
+  async function loadCronExtension(env: Record<string, string | undefined> = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" }) {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env, configPath: join(root, "missing-config.yml") });
+    return pi;
+  }
+
+  async function writeSharedJob(name: string, schedule: string, agent: string): Promise<void> {
+    await mkdir(join(root, "vault", "cron", "jobs"), { recursive: true });
+    await writeFile(
+      join(root, "vault", "cron", "jobs", `${name}.md`),
+      ["---", `id: ${name}`, `agent: "${agent}"`, `schedule: "${schedule}"`, "enabled: true", "---", "", "# Prompt", "", `Do ${name}.`, ""].join("\n"),
+    );
+  }
+
+  it("lists, claims, records a run for, and shows history for a cron job", async () => {
+    await writeSharedJob("nightly-digest", "0 7 * * *", "thor");
+    const pi = await loadCronExtension();
+
+    const list = await pi.tools.cron_list.execute("cron-list", {});
+    expect(list.isError).toBeUndefined();
+    expect(list.content[0].text).toContain("nightly-digest");
+    expect(list.details.jobs[0].id).toBe("nightly-digest");
+    expect(list.details.jobs[0].scope).toBe("shared");
+
+    const claim = await pi.tools.cron_claim.execute("cron-claim", { job_path: "cron/jobs/nightly-digest.md", device_id: "heimdall" });
+    expect(claim.isError).toBeUndefined();
+    expect(claim.details.path).toBe("cron/jobs/nightly-digest.claimed.heimdall.md");
+
+    const record = await pi.tools.cron_record_run.execute("cron-record", {
+      job_path: claim.details.path,
+      status: "completed",
+      result: "Digest produced, no urgent items.",
+      started_at: "2026-06-25T07:00:05.000Z",
+      finished_at: "2026-06-25T07:00:42.000Z",
+    });
+    expect(record.isError).toBeUndefined();
+    expect(record.details.runPath).toBe("cron/runs/20260625T070005000Z-nightly-digest.md");
+    expect(record.details.restoredJobPath).toBe("cron/jobs/nightly-digest.md");
+
+    const runRecord = await readFile(join(root, "vault", record.details.runPath), "utf8");
+    expect(runRecord).toContain("status: completed");
+    expect(runRecord).toContain("device: heimdall");
+
+    const restored = await readFile(join(root, "vault", "cron", "jobs", "nightly-digest.md"), "utf8");
+    expect(restored).toContain("last_run: 2026-06-25T07:00:42.000Z");
+
+    const runs = await pi.tools.cron_runs.execute("cron-runs", {});
+    expect(runs.isError).toBeUndefined();
+    expect(runs.details.runs[0].jobId).toBe("nightly-digest");
+    expect(runs.details.runs[0].status).toBe("completed");
+
+    const filtered = await pi.tools.cron_runs.execute("cron-runs-filtered", { job_id: "nightly-digest" });
+    expect(filtered.details.runs).toHaveLength(1);
+  });
+
+  it("surfaces due cron jobs owned by this device in worker mode without auto-running them", async () => {
+    await writeSharedJob("check-github", "15m", "thor");
+    const configPath = join(root, "worker-config.yml");
+    await writeFile(configPath, "vault_root: " + join(root, "vault") + "\n" + "allowed_agents:\n" + "  - thor\n");
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_WORKER: "1", PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath,
+    });
+
+    const notifications: Array<{ message: string; level: string }> = [];
+    await pi.events.session_start?.[0]?.({}, {
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+
+    // The worker surfaces the due job but does NOT claim or run it: no run
+    // record file should exist, and the job file should still be unclaimed.
+    expect(notifications.some((n) => n.message.includes("Worker cron: 1 due job(s) owned by this device") && n.message.includes("check-github"))).toBe(true);
+    expect(notifications.some((n) => n.message.includes("Use cron_claim then cron_record_run"))).toBe(true);
+    await expect(readFile(join(root, "vault", "cron", "runs"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(root, "vault", "cron", "jobs", "check-github.md"), "utf8")).resolves.toBeDefined();
+  });
+
+  it("includes the vault-backed cron tools and guidance in the context prompt", async () => {
+    const pi = await loadCronExtension();
+    const beforeStart = pi.events.before_agent_start?.[0];
+    expect(beforeStart).toBeDefined();
+    const result = await beforeStart?.();
+    const content = (result as { message: { content: string } }).message.content;
+    expect(content).toContain("cron_list()");
+    expect(content).toContain("cron_claim(job_path, stale_after_ms?)");
+    expect(content).toContain("cron_record_run(job_path, status, result, started_at, finished_at)");
+    expect(content).toContain("cron_runs(job_id?)");
+    expect(content).toContain("Vault-Backed Cron (ADR-0019)");
   });
 });
