@@ -370,6 +370,120 @@ export interface ListCronJobsResult {
   jobs: CronJob[];
 }
 
+// ---------------------------------------------------------------------------
+// Device ownership (ADR-0019: active-device-priority selection)
+// ---------------------------------------------------------------------------
+
+/**
+ * An active, heartbeat-fresh device eligible to run cron jobs. Priority is
+ * numeric and lower means higher priority, mirroring devices.ts (default 10).
+ */
+export interface ActiveDevice {
+  deviceId: string;
+  priority: number;
+}
+
+export interface SelectOwningDeviceOptions {
+  devicePolicy: CronDevicePolicy;
+  activeDevices: ActiveDevice[];
+  deviceId: string;
+}
+
+export interface SelectOwningDeviceResult {
+  owns: boolean;
+  /** The device that owns the job among eligible active devices. */
+  owner: string;
+  /** Devices considered eligible after applying allowed_devices. */
+  eligible: ActiveDevice[];
+}
+
+function devicePriorityRank(a: ActiveDevice, b: ActiveDevice): number {
+  // Lower priority number = higher priority. Tie-break on device id for
+  // deterministic ownership across devices.
+  if (a.priority !== b.priority) return a.priority - b.priority;
+  return a.deviceId.localeCompare(b.deviceId);
+}
+
+/**
+ * Decide whether the current device owns a job under active-device-priority
+ * selection (ADR-0019). Eligibility is restricted to active devices whose id
+ * appears in device_policy.allowed_devices when that list is non-empty. Among
+ * eligible devices, the highest-priority (lowest number) one owns the job.
+ *
+ * Pure: takes the already-filtered active device list, so callers read device
+ * heartbeats once and pass the fresh set in.
+ */
+export function selectOwningDevice(options: SelectOwningDeviceOptions): SelectOwningDeviceResult {
+  const { devicePolicy, activeDevices, deviceId } = options;
+  const allowList = devicePolicy.allowedDevices;
+  const eligible = allowList.length > 0
+    ? activeDevices.filter((device) => allowList.includes(device.deviceId))
+    : [...activeDevices];
+  eligible.sort(devicePriorityRank);
+  const owner = eligible[0]?.deviceId ?? "";
+  return { owns: owner === deviceId, owner, eligible };
+}
+
+// ---------------------------------------------------------------------------
+// Active device discovery (reads team/<agent>/devices/*.json heartbeats)
+// ---------------------------------------------------------------------------
+
+export interface ListActiveDevicesOptions {
+  vaultRoot: string;
+  agentName: string;
+  /** A device whose heartbeat is older than now - staleAfterMs is stale. */
+  staleAfterMs: number;
+  now?: () => Date;
+}
+
+export interface ListActiveDevicesResult {
+  agentName: string;
+  devices: ActiveDevice[];
+}
+
+interface DeviceHeartbeat {
+  device_id?: unknown;
+  priority?: unknown;
+  status?: unknown;
+  last_seen?: unknown;
+}
+
+/**
+ * Read device heartbeat records from team/<agent>/devices/*.json and return
+ * the active, non-stale devices. Reuses the same JSON format and staleness
+ * principle as inbox task claiming: a device whose last_seen is older than
+ * now - staleAfterMs is considered stale and excluded. Malformed or partial
+ * records are skipped, not fatal.
+ */
+export async function listActiveDevices(options: ListActiveDevicesOptions): Promise<ListActiveDevicesResult> {
+  const root = resolve(options.vaultRoot);
+  const now = options.now ?? (() => new Date());
+  const nowMs = now().getTime();
+  const devicesDir = join(root, "team", options.agentName, "devices");
+  const devices: ActiveDevice[] = [];
+  if (!(await pathExists(devicesDir))) {
+    return { agentName: options.agentName, devices };
+  }
+  const entries = await readdir(devicesDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    try {
+      const parsed = JSON.parse(await readFile(join(devicesDir, entry.name), "utf8")) as DeviceHeartbeat;
+      if (typeof parsed.device_id !== "string") continue;
+      const lastSeen = typeof parsed.last_seen === "string" ? Date.parse(parsed.last_seen) : Number.NaN;
+      if (!Number.isFinite(lastSeen)) continue;
+      if (nowMs - lastSeen > options.staleAfterMs) continue;
+      const status = typeof parsed.status === "string" ? parsed.status : "active";
+      if (status !== "active" && status !== "idle") continue;
+      const priority = typeof parsed.priority === "number" && Number.isFinite(parsed.priority) ? parsed.priority : 10;
+      devices.push({ deviceId: parsed.device_id, priority });
+    } catch {
+      // Skip unreadable device records.
+    }
+  }
+  return { agentName: options.agentName, devices };
+}
+
 function isClaimedJobFile(name: string): boolean {
   return /\.claimed\.[a-z][a-z0-9-]*\.md$/i.test(name);
 }

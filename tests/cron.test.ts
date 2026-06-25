@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isScheduleDue, parseSchedule } from "../src/cron.js";
-import { listCronJobs, readCronJob } from "../src/cron.js";
+import { listCronJobs, listActiveDevices, readCronJob, selectOwningDevice } from "../src/cron.js";
 
 let root: string;
 let vault: string;
@@ -13,8 +13,13 @@ beforeEach(async () => {
   vault = join(root, "vault");
   await mkdir(join(vault, "cron", "jobs"), { recursive: true });
   await mkdir(join(vault, "team", "piren", "cron", "jobs"), { recursive: true });
+  await mkdir(join(vault, "team", "piren", "devices"), { recursive: true });
   await writeFile(join(vault, ".piren-vault"), "");
 });
+
+function deviceRecord(deviceId: string, priority: number, lastSeen: string, status = "active"): string {
+  return JSON.stringify({ device_id: deviceId, hostname: deviceId + ".local", priority, status, started_at: lastSeen, last_seen: lastSeen }, null, 2) + "\n";
+}
 
 afterEach(async () => rm(root, { recursive: true, force: true }));
 
@@ -124,6 +129,85 @@ describe("ADR-0019 cron job listing", () => {
   it("returns an empty job list when neither directory exists", async () => {
     const result = await listCronJobs({ vaultRoot: vault, agentName: "ghost", now: () => new Date("2026-06-25T07:00:00Z") });
     expect(result.jobs).toEqual([]);
+  });
+});
+
+describe("ADR-0019 cron device ownership selection", () => {
+  it("selects the highest-priority (lowest number) active device as the owner", () => {
+    const owned = selectOwningDevice({
+      devicePolicy: { mode: "highest_priority", allowedDevices: [] },
+      activeDevices: [
+        { deviceId: "pi4-office", priority: 10 },
+        { deviceId: "heimdall", priority: 1 },
+        { deviceId: "laptop", priority: 5 },
+      ],
+      deviceId: "heimdall",
+    });
+    expect(owned.owns).toBe(true);
+    expect(owned.owner).toBe("heimdall");
+  });
+
+  it("defers when a higher-priority device is active", () => {
+    const owned = selectOwningDevice({
+      devicePolicy: { mode: "highest_priority", allowedDevices: [] },
+      activeDevices: [
+        { deviceId: "heimdall", priority: 1 },
+        { deviceId: "pi4-office", priority: 10 },
+      ],
+      deviceId: "pi4-office",
+    });
+    expect(owned.owns).toBe(false);
+    expect(owned.owner).toBe("heimdall");
+  });
+
+  it("restricts eligibility to allowed_devices when the list is non-empty", () => {
+    const owned = selectOwningDevice({
+      devicePolicy: { mode: "highest_priority", allowedDevices: ["pi4-office"] },
+      activeDevices: [
+        { deviceId: "heimdall", priority: 1 },
+        { deviceId: "pi4-office", priority: 10 },
+      ],
+      deviceId: "pi4-office",
+    });
+    expect(owned.owns).toBe(true);
+    expect(owned.owner).toBe("pi4-office");
+  });
+
+  it("owns when the current device is the only active one, even if higher numbers exist offline", () => {
+    const owned = selectOwningDevice({
+      devicePolicy: { mode: "highest_priority", allowedDevices: [] },
+      activeDevices: [{ deviceId: "pi4-office", priority: 10 }],
+      deviceId: "pi4-office",
+    });
+    expect(owned.owns).toBe(true);
+    expect(owned.owner).toBe("pi4-office");
+  });
+});
+
+describe("ADR-0019 cron active device discovery", () => {
+  it("reads device heartbeats and filters out stale devices", async () => {
+    await writeFile(join(vault, "team", "piren", "devices", "heimdall.json"), deviceRecord("heimdall", 1, "2026-06-25T06:59:00Z"));
+    await writeFile(join(vault, "team", "piren", "devices", "pi4-office.json"), deviceRecord("pi4-office", 10, "2026-06-25T04:00:00Z"));
+
+    const result = await listActiveDevices({
+      vaultRoot: vault,
+      agentName: "piren",
+      staleAfterMs: 60 * 60 * 1000,
+      now: () => new Date("2026-06-25T07:00:00Z"),
+    });
+
+    expect(result.devices.map((d) => d.deviceId)).toEqual(["heimdall"]);
+    expect(result.devices[0]?.priority).toBe(1);
+  });
+
+  it("treats a missing devices directory as no active devices", async () => {
+    const result = await listActiveDevices({
+      vaultRoot: vault,
+      agentName: "ghost",
+      staleAfterMs: 60 * 1000,
+      now: () => new Date("2026-06-25T07:00:00Z"),
+    });
+    expect(result.devices).toEqual([]);
   });
 });
 
