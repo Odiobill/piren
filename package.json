@@ -12,7 +12,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('public','dist/public',{recursive:true})\"",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "clean-install:check": "tsx scripts/clean-install-check.ts"
   },
   "dependencies": {
     "typebox": "^1.0.55",
