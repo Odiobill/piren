@@ -153,8 +153,8 @@ npm run smoke
 Current baseline:
 
 ```text
-Test Files  33 passed (33)
-Tests       213 passed (213)
+Test Files  34 passed (34)
+Tests       226 passed (226)
 SMOKE PASSED
 ```
 
@@ -162,7 +162,7 @@ Smoke and tests must not depend on Davide's real `~/.config/piren/config.yml` un
 
 ## Current implementation surface
 
-Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 is in progress: tracer bullets 1 (RPC client), 2 (HTTP/SSE transport), 3 (read-only vault browser), 4 (model/thinking control, agent switching, context indicator), 5 (steering and approval gates), 6 (auth token gate for non-localhost binds), 7 (web UI frontend with static file serving), and 8 (session resume and abort) are done. `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented.
+Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 tracer bullets 1-8 are done (RPC client, HTTP/SSE transport, read-only vault browser, model/thinking control + agent switching, steering + approval gates, auth token gate, web UI frontend, session resume + abort). `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented. Vault skills (ADR-0014) and Pi package extensibility (ADR-0013) are implemented. The gateway-web-ui.md "Sequencing" section has the per-tracer-bullet detail; this section summarizes the stable surface.
 
 Gateway RPC surface (Phase 3, `src/gateway-rpc.ts`):
 
@@ -224,6 +224,14 @@ Vault skills (ADR-0014, implemented):
 - The loaded skills are injected into `contextPrompt` as an "Available Skills" section (name, source, description, full body) so the agent knows the procedures exist and can follow them when the steward asks or when a task matches.
 - `piren_status` reports `skills_loaded: <count>`.
 - Tests: `tests/skills.test.ts` (9 tests), `tests/pi-extension.test.ts` (2 new tests for context injection + 2 for status count).
+
+Pi package extensibility (ADR-0013, implemented):
+- `src/packages.ts` exports `resolvePackages(packages, resolver)` (pure core: takes a list of package names and an injected resolver, returns resolved entry points plus missing packages) and `defaultPackageResolver(name)` (production resolver using `require.resolve`). The resolver is injected so tests use a fake without a live node_modules tree. Declaration order is preserved; missing packages are collected rather than crashing resolution.
+- `LocalPirenConfig` in `src/bootstrap.ts` gained `packages?: string[]`. `PirenContext` gained `packages: string[]`, populated by `loadPirenContext` from the config's `packages` field.
+- `buildPiRunCommand` in `src/run.ts` resolves each declared package to its entry point and appends `--extension` flags after the core extension in declaration order. Missing packages are skipped (doctor reports them separately). The `packageResolver` option on `BuildPiRunCommandOptions` lets tests inject a fake resolver.
+- `piren doctor` validates that all declared packages are installed via `checkPackages` (status `warn` for missing, `ok` when all installed, omitted when no packages declared). `DoctorPirenOptions` gained `packageResolver` for test injection. `DoctorReport` gained `packages: string[]`. `formatDoctorReport` prints the declared packages.
+- `piren_status` reports declared packages as `packages: <list>` (or `packages: <none>`). The `PirenStatusReport` and `BuildPirenStatusReportOptions` gained `packages`; the status builder falls back to `context.packages`.
+- Tests: `tests/packages.test.ts` (5 tests), `tests/run.test.ts` (3 new for package extension flags), `tests/doctor.test.ts` (3 new for package validation), `tests/pi-extension.test.ts` (2 new for status reporting).
 
 ## Common pitfalls
 

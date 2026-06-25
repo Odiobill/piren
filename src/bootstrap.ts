@@ -17,6 +17,7 @@ export interface LocalPirenConfig {
   installation_id?: string;
   allowed_agents?: string[];
   excluded_agents?: string[];
+  packages?: string[];
   provider?: string;
   model?: string;
 }
@@ -30,6 +31,7 @@ export interface PirenContext {
   config: LocalPirenConfig;
   allowedAgents: string[];
   excludedAgents: string[];
+  packages: string[];
   paths: {
     stewardDirectives: string;
     soul: string;
@@ -180,6 +182,7 @@ export async function loadPirenContext(options: BootstrapOptions = {}): Promise<
     config,
     allowedAgents: normalizeStringArray(config.allowed_agents),
     excludedAgents: normalizeStringArray(config.excluded_agents),
+    packages: normalizeStringArray(config.packages),
     paths,
   };
 }

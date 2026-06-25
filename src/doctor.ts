@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { type BootstrapOptions, type LocalPirenConfig, resolveAgentDir } from "./bootstrap.js";
+import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -20,7 +21,12 @@ export interface DoctorReport {
   vaultRoot?: string;
   allowedAgents: string[];
   excludedAgents: string[];
+  packages: string[];
   checks: DoctorCheck[];
+}
+
+export interface DoctorPirenOptions extends BootstrapOptions {
+  packageResolver?: PackageEntryResolver | undefined;
 }
 
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
@@ -127,6 +133,15 @@ function checkInvalidAgentNames(allowedAgents: string[]): DoctorCheck | null {
   return null;
 }
 
+function checkPackages(packages: string[], resolver: PackageEntryResolver): DoctorCheck | null {
+  if (packages.length === 0) return null;
+  const { missing, resolved } = resolvePackages(packages, resolver);
+  if (missing.length > 0) {
+    return { id: "packages", status: "warn", message: `Declared packages not installed: ${missing.join(", ")}. Run npm install for these packages. Resolved ${resolved.length} of ${packages.length} declared.` };
+  }
+  return { id: "packages", status: "ok", message: `All ${packages.length} declared package(s) installed: ${packages.join(", ")}.` };
+}
+
 async function readProjectPackageJson(): Promise<{ dependencies?: Record<string, string> }> {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -160,11 +175,13 @@ async function checkPiCompatibility(): Promise<DoctorCheck> {
   }
 }
 
-export async function doctorPiren(options: BootstrapOptions = {}): Promise<DoctorReport> {
+export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<DoctorReport> {
   const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
   const config = await readYamlConfig(configPath);
   const allowedAgents = normalizeStringArray(config.allowed_agents);
   const excludedAgents = normalizeStringArray(config.excluded_agents);
+  const packages = normalizeStringArray(config.packages);
+  const resolver = options.packageResolver ?? defaultPackageResolver;
   const checks: DoctorCheck[] = [];
 
   const policyGap = checkPolicyGap(allowedAgents, config.vault_root === undefined ? undefined : resolve(config.vault_root));
@@ -176,6 +193,9 @@ export async function doctorPiren(options: BootstrapOptions = {}): Promise<Docto
   const invalidNames = checkInvalidAgentNames(allowedAgents);
   if (invalidNames) checks.push(invalidNames);
 
+  const packagesCheck = checkPackages(packages, resolver);
+  if (packagesCheck) checks.push(packagesCheck);
+
   let agentDir: string;
   try {
     agentDir = await resolveAgentDir(options);
@@ -183,7 +203,7 @@ export async function doctorPiren(options: BootstrapOptions = {}): Promise<Docto
     const message = error instanceof Error ? error.message : String(error);
     checks.push({ id: "bootstrap", status: "fail", message });
     checks.push(await checkPiCompatibility());
-    return { ok: false, allowedAgents, excludedAgents, checks };
+    return { ok: false, allowedAgents, excludedAgents, packages, checks };
   }
 
   const agentName = basename(agentDir);
@@ -209,6 +229,7 @@ export async function doctorPiren(options: BootstrapOptions = {}): Promise<Docto
     agentDir,
     allowedAgents,
     excludedAgents,
+    packages,
     checks,
   };
   if (vaultRoot !== undefined) report.vaultRoot = vaultRoot;
@@ -222,6 +243,7 @@ export function formatDoctorReport(report: DoctorReport): string {
   if (report.vaultRoot) lines.push(`vault_root: ${report.vaultRoot}`);
   lines.push(`allowed_agents: ${report.allowedAgents.length ? report.allowedAgents.join(", ") : "<not set>"}`);
   lines.push(`excluded_agents: ${report.excludedAgents.length ? report.excludedAgents.join(", ") : "<not set>"}`);
+  lines.push(`packages: ${report.packages.length ? report.packages.join(", ") : "<not set>"}`);
   lines.push("");
   for (const check of report.checks) {
     lines.push(`[${check.status.toUpperCase()}] ${check.id}: ${check.message}`);

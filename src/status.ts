@@ -11,6 +11,7 @@ export interface PirenStatusReport {
   vaultRoot: string;
   allowedAgents: string[];
   excludedAgents: string[];
+  packages: string[];
   vaultAvailable: boolean;
   degraded: boolean;
   writeMode: PirenWriteMode;
@@ -30,6 +31,7 @@ export interface BuildPirenStatusReportOptions {
   localOutboxDir: string;
   localCacheDir: string;
   skillCount?: number;
+  packages?: string[];
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -88,12 +90,14 @@ export async function buildPirenStatusReport(options: BuildPirenStatusReportOpti
   const cache = await inspectLocalCache(options.localCacheDir);
   const toolNames = [...options.toolNames].sort();
   const skillCount = options.skillCount ?? 0;
+  const packages = options.packages ?? options.context.packages ?? [];
   const base = {
     agentName: options.context.agentName,
     agentDir: options.context.agentDir,
     vaultRoot: options.context.vaultRoot,
     allowedAgents: [...options.context.allowedAgents],
     excludedAgents: [...options.context.excludedAgents],
+    packages: [...packages],
     localOutboxDir: options.localOutboxDir,
     localCacheDir: options.localCacheDir,
     cacheAvailable: cache.cacheAvailable,
@@ -133,6 +137,7 @@ export function formatPirenStatusReport(report: PirenStatusReport): string {
     `vault_root: ${report.vaultRoot}`,
     `allowed_agents: ${report.allowedAgents.length ? report.allowedAgents.join(", ") : "<not set>"}`,
     `excluded_agents: ${report.excludedAgents.length ? report.excludedAgents.join(", ") : "<not set>"}`,
+    `packages: ${report.packages.length ? report.packages.join(", ") : "<none>"}`,
     `vault_available: ${report.vaultAvailable}`,
     `degraded: ${report.degraded}`,
     `write_mode: ${report.writeMode}`,

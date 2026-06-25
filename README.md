@@ -4,7 +4,7 @@ Piren is a lightweight, local-first agent layer on top of Pi Coding Agent. It ke
 
 Core thesis: Piren is not only an agent launcher or task queue. It is a knowledge-maintenance harness for a stewarded team of agents, merging LLM-Wiki and Second Brain workflows with explicit multi-agent task execution. Agents should leave structured artifacts that improve future work, while the steward can inspect current project status, decisions, runbooks, concepts, logs, and handoffs directly in the vault.
 
-Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is in progress: tracer bullet 1 added a gateway RPC client that spawns Pi in `--mode rpc` and streams a response over strict LF-only JSONL, tracer bullet 2 added the HTTP/SSE transport (`piren gateway`) on that client, tracer bullet 3 added the read-only vault browser with path-boundary enforcement, tracer bullets 4 and 5 added model/thinking control, agent switching, steering, and approval gates, tracer bullet 6 added the auth token gate for non-localhost binds, and `piren ask` was added as a CLI one-shot wrapper over the same RPC client. All proven against a fake Pi process.
+Current state: Phase 0, Phase 0.5, and Phase 1 single-agent hardening are complete. Phase 2 file-based task inbox is complete with device registration, one-file-per-task creation, `send_to_agent`, task status updates, explicit non-mutating inbox listing, explicit atomic task claiming, stale claim recovery from expired device heartbeats, opt-in worker-mode inbox polling, and `flag_steward` alert creation. Phase 3 is complete through tracer bullet 8 (session resume and abort). The web UI is minimal per ADR-0012 (no model/thinking controls in the UI, API routes kept for external integrations). Vault skills (ADR-0014) load shared and agent-specific procedures into the context prompt. Pi package extensibility (ADR-0013) lets installations declare npm packages that export Pi extensions, loaded as additional `--extension` flags. All proven against a fake Pi process.
 
 Pinned Pi package: `@earendil-works/pi-coding-agent@0.79.9`.
 
@@ -27,7 +27,7 @@ CLI:
 
 Pi extension commands:
 
-- `piren_status`: reports selected agent, agent directory, vault root, runnable-agent policy, vault availability, registered Piren tools, local outbox path, local cache path, cache availability, cache files, and current write mode.
+- `piren_status`: reports selected agent, agent directory, vault root, runnable-agent policy, declared packages, vault availability, registered Piren tools, local outbox path, local cache path, cache availability, cache files, skills loaded, and current write mode.
 
 Bootstrap:
 
@@ -89,8 +89,8 @@ npm run smoke
 Expected current baseline:
 
 ```text
-Test Files  33 passed (33)
-Tests       213 passed (213)
+Test Files  34 passed (34)
+Tests       226 passed (226)
 SMOKE PASSED
 ```
 
@@ -148,6 +148,9 @@ allowed_agents:
   - piren
 excluded_agents:
   - other-agent
+packages:
+  - "@piren/web-search"
+  - "@piren/git-tools"
 ```
 
 Do not put `allowed_agents` in `team/<agent>/config.yml`. Agent-local config is for runtime preferences such as model and polling.
@@ -299,6 +302,7 @@ It reports:
 - Vault layout
 - Required agent files
 - Pi package compatibility
+- Package validation: warns when declared packages are not installed (missing packages are listed by name)
 - Policy-gap warning when `allowed_agents` is empty with a configured vault_root (effectively allow-all)
 - Stale-allowed warning when `allowed_agents` lists agents not found as vault `team/` directories
 - Policy-overlap warning when agents appear in both `allowed_agents` and `excluded_agents`
@@ -419,6 +423,37 @@ Each skill is either a loose `.md` file or a directory containing `SKILL.md`. Fr
 The loaded skills appear in the context prompt as an "Available Skills" section with each skill's name, source (shared/agent), description, and full body. `piren_status` reports `skills_loaded: <count>`.
 
 Core logic lives in `src/skills.ts` (`loadVaultSkills`, `formatSkillsForContext`). Tests: `tests/skills.test.ts` (9 tests). The extension wiring is tested in `tests/pi-extension.test.ts` (context injection + status count).
+
+## Pi package extensibility (ADR-0013)
+
+Piren core stays minimal. Additional capabilities come from npm packages that export Pi extensions, declared in `~/.config/piren/config.yml` under the `packages` field. `buildPiRunCommand` resolves each declared package to its installed entry point via `require.resolve` and appends it as an additional `--extension` flag to the Pi command. Piren's core extension loads first; package extensions load after, in declaration order.
+
+```yaml
+# ~/.config/piren/config.yml
+vault_root: /path/to/vault
+allowed_agents:
+  - piren
+packages:
+  - "@piren/web-search"
+  - "@piren/git-tools"
+```
+
+This produces:
+
+```text
+npx pi \
+  --extension ./src/pi-extension.ts \
+  --extension @piren/web-search \
+  --extension @piren/git-tools \
+  --vault-root /path/to/vault \
+  --agent piren
+```
+
+`piren doctor` validates that all declared packages are installed and reports missing ones (status `warn`, not fail). `piren_status` reports declared packages. Missing packages are skipped at run time rather than crashing: `buildPiRunCommand` only appends `--extension` flags for packages that resolve successfully, while `piren doctor` surfaces the gaps for the steward to fix.
+
+Package code lives in `node_modules/` (installed by npm), not in the vault. The vault does not store package code, but the installation config records which packages are used, so any installation with the same `packages` list and `npm install` can reproduce the same toolset.
+
+Core logic lives in `src/packages.ts` (`resolvePackages`, `defaultPackageResolver`). Tests: `tests/packages.test.ts` (5 tests). The `buildPiRunCommand` wiring is tested in `tests/run.test.ts`, the doctor validation in `tests/doctor.test.ts`, and the status reporting in `tests/pi-extension.test.ts`.
 
 ## Read-only vault browser (Phase 3 tracer bullet 3)
 

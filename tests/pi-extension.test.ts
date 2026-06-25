@@ -60,7 +60,7 @@ describe("Pi extension", () => {
     expect(deviceRecord.status).toBe("active");
     expect(deviceRecord.last_seen).toBeTruthy();
 
-    expect(Object.keys(pi.tools).sort()).toEqual(["flag_steward", "inbox_list", "send_to_agent", "session_write_summary", "task_claim", "task_update_status", "vault_append_log", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
+    expect(Object.keys(pi.tools).sort()).toEqual(["decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "send_to_agent", "session_write_summary", "task_claim", "task_update_status", "vault_append_log", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
     expect(pi.commands.piren_status).toBeDefined();
 
     const notifications: Array<{ message: string; level: string }> = [];
@@ -74,7 +74,7 @@ describe("Pi extension", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.level).toBe("info");
     expect(notifications[0]?.message).toContain("Piren status");
-    expect(notifications[0]?.message).toContain("registered_tools: flag_steward, inbox_list, send_to_agent, session_write_summary, task_claim, task_update_status, vault_append_log, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
+    expect(notifications[0]?.message).toContain("registered_tools: decision_record, flag_steward, inbox_list, project_append_log, project_status, send_to_agent, session_write_summary, task_claim, task_update_status, vault_append_log, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
     expect(notifications[0]?.message).toContain("write_mode: authoritative-vault");
 
     const alert = await pi.tools.flag_steward.execute("call-alert", {
@@ -167,6 +167,68 @@ describe("Pi extension", () => {
     const blocked = await pi.tools.vault_write.execute("call-2", { path: "../outside.md", content: "bad" });
     expect(blocked.isError).toBe(true);
     expect(blocked.content[0].text).toMatch(/outside vault/i);
+  });
+
+  it("registers and exercises project_status, project_append_log, and decision_record", async () => {
+    const vault = join(root, "vault");
+    await mkdir(join(vault, "Projects", "Piren", "decisions"), { recursive: true });
+    await writeFile(
+      join(vault, "Projects", "Piren", "index.md"),
+      [
+        "---",
+        'title: "Piren Project Index"',
+        "created: 2026-06-21",
+        "updated: 2026-06-25",
+        "status: phase-4-knowledge",
+        "---",
+        "",
+        "# Piren Project Index",
+      ].join("\n"),
+    );
+
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const status = await pi.tools.project_status.execute("call-status", { project: "Piren" });
+    expect(status.isError).toBeUndefined();
+    expect(status.content[0].text).toContain("phase-4-knowledge");
+    expect(status.details.available).toBe(true);
+    expect(status.details.title).toBe("Piren Project Index");
+
+    const log = await pi.tools.project_append_log.execute("call-log", {
+      project: "Piren",
+      entry: "Added knowledge lifecycle tools.",
+    });
+    expect(log.isError).toBeUndefined();
+    expect(log.content[0].text).toContain("Appended project log entry to Projects/Piren/log.md");
+    expect(log.details.bytesAppended).toBeGreaterThan(0);
+    const logContent = await readFile(join(vault, "Projects", "Piren", "log.md"), "utf8");
+    expect(logContent).toContain("Added knowledge lifecycle tools.");
+    expect(logContent).toContain("agent: thor");
+
+    const adr = await pi.tools.decision_record.execute("call-adr", {
+      project: "Piren",
+      id: "0015",
+      title: "Knowledge Lifecycle Tools",
+      context: "Agents need explicit tools to leave durable artifacts.",
+      decision: "Add project_status, project_append_log, and decision_record.",
+      consequences: "Agents can promote task lessons into project logs and ADRs.",
+    });
+    expect(adr.isError).toBeUndefined();
+    expect(adr.content[0].text).toContain("Wrote ADR Projects/Piren/decisions/ADR-0015-knowledge-lifecycle-tools.md");
+    const adrContent = await readFile(join(vault, "Projects", "Piren", "decisions", "ADR-0015-knowledge-lifecycle-tools.md"), "utf8");
+    expect(adrContent).toContain("# ADR-0015 - Knowledge Lifecycle Tools");
+    expect(adrContent).toContain("## Context");
+    expect(adrContent).toContain("## Decision");
+    expect(adrContent).toContain("## Consequences");
+
+    const missing = await pi.tools.project_status.execute("call-missing", { project: "NoSuchProject" });
+    expect(missing.isError).toBeUndefined();
+    expect(missing.details.available).toBe(false);
   });
 
   it("allows task_claim to reclaim stale claims using device heartbeat timestamps", async () => {
@@ -304,6 +366,11 @@ describe("Pi extension", () => {
     // The context prompt must tell the agent not to auto-check the inbox
     // in direct (non-worker) conversations. The steward must ask explicitly.
     expect(content).toMatch(/do not.*check.*inbox/i);
+    // The context prompt lists the knowledge lifecycle tools and guidance.
+    expect(content).toContain("project_status(project)");
+    expect(content).toContain("project_append_log(project, entry)");
+    expect(content).toContain("decision_record(project, id, title, context, decision, consequences?, alternatives?)");
+    expect(content).toContain("Knowledge Lifecycle");
     expect(content).toMatch(/only.*steward.*asks|only.*worker.*mode/i);
   });
 
@@ -435,5 +502,46 @@ describe("Pi extension", () => {
       },
     });
     expect(notifications[0]?.message).toContain("skills_loaded: 0");
+  });
+
+  it("reports declared packages in piren_status", async () => {
+    const pi = fakePi();
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + join(root, "vault") + "\n" + "allowed_agents:\n" + "  - thor\n" + "packages:\n" + '  - "@piren/web-search"\n' + '  - "@piren/git-tools"\n');
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath,
+    });
+
+    const notifications: Array<{ message: string; level: string }> = [];
+    await pi.commands.piren_status.handler([], {
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.message).toContain("packages: @piren/web-search, @piren/git-tools");
+  });
+
+  it("reports packages: <none> in piren_status when no packages are declared", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const notifications: Array<{ message: string; level: string }> = [];
+    await pi.commands.piren_status.handler([], {
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+    expect(notifications[0]?.message).toContain("packages: <none>");
   });
 });

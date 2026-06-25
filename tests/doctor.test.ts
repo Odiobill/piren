@@ -114,4 +114,47 @@ describe("Piren doctor", () => {
       expect.objectContaining({ id: "invalid-agent-name", status: "warn" }),
     ]));
   });
+
+  it("reports ok when all declared packages are installed", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "packages:\n" + '  - "@piren/web-search"\n');
+    const fakeResolver = (name: string) => "/fake/node_modules/" + name + "/index.js";
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, packageResolver: fakeResolver });
+
+    expect(report.ok).toBe(true);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ id: "packages", status: "ok" }),
+    );
+  });
+
+  it("warns when declared packages are not installed", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "packages:\n" + '  - "@piren/web-search"\n' + '  - "@piren/missing"\n');
+    const fakeResolver = (name: string) => {
+      if (name === "@piren/missing") throw new Error("Cannot find module '@piren/missing'");
+      return "/fake/node_modules/" + name + "/index.js";
+    };
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, packageResolver: fakeResolver });
+
+    expect(report.ok).toBe(true); // warn, not fail
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ id: "packages", status: "warn", message: expect.stringContaining("@piren/missing") }),
+    );
+  });
+
+  it("omits the packages check when no packages are declared", async () => {
+    const init = await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({ id: "packages" }),
+    );
+  });
 });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import extension from "../src/pi-extension.js";
 import { formatAgentsReport, listPirenAgents } from "../src/agents.js";
 import { buildPiRunCommand } from "../src/run.js";
+import { doctorPiren } from "../src/doctor.js";
 import { PiRpcClient, extractAssistantText } from "../src/gateway-rpc.js";
 import { GatewayServer } from "../src/gateway-http.js";
 import { askAgent } from "../src/ask.js";
@@ -199,6 +200,53 @@ async function main() {
     }
     console.log("flag_steward steward-inbox/alerts: ok");
 
+    // Phase 4 knowledge lifecycle tools: project_status, project_append_log,
+    // and decision_record. Agents leave durable artifacts after non-trivial work.
+    await mkdir(join(fixture.vault, "Projects", "Piren", "decisions"), { recursive: true });
+    await writeFile(
+      join(fixture.vault, "Projects", "Piren", "index.md"),
+      [
+        "---",
+        'title: "Piren Project Index"',
+        "created: 2026-06-21",
+        "updated: 2026-06-25",
+        "status: phase-4-knowledge",
+        "---",
+        "",
+        "# Piren Project Index",
+      ].join("\n"),
+    );
+    const statusResult = await pi.tools.project_status.execute("smoke-status", { project: "Piren" });
+    if (statusResult.isError || !statusResult.details.available || statusResult.details.status !== "phase-4-knowledge") {
+      throw new Error(`project_status smoke failed: ${statusResult.content[0].text}`);
+    }
+    console.log("project_status Projects/Piren: ok");
+
+    const logResult = await pi.tools.project_append_log.execute("smoke-log", {
+      project: "Piren",
+      entry: "Knowledge lifecycle tools smoke passed.",
+    });
+    if (logResult.isError) throw new Error(`project_append_log smoke failed: ${logResult.content[0].text}`);
+    const logContent = await readFile(join(fixture.vault, "Projects", "Piren", "log.md"), "utf8");
+    if (!logContent.includes("Knowledge lifecycle tools smoke passed.")) {
+      throw new Error("project log did not contain expected entry");
+    }
+    console.log("project_append_log Projects/Piren/log.md: ok");
+
+    const adrResult = await pi.tools.decision_record.execute("smoke-adr", {
+      project: "Piren",
+      id: "0015",
+      title: "Knowledge Lifecycle Tools",
+      context: "Agents need explicit tools to leave durable artifacts.",
+      decision: "Add project_status, project_append_log, and decision_record.",
+    });
+    if (adrResult.isError) throw new Error(`decision_record smoke failed: ${adrResult.content[0].text}`);
+    const adrContent = await readFile(join(fixture.vault, "Projects", "Piren", "decisions", "ADR-0015-knowledge-lifecycle-tools.md"), "utf8");
+    if (!adrContent.includes("# ADR-0015 - Knowledge Lifecycle Tools") || !adrContent.includes("## Decision")) {
+      throw new Error("ADR did not contain expected content");
+    }
+    console.log("decision_record Projects/Piren/decisions: ok");
+
     const sentTask = await pi.tools.send_to_agent.execute("smoke-send", {
       to: "thor",
       title: "Check smoke inbox",
@@ -307,6 +355,60 @@ async function main() {
       throw new Error(`piren run command did not forward extra args: ${piCommandText}`);
     }
     console.log(`piren run command: ${piCommandText}`);
+
+    // ADR-0013: Pi package extensibility. Declared packages in config.yml are
+    // resolved to entry points and appended as --extension flags. piren doctor
+    // validates installed packages. piren_status reports declared packages.
+    const packageConfigPath = join(fixture.root, "package-config.yml");
+    await writeFile(packageConfigPath, "vault_root: " + fixture.vault + "\n" + "allowed_agents:\n" + "  - thor\n" + "packages:\n" + '  - "@piren/web-search"\n' + '  - "@piren/git-tools"\n');
+    const fakePackageResolver = (name: string) => "/fake/node_modules/" + name + "/dist/index.js";
+    const pkgCommand = await buildPiRunCommand({ cliAgentDir: fixture.agentDir, env: {}, configPath: packageConfigPath, extensionPath: "./src/pi-extension.ts", packageResolver: fakePackageResolver });
+    const extensionFlags = pkgCommand.args.reduce<string[]>((acc, arg, i) => {
+      if (arg === "--extension") acc.push(pkgCommand.args[i + 1] ?? "");
+      return acc;
+    }, []);
+    if (extensionFlags.length !== 3 || extensionFlags[0] !== "./src/pi-extension.ts" || extensionFlags[1] !== "/fake/node_modules/@piren/web-search/dist/index.js" || extensionFlags[2] !== "/fake/node_modules/@piren/git-tools/dist/index.js") {
+      throw new Error(`package extensions not appended in order: ${extensionFlags.join(", ")}`);
+    }
+    console.log("piren run command with packages: ok");
+
+    // piren doctor validates declared packages.
+    const doctorReport = await doctorPiren({ cliAgent: "thor", env: {}, configPath: packageConfigPath, packageResolver: fakePackageResolver });
+    const packagesCheck = doctorReport.checks.find((c: { id: string; status: string }) => c.id === "packages");
+    if (!packagesCheck || packagesCheck.status !== "ok") {
+      throw new Error(`doctor packages check failed: ${packagesCheck?.status} ${packagesCheck?.message}`);
+    }
+    if (!doctorReport.packages.includes("@piren/web-search") || !doctorReport.packages.includes("@piren/git-tools")) {
+      throw new Error(`doctor report missing packages: ${doctorReport.packages.join(", ")}`);
+    }
+    console.log("piren doctor packages validation: ok");
+
+    // piren doctor warns about missing packages.
+    const missingResolver = (name: string) => {
+      if (name === "@piren/git-tools") throw new Error("Cannot find module");
+      return "/fake/node_modules/" + name + "/index.js";
+    };
+    const missingDoctorReport = await doctorPiren({ cliAgent: "thor", env: {}, configPath: packageConfigPath, packageResolver: missingResolver });
+    const missingPackagesCheck = missingDoctorReport.checks.find((c: { id: string; status: string }) => c.id === "packages");
+    if (!missingPackagesCheck || missingPackagesCheck.status !== "warn") {
+      throw new Error(`doctor missing packages check should warn: ${missingPackagesCheck?.status}`);
+    }
+    console.log("piren doctor missing packages warning: ok");
+
+    // piren_status reports declared packages.
+    const statusPi = await load("packages-status", fixture.agentDir, packageConfigPath, env);
+    const pkgStatusNotifications: string[] = [];
+    await statusPi.commands.piren_status.handler([], {
+      ui: {
+        notify(message: string) {
+          pkgStatusNotifications.push(message);
+        },
+      },
+    });
+    if (!pkgStatusNotifications[0]?.includes("packages: @piren/web-search, @piren/git-tools")) {
+      throw new Error(`piren_status did not report packages: ${pkgStatusNotifications[0]}`);
+    }
+    console.log("piren_status packages reporting: ok");
 
     const agentsReport = await listPirenAgents({ cliVaultRoot: fixture.vault, configPath });
     const agentsOutput = formatAgentsReport(agentsReport);

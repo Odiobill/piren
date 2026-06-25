@@ -12,6 +12,7 @@ import { registerDevice } from "./devices.js";
 import { createInboxTask, claimInboxTask, listInboxTasks, updateInboxTaskStatus } from "./inbox.js";
 import { createStewardAlert } from "./alerts.js";
 import { loadVaultSkills, formatSkillsForContext, type VaultSkill } from "./skills.js";
+import { projectStatus, projectAppendLog, decisionRecord } from "./knowledge.js";
 
 const PIREN_TOOL_NAMES = [
   "vault_read",
@@ -26,6 +27,9 @@ const PIREN_TOOL_NAMES = [
   "task_update_status",
   "task_claim",
   "inbox_list",
+  "project_status",
+  "project_append_log",
+  "decision_record",
 ];
 
 function textResult(text: string, details: unknown = {}) {
@@ -125,7 +129,17 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "- task_update_status(task_path, status, result?)",
     "- task_claim(task_path, device_id?, stale_after_ms?)",
     "- inbox_list()",
+    "- project_status(project)",
+    "- project_append_log(project, entry)",
+    "- decision_record(project, id, title, context, decision, consequences?, alternatives?)",
     "All vault paths resolve relative to vault_root and traversal outside the vault is rejected.",
+    "",
+    "## Knowledge Lifecycle",
+    "After non-trivial work, leave a durable artifact so future sessions do not rediscover it.",
+    "Use project_status to read a project's current state, project_append_log for chronological",
+    "project log entries, and decision_record for architecture decisions. Update the minimum",
+    "useful artifact, not everything. Raw traces are evidence; project docs and ADRs are",
+    "synthesized truth.",
     "",
     "## Inbox Behavior",
     "Do not check the inbox automatically at the start of a direct conversation.",
@@ -472,8 +486,93 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
     },
   });
 
+  pi.registerTool({
+    name: "project_status",
+    label: "Project Status",
+    description: "Read a project's current title, status, and updated date from its index.md frontmatter under Projects/<project>/ in the Piren vault. Read-only.",
+    parameters: Type.Object({
+      project: Type.String({ description: "Project name, matching the directory under Projects/" }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const result = await projectStatus({ vaultRoot: context.vaultRoot, project: params.project });
+        if (!result.available) {
+          return textResult(`Project '${params.project}' has no index.md.`, result);
+        }
+        return textResult(`Project ${result.project}: status=${result.status}, updated=${result.updated}, title=${result.title}`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "project_append_log",
+    label: "Project Append Log",
+    description: "Append a timestamped Markdown entry to Projects/<project>/log.md in the Piren vault. The project log is the chronological change history.",
+    parameters: Type.Object({
+      project: Type.String({ description: "Project name, matching the directory under Projects/" }),
+      entry: Type.String({ description: "Markdown log entry body" }),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const result = await projectAppendLog({
+          vaultRoot: context.vaultRoot,
+          project: params.project,
+          entry: params.entry,
+          agentName: context.agentName,
+        });
+        return textResult(`Appended project log entry to ${result.path} at ${result.timestamp} (${result.bytesAppended} bytes appended)`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "decision_record",
+    label: "Decision Record",
+    description: "Write one Architecture Decision Record under Projects/<project>/decisions/ADR-<id>-<slug>.md in the Piren vault. The id is a 4-digit number.",
+    parameters: Type.Object({
+      project: Type.String({ description: "Project name, matching the directory under Projects/" }),
+      id: Type.String({ description: "4-digit ADR id, for example '0015'" }),
+      title: Type.String({ description: "ADR title" }),
+      context: Type.String({ description: "Why this decision is needed" }),
+      decision: Type.String({ description: "The decision itself" }),
+      consequences: Type.Optional(Type.String({ description: "Optional consequences of the decision" })),
+      alternatives: Type.Optional(Type.String({ description: "Optional alternatives considered" })),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const adrOptions = {
+          vaultRoot: context.vaultRoot,
+          project: params.project,
+          id: params.id,
+          title: params.title,
+          context: params.context,
+          decision: params.decision,
+        } as {
+          vaultRoot: string;
+          project: string;
+          id: string;
+          title: string;
+          context: string;
+          decision: string;
+          consequences?: string;
+          alternatives?: string;
+        };
+        if (params.consequences !== undefined) adrOptions.consequences = params.consequences;
+        if (params.alternatives !== undefined) adrOptions.alternatives = params.alternatives;
+        const result = await decisionRecord(adrOptions);
+        return textResult(`Wrote ADR ${result.path} (${result.bytes} bytes, atomic)`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
   pi.registerCommand("piren_status", {
-    description: "Show Piren agent, vault, runnable-agent policy, tools, and degraded write mode",
+    description: "Show Piren agent, vault, runnable-agent policy, packages, tools, and degraded write mode",
     handler: async (_args, ctx) => {
       const report = await buildPirenStatusReport({
         context,

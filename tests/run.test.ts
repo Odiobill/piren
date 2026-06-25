@@ -135,4 +135,48 @@ describe("piren run command construction", () => {
     expect(command.args).not.toContain("rpc");
     expect(command.stdio).toBe("inherit");
   });
+
+  it("appends --extension flags for declared packages in declaration order after the core extension", async () => {
+    await writeFile(configPath, "vault_root: " + vault + "\n" + "allowed_agents:\n" + "  - piren\n" + "packages:\n" + '  - "@piren/web-search"\n' + '  - "@piren/git-tools"\n');
+    const fakeResolver = (name: string) => "/fake/node_modules/" + name + "/dist/index.js";
+
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", packageResolver: fakeResolver });
+
+    // Core extension loads first, then package extensions in declared order.
+    const extensionArgs = command.args.reduce<string[]>((acc, arg, i) => {
+      if (arg === "--extension") acc.push(command.args[i + 1] ?? "");
+      return acc;
+    }, []);
+    expect(extensionArgs).toEqual([
+      "./src/pi-extension.ts",
+      "/fake/node_modules/@piren/web-search/dist/index.js",
+      "/fake/node_modules/@piren/git-tools/dist/index.js",
+    ]);
+  });
+
+  it("skips missing packages and only appends resolved extensions", async () => {
+    await writeFile(configPath, "vault_root: " + vault + "\n" + "allowed_agents:\n" + "  - piren\n" + "packages:\n" + '  - "@piren/web-search"\n' + '  - "@piren/missing"\n');
+    const fakeResolver = (name: string) => {
+      if (name === "@piren/missing") throw new Error("Cannot find module '@piren/missing'");
+      return "/fake/node_modules/" + name + "/index.js";
+    };
+
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", packageResolver: fakeResolver });
+
+    const extensionArgs = command.args.reduce<string[]>((acc, arg, i) => {
+      if (arg === "--extension") acc.push(command.args[i + 1] ?? "");
+      return acc;
+    }, []);
+    expect(extensionArgs).toEqual([
+      "./src/pi-extension.ts",
+      "/fake/node_modules/@piren/web-search/index.js",
+    ]);
+  });
+
+  it("omits extra --extension flags when no packages are declared", async () => {
+    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts" });
+
+    const extensionCount = command.args.filter((arg) => arg === "--extension").length;
+    expect(extensionCount).toBe(1);
+  });
 });

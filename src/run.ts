@@ -4,6 +4,7 @@ import { parse as parseYaml } from "yaml";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
+import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +32,7 @@ export interface BuildPiRunCommandOptions extends BootstrapOptions {
   extensionPath?: string | undefined;
   workerMode?: boolean | undefined;
   rpcMode?: boolean | undefined;
+  packageResolver?: PackageEntryResolver | undefined;
 }
 
 export interface PiRunCommand {
@@ -84,6 +86,7 @@ export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}):
   const extensionPath = options.extensionPath ?? resolveExtensionPath();
   const extraArgs = options.extraArgs ?? [];
   const rpcMode = options.rpcMode ?? false;
+  const resolver = options.packageResolver ?? defaultPackageResolver;
 
   const args = [
     "pi",
@@ -94,6 +97,15 @@ export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}):
     "--agent",
     context.agentName,
   ];
+
+  // ADR-0013: resolve declared packages to their entry points and append
+  // each as an additional --extension flag. Piren's core extension loads
+  // first; package extensions load after in declaration order. Missing
+  // packages are skipped (piren doctor reports them separately).
+  const { resolved: packageExtensions } = resolvePackages(context.packages, resolver);
+  for (const pkg of packageExtensions) {
+    args.push("--extension", pkg.path);
+  }
 
   const primaryModel = formatPiModel(agentConfig.model);
   const models = formatPiModels(agentConfig.models);
