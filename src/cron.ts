@@ -1,4 +1,4 @@
-import { access, readFile, readdir, rename, stat } from "node:fs/promises";
+import { access, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -482,6 +482,254 @@ export async function listActiveDevices(options: ListActiveDevicesOptions): Prom
     }
   }
   return { agentName: options.agentName, devices };
+}
+
+// ---------------------------------------------------------------------------
+// Atomic job claiming (reuses the inbox rename + stale-recovery pattern)
+// ---------------------------------------------------------------------------
+
+export interface ClaimCronJobOptions {
+  vaultRoot: string;
+  /** Vault-relative path to the job file (claimed or unclaimed). */
+  jobPath: string;
+  deviceId: string;
+  /** Agent whose device heartbeats are consulted for stale-claim recovery. */
+  agentName: string;
+  /** When set and the job is already claimed, allow reclaim if the claiming device heartbeat is stale. */
+  staleAfterMs?: number;
+  now?: () => Date;
+}
+
+export interface ClaimCronJobResult {
+  originalPath: string;
+  path: string;
+  absolutePath: string;
+  deviceId: string;
+}
+
+const DEVICE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+
+function assertValidDeviceName(deviceId: string): void {
+  if (!DEVICE_NAME_PATTERN.test(deviceId)) {
+    throw new Error(`Invalid device id. Use lowercase kebab-case, for example 'heimdall'.`);
+  }
+}
+
+function claimedDeviceIdFromName(fileName: string): string | undefined {
+  const match = fileName.match(/\.claimed\.([a-z][a-z0-9-]*)\.md$/i);
+  return match?.[1];
+}
+
+function runsDirectoryForJob(vaultRoot: string, jobPath: string): string {
+  const parts = jobPath.split(/[\\/]+/);
+  if (parts[0] === "team" && parts[2] === "cron" && parts[3] === "jobs") {
+    return agentRunsPath(vaultRoot, parts[1] ?? "");
+  }
+  return sharedRunsPath(vaultRoot);
+}
+
+/**
+ * Read a single device heartbeat's last_seen timestamp. Returns undefined if
+ * the record is missing or malformed (treated as stale-able for recovery).
+ */
+async function deviceLastSeenMs(vaultRoot: string, agentName: string, deviceId: string): Promise<number | undefined> {
+  const devicePath = join(vaultRoot, "team", agentName, "devices", `${deviceId}.json`);
+  if (!(await pathExists(devicePath))) return undefined;
+  try {
+    const parsed = JSON.parse(await readFile(devicePath, "utf8")) as DeviceHeartbeat;
+    if (typeof parsed.last_seen === "string") {
+      const ms = Date.parse(parsed.last_seen);
+      if (Number.isFinite(ms)) return ms;
+    }
+  } catch {
+    // fall through to undefined
+  }
+  return undefined;
+}
+
+/**
+ * Atomically claim a cron job by renaming it to a .claimed.<device>.md path.
+ * If the job is already claimed and staleAfterMs is provided, the claim is
+ * recoverable when the previous claiming device's heartbeat is older than
+ * now - staleAfterMs. The claimed file gets a last_claimed_by frontmatter
+ * line so the claim is inspectable from the vault.
+ *
+ * This mirrors claimInboxTask's design: atomic rename as the coordination
+ * primitive, device heartbeats as the liveness signal, no leases or DB.
+ */
+export async function claimCronJob(options: ClaimCronJobOptions): Promise<ClaimCronJobResult> {
+  assertValidDeviceName(options.deviceId);
+  const root = resolve(options.vaultRoot);
+  const sourceAbsolutePath = resolve(root, options.jobPath);
+  assertInsideVault(root, sourceAbsolutePath);
+  const fileName = sourceAbsolutePath.split(/[\\/]+/).pop() ?? "";
+  if (!fileName.endsWith(".md")) {
+    throw new Error("Cron job path must point to a Markdown file under cron/jobs/ or team/<agent>/cron/jobs/.");
+  }
+
+  const previousDevice = claimedDeviceIdFromName(fileName);
+  if (previousDevice !== undefined) {
+    // The job is already claimed. Allow recovery only with explicit staleness.
+    if (options.staleAfterMs === undefined) {
+      throw new Error(`Cron job is already claimed by '${previousDevice}'. Pass stale_after_ms to recover a stale claim.`);
+    }
+    const lastSeenMs = await deviceLastSeenMs(root, options.agentName, previousDevice);
+    const now = options.now ?? (() => new Date());
+    const nowMs = now().getTime();
+    if (lastSeenMs !== undefined && nowMs - lastSeenMs <= options.staleAfterMs) {
+      throw new Error(`Cron job is already claimed by active device '${previousDevice}'.`);
+    }
+    // Stale: fall through to reclaim under the new device id.
+  }
+
+  const baseName = fileName.replace(/\.claimed\.[a-z][a-z0-9-]*\.md$/i, ".md");
+  const claimedName = baseName.replace(/\.md$/, `.claimed.${options.deviceId}.md`);
+  const claimedPath = relative(root, sourceAbsolutePath).replace(fileName, claimedName);
+  const claimedAbsolutePath = resolve(root, claimedPath);
+  assertInsideVault(root, claimedAbsolutePath);
+
+  // Inject/refresh last_claimed_by in frontmatter as part of the claim.
+  const content = await readFile(sourceAbsolutePath, "utf8");
+  const updated = content.replace(/^(---\r?\n)/, `$1last_claimed_by: ${options.deviceId}\n`);
+
+  const directory = dirname(claimedAbsolutePath);
+  await mkdir(directory, { recursive: true });
+  const tempPath = resolve(directory, `.${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
+  const handle = await open(tempPath, "wx", 0o600);
+  try {
+    await handle.writeFile(updated, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(tempPath, claimedAbsolutePath);
+  await rm(sourceAbsolutePath, { force: true });
+
+  return {
+    originalPath: relative(root, sourceAbsolutePath),
+    path: claimedPath,
+    absolutePath: claimedAbsolutePath,
+    deviceId: options.deviceId,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Run records and last_run restoration
+// ---------------------------------------------------------------------------
+
+export type CronRunStatus = "completed" | "failed";
+
+export interface RecordCronRunOptions {
+  vaultRoot: string;
+  /** Vault-relative path to the CLAIMED job file (e.g. cron/jobs/x.claimed.dev.md). */
+  jobPath: string;
+  agentName: string;
+  deviceId: string;
+  status: CronRunStatus;
+  result: string;
+  startedAt: Date;
+  finishedAt: Date;
+}
+
+export interface RecordCronRunResult {
+  runPath: string;
+  runAbsolutePath: string;
+  /** The restored unclaimed job path. */
+  restoredJobPath: string;
+  restoredJobAbsolutePath: string;
+}
+
+function compactTimestamp(date: Date): string {
+  return date.toISOString().replace(/[-:.]/g, "");
+}
+
+function atomicWriteFile(target: string, content: string): Promise<number> {
+  const directory = dirname(target);
+  return (async () => {
+    await mkdir(directory, { recursive: true });
+    const tempPath = resolve(directory, `.${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
+    const bytes = Buffer.byteLength(content);
+    const handle = await open(tempPath, "wx", 0o600);
+    try {
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(tempPath, target);
+    return bytes;
+  })();
+}
+
+/**
+ * Record a cron run and restore the unclaimed job. Writes an inspectable run
+ * record Markdown file under cron/runs/ (shared) or team/<agent>/cron/runs/
+ * (scoped), with frontmatter (job_id, agent, device, status, started_at,
+ * finished_at) and the run result as the body. Then restores the job to its
+ * unclaimed path with last_run set to finishedAt and the stale last_claimed_by
+ * line removed, so the job is eligible again on the next due cycle.
+ *
+ * The run record is the durable, inspectable evidence; the job restoration is
+ * the coordination state. Failures are recorded too so the operator can see
+ * them in the vault, and the job is still restored so it can be retried.
+ */
+export async function recordCronRun(options: RecordCronRunOptions): Promise<RecordCronRunResult> {
+  const root = resolve(options.vaultRoot);
+  const claimedAbsolutePath = resolve(root, options.jobPath);
+  assertInsideVault(root, claimedAbsolutePath);
+  const claimedFileName = claimedAbsolutePath.split(/[\\/]+/).pop() ?? "";
+  const jobIdMatch = claimedFileName.match(/^(.+?)\.claimed\.[a-z][a-z0-9-]*\.md$/i);
+  if (!jobIdMatch) {
+    throw new Error(`Cron run can only be recorded for a claimed job path: ${options.jobPath}`);
+  }
+  const jobId = jobIdMatch[1] ?? "";
+  const unclaimedName = `${jobId}.md`;
+
+  const claimedContent = await readFile(claimedAbsolutePath, "utf8");
+  const runsDir = runsDirectoryForJob(root, options.jobPath);
+  const runFileName = `${compactTimestamp(options.startedAt)}-${jobId}.md`;
+  const runPath = relative(root, join(runsDir, runFileName));
+  const runAbsolutePath = join(runsDir, runFileName);
+  assertInsideVault(root, runAbsolutePath);
+
+  const runRecord = [
+    "---",
+    `job_id: ${jobId}`,
+    `agent: ${options.agentName}`,
+    `device: ${options.deviceId}`,
+    `status: ${options.status}`,
+    `started_at: ${options.startedAt.toISOString()}`,
+    `finished_at: ${options.finishedAt.toISOString()}`,
+    "---",
+    "",
+    `# Run ${jobId} @ ${options.startedAt.toISOString()}`,
+    "",
+    options.result,
+    "",
+  ].join("\n");
+  await atomicWriteFile(runAbsolutePath, runRecord);
+
+  // Restore the unclaimed job with last_run set and the stale claim line removed.
+  const restoredPath = relative(root, claimedAbsolutePath).replace(claimedFileName, unclaimedName);
+  const restoredAbsolutePath = resolve(root, restoredPath);
+  assertInsideVault(root, restoredAbsolutePath);
+  const withoutClaim = claimedContent.replace(/^last_claimed_by:.*\r?\n/im, "");
+  let restoredContent: string;
+  if (/^last_run:.*$/m.test(withoutClaim)) {
+    restoredContent = withoutClaim.replace(/^(last_run:).*$/m, `$1 ${options.finishedAt.toISOString()}`);
+  } else {
+    // Insert last_run right after the opening frontmatter delimiter.
+    restoredContent = withoutClaim.replace(/^(---\r?\n)/, `$1last_run: ${options.finishedAt.toISOString()}\n`);
+  }
+  await atomicWriteFile(restoredAbsolutePath, restoredContent);
+  await rm(claimedAbsolutePath, { force: true });
+
+  return {
+    runPath,
+    runAbsolutePath,
+    restoredJobPath: restoredPath,
+    restoredJobAbsolutePath: restoredAbsolutePath,
+  };
 }
 
 function isClaimedJobFile(name: string): boolean {

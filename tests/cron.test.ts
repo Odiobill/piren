@@ -1,9 +1,9 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isScheduleDue, parseSchedule } from "../src/cron.js";
-import { listCronJobs, listActiveDevices, readCronJob, selectOwningDevice } from "../src/cron.js";
+import { claimCronJob, listCronJobs, listActiveDevices, recordCronRun, readCronJob, selectOwningDevice } from "../src/cron.js";
 
 let root: string;
 let vault: string;
@@ -208,6 +208,149 @@ describe("ADR-0019 cron active device discovery", () => {
       now: () => new Date("2026-06-25T07:00:00Z"),
     });
     expect(result.devices).toEqual([]);
+  });
+});
+
+describe("ADR-0019 cron atomic job claiming", () => {
+  it("atomically renames a shared job to a .claimed.<device>.md path", async () => {
+    await writeFile(join(vault, "cron", "jobs", "nightly-digest.md"), sharedJob("nightly-digest", "Summarize logs."));
+
+    const result = await claimCronJob({
+      vaultRoot: vault,
+      jobPath: "cron/jobs/nightly-digest.md",
+      deviceId: "heimdall",
+      agentName: "piren",
+      now: () => new Date("2026-06-25T07:00:00Z"),
+    });
+
+    expect(result.path).toBe("cron/jobs/nightly-digest.claimed.heimdall.md");
+    expect(result.originalPath).toBe("cron/jobs/nightly-digest.md");
+    expect(result.deviceId).toBe("heimdall");
+
+    await expect(readFile(join(vault, "cron", "jobs", "nightly-digest.md"), "utf8")).rejects.toThrow();
+    const claimed = await readFile(result.absolutePath, "utf8");
+    expect(claimed).toContain("last_claimed_by: heimdall");
+    expect(claimed).toContain("Summarize logs.");
+  });
+
+  it("rejects claiming an already-claimed job from an active device without stale recovery", async () => {
+    await writeFile(join(vault, "cron", "jobs", "nightly-digest.md"), sharedJob("nightly-digest", "Summarize logs."));
+    await writeFile(
+      join(vault, "team", "piren", "devices", "heimdall.json"),
+      deviceRecord("heimdall", 1, "2026-06-25T06:59:30Z"),
+    );
+    await claimCronJob({
+      vaultRoot: vault,
+      jobPath: "cron/jobs/nightly-digest.md",
+      deviceId: "heimdall",
+      agentName: "piren",
+      now: () => new Date("2026-06-25T07:00:00Z"),
+    });
+
+    await expect(
+      claimCronJob({
+        vaultRoot: vault,
+        jobPath: "cron/jobs/nightly-digest.claimed.heimdall.md",
+        deviceId: "pi4-office",
+        agentName: "piren",
+        staleAfterMs: 30 * 60 * 1000,
+        now: () => new Date("2026-06-25T07:00:00Z"),
+      }),
+    ).rejects.toThrow(/already claimed by active device/i);
+  });
+
+  it("reclaims a stale claim when the previous device heartbeat expired", async () => {
+    await writeFile(join(vault, "cron", "jobs", "nightly-digest.md"), sharedJob("nightly-digest", "Summarize logs."));
+    // heimdall claimed it 1h ago but its heartbeat stopped 5min after claiming.
+    await writeFile(
+      join(vault, "cron", "jobs", "nightly-digest.claimed.heimdall.md"),
+      sharedJob("nightly-digest", "Summarize logs.").replace("---\n", "---\nlast_claimed_by: heimdall\n"),
+    );
+    await writeFile(
+      join(vault, "team", "piren", "devices", "heimdall.json"),
+      deviceRecord("heimdall", 1, "2026-06-25T06:05:00Z"),
+    );
+
+    const result = await claimCronJob({
+      vaultRoot: vault,
+      jobPath: "cron/jobs/nightly-digest.claimed.heimdall.md",
+      deviceId: "pi4-office",
+      agentName: "piren",
+      staleAfterMs: 30 * 60 * 1000,
+      now: () => new Date("2026-06-25T07:00:00Z"),
+    });
+
+    expect(result.path).toBe("cron/jobs/nightly-digest.claimed.pi4-office.md");
+    expect(result.deviceId).toBe("pi4-office");
+  });
+});
+
+describe("ADR-0019 cron run record and last_run update", () => {
+  it("writes an inspectable run record and restores the unclaimed job with last_run updated", async () => {
+    await writeFile(join(vault, "cron", "jobs", "nightly-digest.md"), sharedJob("nightly-digest", "Summarize logs."));
+    const claimed = await claimCronJob({
+      vaultRoot: vault,
+      jobPath: "cron/jobs/nightly-digest.md",
+      deviceId: "heimdall",
+      agentName: "piren",
+      now: () => new Date("2026-06-25T07:00:00Z"),
+    });
+
+    const record = await recordCronRun({
+      vaultRoot: vault,
+      jobPath: claimed.path,
+      agentName: "piren",
+      deviceId: "heimdall",
+      status: "completed",
+      result: "All project logs summarized. No urgent items.",
+      startedAt: new Date("2026-06-25T07:00:05Z"),
+      finishedAt: new Date("2026-06-25T07:00:42Z"),
+    });
+
+    expect(record.runPath).toBe("cron/runs/20260625T070005000Z-nightly-digest.md");
+    expect(record.restoredJobPath).toBe("cron/jobs/nightly-digest.md");
+
+    const runContent = await readFile(record.runAbsolutePath, "utf8");
+    expect(runContent).toContain("job_id: nightly-digest");
+    expect(runContent).toContain("agent: piren");
+    expect(runContent).toContain("device: heimdall");
+    expect(runContent).toContain("status: completed");
+    expect(runContent).toContain("started_at: 2026-06-25T07:00:05.000Z");
+    expect(runContent).toContain("All project logs summarized.");
+
+    // The claimed file is gone and the unclaimed job is restored with last_run set.
+    await expect(readFile(join(vault, claimed.path), "utf8")).rejects.toThrow();
+    const restored = await readFile(join(vault, "cron", "jobs", "nightly-digest.md"), "utf8");
+    expect(restored).toContain("last_run: 2026-06-25T07:00:42.000Z");
+    expect(restored).not.toContain("last_claimed_by: heimdall");
+  });
+
+  it("records a failed run without leaving the job claimed", async () => {
+    await writeFile(join(vault, "cron", "jobs", "nightly-digest.md"), sharedJob("nightly-digest", "Summarize logs."));
+    const claimed = await claimCronJob({
+      vaultRoot: vault,
+      jobPath: "cron/jobs/nightly-digest.md",
+      deviceId: "heimdall",
+      agentName: "piren",
+      now: () => new Date("2026-06-25T07:00:00Z"),
+    });
+
+    const record = await recordCronRun({
+      vaultRoot: vault,
+      jobPath: claimed.path,
+      agentName: "piren",
+      deviceId: "heimdall",
+      status: "failed",
+      result: "Agent error: could not reach the model provider.",
+      startedAt: new Date("2026-06-25T07:00:05Z"),
+      finishedAt: new Date("2026-06-25T07:00:10Z"),
+    });
+
+    const runContent = await readFile(record.runAbsolutePath, "utf8");
+    expect(runContent).toContain("status: failed");
+    expect(runContent).toContain("could not reach the model provider");
+    // Even on failure the job is restored so it can be retried next cycle.
+    await expect(readFile(join(vault, "cron", "jobs", "nightly-digest.md"), "utf8")).resolves.toBeDefined();
   });
 });
 
