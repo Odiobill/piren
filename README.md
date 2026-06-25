@@ -96,11 +96,10 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren is pre-RC. Phase 3 gateway surfaces are implemented: minimal web UI, Telegram, Discord, and OpenAI-compatible chat completions. Phase 4 RC features implemented so far include Pi package extensibility, lazy vault skills, knowledge lifecycle tools, inspectable self-improvement tools, and vault-backed cron.
 
-Current verification baseline: 48 test files, 325 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing.
+Current verification baseline: 49 test files, 331 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing.
 
 Known limitations before RC:
 
-- Clean-install and global-install validation still need hardening.
 - Security model is bootstrap-token and local allowlist oriented, not multi-user RBAC.
 - Service lifecycle helpers are not yet first-class. Run gateway, Telegram, and Discord transports under your own supervisor for now.
 - Wiki concept/entity update tools and memory-pack integration are post-RC unless pulled forward.
@@ -112,6 +111,7 @@ npm test
 npm run typecheck
 npm run build
 npm run smoke
+npm run clean-install:check
 ```
 
 ## License

@@ -99,3 +99,21 @@ npm run build
 ```
 
 For git global installs, the package `prepare` script should build automatically. If a packaged asset is missing, verify `dist/public/` exists.
+
+## Clean-install check fails
+
+`npm run clean-install:check` runs a real install into an isolated HOME. If it reports `[FAIL] dist-cli`, the package `prepare` build did not run. Under npm 10.5+, this happens when `strict-allow-scripts=true` or an explicit `allow-scripts` allowlist omits Piren.
+
+Fix by approving the build script:
+
+```bash
+npm install -g github:Odiobill/piren --allow-scripts
+```
+
+Or build inside the installed package:
+
+```bash
+cd "$(npm root -g)/piren" && npm run build
+```
+
+If `[FAIL] pi-runtime` appears alongside a passing binary, the clean environment has neither `pi` nor `npx` on PATH. Install Pi, or ensure Node's `npx` is available so Piren can use the `npx --yes -p @earendil-works/pi-coding-agent@latest pi` fallback.

@@ -11,7 +11,7 @@ npm run build
 npm run smoke
 ```
 
-Current expected baseline: 48 test files, 325 tests, typecheck/build/smoke passing.
+Current expected baseline: 49 test files, 331 tests, typecheck/build/smoke passing.
 
 ## Clean install checklist
 
@@ -41,6 +41,57 @@ node dist/src/cli.js doctor
 node dist/src/cli.js status
 ```
 
+## Automated clean-install validation
+
+Piren ships a clean-install validation script that installs the package from
+the real GitHub source into an isolated HOME and verifies the installed binary:
+
+```bash
+npm run clean-install:check
+```
+
+It performs a real `npm install github:Odiobill/piren` in a fresh prefix with
+an isolated clean HOME, then checks:
+
+- `dist/src/cli.js`, `dist/public/index.html`, and `dist/src/pi-extension.js`
+  are present (catches a missing build).
+- The installed `piren` binary actually runs.
+- The Pi runtime policy resolves: a local `pi` on PATH is preferred, otherwise
+  Piren falls back to `npx --yes -p @earendil-works/pi-coding-agent@latest pi`.
+
+The script exits non-zero on any failure, so it is safe in CI. Options:
+
+```bash
+npm run clean-install:check -- github:Odiobill/piren   # explicit spec
+npm run clean-install:check -- /path/to/piren-0.1.0.tgz
+npm run clean-install:check -- --keep                  # keep the install for inspection
+```
+
+### npm allow-scripts and the prepare build
+
+Piren's `package.json` has a `prepare` script that builds `dist/` after
+install. npm (10.5+) warns about install-time scripts under its `allow-scripts`
+policy. By default the warning is advisory and `prepare` runs normally, so the
+github install builds `dist/` and works. If you have set
+`strict-allow-scripts=true`, or an explicit `allow-scripts` allowlist that
+omits Piren, `prepare` is blocked, `dist/` is missing, and the binary breaks.
+
+The clean-install check detects this and prints a pointer to the cause. To
+approve the build script explicitly:
+
+```bash
+npm install -g github:Odiobill/piren --allow-scripts
+```
+
+Or, after a blocked install, build inside the package:
+
+```bash
+cd $(npm root -g)/piren && npm run build
+```
+
+Installing from an npm tarball (`npm pack`) also works, because the tarball
+bundles the already-built `dist/`.
+
 ## Global install smoke
 
 ```bash
@@ -49,7 +100,9 @@ piren --version || true
 piren status
 ```
 
-Piren's package has a `prepare` script so git installs build `dist/` before linking the `piren` binary.
+Piren's package has a `prepare` script so git installs build `dist/` before
+linking the `piren` binary. `npm run clean-install:check` automates the full
+verification described above.
 
 ## Running long-lived transports
 

@@ -45,6 +45,15 @@ Cron job prompts are vault-visible Markdown files. Do not put secrets in job fil
 
 Cron runs only through opt-in worker mode. Default interactive sessions do not poll cron or inboxes automatically.
 
+## Install-script policy
+
+Piren's `prepare` build script runs on install. npm 10.5+ surfaces install-time
+scripts through its `allow-scripts` policy. By default the policy is advisory
+(the script runs with a warning). If your environment sets
+`strict-allow-scripts=true`, the build is blocked and the `piren` binary will be
+missing `dist/`. The `npm run clean-install:check` script detects this failure.
+Approve the build explicitly with `npm install --allow-scripts` when needed.
+
 ## Current limitations
 
 - No multi-user RBAC.

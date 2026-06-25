@@ -148,13 +148,14 @@ npm test
 npm run typecheck
 npm run build
 npm run smoke
+npm run clean-install:check
 ```
 
 Current baseline:
 
 ```text
-Test Files  48 passed (48)
-Tests       325 passed (325)
+Test Files  49 passed (49)
+Tests       331 passed (331)
 SMOKE PASSED
 ```
 
@@ -275,6 +276,12 @@ Vault-backed cron (ADR-0019, implemented):
 - Registered as `cron_list`, `cron_claim`, `cron_record_run`, and `cron_runs` extension tools. `cron_record_run` trusts the device id encoded in the claimed path rather than the runtime hostname. The context prompt gains a \"Vault-Backed Cron\" section. Secrets never belong in cron job files.
 - Worker mode (`PIREN_WORKER=1`, locally-allowed agent only) surfaces due jobs owned by this device via active-device-priority, but does NOT auto-run them: it notifies the agent, which claims and records runs via the tools so every run is inspectable. Default cron device staleness is 5 minutes, overridable via `PIREN_CRON_STALE_MS`. No UI, no leases, no central DB in RC.
 - Tests: `tests/cron.test.ts` (26 tests covering scheduling, due detection, job I/O, device ownership, active-device discovery, atomic claiming with stale recovery, run records, and run history), `tests/pi-extension.test.ts` (3 cron extension tests: full lifecycle, worker surfacing does-not-auto-run, context prompt). Smoke covers cron_list/claim/record_run/runs.
+
+Clean-install validation (RC hardening, implemented):
+- `src/clean-install.ts` exports `assessCleanInstall(probe)` (pure, unit-tested: given the observed state of a fresh install, returns a structured pass/fail report with checks for `dist-cli`, `dist-public`, `dist-extension`, `binary-runs`, and `pi-runtime`), `formatCleanInstallReport`, and `runCleanInstallCheck(options)` / `defaultCleanInstallCheck(spec, opts)` which orchestrate a real `npm install` into an isolated clean HOME and prefix, then feed the observed probe to the pure core. The Pi runtime policy is parsed from `piren doctor` output run in the clean env: `path` when `pi` is on PATH, `npx-latest` when only `npx` is available, `unavailable` otherwise.
+- The script detects the npm `allow-scripts`/`prepare` gap: when install scripts are blocked (`strict-allow-scripts=true` or an explicit denylist), `dist/` is not built, and the check fails with actionable diagnostics pointing at the cause. By default npm's allow-scripts warning is advisory and `prepare` runs, so the github install works.
+- `scripts/clean-install-check.ts` wires `defaultCleanInstallCheck` to a CLI: `npm run clean-install:check [-- spec] [--allow-scripts] [--keep]`. Exits non-zero on failure so it is CI-safe.
+- Tests: `tests/clean-install.test.ts` (6 tests). The full real github install is exercised manually via `npm run clean-install:check`, not in the unit suite (network).
 
 ## Common pitfalls
 
