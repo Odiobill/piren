@@ -57,6 +57,11 @@ Extension tools:
 - `task_claim(task_path, device_id?, stale_after_ms?)`: claims a selected-agent inbox task by renaming it to `.claimed.<device>.md`; `device_id` defaults to the sanitized hostname. If `task_path` is already claimed, `stale_after_ms` enables recovery only when the previous claiming device record under `team/<agent>/devices/<device>.json` has an expired `last_seen` heartbeat
 - `inbox_list()`: lists the selected local agent's unclaimed inbox tasks without claiming or mutating them
 - `flag_steward(title, body, severity?, notify?)`: creates one authoritative Markdown alert file under `steward-inbox/alerts/` for steward attention
+- `project_status(project)`: reads a project's current title, status, and updated date from `Projects/<project>/index.md` frontmatter (read-only)
+- `project_append_log(project, entry)`: appends a timestamped Markdown entry to `Projects/<project>/log.md`, attributed to the current agent
+- `decision_record(project, id, title, context, decision, consequences?, alternatives?)`: writes one ADR under `Projects/<project>/decisions/ADR-<id>-<slug>.md` (id must be a 4-digit number)
+
+Knowledge lifecycle tools (Phase 4) let agents leave durable artifacts after non-trivial work, per the ADR-0010 thesis: `project_status` reads current project state, `project_append_log` records chronological project history, and `decision_record` captures architecture decisions.
 
 Degraded write handling:
 
@@ -89,8 +94,8 @@ npm run smoke
 Expected current baseline:
 
 ```text
-Test Files  34 passed (34)
-Tests       226 passed (226)
+Test Files  35 passed (35)
+Tests       236 passed (236)
 SMOKE PASSED
 ```
 

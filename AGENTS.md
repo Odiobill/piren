@@ -153,8 +153,8 @@ npm run smoke
 Current baseline:
 
 ```text
-Test Files  34 passed (34)
-Tests       226 passed (226)
+Test Files  35 passed (35)
+Tests       236 passed (236)
 SMOKE PASSED
 ```
 
@@ -162,7 +162,7 @@ Smoke and tests must not depend on Davide's real `~/.config/piren/config.yml` un
 
 ## Current implementation surface
 
-Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 tracer bullets 1-8 are done (RPC client, HTTP/SSE transport, read-only vault browser, model/thinking control + agent switching, steering + approval gates, auth token gate, web UI frontend, session resume + abort). `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented. Vault skills (ADR-0014) and Pi package extensibility (ADR-0013) are implemented. The gateway-web-ui.md "Sequencing" section has the per-tracer-bullet detail; this section summarizes the stable surface.
+Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 tracer bullets 1-8 are done (RPC client, HTTP/SSE transport, read-only vault browser, model/thinking control + agent switching, steering + approval gates, auth token gate, web UI frontend, session resume + abort). `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented. Vault skills (ADR-0014), Pi package extensibility (ADR-0013), and Phase 4 knowledge lifecycle tools (ADR-0015) are implemented. The gateway-web-ui.md "Sequencing" section has the per-tracer-bullet detail; this section summarizes the stable surface.
 
 Gateway RPC surface (Phase 3, `src/gateway-rpc.ts`):
 
@@ -218,6 +218,9 @@ Implemented extension tools:
 - `inbox_list()`
 - `task_claim(task_path, device_id?, stale_after_ms?)`
 - `flag_steward(title, body, severity?, notify?)`
+- `project_status(project)`
+- `project_append_log(project, entry)`
+- `decision_record(project, id, title, context, decision, consequences?, alternatives?)`
 
 Vault skills (ADR-0014, implemented):
 - `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName)` and `formatSkillsForContext(skills)`. Skills are loaded from `vault/skills/` (shared) and `team/<agent>/skills/` (agent-specific, overrides shared on name collision). Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
@@ -232,6 +235,11 @@ Pi package extensibility (ADR-0013, implemented):
 - `piren doctor` validates that all declared packages are installed via `checkPackages` (status `warn` for missing, `ok` when all installed, omitted when no packages declared). `DoctorPirenOptions` gained `packageResolver` for test injection. `DoctorReport` gained `packages: string[]`. `formatDoctorReport` prints the declared packages.
 - `piren_status` reports declared packages as `packages: <list>` (or `packages: <none>`). The `PirenStatusReport` and `BuildPirenStatusReportOptions` gained `packages`; the status builder falls back to `context.packages`.
 - Tests: `tests/packages.test.ts` (5 tests), `tests/run.test.ts` (3 new for package extension flags), `tests/doctor.test.ts` (3 new for package validation), `tests/pi-extension.test.ts` (2 new for status reporting).
+
+Phase 4 knowledge lifecycle tools (ADR-0015, implemented):
+- `src/knowledge.ts` exports `projectStatus(options)` (read `Projects/<project>/index.md` frontmatter, returns `{project, path, available, title, status, updated}`), `projectAppendLog(options)` (append to `Projects/<project>/log.md` with agent attribution, uses the existing `vaultAppendLog` core), and `decisionRecord(options)` (write `ADR-<id>-<slug>.md` under `Projects/<project>/decisions/` with standard ADR structure). Project names are validated to reject `/`, `\`, and `..`. ADR id must match `^\d{4}$`. Optional `consequences` and `alternatives` sections are included only when provided (built with conditional assignment for `exactOptionalPropertyTypes`).
+- Registered as `project_status`, `project_append_log`, and `decision_record` extension tools. The context prompt gains a "Knowledge Lifecycle" section guiding agents to leave durable artifacts after non-trivial work.
+- Tests: `tests/knowledge.test.ts` (9 tests), `tests/pi-extension.test.ts` (+1 extension test exercising all three tools, context prompt assertions). Smoke covers all three tools.
 
 ## Common pitfalls
 
