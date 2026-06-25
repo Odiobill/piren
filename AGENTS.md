@@ -162,7 +162,7 @@ Smoke and tests must not depend on Davide's real `~/.config/piren/config.yml` un
 
 ## Current implementation surface
 
-Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 tracer bullets 1-11 are done (RPC client, HTTP/SSE transport, read-only vault browser, model/thinking control + agent switching, steering + approval gates, auth token gate, web UI frontend, session resume + abort, Telegram, Discord, OpenAI-compatible API). `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented. Vault skills with lazy loading (ADR-0014 + ADR-0017), Pi package extensibility (ADR-0013), and Phase 4 knowledge lifecycle tools (ADR-0015) are implemented. The gateway-web-ui.md "Sequencing" section has the per-tracer-bullet detail; this section summarizes the stable surface.
+Phase 0, Phase 0.5, Phase 1, and Phase 2 are complete. Phase 3 tracer bullets 1-11 are done (RPC client, HTTP/SSE transport, read-only vault browser, model/thinking control + agent switching, steering + approval gates, auth token gate, web UI frontend, session resume + abort, Telegram, Discord, OpenAI-compatible API). `piren ask`, `piren chat` (alias for run), and `piren clean` are also implemented. Vault skills with lazy loading (ADR-0014 + ADR-0017), Pi package extensibility (ADR-0013), Phase 4 knowledge lifecycle tools (ADR-0015), ADR-0019 vault-backed cron, and the ADR-0020 README/docs split are implemented. The gateway-web-ui.md "Sequencing" section has the per-tracer-bullet detail; this section summarizes the stable surface.
 
 Gateway RPC surface (Phase 3, `src/gateway-rpc.ts`):
 
