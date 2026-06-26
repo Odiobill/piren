@@ -112,6 +112,14 @@
         <p>Scheduled work is Markdown job files with active-device ownership, atomic claiming, and inspectable run records. No central database.</p>
       </div>
       <div class="feature">
+        <h3>Service lifecycle</h3>
+        <p>Keep transports always-on with one command. Piren generates systemd user units, with a tmux plus <code>@reboot</code> cron fallback for DietPi and stripped-down SBCs. Inspectable, reversible, no root.</p>
+      </div>
+      <div class="feature">
+        <h3>Interactive setup wizard</h3>
+        <p>Run <code>piren setup</code> for a guided walk: pick a vault, choose a Pi provider and API key, write local config. Plus <code>--help</code> on every command.</p>
+      </div>
+      <div class="feature">
         <h3>Lazy vault skills</h3>
         <p>Reusable procedures in <code>vault/skills/</code>, cataloged at startup and loaded on demand. Progressive disclosure, not prompt bloat.</p>
       </div>
@@ -259,7 +267,8 @@ vault/
       <div class="step"><span class="step-num">2.</span><div><span class="cmd">piren init --vault-root /tmp/piren-vault</span></div></div>
       <div class="step"><span class="step-num">3.</span><div><span class="cmd">piren setup --apply --vault-root /tmp/piren-vault --agent piren</span></div></div>
       <div class="step"><span class="step-num">4.</span><div><span class="cmd">piren --vault-root /tmp/piren-vault --agent piren run</span></div></div>
-      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Or start the gateway: <span class="cmd">piren gateway</span></div></div>
+      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">&#10022;</span><div style="color:var(--text-muted);font-size:0.88rem;">Prefer a guided walk? Run <span class="cmd">piren setup</span> with no flags for an interactive wizard: vault, provider key, and config in one flow. Then keep it always-on with <span class="cmd">piren service install gateway</span>.</div></div>
+      <div class="step"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Or start the gateway: <span class="cmd">piren gateway</span></div></div>
     </div>
     <p style="text-align:center;margin-top:1.75rem;">
       <a href="https://github.com/Odiobill/piren/blob/main/docs/getting-started.md" target="_blank" rel="noopener" class="btn btn-secondary">Full getting-started guide</a>
