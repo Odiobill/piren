@@ -12,8 +12,8 @@ import { execFile } from "node:child_process";
  * concern. `runCleanInstallCheck` orchestrates the real npm install in an
  * isolated clean HOME and feeds the resulting probe to `assessCleanInstall`.
  *
- * The most common real-world failure this catches: a github or tarball install
- * that does not contain the committed `dist/` release artifacts expected by the
+ * The most common real-world failure this catches: a github install whose
+ * prepare bootstrap did not produce the `dist/` artifacts expected by the
  * installed `piren` binary.
  */
 
@@ -51,9 +51,9 @@ export interface CleanInstallAssessment {
 }
 
 const DIST_HINT =
-  "This usually means dist/ was not included in the installed package. " +
-  "Piren expects committed release artifacts for github installs, and `npm pack` runs " +
-  "the prepack build before creating an npm tarball.";
+  "This usually means the git-install prepare build did not produce dist/. " +
+  "Piren's prepare bootstrap installs devDependencies when npm git preparation omits them, " +
+  "then runs the build before the package is linked.";
 
 export function assessCleanInstall(probe: CleanInstallProbe): CleanInstallAssessment {
   const checks: CleanInstallCheck[] = [];

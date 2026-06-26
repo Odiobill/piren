@@ -279,7 +279,7 @@ Vault-backed cron (ADR-0019, implemented):
 
 Clean-install validation (RC hardening, implemented):
 - `src/clean-install.ts` exports `assessCleanInstall(probe)` (pure, unit-tested: given the observed state of a fresh install, returns a structured pass/fail report with checks for `dist-cli`, `dist-public`, `dist-extension`, `binary-runs`, and `pi-runtime`), `formatCleanInstallReport`, and `runCleanInstallCheck(options)` / `defaultCleanInstallCheck(spec, opts)` which orchestrate a real `npm install` into an isolated clean HOME and prefix, then feed the observed probe to the pure core. The Pi runtime policy is parsed from `piren doctor` output run in the clean env: `path` when `pi` is on PATH, `npx-latest` when only `npx` is available, `unavailable` otherwise.
-- Clean-install validation now also guards the install lifecycle: `package.json` uses `prepack` for tarball creation and does not define `prepare`, so `npm install -g github:Odiobill/piren` uses the committed `dist/` artifacts instead of trying to compile TypeScript on the target machine.
+- Clean-install validation now also guards the install lifecycle: `package.json` uses `prepare: node scripts/prepare-build.cjs` for GitHub installs. The prepare bootstrap installs devDependencies with `--ignore-scripts` when npm git-dependency preparation omits them, then runs the normal build. `prepack` still rebuilds `dist/` for tarball creation.
 - `scripts/clean-install-check.ts` wires `defaultCleanInstallCheck` to a CLI: `npm run clean-install:check [-- spec] [--allow-scripts] [--keep]`. Exits non-zero on failure so it is CI-safe.
 - Tests: `tests/clean-install.test.ts` (7 tests). The full real github install is exercised manually via `npm run clean-install:check`, not in the unit suite (network).
 

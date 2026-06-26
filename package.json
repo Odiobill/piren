@@ -8,6 +8,7 @@
     "piren": "dist/src/cli.js"
   },
   "scripts": {
+    "prepare": "node scripts/prepare-build.cjs",
     "prepack": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

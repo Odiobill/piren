@@ -6,7 +6,7 @@
  * isolated clean HOME and prefix, then verifies the installed binary:
  *
  *   1. dist/src/cli.js, dist/public/index.html, dist/src/pi-extension.js exist
- *      (catches missing committed release artifacts).
+ *      (catches failed git-install prepare builds).
  *   2. The installed piren binary actually runs.
  *   3. The Pi runtime policy resolves: pi on PATH preferred, otherwise the
  *      explicit npx --yes -p @earendil-works/pi-coding-agent@latest pi fallback.
