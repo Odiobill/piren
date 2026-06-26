@@ -13,6 +13,7 @@ export const KNOWN_COMMANDS = [
     "discord",
     "ask",
     "chat",
+    "service",
     "clean",
     "version",
 ];
@@ -30,6 +31,7 @@ export function parseArgs(argv) {
     let agentName;
     let force = false;
     let apply = false;
+    let help = false;
     let port;
     let host;
     let token;
@@ -58,6 +60,9 @@ export function parseArgs(argv) {
         }
         else if (arg === "--apply") {
             apply = true;
+        }
+        else if (arg === "-h" || arg === "--help") {
+            help = true;
         }
         else if (arg === "--port") {
             port = Number(pirenArgs[index + 1]);
@@ -96,6 +101,7 @@ export function parseArgs(argv) {
         vaultRoot,
         piArgs,
         apply,
+        help,
         port,
         host,
         token,

@@ -1,4 +1,4 @@
-import { type BootstrapOptions, type TelegramLocalConfig, type DiscordLocalConfig } from "./bootstrap.js";
+import { type BootstrapOptions, type TelegramLocalConfig, type DiscordLocalConfig, type ServicesLocalConfig } from "./bootstrap.js";
 import { type PackageEntryResolver } from "./packages.js";
 export type DoctorStatus = "ok" | "warn" | "fail";
 export interface DoctorCheck {
@@ -44,6 +44,22 @@ export declare function checkTelegramConfig(config: TelegramLocalConfig | undefi
  * a default_agent outside the runnable set.
  */
 export declare function checkDiscordConfig(config: DiscordLocalConfig | undefined, runnableAgents?: string[]): DoctorCheck | null;
+/**
+ * The shape of a `services.transports.<name>` block the wizard / service CLI
+ * writes into local config after install. Mirrors ServicesLocalConfig but is
+ * re-declared here so the pure check has no cross-module type dependency beyond
+ * the config contract.
+ */
+export type ServiceConfig = ServicesLocalConfig;
+/**
+ * Validate the service lifecycle status for `piren doctor`.
+ *
+ * Returns null when no `services.transports` block is declared at all, so a
+ * normal doctor run never depends on service management being configured. When
+ * a transport entry is present, it warns if the transport is declared but not
+ * installed, or installed but not running.
+ */
+export declare function checkServiceConfig(config: ServiceConfig | undefined): DoctorCheck | null;
 export declare function defaultPiRuntimeChecker(env?: NodeJS.ProcessEnv | Record<string, string | undefined>): Promise<PiRuntimeCheck>;
 export declare function doctorPiren(options?: DoctorPirenOptions): Promise<DoctorReport>;
 export declare function formatDoctorReport(report: DoctorReport): string;

@@ -1,10 +1,13 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { initVault } from "./init.js";
 import { spawnPiRun, buildPiRunCommand } from "./run.js";
 import { formatSetupReport, setupPiren } from "./setup.js";
+import { runWizard } from "./wizard.js";
+import { ReadlinePrompt } from "./prompt.js";
 import { GatewayServer } from "./gateway-http.js";
 import { TelegramBotApiHttpClient, TelegramTransport, runTelegramPolling } from "./telegram-transport.js";
 import { DiscordBotApiHttpClient, DiscordTransport, runDiscordGateway, createNativeDiscordGatewaySocket } from "./discord-transport.js";
@@ -13,10 +16,12 @@ import { askAgent } from "./ask.js";
 import { cleanPiren, formatCleanReport } from "./clean.js";
 import { readVersion } from "./version.js";
 import { resolveGatewayToken, assertAuthGate, isLocalhostBind, defaultTokenFilePath } from "./gateway-auth.js";
+import { formatHelp, formatCommandHelp, isHelpRequest } from "./help.js";
 import { parseArgs, bootstrapOptions, KNOWN_COMMANDS, } from "./parse-args.js";
 import { loadPirenContext } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents } from "./agents.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
+import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, } from "./service-lifecycle.js";
 const thisDir = dirname(fileURLToPath(import.meta.url));
 // Resolve the public directory (frontend static files) relative to this
 // module's location. From source: src/ -> ../public. From compiled dist:
@@ -25,10 +30,22 @@ const thisDir = dirname(fileURLToPath(import.meta.url));
 function resolvePublicDir() {
     return join(thisDir, "..", "public");
 }
-const parsed = parseArgs(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const parsed = parseArgs(argv);
 const { agentDir, agentName, command, force, vaultRoot, piArgs, port, host, token, positionals } = parsed;
+// Help takes priority. `piren --help` / `piren -h` shows top-level help;
+// `piren <cmd> --help` shows that command's help. The `--` passthrough is
+// respected so `piren run -- --help` forwards the flag to Pi.
+const helpRequested = isHelpRequest(argv);
+const commandExplicitlyGiven = argv.includes(command) && command !== "status";
+if (helpRequested) {
+    console.log(commandExplicitlyGiven ? formatCommandHelp(command) : formatHelp());
+    process.exit(0);
+}
 if (!KNOWN_COMMANDS.includes(command)) {
-    console.error("Usage: piren [init|status|agents|doctor|setup|run|worker|gateway|web|telegram|discord|ask|clean|version] [--vault-root /path/to/vault] [--agent thor] [--agent-dir /path/to/vault/team/agent] [--port 7317] [--host 127.0.0.1] [--force] [-- pi-args...]");
+    console.error(formatHelp());
+    console.error("");
+    console.error(`Unknown command: ${command}`);
     process.exit(2);
 }
 try {
@@ -227,9 +244,126 @@ try {
         console.log(formatAgentsReport(report));
     }
     else if (command === "setup") {
-        const report = await setupPiren({ ...bootstrapOptions(parsed), apply: parsed.apply });
-        console.log(formatSetupReport(report));
-        if (report.checks.some((check) => check.status === "fail"))
+        // Interactive wizard when run bare (no --apply, no --vault-root, no --agent).
+        // Batch mode is preserved when any of those flags is present.
+        const wantsInteractive = !parsed.apply && vaultRoot === undefined && agentName === undefined && agentDir === undefined;
+        if (wantsInteractive && process.stdin.isTTY) {
+            const prompter = new ReadlinePrompt();
+            try {
+                await runWizard(prompter, { log: (m) => console.log(m) });
+            }
+            finally {
+                prompter.close();
+            }
+            // Explicit exit: the readline interface can keep the event loop alive
+            // after the top-level await resolves, which Node reports as an unsettled
+            // top-level await. The wizard is done, so exit cleanly.
+            process.exit(0);
+        }
+        else {
+            const report = await setupPiren({ ...bootstrapOptions(parsed), apply: parsed.apply });
+            console.log(formatSetupReport(report));
+            if (report.checks.some((check) => check.status === "fail"))
+                process.exit(1);
+        }
+    }
+    else if (command === "service") {
+        const [actionRaw, transportRaw] = positionals;
+        if (!actionRaw || !transportRaw) {
+            console.error("Usage: piren service <install|remove|start|stop|restart|status> <gateway|telegram|discord>");
+            process.exit(2);
+        }
+        const actionCheck = validateAction(actionRaw);
+        if (!actionCheck.ok) {
+            console.error(actionCheck.message);
+            process.exit(2);
+        }
+        const transportCheck = validateTransport(transportRaw);
+        if (!transportCheck.ok) {
+            console.error(transportCheck.message);
+            process.exit(2);
+        }
+        const action = actionRaw;
+        const transport = transportRaw;
+        // Resolve the context: vault + agent are needed for install to generate
+        // the right ExecStart command. For remove/start/stop/restart/status we only
+        // need the services dir, but loading context keeps the command consistent.
+        const opts = bootstrapOptions(parsed);
+        let resolvedVaultRoot = vaultRoot;
+        let resolvedAgent = agentName;
+        if (action === "install") {
+            try {
+                const context = await loadPirenContext(opts);
+                resolvedVaultRoot = resolvedVaultRoot ?? context.vaultRoot;
+                resolvedAgent = resolvedAgent ?? context.agentName;
+            }
+            catch {
+                // Bootstrap may fail on a fresh install; fall back to explicit flags.
+            }
+        }
+        if (action === "install" && (!resolvedVaultRoot || !resolvedAgent)) {
+            console.error("service install requires a resolved vault and agent. Pass --vault-root and --agent, or run piren setup first.");
+            process.exit(2);
+        }
+        const servicesDir = join(homedir(), ".config", "piren", "services");
+        const pirenCommand = resolvePirenCommand({ explicit: process.argv[1] });
+        const probe = {
+            hasSystemdUser: async () => commandAvailable("systemctl", ["--user", "is-system-running"]),
+            hasTmux: async () => commandAvailable("tmux", ["-V"]),
+            hasCrontab: async () => commandAvailable("crontab", ["-l"]),
+        };
+        const manager = await detectServiceManager(probe);
+        const deps = {
+            writeFile: async (path, content, fileOpts) => {
+                const { mkdir, writeFile, chmod } = await import("node:fs/promises");
+                await mkdir(dirname(path), { recursive: true });
+                await writeFile(path, content, "utf8");
+                if (fileOpts?.executable)
+                    await chmod(path, 0o755);
+            },
+            removeFile: async (path) => {
+                const { rm } = await import("node:fs/promises");
+                await rm(path, { force: true });
+            },
+            runCommand: (command) => runShell(command),
+            log: (message) => console.log(message),
+        };
+        const report = await executeServiceAction({
+            action,
+            transport,
+            manager,
+            pirenCommand,
+            vaultRoot: resolvedVaultRoot ?? "",
+            agentName: resolvedAgent ?? "",
+            servicesDir,
+            deps,
+        });
+        console.log(formatServiceReport(report));
+        // Record the service status in local config so `piren doctor` can report it.
+        // This is best-effort: a config read/write failure must not fail the service
+        // operation itself. Only record when files were actually generated (manager
+        // is not "none"); when the manager is none, nothing was installed.
+        if (report.ok && (action === "install" || action === "remove") && report.manager !== "none") {
+            try {
+                const { readFile, writeFile, mkdir } = await import("node:fs/promises");
+                const configPathLocal = join(homedir(), ".config", "piren", "config.yml");
+                let existing = "";
+                try {
+                    existing = await readFile(configPathLocal, "utf8");
+                }
+                catch {
+                    existing = "";
+                }
+                const installed = action === "install";
+                const updated = updateServiceStatusYaml(existing, transport, { installed, running: installed });
+                await mkdir(dirname(configPathLocal), { recursive: true });
+                await writeFile(configPathLocal, updated, "utf8");
+            }
+            catch {
+                // Non-fatal: the service files were written; config status is advisory.
+            }
+        }
+        if (!report.ok)
             process.exit(1);
     }
     else if (command === "ask") {
@@ -273,5 +407,27 @@ try {
 catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
+}
+// ---------------------------------------------------------------------------
+// Service lifecycle helpers (shell probes + command runner)
+// ---------------------------------------------------------------------------
+/** Run a command and resolve true if it exits 0 within 5s. Used for detection. */
+function commandAvailable(command, args) {
+    return new Promise((resolvePromise) => {
+        execFile(command, args, { timeout: 5000 }, (error) => {
+            resolvePromise(!error);
+        });
+    });
+}
+/** Run a shell command string and return its exit code and captured output. */
+function runShell(command) {
+    return new Promise((resolvePromise) => {
+        execFile("sh", ["-c", command], { timeout: 30000 }, (error, stdout, stderr) => {
+            const exitCode = error ? (error.errno === undefined ? 1 : -1) : 0;
+            // execFile sets exitCode via the error's `code` for non-zero exits; normalize.
+            const normalizedExit = error && typeof error.code === "number" ? error.code : exitCode;
+            resolvePromise({ exitCode: normalizedExit < 0 ? 1 : normalizedExit, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+        });
+    });
 }
 //# sourceMappingURL=cli.js.map

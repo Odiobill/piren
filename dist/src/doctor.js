@@ -184,6 +184,63 @@ export function checkDiscordConfig(config, runnableAgents = []) {
     }
     return { id: "discord", status: "ok", message: `Discord configured with ${guildIds.length} guild(s) and ${channelIds.length} channel(s) allowlisted.` };
 }
+/**
+ * Validate the service lifecycle status for `piren doctor`.
+ *
+ * Returns null when no `services.transports` block is declared at all, so a
+ * normal doctor run never depends on service management being configured. When
+ * a transport entry is present, it warns if the transport is declared but not
+ * installed, or installed but not running.
+ */
+export function checkServiceConfig(config) {
+    if (config === undefined)
+        return null;
+    const transports = config.transports;
+    if (transports === undefined || transports === null)
+        return null;
+    const names = Object.keys(transports).filter((name) => {
+        const entry = transports[name];
+        return entry !== undefined && entry !== null && ("installed" in entry || "running" in entry);
+    });
+    if (names.length === 0)
+        return null;
+    const notInstalled = [];
+    const notRunning = [];
+    const okInstalled = [];
+    for (const name of names) {
+        const entry = transports[name];
+        if (entry.installed !== true) {
+            notInstalled.push(name);
+        }
+        else {
+            if (entry.running === false) {
+                notRunning.push(name);
+            }
+            else {
+                okInstalled.push(name);
+            }
+        }
+    }
+    if (notInstalled.length > 0) {
+        return {
+            id: "services",
+            status: "warn",
+            message: `Declared transport(s) not installed as a service: ${notInstalled.join(", ")}. Run \`piren service install <transport>\`.`,
+        };
+    }
+    if (notRunning.length > 0) {
+        return {
+            id: "services",
+            status: "warn",
+            message: `Installed transport(s) reported as not running: ${notRunning.join(", ")}. Run \`piren service start <transport>\`.`,
+        };
+    }
+    return {
+        id: "services",
+        status: "ok",
+        message: `All declared transport services installed and running: ${okInstalled.join(", ")}.`,
+    };
+}
 function execFileText(command, args) {
     return new Promise((resolvePromise, reject) => {
         execFile(command, args, { timeout: 5000 }, (error, stdout, stderr) => {
@@ -247,6 +304,9 @@ export async function doctorPiren(options = {}) {
     const discordCheck = checkDiscordConfig(config.discord, allowedAgents);
     if (discordCheck)
         checks.push(discordCheck);
+    const serviceCheck = checkServiceConfig(config.services);
+    if (serviceCheck)
+        checks.push(serviceCheck);
     let agentDir;
     try {
         agentDir = await resolveAgentDir(options);
