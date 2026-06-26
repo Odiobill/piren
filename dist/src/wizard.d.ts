@@ -27,6 +27,80 @@ export interface PiProviderInfo {
 }
 export declare const PI_PROVIDERS: readonly PiProviderInfo[];
 export declare function formatProviderMenu(): string;
+export interface CatalogModel {
+    id: string;
+    name: string;
+}
+/**
+ * Curated flagship models per provider, drawn from Pi's model registry
+ * (packages/ai/src/providers/*.models.ts). Kept intentionally short: the
+ * wizard offers a sensible default set, and points the user to
+ * `pi --list-models` for the full live list after auth is configured. The
+ * catalog is a static fallback so the wizard works without Pi installed.
+ */
+export declare const MODEL_CATALOG: Readonly<Record<string, readonly CatalogModel[]>>;
+/**
+ * Render the model menu for a provider. Numbered entries from the catalog,
+ * followed by a custom/enter-manually option. For an unknown provider, only
+ * the custom option is shown.
+ */
+export declare function formatModelMenu(providerId: string): string;
+/**
+ * Resolve a 0-based menu selection. Returns the catalog entry, or null when
+ * the user picked the custom slot (the last entry) or an out-of-range index.
+ */
+export declare function resolveModelChoice(providerId: string, selection: number): {
+    provider: string;
+    id: string;
+    name: string;
+} | null;
+export interface AgentModelConfigInput {
+    provider: string;
+    id: string;
+    thinking?: string;
+}
+export interface AgentModelConfigOutput {
+    id: string;
+    thinking?: string;
+}
+/**
+ * Build the `model:` block for the agent-local config.yml (team/<agent>/config.yml).
+ * The id is stored with the provider prefix unless it already has one, matching
+ * what Piren's `normalizeModelId` in src/run.ts expects.
+ */
+export declare function buildAgentModelConfig(input: AgentModelConfigInput): AgentModelConfigOutput;
+export interface AgentConfigInput {
+    model?: AgentModelConfigOutput;
+}
+/**
+ * Serialize the agent-local config.yml content (team/<agent>/config.yml). This
+ * mirrors the shape `initVault` writes and what `setup --apply` scaffolds, so
+ * the wizard can write the model selection here after the operator picks one.
+ * The file is intentionally small: model preferences plus the polling defaults.
+ */
+export declare function buildAgentConfigYaml(input: AgentConfigInput): string;
+export interface TransportConfigInput {
+    telegram?: {
+        bot_token: string;
+        allowed_chat_ids: Array<number | string>;
+        default_agent?: string;
+    };
+    discord?: {
+        bot_token: string;
+        allowed_guild_ids: Array<number | string>;
+        allowed_channel_ids: Array<number | string>;
+        allowed_thread_ids?: Array<number | string>;
+        default_agent?: string;
+    };
+}
+/**
+ * Merge transport config blocks (telegram/discord) into an existing local
+ * config.yml document. Re-serializes the whole document so unrelated keys are
+ * preserved, and a re-run overwrites the previous transport values. This keeps
+ * the wizard idempotent: running setup again to change a bot token replaces it
+ * rather than duplicating the block.
+ */
+export declare function mergeTransportConfigYaml(existingConfig: string, transport: TransportConfigInput): string;
 /**
  * Detect whether a path is an existing Piren vault. Mirrors the bootstrap
  * detection heuristic: the `.piren-vault` marker, or `steward-directives.md`
@@ -74,7 +148,10 @@ export interface WizardResult {
     excludedAgents: string[];
     newVault: boolean;
     providerId?: string;
+    modelId?: string;
     wroteAuthJson: boolean;
+    wroteAgentConfig: boolean;
     wroteConfig: boolean;
+    configuredTransports: string[];
 }
 export declare function runWizard(prompt: WizardPrompt, deps?: WizardDeps): Promise<WizardResult>;
