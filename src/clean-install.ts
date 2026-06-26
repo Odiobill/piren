@@ -12,9 +12,9 @@ import { execFile } from "node:child_process";
  * concern. `runCleanInstallCheck` orchestrates the real npm install in an
  * isolated clean HOME and feeds the resulting probe to `assessCleanInstall`.
  *
- * The most common real-world failure this catches: npm's `allow-scripts`
- * policy (npm >= 10.5) blocks the package `prepare` hook, so a `github:` or
- * bare-clone install with no bundled `dist/` ends up with a broken bin.
+ * The most common real-world failure this catches: a github or tarball install
+ * that does not contain the committed `dist/` release artifacts expected by the
+ * installed `piren` binary.
  */
 
 export type CleanInstallStatus = "ok" | "warn" | "fail";
@@ -50,11 +50,10 @@ export interface CleanInstallAssessment {
   checks: CleanInstallCheck[];
 }
 
-const PREPARE_HINT =
-  "This usually means the package prepare/build script did not run. " +
-  "npm >= 10.5 blocks install scripts under allow-scripts by default. " +
-  "Re-run with the approved script, or run `npm run build` inside the package, " +
-  "or install from an npm tarball which bundles dist/.";
+const DIST_HINT =
+  "This usually means dist/ was not included in the installed package. " +
+  "Piren expects committed release artifacts for github installs, and `npm pack` runs " +
+  "the prepack build before creating an npm tarball.";
 
 export function assessCleanInstall(probe: CleanInstallProbe): CleanInstallAssessment {
   const checks: CleanInstallCheck[] = [];
@@ -64,7 +63,7 @@ export function assessCleanInstall(probe: CleanInstallProbe): CleanInstallAssess
     status: probe.cliJsExists ? "ok" : "fail",
     message: probe.cliJsExists
       ? `dist/src/cli.js present at ${probe.installDir}.`
-      : `dist/src/cli.js is MISSING at ${probe.installDir}. ${PREPARE_HINT}`,
+      : `dist/src/cli.js is MISSING at ${probe.installDir}. ${DIST_HINT}`,
   });
 
   checks.push({
@@ -72,7 +71,7 @@ export function assessCleanInstall(probe: CleanInstallProbe): CleanInstallAssess
     status: probe.publicIndexExists ? "ok" : "fail",
     message: probe.publicIndexExists
       ? "dist/public/index.html present (web UI frontend asset)."
-      : `dist/public/index.html is MISSING. ${PREPARE_HINT}`,
+      : `dist/public/index.html is MISSING. ${DIST_HINT}`,
   });
 
   checks.push({
@@ -80,7 +79,7 @@ export function assessCleanInstall(probe: CleanInstallProbe): CleanInstallAssess
     status: probe.extensionJsExists ? "ok" : "fail",
     message: probe.extensionJsExists
       ? "dist/src/pi-extension.js present (Piren extension entry point)."
-      : `dist/src/pi-extension.js is MISSING. ${PREPARE_HINT}`,
+      : `dist/src/pi-extension.js is MISSING. ${DIST_HINT}`,
   });
 
   // If the core dist did not build, the binary cannot run, so cascade cleanly
@@ -157,8 +156,7 @@ export interface CleanInstallOptions {
   npmBin?: string;
   /** Extra args passed to npm install (e.g. ["--no-save"]). */
   npmArgs?: string[];
-  /** Whether to allow npm install scripts (prepare). Default false: the script
-   * is meant to detect the allow-scripts gap. Set true to auto-approve. */
+  /** Whether to pass npm's --allow-scripts flag. Kept for operator compatibility. */
   allowInstallScripts?: boolean;
   /** Whether to delete the prefix/cleanHome at the end. Default false (keep for inspection). */
   cleanup?: boolean;

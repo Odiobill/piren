@@ -8,7 +8,7 @@
     "piren": "dist/src/cli.js"
   },
   "scripts": {
-    "prepare": "npm run build",
+    "prepack": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('public','dist/public',{recursive:true})\"",

@@ -87,7 +87,7 @@ and a verified clean-install path.
 
 ### Verification
 
-51 test files, 341 tests. `npm run typecheck`, `npm run build`,
+51 test files, 342 tests. `npm run typecheck`, `npm run build`,
 `npm run smoke`, and `npm run clean-install:check` all pass against the real
 GitHub source install.
 

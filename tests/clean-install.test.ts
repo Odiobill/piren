@@ -1,5 +1,18 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assessCleanInstall, type CleanInstallProbe, type CleanInstallAssessment } from "../src/clean-install.js";
+
+describe("package install lifecycle", () => {
+  it("does not run a build during github dependency install", () => {
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+
+    expect(pkg.scripts?.prepare).toBeUndefined();
+    expect(pkg.scripts?.prepack).toBe("npm run build");
+  });
+});
 
 describe("assessCleanInstall", () => {
   it("passes when dist artifacts exist, the binary runs, and pi is on PATH", () => {
@@ -27,7 +40,7 @@ describe("assessCleanInstall", () => {
     expect(result.checks.every((c) => c.status === "ok")).toBe(true);
   });
 
-  it("fails when dist/src/cli.js is missing (prepare script did not run)", () => {
+  it("fails when dist/src/cli.js is missing from the installed package", () => {
     const probe: CleanInstallProbe = {
       installDir: "/prefix/node_modules/piren",
       cliJsExists: false,
@@ -44,8 +57,8 @@ describe("assessCleanInstall", () => {
     expect(result.ok).toBe(false);
     const cli = result.checks.find((c) => c.id === "dist-cli")!;
     expect(cli.status).toBe("fail");
-    expect(cli.message).toMatch(/prepare.*build/i);
-    expect(cli.message).toMatch(/allow-scripts/i);
+    expect(cli.message).toMatch(/dist.*installed package/i);
+    expect(cli.message).toMatch(/prepack/i);
   });
 
   it("cascades binary failure when dist exists but the binary does not run", () => {

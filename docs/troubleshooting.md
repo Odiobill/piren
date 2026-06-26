@@ -92,28 +92,22 @@ Common issues are `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, and 
 
 ## Global command cannot find files
 
-Run:
+For source checkouts, run:
 
 ```bash
 npm run build
 ```
 
-For git global installs, the package `prepare` script should build automatically. If a packaged asset is missing, verify `dist/public/` exists.
+For git global installs, Piren expects committed `dist/` release artifacts. If a packaged asset is missing, verify the installed source includes `dist/public/` and `dist/src/cli.js`.
 
 ## Clean-install check fails
 
-`npm run clean-install:check` runs a real install into an isolated HOME. If it reports `[FAIL] dist-cli`, the package `prepare` build did not run. Under npm 10.5+, this happens when `strict-allow-scripts=true` or an explicit `allow-scripts` allowlist omits Piren.
+`npm run clean-install:check` runs a real install into an isolated HOME. If it reports `[FAIL] dist-cli`, the installed GitHub source or tarball did not include the expected `dist/` artifacts.
 
-Fix by approving the build script:
-
-```bash
-npm install -g github:Odiobill/piren --allow-scripts
-```
-
-Or build inside the installed package:
+Fix by rebuilding and committing `dist/`, then reinstalling from GitHub after the commit is pushed. For tarballs, create a fresh one with:
 
 ```bash
-cd "$(npm root -g)/piren" && npm run build
+npm pack
 ```
 
 If `[FAIL] pi-runtime` appears alongside a passing binary, the clean environment has neither `pi` nor `npx` on PATH. Install Pi, or ensure Node's `npx` is available so Piren can use the `npx --yes -p @earendil-works/pi-coding-agent@latest pi` fallback.

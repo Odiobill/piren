@@ -11,7 +11,7 @@ npm run build
 npm run smoke
 ```
 
-Current expected baseline: 51 test files, 341 tests, typecheck/build/smoke passing.
+Current expected baseline: 51 test files, 342 tests, typecheck/build/smoke passing.
 
 ## Clean install checklist
 
@@ -67,30 +67,17 @@ npm run clean-install:check -- /path/to/piren-0.1.0.tgz
 npm run clean-install:check -- --keep                  # keep the install for inspection
 ```
 
-### npm allow-scripts and the prepare build
+### GitHub installs and build artifacts
 
-Piren's `package.json` has a `prepare` script that builds `dist/` after
-install. npm (10.5+) warns about install-time scripts under its `allow-scripts`
-policy. By default the warning is advisory and `prepare` runs normally, so the
-github install builds `dist/` and works. If you have set
-`strict-allow-scripts=true`, or an explicit `allow-scripts` allowlist that
-omits Piren, `prepare` is blocked, `dist/` is missing, and the binary breaks.
+Piren does not build TypeScript on the target machine during `github:`
+installation. The repository carries committed `dist/` release artifacts, so
+`npm install -g github:Odiobill/piren` can link the existing binary without
+requiring `typescript` or dev dependencies on the device. The package uses
+`prepack` to rebuild `dist/` when creating npm tarballs via `npm pack`.
 
-The clean-install check detects this and prints a pointer to the cause. To
-approve the build script explicitly:
-
-```bash
-npm install -g github:Odiobill/piren --allow-scripts
-```
-
-Or, after a blocked install, build inside the package:
-
-```bash
-cd $(npm root -g)/piren && npm run build
-```
-
-Installing from an npm tarball (`npm pack`) also works, because the tarball
-bundles the already-built `dist/`.
+If a clean-install check reports missing `dist/` files, the GitHub source or
+tarball being installed did not include the release artifacts. Rebuild and
+commit `dist/`, or install from a freshly generated tarball.
 
 ## Global install smoke
 
@@ -100,9 +87,7 @@ piren --version || true
 piren status
 ```
 
-Piren's package has a `prepare` script so git installs build `dist/` before
-linking the `piren` binary. `npm run clean-install:check` automates the full
-verification described above.
+Piren's package uses committed `dist/` artifacts for git installs, so `npm install -g github:Odiobill/piren` does not need to compile TypeScript on the target machine. `npm run clean-install:check` automates the full verification described above.
 
 ## Running long-lived transports
 
