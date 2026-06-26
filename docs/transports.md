@@ -74,7 +74,7 @@ Discord uses a platform-mandated WebSocket client connection to Discord's gatewa
 
 Messaging transports use platform bot tokens plus local allowlists. They do not use the HTTP Bearer token gate.
 
-For Discord, `allowed_guild_ids` are server ids. `allowed_channel_ids` are channel ids. Optional `allowed_thread_ids` restricts threads.
+For Discord, `allowed_guild_ids` are server ids. `allowed_channel_ids` are channel ids. Threaded messages require explicit `allowed_thread_ids`; without a matching thread id, Piren ignores the message even when the guild and parent channel appear configured. This keeps thread access fail-closed because Discord gateway message payloads are not a reliable source of parent-channel authorization context.
 
 ## Doctor checks
 

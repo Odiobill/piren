@@ -155,7 +155,7 @@ Current baseline:
 
 ```text
 Test Files  49 passed (49)
-Tests       331 passed (331)
+Tests       334 passed (334)
 SMOKE PASSED
 ```
 
@@ -197,7 +197,7 @@ Telegram transport surface (Phase 3 bullet 9 first slice, `src/transport-session
 
 Discord transport surface (Phase 3 bullet 10, `src/discord-transport.ts`):
 
-- `DiscordTransport` authorizes messages by `guild_id` against `discord.allowed_guild_ids` and `channel_id` against `discord.allowed_channel_ids` (plus optional `discord.allowed_thread_ids`), exposes `/start`, `/agents`, `/agent <name>`, `/whoami`, and `/abort`, and forwards plain text prompts to the active conversation session's `PiRpcClient.promptAndWait()`. The conversation key is `guild_id:channel_id` plus optional `:thread_id`. Long assistant responses are split via `chunkDiscordMessage` (`DISCORD_MESSAGE_LIMIT = 2000`, reusing the Telegram chunker algorithm). Leading bot mentions (`<@id>`) are stripped before command parsing.
+- `DiscordTransport` authorizes messages by `guild_id` against `discord.allowed_guild_ids` and non-thread messages by `channel_id` against `discord.allowed_channel_ids`. Threaded messages require an explicit `discord.allowed_thread_ids` match so thread access fails closed. It exposes `/start`, `/agents`, `/agent <name>`, `/whoami`, and `/abort`, and forwards plain text prompts to the active conversation session's `PiRpcClient.promptAndWait()`. The conversation key is `guild_id:channel_id` plus optional `:thread_id`. Long assistant responses are split via `chunkDiscordMessage` (`DISCORD_MESSAGE_LIMIT = 2000`, reusing the Telegram chunker algorithm). Leading bot mentions (`<@id>`) are stripped before command parsing.
 - `DiscordBotApiHttpClient` is a minimal Discord REST adapter for creating messages (`POST /channels/{id}/messages`) authenticated with a Bot token header. `runDiscordGateway` drives the Discord WebSocket gateway: it sends `Identify` (op 2) on `Hello` (op 10), dispatches `MESSAGE_CREATE` (op 0) to the transport, tracks the last sequence number, and sends `Heartbeat` (op 1) at the negotiated interval and on demand. `createNativeDiscordGatewaySocket` wraps the native `WebSocket` (Node >= 22) into the `DiscordGatewaySocket` interface; tests inject a fake socket via `socketFactory`. The gateway loop is generic over the client type for testability.
 - `piren discord` reads `discord.bot_token`, `discord.allowed_guild_ids`, `discord.allowed_channel_ids`, optional `discord.allowed_thread_ids`, optional `discord.application_id`/`discord.install_url`, and optional `discord.default_agent` from `~/.config/piren/config.yml`, then routes conversations to the local runnable-agent set. The WebSocket gateway client is a platform-mandated dial-out connection, not a WebSocket server added to Piren; the web UI remains SSE plus POST per ADR-0012.
 - `piren doctor` reports a `discord` check (status warn/ok) only when a `discord:` block is present in local config, via the pure `checkDiscordConfig(config, runnableAgents)` exported from `src/doctor.ts`. An installation without Discord config produces no discord check, so normal doctor never depends on Discord being configured.

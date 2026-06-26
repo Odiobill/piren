@@ -9,6 +9,7 @@ import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
+const MAX_JSON_BODY_BYTES = 1024 * 1024;
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -61,6 +62,10 @@ interface ChatStream {
   closed: boolean;
   waiters: Array<() => void>;
 }
+
+type JsonBodyResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; status: 400 | 413; error: string };
 
 function wake(stream: ChatStream): void {
   const waiters = stream.waiters;
@@ -274,26 +279,19 @@ export class GatewayServer {
   }
 
   private async handleStart(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    let body = "";
-    for await (const chunk of req) {
-      body += typeof chunk === "string" ? chunk : chunk.toString();
-    }
-
-    let parsed: { message?: unknown; mode?: unknown };
-    try {
-      parsed = JSON.parse(body) as { message?: unknown; mode?: unknown };
-    } catch {
-      this.writeJson(res, 400, { error: "invalid JSON body" });
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
       return;
     }
 
-    const message = parsed.message;
+    const message = parsed.value.message;
     if (typeof message !== "string" || message.trim() === "") {
       this.writeJson(res, 400, { error: "message is required" });
       return;
     }
 
-    const mode = parsed.mode;
+    const mode = parsed.value.mode;
     if (mode !== undefined && mode !== "steer" && mode !== "follow_up") {
       this.writeJson(res, 400, { error: "mode must be 'steer' or 'follow_up'" });
       return;
@@ -391,12 +389,12 @@ export class GatewayServer {
 
   private async handleOpenAiChatCompletions(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readJsonBody(req);
-    if (body === null) {
-      this.writeJson(res, 400, { error: "invalid JSON body" });
+    if (!body.ok) {
+      this.writeJson(res, body.status, { error: body.error });
       return;
     }
 
-    const messages = (body as { messages?: unknown }).messages;
+    const messages = body.value.messages;
     if (!Array.isArray(messages) || messages.length === 0) {
       this.writeJson(res, 400, { error: "messages array is required" });
       return;
@@ -409,15 +407,15 @@ export class GatewayServer {
     }
 
     try {
-      const requestedStream = (body as { stream?: unknown }).stream;
+      const requestedStream = body.value.stream;
       if (requestedStream === true) {
-        await this.handleOpenAiChatCompletionsStream(res, prompt, body);
+        await this.handleOpenAiChatCompletionsStream(res, prompt, body.value);
         return;
       }
 
       const events = await this.client.promptAndWait(prompt);
       const content = extractAssistantText(events).trim();
-      const requestedModel = (body as { model?: unknown }).model;
+      const requestedModel = body.value.model;
       const model = typeof requestedModel === "string" && requestedModel.trim() !== "" ? requestedModel : "piren/default";
       this.writeJson(res, 200, {
         id: `chatcmpl-${randomUUID()}`,
@@ -546,13 +544,13 @@ export class GatewayServer {
 
   private async handleSetModel(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readJsonBody(req);
-    if (body === null) {
-      this.writeJson(res, 400, { error: "invalid JSON body" });
+    if (!body.ok) {
+      this.writeJson(res, body.status, { error: body.error });
       return;
     }
 
-    const provider = (body as { provider?: unknown }).provider;
-    const modelId = (body as { modelId?: unknown }).modelId;
+    const provider = body.value.provider;
+    const modelId = body.value.modelId;
     if (typeof provider !== "string" || typeof modelId !== "string") {
       this.writeJson(res, 400, { error: "provider and modelId are required" });
       return;
@@ -568,12 +566,12 @@ export class GatewayServer {
 
   private async handleSetThinking(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readJsonBody(req);
-    if (body === null) {
-      this.writeJson(res, 400, { error: "invalid JSON body" });
+    if (!body.ok) {
+      this.writeJson(res, body.status, { error: body.error });
       return;
     }
 
-    const level = (body as { level?: unknown }).level;
+    const level = body.value.level;
     if (typeof level !== "string") {
       this.writeJson(res, 400, { error: "level is required" });
       return;
@@ -587,35 +585,44 @@ export class GatewayServer {
     }
   }
 
-  private async readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+  private async readJsonBody(req: IncomingMessage): Promise<JsonBodyResult> {
     let body = "";
+    let bytes = 0;
     for await (const chunk of req) {
+      bytes += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+      if (bytes > MAX_JSON_BODY_BYTES) {
+        return { ok: false, status: 413, error: "JSON request body is too large" };
+      }
       body += typeof chunk === "string" ? chunk : chunk.toString();
     }
     try {
-      return JSON.parse(body) as Record<string, unknown>;
+      const parsed = JSON.parse(body) as unknown;
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        return { ok: false, status: 400, error: "invalid JSON body" };
+      }
+      return { ok: true, value: parsed as Record<string, unknown> };
     } catch {
-      return null;
+      return { ok: false, status: 400, error: "invalid JSON body" };
     }
   }
 
   private async handleApprove(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readJsonBody(req);
-    if (body === null) {
-      this.writeJson(res, 400, { error: "invalid JSON body" });
+    if (!body.ok) {
+      this.writeJson(res, body.status, { error: body.error });
       return;
     }
 
-    const id = (body as { id?: unknown }).id;
+    const id = body.value.id;
     if (typeof id !== "string") {
       this.writeJson(res, 400, { error: "id is required" });
       return;
     }
 
     // Exactly one of confirmed, value, or cancelled must be present.
-    const confirmed = (body as { confirmed?: unknown }).confirmed;
-    const value = (body as { value?: unknown }).value;
-    const cancelled = (body as { cancelled?: unknown }).cancelled;
+    const confirmed = body.value.confirmed;
+    const value = body.value.value;
+    const cancelled = body.value.cancelled;
 
     try {
       if (cancelled === true) {
@@ -670,12 +677,12 @@ export class GatewayServer {
    */
   private async handleResume(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await this.readJsonBody(req);
-    if (body === null) {
-      this.writeJson(res, 400, { error: "invalid JSON body" });
+    if (!body.ok) {
+      this.writeJson(res, body.status, { error: body.error });
       return;
     }
 
-    const sessionPath = (body as { sessionPath?: unknown }).sessionPath;
+    const sessionPath = body.value.sessionPath;
     if (typeof sessionPath !== "string" || sessionPath.trim() === "") {
       this.writeJson(res, 400, { error: "sessionPath is required" });
       return;
@@ -722,12 +729,12 @@ export class GatewayServer {
     }
 
     const body = await this.readJsonBody(req);
-    if (body === null) {
-      this.writeJson(res, 400, { error: "invalid JSON body" });
+    if (!body.ok) {
+      this.writeJson(res, body.status, { error: body.error });
       return;
     }
 
-    const agent = (body as { agent?: unknown }).agent;
+    const agent = body.value.agent;
     if (typeof agent !== "string") {
       this.writeJson(res, 400, { error: "agent is required" });
       return;

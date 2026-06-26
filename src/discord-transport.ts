@@ -117,10 +117,12 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
   async handleMessage(message: DiscordMessage): Promise<void> {
     if (!message.guild_id || !message.channel_id) return;
     if (!this.allowedGuildIds.has(message.guild_id)) return;
-    // When thread allowlists are configured, a threaded message must be in an
-    // allowed thread; otherwise channels are checked directly.
+    // Threaded Discord messages require an explicit thread allowlist. Discord
+    // gateway payloads do not reliably include the parent channel id in the
+    // MESSAGE_CREATE event shape Piren consumes, so allowing all threads under
+    // an allowlisted guild would bypass the configured channel boundary.
     if (message.thread_id) {
-      if (this.allowedThreadIds.size > 0 && !this.allowedThreadIds.has(message.thread_id)) return;
+      if (!this.allowedThreadIds.has(message.thread_id)) return;
     } else if (!this.allowedChannelIds.has(message.channel_id)) {
       return;
     }

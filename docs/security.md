@@ -23,15 +23,24 @@ Token resolution priority:
 
 The auto-generated token is persisted with mode `0600` and printed once.
 
-All `/api/*` routes require `Authorization: Bearer <token>` when auth is enabled, except `GET /api/auth/info`, which is public so the frontend can discover whether auth is required.
+All `/api/*` routes require `Authorization: Bearer *** when auth is enabled, except `GET /api/auth/info`, which is public so the frontend can discover whether auth is required.
 
 Token comparison uses constant-time logic.
+
+JSON API request bodies are capped at 1 MiB and rejected with HTTP 413 before
+parsing. The cap is a pre-RC denial-of-service guard for the gateway's chat,
+approval, model, session, and OpenAI-compatible endpoints.
 
 ## Messaging transports
 
 Telegram and Discord use platform bot tokens plus local allowlists. They do not use the HTTP Bearer token gate.
 
 Keep bot tokens in local config or another local secret store, not in the vault or repository.
+
+Discord threaded messages require an explicit `discord.allowed_thread_ids`
+entry. This avoids treating every thread in an allowlisted guild as authorized
+when the gateway payload does not carry enough parent-channel context to prove
+the thread belongs under an allowlisted channel.
 
 ## Vault path safety
 

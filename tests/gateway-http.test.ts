@@ -81,6 +81,24 @@ describe("GatewayServer HTTP/SSE transport against a fake Pi process", () => {
     }
   });
 
+  it("rejects oversized JSON request bodies before parsing", async () => {
+    const server = new GatewayServer({ target: fakePiTarget() });
+    try {
+      const handle = await server.start();
+      const oversized = JSON.stringify({ message: "x".repeat(1024 * 1024 + 1) });
+      const res = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: oversized,
+      });
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toMatch(/too large/i);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("returns 404 for an unknown stream id", async () => {
     const server = new GatewayServer({ target: fakePiTarget() });
     try {

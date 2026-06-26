@@ -107,4 +107,4 @@ Static UI:
 - `GET /`
 - `GET /<asset>`
 
-All `/api/*` routes except `GET /api/auth/info` require Bearer auth when a gateway token is configured.
+All `/api/*` routes except `GET /api/auth/info` require Bearer auth when a gateway token is configured. JSON request bodies are capped at 1 MiB; oversized bodies return HTTP 413 before parsing.

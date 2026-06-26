@@ -37,6 +37,9 @@ The native web chat uses a POST-start plus GET-stream pattern:
 
 This avoids WebSocket server complexity. Heartbeats keep proxies from closing idle streams.
 
+JSON request bodies accepted by gateway API routes are capped at 1 MiB and
+return HTTP 413 when oversized.
+
 ## Minimal integrated UI
 
 Open:

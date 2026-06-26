@@ -135,6 +135,8 @@ discord:
   default_agent: piren
 ```
 
+Discord thread access is fail-closed: messages with `thread_id` are accepted only when that exact thread id appears in `allowed_thread_ids`.
+
 Gateway token can be passed through `--token`, `PIREN_TOKEN`, or `~/.config/piren/gateway-token`.
 
 ## Environment variables

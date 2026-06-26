@@ -16,13 +16,14 @@ class FakeDiscordClient {
   }
 }
 
-function buildTransport() {
+function buildTransport(options?: { allowedThreadIds?: string[] }) {
   const replies: Array<{ channelId: string; text: string }> = [];
   const clients: FakeDiscordClient[] = [];
   const transport = new DiscordTransport<FakeDiscordClient>({
     transportName: "discord",
     allowedGuildIds: ["111"],
     allowedChannelIds: ["222"],
+    allowedThreadIds: options?.allowedThreadIds,
     runnableAgents: ["piren", "thor"],
     defaultAgent: "piren",
     targetBuilder: async (agent) => ({ command: "fake", args: [agent], cwd: process.cwd(), env: process.env }),
@@ -66,7 +67,7 @@ describe("DiscordTransport", () => {
   });
 
   it("keeps separate active agents per distinct channel conversation", async () => {
-    const { transport, replies } = buildTransport();
+    const { transport, replies } = buildTransport({ allowedThreadIds: ["333"] });
     // channel 222 in guild 111 is allowlisted
     await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/whoami" });
     // a thread off channel 222 is a distinct conversation
@@ -78,6 +79,34 @@ describe("DiscordTransport", () => {
       "Active Piren agent for this channel: thor",
       "Active Piren agent: thor",
     ]);
+  });
+
+  it("ignores threaded messages unless the thread id is explicitly allowlisted", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    await transport.handleMessage({
+      guild_id: "111",
+      channel_id: "222",
+      thread_id: "333",
+      content: "hello from a thread",
+    });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("accepts threaded messages when the thread id is explicitly allowlisted", async () => {
+    const { transport, replies, clients } = buildTransport({ allowedThreadIds: ["333"] });
+
+    await transport.handleMessage({
+      guild_id: "111",
+      channel_id: "222",
+      thread_id: "333",
+      content: "hello from a thread",
+    });
+
+    expect(replies).toEqual([{ channelId: "333", text: "pong" }]);
+    expect(clients).toHaveLength(1);
   });
 
   it("rejects an agent that is not in the runnable set", async () => {
