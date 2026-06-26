@@ -4,13 +4,12 @@ import { describe, expect, it } from "vitest";
 import { assessCleanInstall, type CleanInstallProbe, type CleanInstallAssessment } from "../src/clean-install.js";
 
 describe("package install lifecycle", () => {
-  it("bootstraps github dependency builds when npm omits devDependencies", () => {
+  it("does not run a build during github dependency install", () => {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
 
-    expect(pkg.scripts?.prepare).toBe("node scripts/prepare-build.cjs");
-    expect(pkg.scripts?.prepare).not.toBe("npm run build");
+    expect(pkg.scripts?.prepare).toBeUndefined();
     expect(pkg.scripts?.prepack).toBe("npm run build");
   });
 });
@@ -58,8 +57,8 @@ describe("assessCleanInstall", () => {
     expect(result.ok).toBe(false);
     const cli = result.checks.find((c) => c.id === "dist-cli")!;
     expect(cli.status).toBe("fail");
-    expect(cli.message).toMatch(/prepare build/i);
-    expect(cli.message).toMatch(/devDependencies/i);
+    expect(cli.message).toMatch(/dist.*installed package/i);
+    expect(cli.message).toMatch(/prepack/i);
   });
 
   it("cascades binary failure when dist exists but the binary does not run", () => {

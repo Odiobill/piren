@@ -69,15 +69,15 @@ npm run clean-install:check -- --keep                  # keep the install for in
 
 ### GitHub installs and build artifacts
 
-Piren builds TypeScript during `github:` installation through a small prepare
-bootstrap (`scripts/prepare-build.cjs`). The bootstrap handles npm git-dependency
-preparation on stripped-down machines: if npm did not install devDependencies
-into the clone before running `prepare`, it runs a local `npm install
---include=dev --ignore-scripts` first, then builds `dist/`. `prepack` also
-rebuilds `dist/` when creating npm tarballs via `npm pack`.
+Piren does not build TypeScript on the target machine during `github:`
+installation. The repository carries committed `dist/` release artifacts, so
+`npm install -g github:Odiobill/piren` can link the existing binary without
+requiring `typescript` or dev dependencies on the device. The package uses
+`prepack` to rebuild `dist/` when creating npm tarballs via `npm pack`.
 
-If a clean-install check reports missing `dist/` files, the prepare bootstrap or
-build failed. Run the check with `--keep` and inspect the isolated npm logs.
+If a clean-install check reports missing `dist/` files, the GitHub source or
+tarball being installed did not include the release artifacts. Rebuild and
+commit `dist/`, or install from a freshly generated tarball.
 
 ## Global install smoke
 
@@ -87,7 +87,7 @@ piren --version || true
 piren status
 ```
 
-Piren's package runs a prepare bootstrap for git installs, so `npm install -g github:Odiobill/piren` can build `dist/` even when npm git preparation initially omits devDependencies. `npm run clean-install:check` automates the full verification described above.
+Piren's package uses committed `dist/` artifacts for git installs, so `npm install -g github:Odiobill/piren` does not need to compile TypeScript on the target machine. `npm run clean-install:check` automates the full verification described above.
 
 ## Running long-lived transports
 

@@ -98,18 +98,16 @@ For source checkouts, run:
 npm run build
 ```
 
-For git global installs, Piren runs a prepare bootstrap that builds `dist/` before linking the binary. If a packaged asset is missing, run the clean-install check with `--keep` and inspect the npm logs.
+For git global installs, Piren expects committed `dist/` release artifacts. If a packaged asset is missing, verify the installed source includes `dist/public/` and `dist/src/cli.js`.
 
 ## Clean-install check fails
 
-`npm run clean-install:check` runs a real install into an isolated HOME. If it reports `[FAIL] dist-cli`, the prepare bootstrap did not produce the expected `dist/` artifacts.
+`npm run clean-install:check` runs a real install into an isolated HOME. If it reports `[FAIL] dist-cli`, the installed GitHub source or tarball did not include the expected `dist/` artifacts.
 
-Fix by keeping the failed install for inspection:
+Fix by rebuilding and committing `dist/`, then reinstalling from GitHub after the commit is pushed. For tarballs, create a fresh one with:
 
 ```bash
-npm run clean-install:check -- --keep
+npm pack
 ```
-
-Then inspect the printed `/tmp/piren-clean-*/home/.npm/_logs/` files for the build failure.
 
 If `[FAIL] pi-runtime` appears alongside a passing binary, the clean environment has neither `pi` nor `npx` on PATH. Install Pi, or ensure Node's `npx` is available so Piren can use the `npx --yes -p @earendil-works/pi-coding-agent@latest pi` fallback.
