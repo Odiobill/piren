@@ -119,7 +119,7 @@ npm run clean-install:check
 
 ## Landing page
 
-The public landing page lives under `site/` and reuses the integrated web UI palette. It deploys to GitHub Pages via the `.github/workflows/pages.yml` workflow (Actions-deploy mode, since branch-deploy only serves `/` or `/docs`). To enable it: Settings > Pages > Source = "GitHub Actions". The workflow publishes on every push to `main` that touches `site/`.
+The public landing page lives under `site/` and reuses the integrated web UI palette. It deploys to GitHub Pages via the `.github/workflows/pages.yml` workflow (Actions-deploy mode, since branch-deploy only serves `/` or `/docs`). The workflow is self-enabling: on first run it enables Pages and sets the source to "GitHub Actions" automatically, then publishes on every subsequent push to `main` that touches `site/`.
 
 ## License
 

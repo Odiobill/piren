@@ -25,6 +25,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          # enablement: true auto-enables GitHub Pages on the repository and
+          # sets the source to "GitHub Actions" if it is not already enabled.
+          # This makes the workflow self-contained: no manual Settings toggle.
+          enablement: true
       - name: Upload site/ as Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
