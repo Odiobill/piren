@@ -1,6 +1,6 @@
 # Operations
 
-This page covers routine operator tasks and the pre-RC clean-install checklist.
+This page covers routine operator tasks and the clean-install checklist.
 
 ## Verify a source checkout
 
@@ -106,7 +106,7 @@ verification described above.
 
 ## Running long-lived transports
 
-Pre-RC, run transports under your own supervisor:
+Run transports under your own supervisor:
 
 ```bash
 piren gateway

@@ -1,6 +1,6 @@
 # Security
 
-Piren is local-first and pre-RC. Its security model is intentionally simple and inspectable.
+Piren is local-first. As of 0.1.0-rc.1 its security model is intentionally simple and inspectable.
 
 ## Boundaries
 
@@ -28,7 +28,7 @@ All `/api/*` routes require `Authorization: Bearer *** when auth is enabled, exc
 Token comparison uses constant-time logic.
 
 JSON API request bodies are capped at 1 MiB and rejected with HTTP 413 before
-parsing. The cap is a pre-RC denial-of-service guard for the gateway's chat,
+parsing. The cap is a denial-of-service guard for the gateway's chat,
 approval, model, session, and OpenAI-compatible endpoints.
 
 ## Messaging transports
