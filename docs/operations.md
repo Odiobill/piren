@@ -82,12 +82,12 @@ commit `dist/`, or install from a freshly generated tarball.
 ## Global install smoke
 
 ```bash
-npm install -g github:Odiobill/piren
+npm install -g --install-links github:Odiobill/piren
 piren --version || true
 piren status
 ```
 
-Piren's package uses committed `dist/` artifacts for git installs, so `npm install -g github:Odiobill/piren` does not need to compile TypeScript on the target machine. `npm run clean-install:check` automates the full verification described above.
+Piren's package uses committed `dist` artifacts for git installs, so `npm install -g --install-links github:Odiobill/piren` does not need to compile TypeScript on the target machine. `--install-links` avoids npm 11 leaving a global bin symlink that points into the temporary git cache. `npm run clean-install:check` automates the full verification described above.
 
 ## Running long-lived transports
 

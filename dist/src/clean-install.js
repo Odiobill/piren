@@ -110,7 +110,7 @@ export async function runCleanInstallCheck(options) {
         npm_config_prefix: options.prefix,
     };
     delete env.XDG_CONFIG_HOME;
-    const installArgs = ["install", "--prefix", options.prefix];
+    const installArgs = ["install", "--prefix", options.prefix, "--install-links"];
     if (options.allowInstallScripts)
         installArgs.push("--allow-scripts");
     installArgs.push(options.spec);
@@ -125,18 +125,19 @@ export async function runCleanInstallCheck(options) {
     const cliJs = join(installDir, "dist", "src", "cli.js");
     const publicIndex = join(installDir, "dist", "public", "index.html");
     const extensionJs = join(installDir, "dist", "src", "pi-extension.js");
-    // Probe the installed binary: it must print "Piren status" (or version) on
-    // a no-network command. We run `piren status` against an explicit disposable
-    // vault so it does not depend on the clean HOME having any config.
+    // Probe the installed binary through npm's linked command, not only through
+    // node dist/src/cli.js. This catches npm git installs that leave a broken bin
+    // symlink unless --install-links is used.
     const vaultRoot = join(options.cleanHome, "verify-vault");
-    const verifyEnv = { ...env };
+    const verifyEnv = { ...env, PATH: `${join(options.prefix, "node_modules", ".bin")}:${join(options.prefix, "bin")}:${env.PATH ?? ""}` };
+    const binPath = join(options.prefix, "node_modules", ".bin", process.platform === "win32" ? "piren.cmd" : "piren");
     const verifyArgs = ["--vault-root", vaultRoot, "--agent", "piren", "status"];
     let binaryRuns = false;
     let binaryVersion;
     if (await exists(cliJs)) {
         // init the vault first so status has a SOUL.md to read
         await run(nodeBin, [cliJs, "init", "--vault-root", vaultRoot], { cwd: options.prefix, env: verifyEnv, timeout: 20_000 });
-        const statusRun = await run(nodeBin, [cliJs, ...verifyArgs], { cwd: options.prefix, env: verifyEnv, timeout: 20_000 });
+        const statusRun = await run(binPath, verifyArgs, { cwd: options.prefix, env: verifyEnv, timeout: 20_000 });
         binaryRuns = statusRun.code === 0 && statusRun.stdout.includes("Piren status");
         // Read the package.json version as the binary version marker.
         try {

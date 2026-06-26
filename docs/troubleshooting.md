@@ -98,7 +98,7 @@ For source checkouts, run:
 npm run build
 ```
 
-For git global installs, Piren expects committed `dist/` release artifacts. If a packaged asset is missing, verify the installed source includes `dist/public/` and `dist/src/cli.js`.
+For git global installs, Piren expects committed `dist/` release artifacts. Use `npm install -g --install-links github:Odiobill/piren` on npm 11 so the global binary points at a copied package rather than npm's temporary git cache. If a packaged asset is missing, verify the installed source includes `dist/public/` and `dist/src/cli.js`.
 
 ## Clean-install check fails
 

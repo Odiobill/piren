@@ -57,9 +57,11 @@ Cron runs only through opt-in worker mode. Default interactive sessions do not p
 ## Install artifact policy
 
 GitHub installs use the committed `dist/` release artifacts and do not compile
-TypeScript on the target machine. `npm pack` runs the `prepack` build before
-creating a tarball. If `dist/` is missing after install, the source or tarball
-being installed is incomplete. Run `npm run clean-install:check` before release.
+TypeScript on the target machine. On npm 11, install GitHub sources with
+`--install-links` so the global bin points at a copied package instead of npm's
+temporary git cache. `npm pack` runs the `prepack` build before creating a
+tarball. If `dist/` is missing after install, the source or tarball being
+installed is incomplete. Run `npm run clean-install:check` before release.
 
 ## Current limitations
 
