@@ -1,0 +1,337 @@
+/* Piren landing page.
+ *
+ * The palette and design tokens intentionally mirror the integrated web UI
+ * (public/style.css) so the landing page and the gateway web UI read as one
+ * brand: same dark base, same purple accent, same borders, same monospace
+ * touches. The landing page only adds the layout, spacing, and sections a
+ * marketing page needs. */
+
+:root {
+  /* Mirrored from public/style.css */
+  --bg: #0f0f17;
+  --bg-panel: #181828;
+  --bg-input: #1e1e30;
+  --text: #c8c8d8;
+  --text-bright: #e8e8f0;
+  --text-muted: #6b6b80;
+  --accent: #7c6ff0;
+  --accent-hover: #9488f5;
+  --green: #4ade80;
+  --red: #f87171;
+  --border: #252538;
+  --yellow: #fbbf24;
+
+  /* Logo accent colors, reused for subtle highlights */
+  --orb-orange: #d85a30;
+  --orb-purple: #7f77dd;
+  --orb-green: #1d9e75;
+  --orb-blue: #378add;
+
+  --mono: "SF Mono", "JetBrains Mono", Monaco, "Cascadia Code", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --maxw: 1040px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+a { color: var(--accent); text-decoration: none; transition: color 0.15s; }
+a:hover { color: var(--accent-hover); }
+
+.container {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+/* ---- Nav ---- */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(15, 15, 23, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.5rem;
+  max-width: var(--maxw);
+  margin: 0 auto;
+}
+.nav-brand {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  letter-spacing: -0.3px;
+}
+.nav-links { display: flex; gap: 1.75rem; align-items: center; }
+.nav-links a {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+.nav-links a:hover { color: var(--text-bright); }
+
+/* ---- Buttons ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.7rem 1.3rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.btn-primary {
+  background: var(--accent);
+  color: white;
+}
+.btn-primary:hover { background: var(--accent-hover); color: white; }
+.btn-secondary {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { border-color: var(--accent); color: var(--text-bright); }
+
+/* ---- Hero ---- */
+.hero {
+  text-align: center;
+  padding: 5rem 1.5rem 4rem;
+}
+.hero-logo {
+  width: min(420px, 80vw);
+  height: auto;
+  margin: 0 auto 1rem;
+  display: block;
+}
+.hero-tagline {
+  font-size: clamp(1.7rem, 4vw, 2.6rem);
+  font-weight: 600;
+  color: var(--text-bright);
+  line-height: 1.25;
+  letter-spacing: -0.5px;
+  max-width: 700px;
+  margin: 0 auto 1rem;
+}
+.hero-sub {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  max-width: 580px;
+  margin: 0 auto 2.25rem;
+}
+.hero-actions {
+  display: flex;
+  gap: 0.85rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.install-line {
+  margin-top: 2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  padding: 0.55rem 0.95rem;
+  border-radius: 6px;
+}
+.install-line .prompt { color: var(--accent); }
+.install-line code { color: var(--green); }
+
+/* ---- Section scaffolding ---- */
+section { padding: 4rem 0; }
+.section-title {
+  font-size: 1.65rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  text-align: center;
+  margin-bottom: 0.6rem;
+  letter-spacing: -0.4px;
+}
+.section-sub {
+  text-align: center;
+  color: var(--text-muted);
+  max-width: 580px;
+  margin: 0 auto 2.75rem;
+  font-size: 1rem;
+}
+
+/* ---- Philosophy pillars ---- */
+.pillars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1rem;
+}
+.pillar {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.6rem 1.4rem;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.pillar:hover { border-color: var(--accent); transform: translateY(-2px); }
+.pillar-icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.65rem;
+  display: block;
+}
+.pillar h3 {
+  font-size: 1.05rem;
+  color: var(--text-bright);
+  margin-bottom: 0.4rem;
+}
+.pillar p { font-size: 0.9rem; color: var(--text-muted); line-height: 1.55; }
+
+/* ---- Features grid ---- */
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.feature {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.4rem;
+}
+.feature h3 {
+  font-size: 1rem;
+  color: var(--accent);
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+}
+.feature p { font-size: 0.9rem; color: var(--text-muted); }
+
+/* ---- Comparison ---- */
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.compare-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.6rem;
+}
+.compare-card h3 {
+  font-size: 1.05rem;
+  color: var(--text-bright);
+  margin-bottom: 0.3rem;
+}
+.compare-card .compare-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 0.9rem;
+}
+.compare-card p { font-size: 0.9rem; color: var(--text); line-height: 1.6; }
+.compare-card .vs-note {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.86rem;
+  color: var(--text-muted);
+}
+.compare-card .vs-note strong { color: var(--green); font-weight: 600; }
+
+/* ---- Architecture block ---- */
+.arch {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.6rem;
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  line-height: 1.85;
+  color: var(--text);
+  overflow-x: auto;
+}
+.arch .a-steward { color: var(--yellow); }
+.arch .a-piren { color: var(--accent); font-weight: 600; }
+.arch .a-pi { color: var(--orb-green); }
+.arch .a-vault { color: var(--orb-blue); }
+.arch .a-arrow { color: var(--text-muted); }
+
+/* ---- Quick start ---- */
+.quickstart {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem 1.6rem;
+  max-width: 640px;
+  margin: 0 auto;
+}
+.quickstart .step {
+  display: flex;
+  gap: 0.85rem;
+  align-items: baseline;
+  padding: 0.45rem 0;
+}
+.quickstart .step-num {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  min-width: 1.5rem;
+}
+.quickstart code, .quickstart .cmd {
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  color: var(--green);
+}
+
+/* ---- Footer ---- */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 2.5rem 0;
+  text-align: center;
+}
+footer p { color: var(--text-muted); font-size: 0.88rem; }
+footer .footer-links {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 640px) {
+  .nav-links { gap: 1.1rem; }
+  .nav-links a:nth-child(n+3) { display: none; }
+  .hero { padding: 3.5rem 1rem 2.5rem; }
+  section { padding: 3rem 0; }
+  .install-line { font-size: 0.78rem; }
+}
+
+/* Scrollbar (mirrors web UI) */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; scroll-behavior: auto !important; }
+}

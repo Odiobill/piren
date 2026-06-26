@@ -1,0 +1,60 @@
+<svg width="680" height="260" viewBox="0 0 680 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Piren animated logo for light backgrounds">
+  <title>Piren logo - light</title>
+  <desc>The Piren wordmark with orbiting particles, optimized for light backgrounds.</desc>
+  <style>
+    svg { overflow: visible; }
+    @keyframes orbit1 {
+      from { transform: rotate(0deg) translateX(88px) rotate(0deg); }
+      to { transform: rotate(360deg) translateX(88px) rotate(-360deg); }
+    }
+    @keyframes orbit2 {
+      from { transform: rotate(140deg) translateX(114px) rotate(-140deg); }
+      to { transform: rotate(500deg) translateX(114px) rotate(-500deg); }
+    }
+    @keyframes orbit3 {
+      from { transform: rotate(260deg) translateX(68px) rotate(-260deg); }
+      to { transform: rotate(620deg) translateX(68px) rotate(-620deg); }
+    }
+    @keyframes orbit4 {
+      from { transform: rotate(50deg) translateX(138px) rotate(-50deg); }
+      to { transform: rotate(410deg) translateX(138px) rotate(-410deg); }
+    }
+    @keyframes trail1 { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -553; } }
+    @keyframes trail2 { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 716; } }
+    @keyframes trail3 { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -427; } }
+    .dot1 { animation: orbit1 4.4s linear infinite; transform-origin: 0 0; }
+    .dot2 { animation: orbit2 6.3s linear infinite; transform-origin: 0 0; }
+    .dot3 { animation: orbit3 3.6s linear infinite reverse; transform-origin: 0 0; }
+    .dot4 { animation: orbit4 8.2s linear infinite; transform-origin: 0 0; }
+    .ring1 { animation: trail1 4.4s linear infinite; }
+    .ring2 { animation: trail2 6.3s linear infinite; }
+    .ring3 { animation: trail3 3.6s linear infinite reverse; }
+    .wordmark {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 110px;
+      font-weight: 500;
+      letter-spacing: -2px;
+      fill: #0e0e0e;
+      paint-order: stroke;
+      stroke: rgba(14, 14, 14, 0.08);
+      stroke-width: 1.5px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .dot1, .dot2, .dot3, .dot4, .ring1, .ring2, .ring3 { animation: none; }
+    }
+  </style>
+  <g transform="translate(340,130)">
+    <ellipse cx="0" cy="0" rx="68" ry="24" fill="none" stroke="#D85A30" stroke-width="0.5" stroke-opacity="0.15"/>
+    <ellipse cx="0" cy="0" rx="88" ry="32" fill="none" stroke="#7F77DD" stroke-width="0.5" stroke-opacity="0.15"/>
+    <ellipse cx="0" cy="0" rx="114" ry="44" fill="none" stroke="#1D9E75" stroke-width="0.5" stroke-opacity="0.15"/>
+    <ellipse cx="0" cy="0" rx="138" ry="54" fill="none" stroke="#378ADD" stroke-width="0.5" stroke-opacity="0.15"/>
+    <ellipse class="ring3" cx="0" cy="0" rx="68" ry="24" fill="none" stroke="#D85A30" stroke-width="0.9" stroke-opacity="0.35" stroke-dasharray="34 393"/>
+    <ellipse class="ring1" cx="0" cy="0" rx="88" ry="32" fill="none" stroke="#7F77DD" stroke-width="0.9" stroke-opacity="0.35" stroke-dasharray="44 509"/>
+    <ellipse class="ring2" cx="0" cy="0" rx="114" ry="44" fill="none" stroke="#1D9E75" stroke-width="0.9" stroke-opacity="0.3" stroke-dasharray="57 659"/>
+    <g class="dot3"><circle r="4.5" fill="#D85A30" fill-opacity="0.9"/><circle r="8" fill="#D85A30" fill-opacity="0.14"/></g>
+    <g class="dot1"><circle r="5" fill="#7F77DD" fill-opacity="0.9"/><circle r="9" fill="#7F77DD" fill-opacity="0.14"/></g>
+    <g class="dot2"><circle r="5.5" fill="#1D9E75" fill-opacity="0.9"/><circle r="9.5" fill="#1D9E75" fill-opacity="0.13"/></g>
+    <g class="dot4"><circle r="4" fill="#378ADD" fill-opacity="0.88"/><circle r="7.5" fill="#378ADD" fill-opacity="0.12"/></g>
+    <text class="wordmark" text-anchor="middle" dominant-baseline="central">Piren</text>
+  </g>
+</svg>

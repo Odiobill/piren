@@ -76,6 +76,8 @@ Gateway transports are separate processes that spawn Pi in RPC mode. The integra
 
 ## Documentation
 
+Online landing page: **https://odiobill.github.io/piren/** (once GitHub Pages is enabled, see below).
+
 - [Getting started](docs/getting-started.md)
 - [Configuration](docs/configuration.md)
 - [Vault layout](docs/vault-layout.md)
@@ -114,6 +116,10 @@ npm run build
 npm run smoke
 npm run clean-install:check
 ```
+
+## Landing page
+
+The public landing page lives under `site/` and reuses the integrated web UI palette. It deploys to GitHub Pages via the `.github/workflows/pages.yml` workflow (Actions-deploy mode, since branch-deploy only serves `/` or `/docs`). To enable it: Settings > Pages > Source = "GitHub Actions". The workflow publishes on every push to `main` that touches `site/`.
 
 ## License
 

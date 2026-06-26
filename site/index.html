@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Piren — vault-backed agent runtime for the edge</title>
+  <meta name="description" content="Piren is a lightweight, local-first agent runtime built on Pi Coding Agent. It keeps agent identity, state, tasks, skills, and team knowledge in an inspectable Markdown vault.">
+  <meta property="og:title" content="Piren — vault-backed agent runtime for the edge">
+  <meta property="og:description" content="Lightweight, local-first, vault-native. An inspectable team knowledge substrate for a stewarded fleet of agents.">
+  <meta property="og:type" content="website">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/assets/piren-logo-dark.svg">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="/" class="nav-brand">Piren</a>
+    <div class="nav-links">
+      <a href="#philosophy">Philosophy</a>
+      <a href="#features">Features</a>
+      <a href="#compare">Compare</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/Odiobill/piren" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="/assets/piren-logo-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="/assets/piren-logo-dark.svg">
+    <img class="hero-logo" src="/assets/piren-logo-dark.svg" alt="Piren animated logo">
+  </picture>
+  <h1 class="hero-tagline">An inspectable team of agents, grounded in a Markdown vault.</h1>
+  <p class="hero-sub">Piren does not reinvent the wheel. It starts with the right engine, Pi Coding Agent, then adds the tire local agents need: inspectable state, vault-native knowledge, explicit tools, safe gateways, and edge-device operations.</p>
+  <div class="hero-actions">
+    <a href="https://github.com/Odiobill/piren" target="_blank" rel="noopener" class="btn btn-primary">View on GitHub</a>
+    <a href="#start" class="btn btn-secondary">Read the docs</a>
+  </div>
+  <div class="install-line">
+    <span class="prompt">$</span> <code>npm install -g github:Odiobill/piren</code>
+  </div>
+</header>
+
+<section id="philosophy">
+  <div class="container">
+    <h2 class="section-title">Philosophy</h2>
+    <p class="section-sub">Piren merges LLM-Wiki and Second Brain workflows with explicit multi-agent task execution. Boring on purpose, transparent by design.</p>
+    <div class="pillars">
+      <div class="pillar">
+        <span class="pillar-icon">📓</span>
+        <h3>Vault-native</h3>
+        <p>Agent identity, memory, tasks, logs, skills, and cron jobs live in plain Markdown. Obsidian can be the source of truth. Nothing is hidden in a database.</p>
+      </div>
+      <div class="pillar">
+        <span class="pillar-icon">🔧</span>
+        <h3>Explicit tools</h3>
+        <p>No transparent shell or file interception. Agents call named tools like <code>vault_read</code> and <code>project_append_log</code> that you can read and audit.</p>
+      </div>
+      <div class="pillar">
+        <span class="pillar-icon">🔍</span>
+        <h3>Inspectable self-improvement</h3>
+        <p>Agents update handoffs, runbooks, ADRs, and skill candidates as visible artifacts, not hidden memory mutations. Everything is reviewable.</p>
+      </div>
+      <div class="pillar">
+        <span class="pillar-icon">🍓</span>
+        <h3>Edge-friendly</h3>
+        <p>Lightweight enough for a Raspberry Pi or UDOO X86. Transparency and debuggability over maximal framework surface area.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <h2 class="section-title">What's in the box</h2>
+    <p class="section-sub">Four ways to reach your agents, one inspectable substrate underneath.</p>
+    <div class="features">
+      <div class="feature">
+        <h3>Minimal web UI</h3>
+        <p>Agent selection, chat streaming, steering, approval gates, a read-only vault browser, and a context indicator. An emergency interface, not a config surface.</p>
+      </div>
+      <div class="feature">
+        <h3>Messaging transports</h3>
+        <p>Telegram and Discord bots route conversations to your local runnable agents. One bot, many agents, local allowlists for access control.</p>
+      </div>
+      <div class="feature">
+        <h3>OpenAI-compatible API</h3>
+        <p>A drop-in <code>/api/v1/chat/completions</code> endpoint. Point any OpenAI-compatible client at Piren and it just works.</p>
+      </div>
+      <div class="feature">
+        <h3>Vault-backed cron</h3>
+        <p>Scheduled work is Markdown job files with active-device ownership, atomic claiming, and inspectable run records. No central database.</p>
+      </div>
+      <div class="feature">
+        <h3>Lazy vault skills</h3>
+        <p>Reusable procedures in <code>vault/skills/</code>, cataloged at startup and loaded on demand. Progressive disclosure, not prompt bloat.</p>
+      </div>
+      <div class="feature">
+        <h3>Pi package extensibility</h3>
+        <p>Add capabilities through npm packages declared in local config, loaded as Pi extension flags. Piren core stays minimal.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="compare">
+  <div class="container">
+    <h2 class="section-title">How it compares</h2>
+    <p class="section-sub">Piren borrows the best ideas from heavier systems while staying vault-native and edge-friendly.</p>
+    <div class="compare-grid">
+      <div class="compare-card">
+        <h3>vs Hermes Agent</h3>
+        <span class="compare-tag">self-improving, vault-native, light</span>
+        <p>Hermes is a powerful, self-improving agent with database-backed memory and a rich TUI. Piren borrows its self-improvement thesis but realizes it as inspectable Markdown artifacts you can read in Obsidian, on hardware a Raspberry Pi can run.</p>
+        <div class="vs-note"><strong>Same ideas, lighter substrate.</strong> Handoffs, runbooks, and skill candidates are files, not hidden memories.</div>
+      </div>
+      <div class="compare-card">
+        <h3>vs OpenClaw</h3>
+        <span class="compare-tag">team substrate, not one assistant</span>
+        <p>OpenClaw is a single personal assistant with full system access and persistent memory that builds its own skills. Piren is a team knowledge substrate for a stewarded fleet: every agent's state is an auditable Markdown file, and operations stay local and fail-safe.</p>
+        <div class="vs-note"><strong>A fleet you can inspect</strong>, where each agent's work leaves durable, navigable artifacts.</div>
+      </div>
+      <div class="compare-card">
+        <h3>vs database-backed agents</h3>
+        <span class="compare-tag">inspectable over opaque</span>
+        <p>Most agent platforms hide operational state in databases. Piren keeps it in the vault: tasks are one Markdown file each, logs are append-only, sessions are summarized in place. You can debug the whole system from a terminal.</p>
+        <div class="vs-note"><strong>Readable in Obsidian.</strong> The same substrate agents use is the one you browse.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="architecture">
+  <div class="container">
+    <h2 class="section-title">Architecture, at a glance</h2>
+    <p class="section-sub">Gateway transports are separate Pi RPC processes. The vault is always the source of truth.</p>
+    <div class="arch">
+<span class="a-steward">steward / client</span><br>
+&nbsp;&nbsp;<span class="a-arrow">→</span> <span class="a-piren">Piren CLI or gateway transport</span><br>
+&nbsp;&nbsp;<span class="a-arrow">→</span> <span class="a-pi">Pi Coding Agent process</span> (normal or RPC mode)<br>
+&nbsp;&nbsp;<span class="a-arrow">→</span> <span class="a-piren">Piren Pi extension</span><br>
+&nbsp;&nbsp;<span class="a-arrow">→</span> <span class="a-vault">Markdown vault — the source of truth</span>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="container">
+    <h2 class="section-title">Get started in a minute</h2>
+    <p class="section-sub">From a clean checkout to a running agent.</p>
+    <div class="quickstart">
+      <div class="step"><span class="step-num">1.</span><div><span class="cmd">git clone https://github.com/Odiobill/piren.git</span></div></div>
+      <div class="step"><span class="step-num">2.</span><div><span class="cmd">cd piren &amp;&amp; npm install &amp;&amp; npm run build</span></div></div>
+      <div class="step"><span class="step-num">3.</span><div><span class="cmd">node dist/src/cli.js init --vault-root /tmp/piren-vault</span></div></div>
+      <div class="step"><span class="step-num">4.</span><div><span class="cmd">node dist/src/cli.js setup --apply --vault-root /tmp/piren-vault --agent piren</span></div></div>
+      <div class="step"><span class="step-num">5.</span><div><span class="cmd">node dist/src/cli.js --vault-root /tmp/piren-vault --agent piren run</span></div></div>
+      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Or start the gateway: <span class="cmd">node dist/src/cli.js gateway</span></div></div>
+    </div>
+    <p style="text-align:center;margin-top:1.75rem;">
+      <a href="https://github.com/Odiobill/piren/blob/main/docs/getting-started.md" target="_blank" rel="noopener" class="btn btn-secondary">Full getting-started guide</a>
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="https://github.com/Odiobill/piren" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Odiobill/piren/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+      <a href="https://github.com/Odiobill/piren/blob/main/docs/getting-started.md" target="_blank" rel="noopener">Docs</a>
+    </div>
+    <p>Piren 0.1.0-rc.1 &middot; MIT License &middot; Built on <a href="https://pi.dev/" target="_blank" rel="noopener">Pi Coding Agent</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
