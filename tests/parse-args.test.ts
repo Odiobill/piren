@@ -108,4 +108,10 @@ describe("parseArgs: preserved behavior", () => {
     expect(KNOWN_COMMANDS).toContain("telegram");
     expect(KNOWN_COMMANDS).toContain("discord");
   });
+
+  it("recognizes the version command", () => {
+    const result = parseArgs(["version"]);
+    expect(result.command).toBe("version");
+    expect(KNOWN_COMMANDS).toContain("version");
+  });
 });

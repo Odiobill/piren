@@ -49,6 +49,7 @@ export const KNOWN_COMMANDS = [
   "ask",
   "chat",
   "clean",
+  "version",
 ] as const;
 
 /**

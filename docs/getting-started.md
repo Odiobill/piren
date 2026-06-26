@@ -68,6 +68,12 @@ If you do not want to touch local config, pass the vault and agent explicitly:
 node dist/src/cli.js --vault-root /tmp/piren-vault --agent piren status
 ```
 
+Print the installed version:
+
+```bash
+node dist/src/cli.js version
+```
+
 ## Run an agent
 
 ```bash

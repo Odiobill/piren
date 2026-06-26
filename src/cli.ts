@@ -11,6 +11,7 @@ import { DiscordBotApiHttpClient, DiscordTransport, runDiscordGateway, createNat
 import { PiRpcClient } from "./gateway-rpc.js";
 import { askAgent } from "./ask.js";
 import { cleanPiren, formatCleanReport } from "./clean.js";
+import { readVersion } from "./version.js";
 import { resolveGatewayToken, assertAuthGate, isLocalhostBind, defaultTokenFilePath } from "./gateway-auth.js";
 import {
   parseArgs,
@@ -35,7 +36,7 @@ const parsed = parseArgs(process.argv.slice(2));
 const { agentDir, agentName, command, force, vaultRoot, piArgs, port, host, token, positionals } = parsed;
 
 if (!(KNOWN_COMMANDS as readonly string[]).includes(command)) {
-  console.error("Usage: piren [init|status|agents|doctor|setup|run|worker|gateway|web|telegram|discord|ask|clean] [--vault-root /path/to/vault] [--agent thor] [--agent-dir /path/to/vault/team/agent] [--port 7317] [--host 127.0.0.1] [--force] [-- pi-args...]");
+  console.error("Usage: piren [init|status|agents|doctor|setup|run|worker|gateway|web|telegram|discord|ask|clean|version] [--vault-root /path/to/vault] [--agent thor] [--agent-dir /path/to/vault/team/agent] [--port 7317] [--host 127.0.0.1] [--force] [-- pi-args...]");
   process.exit(2);
 }
 
@@ -253,6 +254,12 @@ try {
     });
     console.log(formatCleanReport(report));
     if (report.errors.length > 0) process.exit(1);
+  } else if (command === "version") {
+    // Resolve package.json relative to this module's location: from source
+    // thisDir is <repo>/src, from compiled dist it is <repo>/dist/src. Either
+    // way the package.json is two levels up.
+    const packageJsonPath = join(thisDir, "..", "..", "package.json");
+    console.log(readVersion(packageJsonPath));
   } else {
     const context = await loadPirenContext(bootstrapOptions(parsed));
     console.log(`Piren ${command}`);
