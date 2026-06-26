@@ -51,9 +51,17 @@ piren setup --apply --vault-root /tmp/piren-vault --agent piren
 
 `setup --apply` does not overwrite existing config values. Running `piren setup`
 with no flags is a dry-run health check, or, when connected to a terminal,
-launches an interactive wizard that guides you through vault, LLM provider key,
-and local config. The wizard detects an existing vault and asks which agents to
-enable, or initializes a new one with a first agent name (default `piren`).
+launches an interactive wizard. The wizard:
+
+1. Detects an existing vault and asks which agents to enable, or initializes a
+   new one with a first agent name (default `piren`).
+2. Configures a Pi LLM provider and API key, then offers a model selection
+   (from a curated flagship catalog, or a custom id) and an optional thinking
+   level, writing the choice to the agent-local `config.yml`.
+3. Writes the local installation config, then optionally configures a Telegram
+   or Discord gateway.
+
+For the full live model list after setup, run `pi --list-models`.
 
 ## Check status
 
