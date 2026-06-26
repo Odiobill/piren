@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { defaultPiCommandResolver } from "./run.js";
-import { type BootstrapOptions, type LocalPirenConfig, type TelegramLocalConfig, type DiscordLocalConfig, resolveAgentDir } from "./bootstrap.js";
+import { type BootstrapOptions, type LocalPirenConfig, type TelegramLocalConfig, type DiscordLocalConfig, type ServicesLocalConfig, resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
@@ -228,6 +228,70 @@ export function checkDiscordConfig(
   return { id: "discord", status: "ok", message: `Discord configured with ${guildIds.length} guild(s) and ${channelIds.length} channel(s) allowlisted.` };
 }
 
+/**
+ * The shape of a `services.transports.<name>` block the wizard / service CLI
+ * writes into local config after install. Mirrors ServicesLocalConfig but is
+ * re-declared here so the pure check has no cross-module type dependency beyond
+ * the config contract.
+ */
+export type ServiceConfig = ServicesLocalConfig;
+
+/**
+ * Validate the service lifecycle status for `piren doctor`.
+ *
+ * Returns null when no `services.transports` block is declared at all, so a
+ * normal doctor run never depends on service management being configured. When
+ * a transport entry is present, it warns if the transport is declared but not
+ * installed, or installed but not running.
+ */
+export function checkServiceConfig(config: ServiceConfig | undefined): DoctorCheck | null {
+  if (config === undefined) return null;
+  const transports = config.transports;
+  if (transports === undefined || transports === null) return null;
+
+  const names = Object.keys(transports).filter((name) => {
+    const entry = transports[name];
+    return entry !== undefined && entry !== null && ("installed" in entry || "running" in entry);
+  });
+  if (names.length === 0) return null;
+
+  const notInstalled: string[] = [];
+  const notRunning: string[] = [];
+  const okInstalled: string[] = [];
+  for (const name of names) {
+    const entry = transports[name]!;
+    if (entry.installed !== true) {
+      notInstalled.push(name);
+    } else {
+      if (entry.running === false) {
+        notRunning.push(name);
+      } else {
+        okInstalled.push(name);
+      }
+    }
+  }
+
+  if (notInstalled.length > 0) {
+    return {
+      id: "services",
+      status: "warn",
+      message: `Declared transport(s) not installed as a service: ${notInstalled.join(", ")}. Run \`piren service install <transport>\`.`,
+    };
+  }
+  if (notRunning.length > 0) {
+    return {
+      id: "services",
+      status: "warn",
+      message: `Installed transport(s) reported as not running: ${notRunning.join(", ")}. Run \`piren service start <transport>\`.`,
+    };
+  }
+  return {
+    id: "services",
+    status: "ok",
+    message: `All declared transport services installed and running: ${okInstalled.join(", ")}.`,
+  };
+}
+
 function execFileText(command: string, args: string[]): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     execFile(command, args, { timeout: 5000 }, (error, stdout, stderr) => {
@@ -293,6 +357,9 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
 
   const discordCheck = checkDiscordConfig(config.discord, allowedAgents);
   if (discordCheck) checks.push(discordCheck);
+
+  const serviceCheck = checkServiceConfig(config.services);
+  if (serviceCheck) checks.push(serviceCheck);
 
   let agentDir: string;
   try {

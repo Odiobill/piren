@@ -36,8 +36,23 @@ export interface LocalPirenConfig {
   packages?: string[];
   telegram?: TelegramLocalConfig;
   discord?: DiscordLocalConfig;
+  services?: ServicesLocalConfig;
   provider?: string;
   model?: string;
+}
+
+/**
+ * Service lifecycle status stored in local config. Each transport may carry
+ * `installed` (a service unit/script exists) and `running` (it is active now).
+ * Both are optional; an empty object is treated as "not declared".
+ */
+export interface ServiceStatusEntry {
+  installed?: boolean;
+  running?: boolean;
+}
+
+export interface ServicesLocalConfig {
+  transports?: Record<string, ServiceStatusEntry>;
 }
 
 export interface PirenContext {

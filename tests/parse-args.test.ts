@@ -114,4 +114,23 @@ describe("parseArgs: preserved behavior", () => {
     expect(result.command).toBe("version");
     expect(KNOWN_COMMANDS).toContain("version");
   });
+
+  it("sets help=true for --help anywhere before the -- passthrough", () => {
+    expect(parseArgs(["--help"]).help).toBe(true);
+    expect(parseArgs(["gateway", "--help"]).help).toBe(true);
+    expect(parseArgs(["-h", "run"]).help).toBe(true);
+  });
+
+  it("does not set help for --help after the -- passthrough (forwarded to Pi)", () => {
+    const result = parseArgs(["run", "--", "--help"]);
+    expect(result.help).toBe(false);
+    expect(result.piArgs).toEqual(["--help"]);
+  });
+
+  it("recognizes the service command", () => {
+    const result = parseArgs(["service", "install", "gateway"]);
+    expect(result.command).toBe("service");
+    expect(result.positionals).toEqual(["install", "gateway"]);
+    expect(KNOWN_COMMANDS).toContain("service");
+  });
 });
