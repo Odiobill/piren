@@ -16,7 +16,7 @@
     "clean-install:check": "tsx scripts/clean-install-check.ts"
   },
   "dependencies": {
-    "typebox": "^1.0.55",
+    "typebox": "1.2.19",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
