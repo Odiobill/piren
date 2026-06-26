@@ -57,7 +57,7 @@
     <a href="#start" class="btn btn-secondary">Read the docs</a>
   </div>
   <div class="install-line">
-    <span class="prompt">$</span> <code>npm install -g github:Odiobill/piren</code>
+    <span class="prompt">$</span> <code>npm install -g --install-links github:Odiobill/piren</code>
   </div>
 </header>
 
@@ -253,14 +253,13 @@ vault/
 <section id="start">
   <div class="container">
     <h2 class="section-title">Get started in a minute</h2>
-    <p class="section-sub">From a clean checkout to a running agent.</p>
+    <p class="section-sub">Install Piren, create a disposable vault, then start a local agent.</p>
     <div class="quickstart">
-      <div class="step"><span class="step-num">1.</span><div><span class="cmd">git clone https://github.com/Odiobill/piren.git</span></div></div>
-      <div class="step"><span class="step-num">2.</span><div><span class="cmd">cd piren &amp;&amp; npm install &amp;&amp; npm run build</span></div></div>
-      <div class="step"><span class="step-num">3.</span><div><span class="cmd">node dist/src/cli.js init --vault-root /tmp/piren-vault</span></div></div>
-      <div class="step"><span class="step-num">4.</span><div><span class="cmd">node dist/src/cli.js setup --apply --vault-root /tmp/piren-vault --agent piren</span></div></div>
-      <div class="step"><span class="step-num">5.</span><div><span class="cmd">node dist/src/cli.js --vault-root /tmp/piren-vault --agent piren run</span></div></div>
-      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Or start the gateway: <span class="cmd">node dist/src/cli.js gateway</span></div></div>
+      <div class="step"><span class="step-num">1.</span><div><span class="cmd">npm install -g --install-links github:Odiobill/piren</span></div></div>
+      <div class="step"><span class="step-num">2.</span><div><span class="cmd">piren init --vault-root /tmp/piren-vault</span></div></div>
+      <div class="step"><span class="step-num">3.</span><div><span class="cmd">piren setup --apply --vault-root /tmp/piren-vault --agent piren</span></div></div>
+      <div class="step"><span class="step-num">4.</span><div><span class="cmd">piren --vault-root /tmp/piren-vault --agent piren run</span></div></div>
+      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Or start the gateway: <span class="cmd">piren gateway</span></div></div>
     </div>
     <p style="text-align:center;margin-top:1.75rem;">
       <a href="https://github.com/Odiobill/piren/blob/main/docs/getting-started.md" target="_blank" rel="noopener" class="btn btn-secondary">Full getting-started guide</a>

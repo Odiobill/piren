@@ -19,32 +19,29 @@ Pi runtime policy: Piren prefers a `pi` binary already available on `PATH`. If n
 ## Five-minute quickstart
 
 ```bash
-git clone https://github.com/Odiobill/piren.git
-cd piren
-npm install
-npm run build
-node dist/src/cli.js init --vault-root /tmp/piren-vault
-node dist/src/cli.js setup --apply --vault-root /tmp/piren-vault --agent piren
-node dist/src/cli.js --vault-root /tmp/piren-vault --agent piren status
+npm install -g --install-links github:Odiobill/piren
+piren init --vault-root /tmp/piren-vault
+piren setup --apply --vault-root /tmp/piren-vault --agent piren
+piren --vault-root /tmp/piren-vault --agent piren status
 ```
 
 Start an interactive Pi-backed Piren agent:
 
 ```bash
-node dist/src/cli.js --vault-root /tmp/piren-vault --agent piren run
+piren --vault-root /tmp/piren-vault --agent piren run
 ```
 
 Start the minimal local web gateway:
 
 ```bash
-node dist/src/cli.js --vault-root /tmp/piren-vault --agent piren gateway
+piren --vault-root /tmp/piren-vault --agent piren gateway
 # open http://127.0.0.1:7317/
 ```
 
 For a global install from this repository:
 
 ```bash
-npm install -g github:Odiobill/piren
+npm install -g --install-links github:Odiobill/piren
 piren status
 ```
 

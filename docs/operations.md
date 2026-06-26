@@ -28,17 +28,14 @@ On a clean machine or container:
 9. If testing real model calls, verify Pi auth and run a short `piren ask`.
 10. Run `piren clean --force` in a fake HOME or disposable environment to verify cleanup.
 
-Example from source:
+Example from a global install:
 
 ```bash
-git clone https://github.com/Odiobill/piren.git
-cd piren
-npm install
-npm run build
-node dist/src/cli.js init --vault-root /tmp/piren-vault
-node dist/src/cli.js setup --apply --vault-root /tmp/piren-vault --agent piren
-node dist/src/cli.js doctor
-node dist/src/cli.js status
+npm install -g --install-links github:Odiobill/piren
+piren init --vault-root /tmp/piren-vault
+piren setup --apply --vault-root /tmp/piren-vault --agent piren
+piren doctor
+piren status
 ```
 
 ## Automated clean-install validation
@@ -50,7 +47,7 @@ the real GitHub source into an isolated HOME and verifies the installed binary:
 npm run clean-install:check
 ```
 
-It performs a real `npm install github:Odiobill/piren` in a fresh prefix with
+It performs a real `npm install --install-links github:Odiobill/piren` in a fresh prefix with
 an isolated clean HOME, then checks:
 
 - `dist/src/cli.js`, `dist/public/index.html`, and `dist/src/pi-extension.js`
@@ -71,7 +68,7 @@ npm run clean-install:check -- --keep                  # keep the install for in
 
 Piren does not build TypeScript on the target machine during `github:`
 installation. The repository carries committed `dist/` release artifacts, so
-`npm install -g github:Odiobill/piren` can link the existing binary without
+`npm install -g --install-links github:Odiobill/piren` can link the existing binary without
 requiring `typescript` or dev dependencies on the device. The package uses
 `prepack` to rebuild `dist/` when creating npm tarballs via `npm pack`.
 
