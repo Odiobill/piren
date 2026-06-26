@@ -122,6 +122,27 @@ nav {
   height: auto;
   margin: 0 auto 1rem;
   display: block;
+  overflow: visible;
+}
+/* One-shot intro + continuous orbit. Scoped to the hero so they never
+ * collide with the gateway web UI's own logo animation. */
+.hero-logo .hdot1 { animation: hOrbit1 4.4s linear infinite; transform-origin: 0 0; }
+.hero-logo .hdot2 { animation: hOrbit2 6.3s linear infinite; transform-origin: 0 0; }
+.hero-logo .hdot3 { animation: hOrbit3 3.6s linear infinite reverse; transform-origin: 0 0; }
+.hero-logo .hdot4 { animation: hOrbit4 8.2s linear infinite; transform-origin: 0 0; }
+.hero-logo .hring1 { animation: hTrail1 4.4s linear infinite; }
+.hero-logo .hring2 { animation: hTrail2 6.3s linear infinite; }
+.hero-logo .hring3 { animation: hTrail3 3.6s linear infinite reverse; }
+@keyframes hOrbit1 { from { transform: rotate(0deg) translateX(88px) rotate(0deg); } to { transform: rotate(360deg) translateX(88px) rotate(-360deg); } }
+@keyframes hOrbit2 { from { transform: rotate(140deg) translateX(114px) rotate(-140deg); } to { transform: rotate(500deg) translateX(114px) rotate(-500deg); } }
+@keyframes hOrbit3 { from { transform: rotate(260deg) translateX(68px) rotate(-260deg); } to { transform: rotate(620deg) translateX(68px) rotate(-620deg); } }
+@keyframes hOrbit4 { from { transform: rotate(50deg) translateX(138px) rotate(-50deg); } to { transform: rotate(410deg) translateX(138px) rotate(-410deg); } }
+@keyframes hTrail1 { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -553; } }
+@keyframes hTrail2 { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 716; } }
+@keyframes hTrail3 { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -427; } }
+@media (prefers-reduced-motion: reduce) {
+  .hero-logo .hdot1, .hero-logo .hdot2, .hero-logo .hdot3, .hero-logo .hdot4,
+  .hero-logo .hring1, .hero-logo .hring2, .hero-logo .hring3 { animation: none; }
 }
 .hero-tagline {
   font-size: clamp(1.7rem, 4vw, 2.6rem);

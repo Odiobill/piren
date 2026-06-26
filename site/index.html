@@ -9,7 +9,8 @@
   <meta property="og:description" content="Lightweight, local-first, vault-native. An inspectable team knowledge substrate for a stewarded fleet of agents.">
   <meta property="og:type" content="website">
   <link rel="stylesheet" href="style.css">
-  <link rel="icon" type="image/svg+xml" href="assets/piren-logo-dark.svg">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="apple-touch-icon" href="assets/favicon.svg">
 </head>
 <body>
 
@@ -28,11 +29,27 @@
 </nav>
 
 <header class="hero">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="assets/piren-logo-light.svg">
-    <source media="(prefers-color-scheme: dark)" srcset="assets/piren-logo-dark.svg">
-    <img class="hero-logo" src="assets/piren-logo-dark.svg" alt="Piren animated logo">
-  </picture>
+  <svg class="hero-logo" width="680" height="260" viewBox="0 0 680 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Piren animated logo">
+    <title>Piren</title>
+    <desc>The word Pi draws in, morphs into Piren, then stays with orbiting particles</desc>
+    <g transform="translate(340,130)">
+      <ellipse cx="0" cy="0" rx="68" ry="24" fill="none" stroke="#D85A30" stroke-width="0.5" stroke-opacity="0.18"/>
+      <ellipse cx="0" cy="0" rx="88" ry="32" fill="none" stroke="#7F77DD" stroke-width="0.5" stroke-opacity="0.18"/>
+      <ellipse cx="0" cy="0" rx="114" ry="44" fill="none" stroke="#1D9E75" stroke-width="0.5" stroke-opacity="0.18"/>
+      <ellipse cx="0" cy="0" rx="138" ry="54" fill="none" stroke="#378ADD" stroke-width="0.5" stroke-opacity="0.18"/>
+      <ellipse class="hring3" cx="0" cy="0" rx="68" ry="24" fill="none" stroke="#D85A30" stroke-width="0.9" stroke-opacity="0.4" stroke-dasharray="34 393"/>
+      <ellipse class="hring1" cx="0" cy="0" rx="88" ry="32" fill="none" stroke="#7F77DD" stroke-width="0.9" stroke-opacity="0.4" stroke-dasharray="44 509"/>
+      <ellipse class="hring2" cx="0" cy="0" rx="114" ry="44" fill="none" stroke="#1D9E75" stroke-width="0.9" stroke-opacity="0.35" stroke-dasharray="57 659"/>
+      <g class="hdot3"><circle r="4.5" fill="#D85A30" fill-opacity="0.95"/><circle r="8" fill="#D85A30" fill-opacity="0.2"/></g>
+      <g class="hdot1"><circle r="5" fill="#7F77DD" fill-opacity="0.95"/><circle r="9" fill="#7F77DD" fill-opacity="0.2"/></g>
+      <g class="hdot2"><circle r="5.5" fill="#1D9E75" fill-opacity="0.95"/><circle r="9.5" fill="#1D9E75" fill-opacity="0.18"/></g>
+      <g class="hdot4"><circle r="4" fill="#378ADD" fill-opacity="0.9"/><circle r="7.5" fill="#378ADD" fill-opacity="0.16"/></g>
+      <g id="piren-hero-text"></g>
+    </g>
+  </svg>
+  <noscript>
+    <img class="hero-logo" src="assets/piren-logo-dark.svg" alt="Piren logo" style="margin-top:-1rem">
+  </noscript>
   <h1 class="hero-tagline">An inspectable team of agents, grounded in a Markdown vault.</h1>
   <p class="hero-sub">Piren does not reinvent the wheel. It starts with the right engine, Pi Coding Agent, then adds the tire local agents need: inspectable state, vault-native knowledge, explicit tools, safe gateways, and edge-device operations.</p>
   <div class="hero-actions">
@@ -269,5 +286,6 @@ vault/
   </div>
 </footer>
 
+<script src="hero-logo.js" defer></script>
 </body>
 </html>
