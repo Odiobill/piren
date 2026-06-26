@@ -303,6 +303,111 @@ section { padding: 4rem 0; }
   color: var(--green);
 }
 
+/* ---- Screenshot ---- */
+.screenshot-wrap {
+  max-width: 880px;
+  margin: 0 auto;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.screenshot-wrap img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.screenshot-caption {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-top: 0.85rem;
+}
+
+/* ---- Knowledge ladder ---- */
+.ladder {
+  max-width: 620px;
+  margin: 0 auto 2.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.ladder-step {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.7rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  font-size: 0.9rem;
+}
+.ladder-step .ladder-layer {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  min-width: 96px;
+  font-weight: 600;
+}
+.ladder-step .ladder-desc { color: var(--text-muted); }
+.ladder-arrow {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+/* ---- Vault tree + team example (two-column) ---- */
+.practice-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+.practice-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.4rem;
+}
+.practice-card h3 {
+  font-size: 1rem;
+  color: var(--text-bright);
+  margin-bottom: 0.7rem;
+}
+.vault-tree, .agent-list {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+}
+.vault-tree .t-dir { color: var(--accent); }
+.vault-tree .t-file { color: var(--text-muted); }
+.vault-tree .t-comment { color: var(--orb-green); }
+.agent-list .a-name { color: var(--yellow); font-weight: 600; }
+.agent-list .a-role { color: var(--text-muted); }
+
+/* ---- Footer links with icons ---- */
+.footer-links {
+  display: flex;
+  gap: 1.25rem;
+  justify-content: center;
+  margin-bottom: 1rem;
+  align-items: center;
+}
+.footer-links a {
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}
+.footer-links a:hover { color: var(--text-bright); }
+.footer-links svg { width: 18px; height: 18px; fill: currentColor; }
+
 /* ---- Footer ---- */
 footer {
   border-top: 1px solid var(--border);
@@ -324,6 +429,7 @@ footer .footer-links {
   .hero { padding: 3.5rem 1rem 2.5rem; }
   section { padding: 3rem 0; }
   .install-line { font-size: 0.78rem; }
+  .practice-grid { grid-template-columns: 1fr; }
 }
 
 /* Scrollbar (mirrors web UI) */
