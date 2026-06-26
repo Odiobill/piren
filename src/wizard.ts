@@ -15,6 +15,7 @@
 import { mkdir, readFile, writeFile, chmod, access, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { WizardPrompt } from "./prompt.js";
 import { initVault } from "./init.js";
 
@@ -53,6 +54,176 @@ export function formatProviderMenu(): string {
     lines.push(`${index + 1}. ${provider.name} (${provider.id}) — key via ${provider.envVar}`);
   });
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Model catalog + agent-local config serialization
+// ---------------------------------------------------------------------------
+
+export interface CatalogModel {
+  id: string;
+  name: string;
+}
+
+/**
+ * Curated flagship models per provider, drawn from Pi's model registry
+ * (packages/ai/src/providers/*.models.ts). Kept intentionally short: the
+ * wizard offers a sensible default set, and points the user to
+ * `pi --list-models` for the full live list after auth is configured. The
+ * catalog is a static fallback so the wizard works without Pi installed.
+ */
+export const MODEL_CATALOG: Readonly<Record<string, readonly CatalogModel[]>> = {
+  anthropic: [
+    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+    { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+  ],
+  openai: [
+    { id: "gpt-5.2", name: "GPT-5.2" },
+    { id: "gpt-5.1", name: "GPT-5.1" },
+    { id: "o4-mini", name: "o4-mini" },
+  ],
+  google: [
+    { id: "gemini-3-pro-preview", name: "Gemini 3 Pro (preview)" },
+    { id: "gemini-3-flash-preview", name: "Gemini 3 Flash (preview)" },
+    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+  ],
+  deepseek: [
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+    { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
+  ],
+  groq: [
+    { id: "openai/gpt-oss-20b", name: "GPT OSS 20B" },
+    { id: "qwen/qwen3-32b", name: "Qwen3-32B" },
+  ],
+  mistral: [
+    { id: "mistral-large-latest", name: "Mistral Large (latest)" },
+    { id: "codestral-latest", name: "Codestral (latest)" },
+  ],
+  xai: [
+    { id: "grok-4.3", name: "Grok 4.3" },
+    { id: "grok-code-fast-1", name: "Grok Code Fast 1" },
+  ],
+};
+
+/**
+ * Render the model menu for a provider. Numbered entries from the catalog,
+ * followed by a custom/enter-manually option. For an unknown provider, only
+ * the custom option is shown.
+ */
+export function formatModelMenu(providerId: string): string {
+  const models = MODEL_CATALOG[providerId] ?? [];
+  const lines: string[] = [`Choose a model for ${providerId}:`];
+  models.forEach((model, index) => {
+    lines.push(`${index + 1}. ${model.name} (${model.id})`);
+  });
+  lines.push(`${models.length + 1}. Enter a model id manually (or skip)`);
+  lines.push("");
+  lines.push(`Tip: after setup, run \`pi --list-models\` to see the full live list for ${providerId}.`);
+  return lines.join("\n");
+}
+
+/**
+ * Resolve a 0-based menu selection. Returns the catalog entry, or null when
+ * the user picked the custom slot (the last entry) or an out-of-range index.
+ */
+export function resolveModelChoice(providerId: string, selection: number): { provider: string; id: string; name: string } | null {
+  const models = MODEL_CATALOG[providerId] ?? [];
+  if (selection < 0 || selection >= models.length) return null;
+  const model = models[selection]!;
+  return { provider: providerId, id: model.id, name: model.name };
+}
+
+export interface AgentModelConfigInput {
+  provider: string;
+  id: string;
+  thinking?: string;
+}
+
+export interface AgentModelConfigOutput {
+  id: string;
+  thinking?: string;
+}
+
+/**
+ * Build the `model:` block for the agent-local config.yml (team/<agent>/config.yml).
+ * The id is stored with the provider prefix unless it already has one, matching
+ * what Piren's `normalizeModelId` in src/run.ts expects.
+ */
+export function buildAgentModelConfig(input: AgentModelConfigInput): AgentModelConfigOutput {
+  const id = input.id.includes("/") ? input.id : `${input.provider}/${input.id}`;
+  const result: AgentModelConfigOutput = { id };
+  if (input.thinking !== undefined && input.thinking.trim() !== "") {
+    result.thinking = input.thinking.trim();
+  }
+  return result;
+}
+
+export interface AgentConfigInput {
+  model?: AgentModelConfigOutput;
+}
+
+/**
+ * Serialize the agent-local config.yml content (team/<agent>/config.yml). This
+ * mirrors the shape `initVault` writes and what `setup --apply` scaffolds, so
+ * the wizard can write the model selection here after the operator picks one.
+ * The file is intentionally small: model preferences plus the polling defaults.
+ */
+export function buildAgentConfigYaml(input: AgentConfigInput): string {
+  const lines: string[] = [
+    "# Agent-local Piren preferences.",
+    "# Installation authority lives in ~/.config/piren/config.yml, not here.",
+  ];
+  if (input.model) {
+    lines.push("model:");
+    lines.push(`  id: ${input.model.id}`);
+    if (input.model.thinking) {
+      lines.push(`  thinking: ${input.model.thinking}`);
+    }
+  }
+  lines.push("poll_interval_active_seconds: 60");
+  lines.push("poll_interval_idle_seconds: 300");
+  lines.push("");
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Transport config merge (telegram/discord blocks into local config.yml)
+// ---------------------------------------------------------------------------
+
+export interface TransportConfigInput {
+  telegram?: {
+    bot_token: string;
+    allowed_chat_ids: Array<number | string>;
+    default_agent?: string;
+  };
+  discord?: {
+    bot_token: string;
+    allowed_guild_ids: Array<number | string>;
+    allowed_channel_ids: Array<number | string>;
+    allowed_thread_ids?: Array<number | string>;
+    default_agent?: string;
+  };
+}
+
+/**
+ * Merge transport config blocks (telegram/discord) into an existing local
+ * config.yml document. Re-serializes the whole document so unrelated keys are
+ * preserved, and a re-run overwrites the previous transport values. This keeps
+ * the wizard idempotent: running setup again to change a bot token replaces it
+ * rather than duplicating the block.
+ */
+export function mergeTransportConfigYaml(existingConfig: string, transport: TransportConfigInput): string {
+  const trimmed = existingConfig.trim();
+  const parsed = trimmed === "" ? {} : (parseYaml(trimmed) as Record<string, unknown> | null) ?? {};
+  const root = (parsed && typeof parsed === "object" ? parsed : {}) as Record<string, unknown>;
+  if (transport.telegram) {
+    root.telegram = transport.telegram;
+  }
+  if (transport.discord) {
+    root.discord = transport.discord;
+  }
+  return stringifyYaml(root);
 }
 
 /**
@@ -159,8 +330,11 @@ export interface WizardResult {
   excludedAgents: string[];
   newVault: boolean;
   providerId?: string;
+  modelId?: string;
   wroteAuthJson: boolean;
+  wroteAgentConfig: boolean;
   wroteConfig: boolean;
+  configuredTransports: string[];
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -247,9 +421,11 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
 
   log("");
 
-  // --- Step 2: LLM provider + key ---
+  // --- Step 2: LLM provider + key + model ---
   let providerId: string | undefined;
+  let modelId: string | undefined;
   let wroteAuthJson = false;
+  let wroteAgentConfig = false;
   const setupLlm = await prompt.confirm("Configure a Pi LLM provider and API key now?", true);
   if (setupLlm) {
     log(formatProviderMenu());
@@ -270,6 +446,53 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
       wroteAuthJson = true;
       log(`Wrote ${provider.name} key to ${authPath} (mode 0600).`);
     }
+
+    log("");
+
+    // Model selection: offer the curated catalog, then a custom/manual option.
+    log(formatModelMenu(provider.id));
+    const modelCount = (MODEL_CATALOG[provider.id] ?? []).length;
+    const customIndex = modelCount; // the "enter manually" slot is 0-based == modelCount
+    const modelIdx = await prompt.select("Model", Array.from({ length: modelCount + 1 }, (_, i) => {
+      const m = MODEL_CATALOG[provider.id]?.[i];
+      return m ? `${m.name} (${m.id})` : "Enter a model id manually (or skip)";
+    }), 0);
+    let chosenModelId: string | undefined;
+    if (modelIdx === customIndex) {
+      const manual = await prompt.text("Model id (e.g. claude-sonnet-4-6), or leave blank to skip", "");
+      if (manual.trim() !== "") {
+        chosenModelId = manual.trim();
+      }
+    } else {
+      const resolved = resolveModelChoice(provider.id, modelIdx);
+      if (resolved) chosenModelId = resolved.id;
+    }
+
+    if (chosenModelId) {
+      const wantsThinking = await prompt.confirm("Set a thinking level? (off/minimal/low/medium/high/xhigh)", false);
+      let thinking: string | undefined;
+      if (wantsThinking) {
+        thinking = (await prompt.text("Thinking level", "medium")).trim();
+      }
+      const modelConfig = buildAgentModelConfig({
+        provider: provider.id,
+        id: chosenModelId,
+        ...(thinking !== undefined ? { thinking } : {}),
+      });
+      modelId = modelConfig.id;
+      // Write the agent-local config.yml for the first agent.
+      const agentConfigPath = join(vaultRoot, "team", allowedAgents[0] ?? "piren", "config.yml");
+      const agentConfigContent = buildAgentConfigYaml({ model: modelConfig });
+      await mkdir(dirname(agentConfigPath), { recursive: true });
+      await writeFile(agentConfigPath, agentConfigContent, "utf8");
+      wroteAgentConfig = true;
+      log(`Wrote model selection to ${agentConfigPath}.`);
+      log("");
+      log("To add more providers or models later:");
+      log(`  - Add another provider key: re-run \`piren setup\` (it merges without overwriting others).`);
+      log(`  - See all models for a provider: \`pi --list-models <search>\``);
+      log(`  - Edit the agent model anytime: edit ${agentConfigPath}`);
+    }
   }
 
   log("");
@@ -283,13 +506,63 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
     .join("\n"));
   const confirmWrite = await prompt.confirm("Write this configuration?", true);
   let wroteConfig = false;
+  let configOnDisk = "";
   if (confirmWrite) {
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, configContent, "utf8");
     wroteConfig = true;
+    configOnDisk = configContent;
     log(`Wrote ${configPath}.`);
   } else {
+    // If the file already exists, read it so the gateway merge can preserve it.
+    try {
+      configOnDisk = await readFile(configPath, "utf8");
+    } catch {
+      configOnDisk = "";
+    }
     log("Skipped writing local config. Re-run piren setup when ready.");
+  }
+
+  log("");
+
+  // --- Step 4: gateways (telegram / discord) ---
+  const configuredTransports: string[] = [];
+  const wantsGateway = await prompt.confirm("Configure a messaging gateway (Telegram or Discord)?", false);
+  if (wantsGateway) {
+    const which = await prompt.select("Gateway", ["Telegram", "Discord", "Both", "Skip"], 0);
+    if (which === 0 || which === 2) {
+      const token = (await prompt.secret("Telegram bot token (from @BotFather)")).trim();
+      if (token !== "") {
+        const chatIdsRaw = await prompt.text("Allowed Telegram chat IDs (comma-separated)", "");
+        const chatIds = parseCommaList(chatIdsRaw)
+          .map((id) => Number(id))
+          .filter((id) => Number.isFinite(id) && id !== 0);
+        const merged = mergeTransportConfigYaml(configOnDisk, { telegram: { bot_token: token, allowed_chat_ids: chatIds } });
+        await mkdir(dirname(configPath), { recursive: true });
+        await writeFile(configPath, merged, "utf8");
+        configOnDisk = merged;
+        configuredTransports.push("telegram");
+        log(`Wrote telegram block to ${configPath}.`);
+      }
+    }
+    if (which === 1 || which === 2) {
+      const token = (await prompt.secret("Discord bot token")).trim();
+      if (token !== "") {
+        const guildIds = parseCommaList(await prompt.text("Allowed Discord guild (server) IDs (comma-separated)", ""));
+        const channelIds = parseCommaList(await prompt.text("Allowed Discord channel IDs (comma-separated)", ""));
+        const merged = mergeTransportConfigYaml(configOnDisk, {
+          discord: { bot_token: token, allowed_guild_ids: guildIds, allowed_channel_ids: channelIds },
+        });
+        await mkdir(dirname(configPath), { recursive: true });
+        await writeFile(configPath, merged, "utf8");
+        configOnDisk = merged;
+        configuredTransports.push("discord");
+        log(`Wrote discord block to ${configPath}.`);
+      }
+    }
+    if (configuredTransports.length > 0) {
+      log("Keep a gateway always-on with: piren service install <gateway|telegram|discord>");
+    }
   }
 
   log("");
@@ -307,8 +580,11 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
     excludedAgents,
     newVault,
     wroteAuthJson,
+    wroteAgentConfig,
     wroteConfig,
+    configuredTransports,
   };
   if (providerId !== undefined) result.providerId = providerId;
+  if (modelId !== undefined) result.modelId = modelId;
   return result;
 }

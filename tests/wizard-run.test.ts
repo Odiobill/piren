@@ -162,3 +162,69 @@ describe("runWizard: existing vault flow", () => {
     expect(auth.openai.key).toBe("sk-openai-new");
   });
 });
+
+describe("runWizard: model selection and gateway config", () => {
+  it("writes the selected model to the agent-local config.yml", async () => {
+    const vault = join(root, "model-vault");
+    const configPath = join(root, "config.yml");
+    const piHome = join(root, "pi-home");
+
+    // Use a fake prompter that answers: provider=anthropic(0), model=sonnet(0),
+    // thinking=no(default false), gateway=no(default false).
+    const result = await runWizard(
+      fakePrompt({ vaultPath: vault, firstAgent: "piren", setupLlm: true, providerIndex: 0, apiKey: "***", confirmWrite: true }),
+      { configPath, piHome, log: () => {} },
+    );
+
+    expect(result.providerId).toBe("anthropic");
+    expect(result.wroteAgentConfig).toBe(true);
+    expect(result.modelId).toBe("anthropic/claude-sonnet-4-6");
+
+    const agentConfig = await readFile(join(vault, "team", "piren", "config.yml"), "utf8");
+    expect(agentConfig).toContain("model:");
+    expect(agentConfig).toContain("id: anthropic/claude-sonnet-4-6");
+  });
+
+  it("configures a telegram gateway block in local config when selected", async () => {
+    const vault = join(root, "gw-vault");
+    await mkdir(join(vault, "team", "piren"), { recursive: true });
+    await writeFile(join(vault, ".piren-vault"), "");
+    await writeFile(join(vault, "steward-directives.md"), "# directives");
+    const configPath = join(root, "config.yml");
+    const piHome = join(root, "pi-home");
+
+    // Custom fake: skip LLM, enable gateway, pick Telegram, provide token + chat ids.
+    const secrets: string[] = ["tg-bot-token"];
+    const prompts: WizardPrompt = {
+      async text(message: string, defaultValue?: string) {
+        if (message.toLowerCase().includes("vault")) return vault;
+        if (message.toLowerCase().includes("chat ids")) return "111222, 333444";
+        return defaultValue ?? "";
+      },
+      async secret() {
+        return secrets.shift() ?? "";
+      },
+      async confirm(message: string, defaultValue?: boolean) {
+        if (message.toLowerCase().includes("llm")) return false; // skip LLM
+        if (message.toLowerCase().includes("gateway")) return true; // enable gateway
+        return defaultValue ?? false;
+      },
+      async select(message: string) {
+        if (message.toLowerCase().includes("gateway")) return 0; // Telegram
+        return 0;
+      },
+      async list(_message: string, defaults?: string[]) {
+        return defaults ?? [];
+      },
+    };
+
+    const result = await runWizard(prompts, { configPath, piHome, log: () => {} });
+
+    expect(result.configuredTransports).toContain("telegram");
+    const configContent = await readFile(configPath, "utf8");
+    expect(configContent).toContain("telegram:");
+    expect(configContent).toContain("tg-bot-token");
+    expect(configContent).toContain("111222");
+    expect(configContent).toContain("333444");
+  });
+});
