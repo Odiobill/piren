@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  51 passed (51)
-Tests       342 passed (342)
+Test Files  58 passed (58)
+Tests       419 passed (419)
 SMOKE PASSED
 ```
 
@@ -209,7 +209,7 @@ Implemented CLI:
 - `piren status`
 - `piren agents`
 - `piren doctor`
-- `piren setup`
+- `piren setup` (interactive wizard when run bare in a TTY; batch with `--apply`)
 - `piren run`
 - `piren chat` (alias for run)
 - `piren worker`
@@ -217,7 +217,10 @@ Implemented CLI:
 - `piren telegram`
 - `piren discord`
 - `piren ask "message"`
+- `piren service <install|remove|start|stop|restart|status> <gateway|telegram|discord>`
 - `piren clean`
+- `piren version`
+- `piren -h|--help` and `piren <command> --help`
 
 Implemented extension command:
 
@@ -282,6 +285,14 @@ Clean-install validation (RC hardening, implemented):
 - Clean-install validation now also guards the install lifecycle: `package.json` does not define `prepare`, so `npm install -g --install-links github:Odiobill/piren` does not compile TypeScript on the target machine. GitHub installs use the committed `dist/` release artifacts. `prepack` still rebuilds `dist/` for tarball creation.
 - `scripts/clean-install-check.ts` wires `defaultCleanInstallCheck` to a CLI: `npm run clean-install:check [-- spec] [--allow-scripts] [--keep]`. Exits non-zero on failure so it is CI-safe.
 - Tests: `tests/clean-install.test.ts` (7 tests). The full real github install is exercised manually via `npm run clean-install:check`, not in the unit suite (network).
+
+Service lifecycle management (ADR-0021, implemented):
+- `src/service-lifecycle.ts` exports the pure core: `SERVICE_TRANSPORTS` (gateway/telegram/discord), `SERVICE_ACTIONS` (install/remove/start/stop/restart/status), `detectServiceManager(probe)` (returns `systemd` > `tmux-cron` > `none` via an injected availability probe), `generateSystemdUnit()` (user unit: Type=simple, Restart=on-failure, WantedBy=default.target), `generateTmuxLaunchScript()` (idempotent detached tmux session), `generateCronEntry()` (`@reboot` line), `installPlan()`/`removePlan()` (exact file paths + commands + instructions), `controlCommands()` (start/stop/restart/status), `executeServiceAction()` orchestration with injected `ServiceExecDeps` (writeFile/removeFile/runCommand/log), `resolvePirenCommand()`, and `updateServiceStatusYaml()` (merges `services.transports.<name>` status into config.yml). All generated files live under `~/.config/piren/services/`. `ServiceTransport` and `ServiceAction` types are exported.
+- `src/help.ts` exports `formatHelp()`, `formatCommandHelp(command)`, `isHelpRequest(argv)`, and `HELP_TOPICS`. The parser (`src/parse-args.ts`) sets `parsed.help=true` for `-h`/`--help` anywhere before the `--` passthrough; the CLI routes help before command dispatch.
+- `src/wizard.ts` exports the interactive setup wizard: pure helpers (`isExistingVault`, `PI_PROVIDERS`, `formatProviderMenu`, `buildAuthJsonEntry`, `serializeAuthJson`, `buildLocalConfigPatch`, `parseCommaList`) plus `runWizard(prompt, deps)` which drives the Hermes-style flow (existing vault detection + agent enable/disable, or new vault init; Pi provider selection + `~/.pi/agent/auth.json` write at mode 0600; local config write with confirmation). `src/prompt.ts` provides the `ReadlinePrompt` adapter (text/secret/confirm/select/list); the `WizardPrompt` interface is injected so the step logic is pure and unit-tested.
+- `src/doctor.ts` gained an opt-in `checkServiceConfig(config)` that reports a `services` check only when a `services.transports` block is present, warning on declared-but-not-installed or installed-but-not-running transports. `ServicesLocalConfig` and `ServiceStatusEntry` added to `src/bootstrap.ts`.
+- The CLI wires: `piren -h|--help` and `piren <cmd> --help`; `piren setup` interactive when bare in a TTY (explicit `process.exit(0)` after the wizard to avoid an unsettled top-level await from the readline interface); `piren service <action> <transport>` with real `systemctl --user`/`tmux`/`crontab` detection probes, best-effort service-status writeback to config.yml after install/remove (only when files were generated, i.e. manager is not `none`).
+- Tests: `tests/service-lifecycle.test.ts` (22), `tests/service-lifecycle-exec.test.ts` (7), `tests/service-status-yaml.test.ts` (5), `tests/help.test.ts` (12), `tests/wizard.test.ts` (16), `tests/wizard-run.test.ts` (5), `tests/doctor-service.test.ts` (7), plus parser help tests.
 
 ## Common pitfalls
 

@@ -11,7 +11,7 @@ npm run build
 npm run smoke
 ```
 
-Current expected baseline: 51 test files, 342 tests, typecheck/build/smoke passing.
+Current expected baseline: 58 test files, 419 tests, typecheck/build/smoke passing.
 
 ## Clean install checklist
 
@@ -88,15 +88,27 @@ Piren's package uses committed `dist` artifacts for git installs, so `npm instal
 
 ## Running long-lived transports
 
-Run transports under your own supervisor:
+Piren can generate and manage supervisor files for each transport:
+
+```bash
+piren service install gateway
+piren service start gateway
+piren service status gateway
+```
+
+Piren prefers systemd user units and falls back to tmux plus `@reboot` cron on
+systems without a systemd user session (DietPi, stripped-down SBCs). All
+generated files live under `~/.config/piren/services/` and are inspectable and
+reversible. See [Service management](service-management.md) for full details,
+including the `loginctl enable-linger` step for systemd user units.
+
+For quick manual runs during development:
 
 ```bash
 piren gateway
 piren telegram
 piren discord
 ```
-
-For always-on devices, use systemd, tmux, or your preferred process supervisor. Service lifecycle generation is planned after core RC hardening.
 
 ## Cleanup
 

@@ -49,11 +49,11 @@ You can scaffold it safely:
 piren setup --apply --vault-root /tmp/piren-vault --agent piren
 ```
 
-`setup --apply` does not overwrite existing config values. Dry-run setup is the default:
-
-```bash
-piren setup
-```
+`setup --apply` does not overwrite existing config values. Running `piren setup`
+with no flags is a dry-run health check, or, when connected to a terminal,
+launches an interactive wizard that guides you through vault, LLM provider key,
+and local config. The wizard detects an existing vault and asks which agents to
+enable, or initializes a new one with a first agent name (default `piren`).
 
 ## Check status
 

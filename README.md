@@ -55,6 +55,8 @@ piren status
 - Gateway process isolation: web, Telegram, Discord, and OpenAI-compatible API surfaces drive Pi through RPC, not in-process embedding.
 - Minimal web UI: agent selection, chat streaming, steering, approval gates, read-only vault browser, and read-only context indicator. No model or configuration controls.
 - Vault-backed cron: Markdown cron job files with active-device ownership, atomic claiming, and inspectable run records.
+- Service lifecycle: systemd user units with tmux plus `@reboot` cron fallback for gateway, Telegram, and Discord transports. Inspectable, reversible files under `~/.config/piren/services/`.
+- Interactive setup wizard: `piren setup` (no flags) guides vault, LLM provider key, and local config; `--help` on every command.
 - Inspectable self-improvement: agents can update handoffs, runbooks, ADRs, project logs, and skill candidates as visible vault artifacts.
 
 ## Architecture sketch
@@ -85,6 +87,7 @@ Online landing page: **https://piren.org/**
 - [Knowledge lifecycle](docs/knowledge-lifecycle.md)
 - [Cron jobs](docs/cron.md)
 - [Operations](docs/operations.md)
+- [Service management](docs/service-management.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Security](docs/security.md)
 - [API reference](docs/api.md)
@@ -95,13 +98,12 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren 0.1.0-rc.1 is the first release candidate. Phase 3 gateway surfaces are implemented: minimal web UI, Telegram, Discord, and OpenAI-compatible chat completions. Phase 4 RC features implemented so far include Pi package extensibility, lazy vault skills, knowledge lifecycle tools, inspectable self-improvement tools, and vault-backed cron.
 
-Current verification baseline: 51 test files, 342 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` passing.
+Current verification baseline: 58 test files, 419 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` passing.
 
 Known limitations:
 
 - Release candidate: not a stable 1.0. APIs and vault layouts may change before the first official release.
 - Security model is bootstrap-token and local allowlist oriented, not multi-user RBAC.
-- Service lifecycle helpers are not yet first-class. Run gateway, Telegram, and Discord transports under your own supervisor for now.
 - Wiki concept/entity update tools and memory-pack integration are post-RC unless pulled forward.
 
 ## Verify from source
