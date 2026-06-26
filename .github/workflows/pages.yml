@@ -1,3 +1,15 @@
+# Deploy the public landing page (site/) to GitHub Pages.
+#
+# One-time setup (GitHub gates site creation behind repo admin access, so the
+# default GITHUB_TOKEN cannot do it from a workflow):
+#   1. Repository Settings > Pages > "Build and deployment" > Source
+#   2. Select "GitHub Actions"
+# After that one toggle, this workflow publishes automatically on every push
+# to main that touches site/ or this workflow file.
+#
+# Why Actions-deploy, not branch-deploy: the "Deploy from a branch" mode only
+# serves the branch root or /docs. site/ cannot be a source there, so we use
+# Actions-deploy, which can publish any path.
 name: Deploy landing page
 
 on:
@@ -25,11 +37,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
-        with:
-          # enablement: true auto-enables GitHub Pages on the repository and
-          # sets the source to "GitHub Actions" if it is not already enabled.
-          # This makes the workflow self-contained: no manual Settings toggle.
-          enablement: true
       - name: Upload site/ as Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
