@@ -12,7 +12,7 @@ import { createInboxTask, claimInboxTask, listInboxTasks, updateInboxTaskStatus 
 import { createStewardAlert } from "./alerts.js";
 import { loadVaultSkills, formatSkillCatalogForContext } from "./skills.js";
 import { projectStatus, projectAppendLog, decisionRecord, projectUpdateHandoff, runbookWrite, skillCandidateWrite, } from "./knowledge.js";
-import { listCronJobs, listCronRuns, claimCronJob, recordCronRun, selectOwningDevice, listActiveDevices, isScheduleDue, } from "./cron.js";
+import { listCronJobs, listCronRuns, claimCronJob, recordCronRun, executeScriptCronJob, selectOwningDevice, listActiveDevices, isScheduleDue, } from "./cron.js";
 const PIREN_TOOL_NAMES = [
     "vault_read",
     "vault_read_cached",
@@ -66,7 +66,7 @@ function formatInboxTasks(tasks) {
 function formatCronJobs(jobs, dueIds) {
     if (jobs.length === 0)
         return "No cron jobs.";
-    return jobs.map((job) => `${dueIds.has(job.id) ? "due" : "idle"}\t${job.id}\t${job.scope}\t${job.schedule}\t${job.agent}\t${job.path}`).join("\n");
+    return jobs.map((job) => `${dueIds.has(job.id) ? "due" : "idle"}\t${job.id}\t${job.mode ?? "agent"}\t${job.scope}\t${job.schedule}\t${job.agent}\t${job.path}`).join("\n");
 }
 function formatCronRuns(runs) {
     if (runs.length === 0)
@@ -126,6 +126,15 @@ function cronStaleAfterMs(env) {
             return parsed;
     }
     return DEFAULT_CRON_STALE_MS;
+}
+function scriptCronTimeoutMs(env) {
+    const envValue = env.PIREN_SCRIPT_CRON_TIMEOUT_MS;
+    if (envValue !== undefined && envValue.trim() !== "") {
+        const parsed = Number(envValue);
+        if (Number.isFinite(parsed) && parsed > 0)
+            return parsed;
+    }
+    return 60_000;
 }
 // Build isScheduleDue options respecting exactOptionalPropertyTypes: lastRun
 // is omitted (never passed as explicit undefined) when the job has no last run.
@@ -188,12 +197,14 @@ function contextPrompt(context, skills = []) {
         "or when running in worker mode (PIREN_WORKER=1). In a direct conversation,",
         "wait for the steward to direct the work.",
         "",
-        "## Vault-Backed Cron (ADR-0019)",
+        "## Vault-Backed Cron (ADR-0019 + ADR-0023)",
         "Scheduled work is file-backed and inspectable. cron_list() shows due jobs,",
         "cron_claim() atomically claims one for this device, cron_record_run() writes",
         "an inspectable run record and restores the job, and cron_runs(job_id?) shows",
-        "history. Do not run cron jobs automatically in a direct conversation; worker",
-        "mode surfaces due jobs. Secrets never belong in cron job files.",
+        "history. Agent-mode jobs are surfaced in worker mode for explicit claim/run/record.",
+        "Script-mode jobs (mode: script, script: <vault path>) are executed directly by",
+        "worker mode with no agent prompt and recorded as run records. Do not run cron jobs",
+        "automatically in a direct conversation. Secrets never belong in cron job files or scripts.",
     ];
     const skillsSection = formatSkillCatalogForContext(skills);
     if (skillsSection) {
@@ -719,6 +730,7 @@ export default async function pirenExtension(pi, testOptions = {}) {
                     schedule: job.schedule.describe(),
                     agent: job.agent,
                     enabled: job.enabled,
+                    mode: job.mode,
                     path: job.path,
                     due: dueIds.has(job.id),
                 }));
@@ -865,8 +877,23 @@ export default async function pirenExtension(pi, testOptions = {}) {
                     if (!jobIsDue(job, now))
                         continue;
                     const ownedResult = selectOwningDevice({ devicePolicy: job.devicePolicy, activeDevices: devices.devices, deviceId: device.deviceId });
-                    if (ownedResult.owns)
+                    if (!ownedResult.owns)
+                        continue;
+                    if (job.mode === "script") {
+                        const run = await executeScriptCronJob({
+                            vaultRoot: context.vaultRoot,
+                            jobPath: job.path,
+                            agentName: context.agentName,
+                            deviceId: device.deviceId,
+                            staleAfterMs: staleMs,
+                            timeoutMs: scriptCronTimeoutMs(env),
+                            env,
+                        });
+                        ctx.ui.notify(`Worker cron script: ${run.status} ${job.id} exit=${run.exitCode === null ? "" : run.exitCode} run=${run.runPath}`, run.status === "completed" ? "info" : "error");
+                    }
+                    else {
                         owned.push(`${job.id}\t${job.scope}\t${job.schedule.describe()}\t${job.path}`);
+                    }
                 }
                 if (owned.length > 0) {
                     ctx.ui.notify(`Worker cron: ${owned.length} due job(s) owned by this device\n${owned.join("\n")}\nUse cron_claim then cron_record_run to execute.`, "info");

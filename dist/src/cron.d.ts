@@ -52,6 +52,7 @@ export interface CronDevicePolicy {
     mode: CronDevicePolicyMode;
     allowedDevices: string[];
 }
+export type CronJobMode = "agent" | "script";
 export interface CronJob {
     /** Vault-relative path, e.g. "cron/jobs/nightly-digest.md". */
     path: string;
@@ -62,7 +63,11 @@ export interface CronJob {
     agent: string;
     schedule: CronSchedule;
     enabled: boolean;
+    mode: CronJobMode;
+    /** Prompt for agent mode, documentation/purpose text for script mode. */
     prompt: string;
+    /** Vault-relative executable script path when mode is "script". */
+    script?: string;
     devicePolicy: CronDevicePolicy;
     staleAfterSeconds?: number;
     /** Last recorded run ISO timestamp, parsed from frontmatter if present. */
@@ -195,6 +200,37 @@ export interface RecordCronRunResult {
  * them in the vault, and the job is still restored so it can be retried.
  */
 export declare function recordCronRun(options: RecordCronRunOptions): Promise<RecordCronRunResult>;
+export interface ResolveCronScriptPathOptions {
+    vaultRoot: string;
+    script: string;
+}
+export interface ResolvedCronScriptPath {
+    path: string;
+    absolutePath: string;
+}
+export declare function resolveCronScriptPath(options: ResolveCronScriptPathOptions): ResolvedCronScriptPath;
+export interface ExecuteScriptCronJobOptions {
+    vaultRoot: string;
+    jobPath: string;
+    agentName: string;
+    deviceId: string;
+    staleAfterMs?: number;
+    timeoutMs?: number;
+    outputLimitBytes?: number;
+    now?: () => Date;
+    env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+}
+export interface ExecuteScriptCronJobResult {
+    status: CronRunStatus;
+    exitCode: number | null;
+    signal: string | null;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+    runPath: string;
+    restoredJobPath: string;
+}
+export declare function executeScriptCronJob(options: ExecuteScriptCronJobOptions): Promise<ExecuteScriptCronJobResult>;
 /**
  * Read all unclaimed, enabled job files from the shared (cron/jobs/) and
  * agent-scoped (team/<agent>/cron/jobs/) directories. Missing directories

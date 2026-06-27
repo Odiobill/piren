@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import extension from "../src/pi-extension.js";
@@ -8,6 +8,7 @@ import { doctorPiren } from "../src/doctor.js";
 import { PiRpcClient, extractAssistantText } from "../src/gateway-rpc.js";
 import { GatewayServer } from "../src/gateway-http.js";
 import { askAgent } from "../src/ask.js";
+import { executeScriptCronJob } from "../src/cron.js";
 
 type FakePi = ReturnType<typeof fakePi>;
 
@@ -350,6 +351,38 @@ async function main() {
       throw new Error(`cron_runs smoke failed: ${cronRuns.content[0].text}`);
     }
     console.log("cron_runs history: ok");
+
+    await mkdir(join(fixture.vault, "scripts"), { recursive: true });
+    const smokeScript = join(fixture.vault, "scripts", "smoke-cron.sh");
+    await writeFile(smokeScript, "#!/bin/sh\necho script-smoke:$PIREN_AGENT:$PIREN_VAULT_ROOT\n", "utf8");
+    await chmod(smokeScript, 0o755);
+    await writeFile(
+      join(fixture.vault, "cron", "jobs", "smoke-script.md"),
+      [
+        "---",
+        "id: smoke-script",
+        'agent: "thor"',
+        'schedule: "30m"',
+        "mode: script",
+        "script: scripts/smoke-cron.sh",
+        "enabled: true",
+        "---",
+        "",
+      ].join("\n"),
+    );
+    const scriptRun = await executeScriptCronJob({
+      vaultRoot: fixture.vault,
+      jobPath: "cron/jobs/smoke-script.md",
+      agentName: "thor",
+      deviceId: "heimdall",
+      timeoutMs: 2000,
+      now: () => new Date("2026-06-25T07:01:00.000Z"),
+    });
+    const scriptRunContent = await readFile(join(fixture.vault, scriptRun.runPath), "utf8");
+    if (scriptRun.status !== "completed" || !scriptRunContent.includes("mode: script") || !scriptRunContent.includes("script-smoke:thor:" + fixture.vault)) {
+      throw new Error("script-only cron smoke failed");
+    }
+    console.log("script-only cron execution: ok");
 
     const sentTask = await pi.tools.send_to_agent.execute("smoke-send", {
       to: "thor",

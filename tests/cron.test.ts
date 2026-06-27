@@ -2,8 +2,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { chmod } from "node:fs/promises";
 import { isScheduleDue, parseSchedule } from "../src/cron.js";
-import { claimCronJob, listCronJobs, listActiveDevices, listCronRuns, recordCronRun, readCronJob, selectOwningDevice } from "../src/cron.js";
+import { claimCronJob, executeScriptCronJob, listCronJobs, listActiveDevices, listCronRuns, recordCronRun, readCronJob, resolveCronScriptPath, selectOwningDevice } from "../src/cron.js";
 
 let root: string;
 let vault: string;
@@ -88,6 +89,106 @@ describe("ADR-0019 cron job file reading", () => {
     expect(job.devicePolicy.mode).toBe("highest_priority");
     expect(job.devicePolicy.allowedDevices).toEqual([]);
     expect(job.staleAfterSeconds).toBeUndefined();
+  });
+});
+
+describe("ADR-0023 script-only cron job files", () => {
+  it("reads a script-mode cron job with script path and optional prompt body", async () => {
+    await writeFile(
+      join(vault, "cron", "jobs", "disk-check.md"),
+      [
+        "---",
+        "id: disk-check",
+        'agent: "piren"',
+        'schedule: "30m"',
+        "mode: script",
+        "script: scripts/disk-check.sh",
+        "enabled: true",
+        "---",
+        "",
+        "# Disk Check",
+        "",
+        "Human-readable purpose only.",
+        "",
+      ].join("\n"),
+    );
+
+    const job = await readCronJob({ vaultRoot: vault, path: "cron/jobs/disk-check.md" });
+
+    expect(job.mode).toBe("script");
+    expect(job.script).toBe("scripts/disk-check.sh");
+    expect(job.prompt).toContain("Human-readable purpose only");
+  });
+
+  it("allows script-mode jobs to omit the prompt body", async () => {
+    await writeFile(
+      join(vault, "cron", "jobs", "disk-check.md"),
+      [
+        "---",
+        "id: disk-check",
+        'agent: "piren"',
+        'schedule: "30m"',
+        "mode: script",
+        "script: scripts/disk-check.sh",
+        "enabled: true",
+        "---",
+        "",
+      ].join("\n"),
+    );
+
+    const job = await readCronJob({ vaultRoot: vault, path: "cron/jobs/disk-check.md" });
+
+    expect(job.mode).toBe("script");
+    expect(job.prompt).toBe("");
+  });
+
+  it("rejects script paths that resolve outside the vault", () => {
+    expect(() => resolveCronScriptPath({ vaultRoot: vault, script: "../escape.sh" })).toThrow(/outside vault/i);
+  });
+});
+
+describe("ADR-0023 script-only cron execution", () => {
+  it("claims a due script job, executes the vault script without agent input, and records the run", async () => {
+    await mkdir(join(vault, "scripts"), { recursive: true });
+    const scriptPath = join(vault, "scripts", "disk-check.sh");
+    await writeFile(scriptPath, "#!/bin/sh\necho vault=$PIREN_VAULT_ROOT\necho agent=$PIREN_AGENT\n", "utf8");
+    await chmod(scriptPath, 0o755);
+    await writeFile(
+      join(vault, "cron", "jobs", "disk-check.md"),
+      [
+        "---",
+        "id: disk-check",
+        'agent: "piren"',
+        'schedule: "30m"',
+        "mode: script",
+        "script: scripts/disk-check.sh",
+        "enabled: true",
+        "---",
+        "",
+        "# Disk check",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await executeScriptCronJob({
+      vaultRoot: vault,
+      jobPath: "cron/jobs/disk-check.md",
+      agentName: "piren",
+      deviceId: "heimdall",
+      timeoutMs: 2000,
+      now: () => new Date("2026-06-27T10:00:00Z"),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.exitCode).toBe(0);
+    expect(result.runPath).toBe("cron/runs/20260627T100000000Z-disk-check.md");
+    const runContent = await readFile(join(vault, result.runPath), "utf8");
+    expect(runContent).toContain("mode: script");
+    expect(runContent).toContain("exit_code: 0");
+    expect(runContent).toContain("vault=" + vault);
+    expect(runContent).toContain("agent=piren");
+    const restored = await readFile(join(vault, "cron", "jobs", "disk-check.md"), "utf8");
+    expect(restored).toContain("last_run: 2026-06-27T10:00:00.000Z");
   });
 });
 

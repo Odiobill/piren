@@ -72,13 +72,18 @@ Default interactive sessions do not enable worker polling. If an agent checks `i
 
 ## Cron job does not run
 
-Cron jobs are surfaced only in worker mode and are not auto-run. Check:
+Cron behavior depends on job mode:
 
-- Job file frontmatter has `enabled: true`.
-- Schedule is due.
-- A current device heartbeat exists under `team/<agent>/devices/`.
-- This device wins active-device priority.
-- The agent claims and records the job with `cron_claim` and `cron_record_run`.
+- `mode: agent` jobs are surfaced only in worker mode and are not auto-run. Check:
+  - Job file frontmatter has `enabled: true`.
+  - Schedule is due.
+  - A current device heartbeat exists under `team/<agent>/devices/`.
+  - This device wins active-device priority.
+  - The agent claims and records the job with `cron_claim` and `cron_record_run`.
+- `mode: script` jobs are executed directly by worker mode. Check:
+  - `script:` is set and resolves inside the vault.
+  - The script file exists and is executable by the worker user.
+  - The run record under `cron/runs/` or `team/<agent>/cron/runs/` contains stdout, stderr, exit code, and timeout status.
 
 ## Tests pass but typecheck fails
 

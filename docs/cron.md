@@ -22,6 +22,8 @@ Shared jobs include an `agent` frontmatter field. Agent-scoped jobs inherit thei
 
 ## Job file format
 
+Agent-mode jobs are the default. They are surfaced to the worker agent, which must claim, execute, and record them explicitly:
+
 ```markdown
 ---
 id: daily-briefing
@@ -38,6 +40,26 @@ device_policy:
 
 Summarize new project activity and update the handoff if needed.
 ```
+
+Script-mode jobs run a vault-referenced executable directly in worker mode, without sending a prompt to the agent or making an LLM call:
+
+```markdown
+---
+id: disk-check
+agent: piren
+schedule: 30m
+mode: script
+script: scripts/disk-check.sh
+enabled: true
+stale_after_seconds: 120
+---
+
+# Disk check
+
+Human-readable purpose. Optional in script mode.
+```
+
+`mode` defaults to `agent`. In `mode: script`, `script` is a vault-relative path. It must resolve inside the vault. Shared scripts conventionally live under `scripts/`; agent-scoped scripts conventionally live under `team/<agent>/scripts/`.
 
 Supported schedules:
 
@@ -89,7 +111,10 @@ PIREN_WORKER=1 piren run
 piren worker
 ```
 
-Worker mode surfaces due jobs owned by this device. It does not auto-run them. The agent must claim and record runs explicitly, so every run remains inspectable.
+Worker mode handles due jobs owned by this device:
+
+- `mode: agent` jobs are surfaced to the worker agent. They are not auto-run. The agent must claim and record runs explicitly, so every run remains inspectable.
+- `mode: script` jobs are claimed, executed directly as child processes, and recorded by the worker without an LLM call.
 
 Default interactive sessions do not poll cron or inboxes automatically.
 

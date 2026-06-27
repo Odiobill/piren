@@ -1,4 +1,5 @@
 import { access, mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -155,6 +156,8 @@ export interface CronDevicePolicy {
   allowedDevices: string[];
 }
 
+export type CronJobMode = "agent" | "script";
+
 export interface CronJob {
   /** Vault-relative path, e.g. "cron/jobs/nightly-digest.md". */
   path: string;
@@ -165,7 +168,11 @@ export interface CronJob {
   agent: string;
   schedule: CronSchedule;
   enabled: boolean;
+  mode: CronJobMode;
+  /** Prompt for agent mode, documentation/purpose text for script mode. */
   prompt: string;
+  /** Vault-relative executable script path when mode is "script". */
+  script?: string;
   devicePolicy: CronDevicePolicy;
   staleAfterSeconds?: number;
   /** Last recorded run ISO timestamp, parsed from frontmatter if present. */
@@ -214,7 +221,9 @@ interface ParsedJobFrontmatter {
   agent: string;
   schedule: string;
   enabled: boolean;
+  mode: CronJobMode;
   prompt: string;
+  script?: string;
   devicePolicy: CronDevicePolicy;
   staleAfterSeconds?: number;
   lastRun?: Date;
@@ -281,6 +290,12 @@ function promptFromBody(body: string): string {
   return body.trim();
 }
 
+function parseJobMode(value: unknown, path: string): CronJobMode {
+  if (value === undefined || value === null || value === "") return "agent";
+  if (value === "agent" || value === "script") return value;
+  throw new Error(`Cron job mode '${String(value)}' is not supported: ${path}`);
+}
+
 function parseJobFrontmatter(content: string, path: string): ParsedJobFrontmatter {
   const { fields, body } = splitFrontmatter(content);
   const id = asString(fields.id, "id", path).trim();
@@ -292,17 +307,24 @@ function parseJobFrontmatter(content: string, path: string): ParsedJobFrontmatte
   const schedule = parseSchedule(scheduleRaw);
   const enabledRaw = fields.enabled;
   const enabled = enabledRaw === undefined ? true : Boolean(enabledRaw);
+  const mode = parseJobMode(fields.mode, path);
+  const scriptRaw = fields.script;
+  const script = scriptRaw === undefined || scriptRaw === null || String(scriptRaw).trim() === "" ? undefined : asString(scriptRaw, "script", path).trim();
+  if (mode === "script" && script === undefined) {
+    throw new Error(`Cron job mode 'script' requires a script path: ${path}`);
+  }
   const devicePolicy = parseDevicePolicy(fields.device_policy, path);
   const staleAfterSeconds = asNumberOrUndefined(fields.stale_after_seconds, "stale_after_seconds", path);
   const lastRunRaw = fields.last_run;
   const lastClaimedByRaw = fields.last_claimed_by;
 
   const prompt = promptFromBody(body);
-  if (!prompt) {
+  if (mode === "agent" && !prompt) {
     throw new Error(`Cron job has an empty prompt: ${path}`);
   }
 
-  const result: ParsedJobFrontmatter = { id, agent, schedule: scheduleRaw, enabled, prompt, devicePolicy };
+  const result: ParsedJobFrontmatter = { id, agent, schedule: scheduleRaw, enabled, mode, prompt, devicePolicy };
+  if (script !== undefined) result.script = script;
   if (staleAfterSeconds !== undefined) result.staleAfterSeconds = staleAfterSeconds;
   if (typeof lastRunRaw === "string" && lastRunRaw.trim() !== "") {
     const parsed = new Date(lastRunRaw);
@@ -350,9 +372,11 @@ export async function readCronJob(options: ReadCronJobOptions): Promise<CronJob>
     agent: parsed.agent,
     schedule,
     enabled: parsed.enabled,
+    mode: parsed.mode,
     prompt: parsed.prompt,
     devicePolicy: parsed.devicePolicy,
   };
+  if (parsed.script !== undefined) job.script = parsed.script;
   if (parsed.staleAfterSeconds !== undefined) job.staleAfterSeconds = parsed.staleAfterSeconds;
   if (parsed.lastRun !== undefined) job.lastRun = parsed.lastRun;
   if (parsed.lastClaimedBy !== undefined) job.lastClaimedBy = parsed.lastClaimedBy;
@@ -729,6 +753,189 @@ export async function recordCronRun(options: RecordCronRunOptions): Promise<Reco
     runAbsolutePath,
     restoredJobPath: restoredPath,
     restoredJobAbsolutePath: restoredAbsolutePath,
+  };
+}
+
+export interface ResolveCronScriptPathOptions {
+  vaultRoot: string;
+  script: string;
+}
+
+export interface ResolvedCronScriptPath {
+  path: string;
+  absolutePath: string;
+}
+
+export function resolveCronScriptPath(options: ResolveCronScriptPathOptions): ResolvedCronScriptPath {
+  const root = resolve(options.vaultRoot);
+  const scriptAbsolutePath = resolve(root, options.script);
+  assertInsideVault(root, scriptAbsolutePath);
+  return { path: relative(root, scriptAbsolutePath), absolutePath: scriptAbsolutePath };
+}
+
+export interface ExecuteScriptCronJobOptions {
+  vaultRoot: string;
+  jobPath: string;
+  agentName: string;
+  deviceId: string;
+  staleAfterMs?: number;
+  timeoutMs?: number;
+  outputLimitBytes?: number;
+  now?: () => Date;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+}
+
+export interface ExecuteScriptCronJobResult {
+  status: CronRunStatus;
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+  runPath: string;
+  restoredJobPath: string;
+}
+
+interface SpawnScriptResult {
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+}
+
+function appendCapped(current: string, chunk: Buffer, limitBytes: number): string {
+  const next = current + chunk.toString("utf8");
+  if (Buffer.byteLength(next, "utf8") <= limitBytes) return next;
+  return next.slice(0, limitBytes) + "\n[output truncated]\n";
+}
+
+function runScriptProcess(options: {
+  command: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  timeoutMs: number;
+  outputLimitBytes: number;
+}): Promise<SpawnScriptResult> {
+  return new Promise((resolvePromise) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    const child = spawn(options.command, [], {
+      cwd: options.cwd,
+      env: options.env as NodeJS.ProcessEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!settled) child.kill("SIGKILL");
+      }, 1000).unref?.();
+    }, options.timeoutMs);
+    timer.unref?.();
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout = appendCapped(stdout, chunk, options.outputLimitBytes);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = appendCapped(stderr, chunk, options.outputLimitBytes);
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({ exitCode: null, signal: null, timedOut, stdout, stderr: stderr + String(error.message) });
+    });
+    child.on("close", (exitCode, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({ exitCode, signal, timedOut, stdout, stderr });
+    });
+  });
+}
+
+function formatScriptCronResult(options: {
+  job: CronJob;
+  scriptPath: string;
+  run: SpawnScriptResult;
+}): string {
+  const lines = [
+    "mode: script",
+    `script: ${options.scriptPath}`,
+    `exit_code: ${options.run.exitCode === null ? "" : options.run.exitCode}`,
+    `signal: ${options.run.signal ?? ""}`,
+    `timed_out: ${options.run.timedOut ? "true" : "false"}`,
+    "",
+    "## Purpose",
+    "",
+    options.job.prompt || "(no documented purpose)",
+    "",
+    "## Stdout",
+    "",
+    options.run.stdout || "(empty)",
+    "",
+    "## Stderr",
+    "",
+    options.run.stderr || "(empty)",
+  ];
+  return lines.join("\n");
+}
+
+export async function executeScriptCronJob(options: ExecuteScriptCronJobOptions): Promise<ExecuteScriptCronJobResult> {
+  const startedAt = options.now?.() ?? new Date();
+  const job = await readCronJob({ vaultRoot: options.vaultRoot, path: options.jobPath });
+  if (job.mode !== "script") {
+    throw new Error(`Cron job is not in script mode: ${options.jobPath}`);
+  }
+  if (job.script === undefined || job.script.trim() === "") {
+    throw new Error(`Cron script-mode job is missing script path: ${options.jobPath}`);
+  }
+  const resolvedScript = resolveCronScriptPath({ vaultRoot: options.vaultRoot, script: job.script });
+  const claimOptions = {
+    vaultRoot: options.vaultRoot,
+    jobPath: options.jobPath,
+    deviceId: options.deviceId,
+    agentName: options.agentName,
+  } as ClaimCronJobOptions;
+  if (options.staleAfterMs !== undefined) claimOptions.staleAfterMs = options.staleAfterMs;
+  if (options.now !== undefined) claimOptions.now = options.now;
+  const claimed = await claimCronJob(claimOptions);
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    ...options.env,
+    PIREN_VAULT_ROOT: resolve(options.vaultRoot),
+    PIREN_AGENT: options.agentName,
+  };
+  const run = await runScriptProcess({
+    command: resolvedScript.absolutePath,
+    cwd: resolve(options.vaultRoot),
+    env,
+    timeoutMs: options.timeoutMs ?? 60_000,
+    outputLimitBytes: options.outputLimitBytes ?? 64 * 1024,
+  });
+  const status: CronRunStatus = run.exitCode === 0 && !run.timedOut ? "completed" : "failed";
+  const finishedAt = options.now?.() ?? new Date();
+  const record = await recordCronRun({
+    vaultRoot: options.vaultRoot,
+    jobPath: claimed.path,
+    agentName: options.agentName,
+    deviceId: options.deviceId,
+    status,
+    result: formatScriptCronResult({ job, scriptPath: resolvedScript.path, run }),
+    startedAt,
+    finishedAt,
+  });
+  return {
+    status,
+    exitCode: run.exitCode,
+    signal: run.signal,
+    timedOut: run.timedOut,
+    stdout: run.stdout,
+    stderr: run.stderr,
+    runPath: record.runPath,
+    restoredJobPath: record.restoredJobPath,
   };
 }
 

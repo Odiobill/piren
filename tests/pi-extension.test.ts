@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, chmod, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -717,6 +717,56 @@ describe("Pi extension cron tools (ADR-0019)", () => {
     await expect(readFile(join(root, "vault", "cron", "jobs", "check-github.md"), "utf8")).resolves.toBeDefined();
   });
 
+  it("executes due script-mode cron jobs directly in worker mode and records the run", async () => {
+    await mkdir(join(root, "vault", "scripts"), { recursive: true });
+    const scriptPath = join(root, "vault", "scripts", "disk-check.sh");
+    await writeFile(scriptPath, "#!/bin/sh\necho script-worker:$PIREN_AGENT:$PIREN_VAULT_ROOT\n", "utf8");
+    await chmod(scriptPath, 0o755);
+    await mkdir(join(root, "vault", "cron", "jobs"), { recursive: true });
+    await writeFile(
+      join(root, "vault", "cron", "jobs", "disk-check.md"),
+      [
+        "---",
+        "id: disk-check",
+        'agent: "thor"',
+        'schedule: "15m"',
+        "mode: script",
+        "script: scripts/disk-check.sh",
+        "enabled: true",
+        "---",
+        "",
+        "# Disk check",
+        "",
+      ].join("\n"),
+    );
+    const configPath = join(root, "worker-config.yml");
+    await writeFile(configPath, "vault_root: " + join(root, "vault") + "\n" + "allowed_agents:\n" + "  - thor\n");
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_WORKER: "1", PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath,
+    });
+
+    const notifications: Array<{ message: string; level: string }> = [];
+    await pi.events.session_start?.[0]?.({}, {
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+
+    expect(notifications.some((n) => n.message.includes("Worker cron script: completed disk-check"))).toBe(true);
+    const runDir = join(root, "vault", "cron", "runs");
+    const runs = await readdir(runDir);
+    expect(runs).toHaveLength(1);
+    const content = await readFile(join(runDir, runs[0] ?? ""), "utf8");
+    expect(content).toContain("mode: script");
+    expect(content).toContain("script-worker:thor:" + join(root, "vault"));
+    await expect(readFile(join(root, "vault", "cron", "jobs", "disk-check.md"), "utf8")).resolves.toContain("last_run:");
+  });
+
   it("includes the vault-backed cron tools and guidance in the context prompt", async () => {
     const pi = await loadCronExtension();
     const beforeStart = pi.events.before_agent_start?.[0];
@@ -727,6 +777,7 @@ describe("Pi extension cron tools (ADR-0019)", () => {
     expect(content).toContain("cron_claim(job_path, stale_after_ms?)");
     expect(content).toContain("cron_record_run(job_path, status, result, started_at, finished_at)");
     expect(content).toContain("cron_runs(job_id?)");
-    expect(content).toContain("Vault-Backed Cron (ADR-0019)");
+    expect(content).toContain("Vault-Backed Cron (ADR-0019 + ADR-0023)");
+    expect(content).toContain("Script-mode jobs");
   });
 });

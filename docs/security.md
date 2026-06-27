@@ -50,9 +50,9 @@ The web vault browser is read-only.
 
 ## Cron safety
 
-Cron job prompts are vault-visible Markdown files. Do not put secrets in job files. Use local config or provider-native credential locations.
+Cron job prompts and script paths are vault-visible Markdown frontmatter. Do not put secrets in job files or vault scripts. Use local config or provider-native credential locations.
 
-Cron runs only through opt-in worker mode. Default interactive sessions do not poll cron or inboxes automatically.
+Cron runs only through opt-in worker mode. Default interactive sessions do not poll cron or inboxes automatically. Script-mode cron executes vault scripts with the worker process privileges, so only run scripts you trust and keep them inspectable in the vault.
 
 ## Install artifact policy
 
