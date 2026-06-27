@@ -25,6 +25,7 @@ export interface ParsedArgs {
   vaultRoot: string | undefined;
   force: boolean;
   apply: boolean;
+  yes: boolean;
   help: boolean;
   port: number | undefined;
   host: string | undefined;
@@ -50,6 +51,7 @@ export const KNOWN_COMMANDS = [
   "ask",
   "chat",
   "service",
+  "agent",
   "clean",
   "version",
 ] as const;
@@ -68,6 +70,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let agentName: string | undefined;
   let force = false;
   let apply = false;
+  let yes = false;
   let help = false;
   let port: number | undefined;
   let host: string | undefined;
@@ -97,6 +100,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       force = true;
     } else if (arg === "--apply") {
       apply = true;
+    } else if (arg === "--yes" || arg === "-y") {
+      yes = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     } else if (arg === "--port") {
@@ -133,6 +138,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     vaultRoot,
     piArgs,
     apply,
+    yes,
     help,
     port,
     host,

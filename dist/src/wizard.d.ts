@@ -154,4 +154,17 @@ export interface WizardResult {
     wroteConfig: boolean;
     configuredTransports: string[];
 }
+/**
+ * Read an existing local config.yml and extract the values the wizard wants to
+ * remember across runs (vault_root, allowed_agents, excluded_agents). Returns
+ * empty arrays and an undefined root when the file is missing or unparseable,
+ * so the wizard falls back to CWD / empty defaults on a first run. This is the
+ * "value memory" behind frictionless re-runs: the operator does not have to
+ * re-enter the vault path or re-pick agents every time they add a provider.
+ */
+export interface PriorLocalConfig {
+    vaultRoot?: string;
+    allowedAgents: string[];
+    excludedAgents: string[];
+}
 export declare function runWizard(prompt: WizardPrompt, deps?: WizardDeps): Promise<WizardResult>;

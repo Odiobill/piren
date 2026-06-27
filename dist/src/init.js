@@ -71,4 +71,47 @@ export async function initVault(options) {
     }
     return { vaultRoot, agentName, agentDir, created };
 }
+/**
+ * Scaffold a single agent directory (team/<agent>/) inside an EXISTING vault,
+ * without re-initializing the vault itself. Used by `piren agent add` so adding
+ * a second agent does not trip initVault's "vault file already exists" guard.
+ *
+ * Creates the same subdirectories and identity files initVault writes for a
+ * fresh agent: inbox/outbox/devices/logs/sessions/skills, plus SOUL.md,
+ * MEMORY.md, and config.yml. Respects `force` to overwrite identity files.
+ */
+export async function scaffoldAgentDirectory(options) {
+    const vaultRoot = resolve(options.vaultRoot);
+    const agentName = options.agentName ?? "piren";
+    const force = options.force ?? false;
+    if (!AGENT_NAME_PATTERN.test(agentName)) {
+        throw new Error("Invalid agent name. Use lowercase kebab-case, for example 'thor' or 'research-agent'.");
+    }
+    const agentTitle = titleCaseAgentName(agentName);
+    const agentDir = join(vaultRoot, "team", agentName);
+    const created = [];
+    await mkdir(join(agentDir, "inbox"), { recursive: true });
+    await mkdir(join(agentDir, "outbox"), { recursive: true });
+    await mkdir(join(agentDir, "devices"), { recursive: true });
+    await mkdir(join(agentDir, "logs"), { recursive: true });
+    await mkdir(join(agentDir, "sessions"), { recursive: true });
+    await mkdir(join(agentDir, "skills"), { recursive: true });
+    await writeNewFile(join(agentDir, "SOUL.md"), [
+        `# ${agentTitle}`,
+        "",
+        `You are ${agentTitle}, a Piren agent defined by this vault directory.`,
+        "Operate from the vault, respect steward directives, and keep state human-readable.",
+        "",
+    ].join("\n"), force, created);
+    await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
+    await writeNewFile(join(agentDir, "config.yml"), [
+        "# Agent-local Piren preferences.",
+        "# Installation authority lives in ~/.config/piren/config.yml, not here.",
+        "model: {}",
+        "poll_interval_active_seconds: 60",
+        "poll_interval_idle_seconds: 300",
+        "",
+    ].join("\n"), force, created);
+    return { vaultRoot, agentName, agentDir, created };
+}
 //# sourceMappingURL=init.js.map

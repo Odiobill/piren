@@ -79,6 +79,12 @@ export const HELP_TOPICS = [
         example: "piren service install gateway",
     },
     {
+        command: "agent",
+        short: "Manage agent identities and permissions: add, remove, clone, list.",
+        flags: ["add <name>", "remove <name>", "clone <source> <name>", "list", "--force", "--yes"],
+        example: "piren agent add thor",
+    },
+    {
         command: "clean",
         short: "Dry-run (or with --force, actually remove) local Piren state.",
         flags: ["--force"],

@@ -24,6 +24,7 @@ export interface ParsedArgs {
     vaultRoot: string | undefined;
     force: boolean;
     apply: boolean;
+    yes: boolean;
     help: boolean;
     port: number | undefined;
     host: string | undefined;
@@ -33,7 +34,7 @@ export interface ParsedArgs {
     piArgs: string[];
 }
 /** Commands the CLI recognizes as the first non-flag positional. */
-export declare const KNOWN_COMMANDS: readonly ["status", "agents", "doctor", "init", "run", "worker", "setup", "gateway", "web", "telegram", "discord", "ask", "chat", "service", "clean", "version"];
+export declare const KNOWN_COMMANDS: readonly ["status", "agents", "doctor", "init", "run", "worker", "setup", "gateway", "web", "telegram", "discord", "ask", "chat", "service", "agent", "clean", "version"];
 /**
  * Parse Piren CLI arguments (typically `process.argv.slice(2)`).
  *

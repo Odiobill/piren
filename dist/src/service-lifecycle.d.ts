@@ -39,6 +39,24 @@ export declare function unitName(transport: ServiceTransport): string;
  */
 export declare function systemdUnitPath(servicesDir: string, transport: ServiceTransport): string;
 export declare function detectServiceManager(probe: ServiceManagerDetection): Promise<ServiceManager>;
+/**
+ * Interpret the result of invoking `crontab -l` to decide whether cron is
+ * available on this system. vixie cron / Debian's `cron` package exit 1
+ * specifically when the user has NO crontab yet, even though cron is installed
+ * and running. Reading that as "unavailable" caused DietPi and other
+ * stripped-down systems (no user crontab at first run) to be detected as "none"
+ * instead of the intended "tmux-cron" fallback.
+ *
+ * Semantics:
+ *   - exit 0: crontab exists, available.
+ *   - exit 1: "no crontab for user" on Debian/vixie cron; cron IS installed.
+ *   - exit >= 2 or a signal: hard failure (command not found, etc.) -> unavailable.
+ */
+export interface CrontabInvocationResult {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+}
+export declare function crontabAvailableFromInvocation(result: CrontabInvocationResult): boolean;
 export interface GenerateServiceOptions {
     transport: ServiceTransport;
     pirenCommand: string;

@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { initVault } from "./init.js";
+import { initVault, scaffoldAgentDirectory } from "./init.js";
 import { spawnPiRun, buildPiRunCommand } from "./run.js";
 import { formatSetupReport, setupPiren } from "./setup.js";
 import { runWizard } from "./wizard.js";
@@ -15,6 +15,15 @@ import { PiRpcClient } from "./gateway-rpc.js";
 import { askAgent } from "./ask.js";
 import { cleanPiren, formatCleanReport } from "./clean.js";
 import { readVersion } from "./version.js";
+import {
+  validateAgentName,
+  agentDirPath,
+  executeAddAgent,
+  executeRemoveAgent,
+  executeCloneAgent,
+  updateAllowedAgentsInConfig,
+  type AgentManageDeps,
+} from "./agent-manage.js";
 import { resolveGatewayToken, assertAuthGate, isLocalhostBind, defaultTokenFilePath } from "./gateway-auth.js";
 import { formatHelp, formatCommandHelp, isHelpRequest } from "./help.js";
 import {
@@ -22,7 +31,7 @@ import {
   bootstrapOptions,
   KNOWN_COMMANDS,
 } from "./parse-args.js";
-import { loadPirenContext } from "./bootstrap.js";
+import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents } from "./agents.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import {
@@ -33,6 +42,7 @@ import {
   updateServiceStatusYaml,
   validateTransport,
   validateAction,
+  crontabAvailableFromInvocation,
   type ServiceManagerDetection,
   type ServiceExecDeps,
   type CommandResult,
@@ -52,7 +62,7 @@ function resolvePublicDir(): string {
 
 const argv = process.argv.slice(2);
 const parsed = parseArgs(argv);
-const { agentDir, agentName, command, force, vaultRoot, piArgs, port, host, token, positionals } = parsed;
+const { agentDir, agentName, command, force, yes, vaultRoot, piArgs, port, host, token, positionals } = parsed;
 
 // Help takes priority. `piren --help` / `piren -h` shows top-level help;
 // `piren <cmd> --help` shows that command's help. The `--` passthrough is
@@ -325,7 +335,7 @@ try {
     const probe: ServiceManagerDetection = {
       hasSystemdUser: async () => commandAvailable("systemctl", ["--user", "is-system-running"]),
       hasTmux: async () => commandAvailable("tmux", ["-V"]),
-      hasCrontab: async () => commandAvailable("crontab", ["-l"]),
+      hasCrontab: async () => crontabInstalled(),
     };
     const manager = await detectServiceManager(probe);
 
@@ -408,6 +418,16 @@ try {
     // way the package.json is two levels up.
     const packageJsonPath = join(thisDir, "..", "..", "package.json");
     console.log(readVersion(packageJsonPath));
+  } else if (command === "agent") {
+    await runAgentCommand({
+      subcommand: positionals[0],
+      nameArg1: positionals[1],
+      nameArg2: positionals[2],
+      opts: bootstrapOptions(parsed),
+      explicitVaultRoot: vaultRoot,
+      force,
+      yes,
+    });
   } else {
     const context = await loadPirenContext(bootstrapOptions(parsed));
     console.log(`Piren ${command}`);
@@ -423,6 +443,245 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// Agent management (piren agent add|remove|clone|list)
+// ---------------------------------------------------------------------------
+
+interface RunAgentCommandArgs {
+  subcommand: string | undefined;
+  nameArg1: string | undefined;
+  nameArg2: string | undefined;
+  opts: BootstrapOptions;
+  explicitVaultRoot: string | undefined;
+  force: boolean;
+  yes: boolean;
+}
+
+async function runAgentCommand(args: RunAgentCommandArgs): Promise<void> {
+  const { parse: parseYaml } = await import("yaml");
+  const { readFile, writeFile, mkdir, access, rm, cp } = await import("node:fs/promises");
+  const configPath = join(homedir(), ".config", "piren", "config.yml");
+
+  // Resolve vault root: explicit --vault-root wins, else read from config.yml.
+  let vaultRoot = args.explicitVaultRoot;
+  let existingConfig = "";
+  try {
+    existingConfig = await readFile(configPath, "utf8");
+  } catch {
+    existingConfig = "";
+  }
+  if (!vaultRoot) {
+    try {
+      const parsed = parseYaml(existingConfig) as Record<string, unknown> | null;
+      const root = parsed?.vault_root;
+      if (typeof root === "string" && root.trim() !== "") vaultRoot = root;
+    } catch {
+      // malformed config; ignore
+    }
+  }
+  if (!vaultRoot) {
+    console.error("Could not resolve vault root. Pass --vault-root or set vault_root in " + configPath + ".");
+    process.exit(2);
+  }
+
+  const sub = args.subcommand;
+
+  // Shared deps: real filesystem operations. scaffoldAgentDir reuses the
+  // init.ts team-dir layout (inbox/outbox/devices/logs/sessions/skills + identity files).
+  const deps: AgentManageDeps = {
+    exists: async (path: string) => {
+      try {
+        await access(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    scaffoldAgentDir: async (root: string, agentName: string) => {
+      // Scaffold ONLY the new agent's team/ dir, not the whole vault. Using
+      // initVault here would trip its "vault file already exists" guard when
+      // adding a second agent to an existing vault.
+      const result = await scaffoldAgentDirectory({ vaultRoot: root, agentName, force: args.force });
+      return result.agentDir;
+    },
+    copyDir: async (src: string, dest: string) => {
+      await cp(src, dest, { recursive: true });
+    },
+    removeDir: async (path: string) => {
+      await rm(path, { recursive: true, force: true });
+    },
+    log: (message: string) => console.log(message),
+  };
+
+  if (sub === "list" || sub === undefined) {
+    await printAgentList(vaultRoot, existingConfig);
+    return;
+  }
+
+  if (sub === "add") {
+    const name = args.nameArg1;
+    if (!name) {
+      console.error("Usage: piren agent add <name>");
+      process.exit(2);
+    }
+    const nameCheck = validateAgentName(name);
+    if (!nameCheck.ok) {
+      console.error(nameCheck.message ?? "Invalid agent name.");
+      process.exit(2);
+    }
+    const result = await executeAddAgent({
+      vaultRoot,
+      agentName: name,
+      existingConfig,
+      force: args.force,
+      deps,
+    });
+    if (result.error) {
+      console.error(result.error);
+      process.exit(1);
+    }
+    console.log(`Added agent '${name}' at ${result.scaffoldedDir}.`);
+    if (result.configUpdated) {
+      await mkdir(dirname(configPath), { recursive: true });
+      await writeFile(configPath, result.updatedConfig, "utf8");
+      console.log(`Permitted '${name}' in ${configPath}.`);
+    } else {
+      console.log(`'${name}' was already permitted; no config change.`);
+    }
+    console.log("");
+    console.log(`Next: piren --vault-root ${vaultRoot} --agent ${name} run`);
+    return;
+  }
+
+  if (sub === "clone") {
+    const source = args.nameArg1;
+    const target = args.nameArg2;
+    if (!source || !target) {
+      console.error("Usage: piren agent clone <source> <name>");
+      process.exit(2);
+    }
+    const targetCheck = validateAgentName(target);
+    if (!targetCheck.ok) {
+      console.error(targetCheck.message ?? "Invalid target agent name.");
+      process.exit(2);
+    }
+    const result = await executeCloneAgent({
+      vaultRoot,
+      sourceAgent: source,
+      targetAgent: target,
+      existingConfig,
+      deps,
+    });
+    if (result.error) {
+      console.error(result.error);
+      process.exit(1);
+    }
+    console.log(`Cloned '${source}' to '${target}' at ${result.targetDir}.`);
+    if (result.configUpdated) {
+      await mkdir(dirname(configPath), { recursive: true });
+      await writeFile(configPath, result.updatedConfig, "utf8");
+      console.log(`Permitted '${target}' in ${configPath}.`);
+    }
+    return;
+  }
+
+  if (sub === "remove") {
+    const name = args.nameArg1;
+    if (!name) {
+      console.error("Usage: piren agent remove <name>");
+      process.exit(2);
+    }
+    // Permission is ALWAYS dropped; the vault dir is deleted only after a
+    // confirm prompt (or --yes to skip the prompt and confirm non-interactively).
+    const dirPath = agentDirPath(vaultRoot, name);
+    let confirmedDeleteDir = false;
+    const dirExists = await deps.exists(dirPath);
+    if (dirExists) {
+      if (args.yes) {
+        confirmedDeleteDir = true;
+      } else {
+        const prompt = new ReadlinePrompt();
+        confirmedDeleteDir = await prompt.confirm(
+          `Delete the agent directory ${dirPath} and all its contents? (Identity and memory will be lost.)`,
+          false,
+        );
+        prompt.close();
+      }
+    }
+    const result = await executeRemoveAgent({
+      vaultRoot,
+      agentName: name,
+      existingConfig,
+      confirmedDeleteDir,
+      deps,
+    });
+    if (result.configUpdated) {
+      await mkdir(dirname(configPath), { recursive: true });
+      await writeFile(configPath, result.updatedConfig, "utf8");
+      console.log(`Removed '${name}' from allowed_agents in ${configPath}.`);
+    } else {
+      console.log(`'${name}' was not in allowed_agents; no config change.`);
+    }
+    if (result.dirRemoved) {
+      console.log(`Deleted vault directory ${dirPath}.`);
+    } else if (dirExists && !confirmedDeleteDir) {
+      console.log(`Vault directory left in place (not confirmed): ${dirPath}`);
+      console.log("Re-run `piren agent remove " + name + "` and confirm to delete it.");
+    }
+    return;
+  }
+
+  console.error(`Unknown agent subcommand '${sub}'. Use: add, remove, clone, list.`);
+  process.exit(2);
+}
+
+/** Render the agent list for `piren agent` / `piren agent list`. */
+async function printAgentList(vaultRoot: string, existingConfig: string): Promise<void> {
+  const { parse: parseYaml } = await import("yaml");
+  const { join } = await import("node:path");
+  const { readdir, access } = await import("node:fs/promises");
+  let allowed: string[] = [];
+  let excluded: string[] = [];
+  try {
+    const parsed = parseYaml(existingConfig) as Record<string, unknown> | null;
+    if (parsed && Array.isArray(parsed.allowed_agents)) {
+      allowed = parsed.allowed_agents.filter((x): x is string => typeof x === "string");
+    }
+    if (parsed && Array.isArray(parsed.excluded_agents)) {
+      excluded = parsed.excluded_agents.filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    // ignore malformed config
+  }
+  console.log(`vault_root: ${vaultRoot}`);
+  console.log("");
+  console.log("Agents (vault team/ directories):");
+  let vaultAgents: string[] = [];
+  try {
+    const teamDir = join(vaultRoot, "team");
+    await access(teamDir);
+    const entries = await readdir(teamDir, { withFileTypes: true });
+    vaultAgents = entries
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .map((e) => e.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    // team dir missing
+  }
+  if (vaultAgents.length === 0) {
+    console.log("  <none> — add one with: piren agent add <name>");
+  } else {
+    for (const agent of vaultAgents) {
+      const isAllowed = allowed.includes(agent);
+      const isExcluded = excluded.includes(agent);
+      const tag = isExcluded ? "[excluded]" : isAllowed ? "[allowed]" : "[vault-only]";
+      console.log(`  ${tag} ${agent}`);
+    }
+  }
+  console.log("");
+  console.log(`allowed_agents: ${allowed.length ? allowed.join(", ") : "<not set>"}`);
+}
+
+// ---------------------------------------------------------------------------
 // Service lifecycle helpers (shell probes + command runner)
 // ---------------------------------------------------------------------------
 
@@ -431,6 +690,31 @@ function commandAvailable(command: string, args: string[]): Promise<boolean> {
   return new Promise((resolvePromise) => {
     execFile(command, args, { timeout: 5000 }, (error) => {
       resolvePromise(!error);
+    });
+  });
+}
+
+/**
+ * Detect whether cron is installed by invoking `crontab -l`. Unlike
+ * `commandAvailable`, this routes the raw exit code + signal through
+ * `crontabAvailableFromInvocation`, because vixie cron / Debian's `cron` exit 1
+ * when the user has no crontab yet. A bare `exit 0` check would read that as
+ * "cron not installed" and break DietPi / stripped-down systems into the "none"
+ * path instead of the intended tmux-cron fallback.
+ */
+function crontabInstalled(): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    execFile("crontab", ["-l"], { timeout: 5000 }, (error, _stdout, _stderr) => {
+      // No error means exit 0 (a crontab exists). On a non-zero exit, execFile
+      // yields an error whose .code is the numeric exit code for a command that
+      // ran but failed; ENOENT (string) means the binary itself is missing.
+      if (!error) {
+        resolvePromise(crontabAvailableFromInvocation({ exitCode: 0, signal: null }));
+        return;
+      }
+      const code = typeof error.code === "number" ? error.code : null;
+      const signal = error.signal ?? null;
+      resolvePromise(crontabAvailableFromInvocation({ exitCode: code, signal }));
     });
   });
 }

@@ -346,6 +346,60 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Read an existing local config.yml and extract the values the wizard wants to
+ * remember across runs (vault_root, allowed_agents, excluded_agents). Returns
+ * empty arrays and an undefined root when the file is missing or unparseable,
+ * so the wizard falls back to CWD / empty defaults on a first run. This is the
+ * "value memory" behind frictionless re-runs: the operator does not have to
+ * re-enter the vault path or re-pick agents every time they add a provider.
+ */
+export interface PriorLocalConfig {
+  vaultRoot?: string;
+  allowedAgents: string[];
+  excludedAgents: string[];
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+}
+
+async function readExistingLocalConfig(configPath: string): Promise<PriorLocalConfig> {
+  try {
+    if (!(await pathExists(configPath))) {
+      return { allowedAgents: [], excludedAgents: [] };
+    }
+    const content = await readFile(configPath, "utf8");
+    const parsed = parseYaml(content) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { allowedAgents: [], excludedAgents: [] };
+    }
+    const root = parsed as Record<string, unknown>;
+    const vaultRoot = typeof root.vault_root === "string" && root.vault_root.trim() !== "" ? root.vault_root : undefined;
+    // Build with required fields first, then add the optional field only when
+    // defined (exactOptionalPropertyTypes forbids explicit undefined).
+    const result: PriorLocalConfig = {
+      allowedAgents: normalizeStringArray(root.allowed_agents),
+      excludedAgents: normalizeStringArray(root.excluded_agents),
+    };
+    if (vaultRoot !== undefined) result.vaultRoot = vaultRoot;
+    return result;
+  } catch {
+    return { allowedAgents: [], excludedAgents: [] };
+  }
+}
+
+/**
+ * Intersect a prior agent list with the agents that currently exist in the
+ * vault, preserving the prior order. Used so a remembered "allowed" list never
+ * silently re-enables an agent that has since been deleted from the vault.
+ */
+function filterToVaultAgents(prior: string[], vaultAgents: string[]): string[] {
+  const vaultSet = new Set(vaultAgents);
+  return prior.filter((agent) => vaultSet.has(agent));
+}
+
 async function readAuthJson(piHome: string): Promise<Record<string, AuthJsonCredential>> {
   const authPath = join(piHome, "auth.json");
   if (!(await pathExists(authPath))) return {};
@@ -369,8 +423,18 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
   log("Welcome to Piren setup. This wizard configures your vault, LLM provider, and local config.");
   log("");
 
+  // Value memory: read any existing config.yml so re-running the wizard offers
+  // the previously entered vault path and previously allowed agents as the
+  // defaults instead of restarting from CWD / empty each time. This makes the
+  // "re-run setup to add another provider" flow frictionless.
+  const priorConfig = await readExistingLocalConfig(configPath);
+  const priorVaultRoot = priorConfig.vaultRoot;
+  const priorAllowedAgents = priorConfig.allowedAgents;
+  const priorExcludedAgents = priorConfig.excludedAgents;
+
   // --- Step 1: Vault ---
-  const vaultAnswer = await prompt.text("Path to your Piren vault", process.cwd());
+  const vaultDefault = priorVaultRoot ?? process.cwd();
+  const vaultAnswer = await prompt.text("Path to your Piren vault", vaultDefault);
   const vaultRoot = resolve(vaultAnswer);
 
   let allowedAgents: string[] = [];
@@ -401,9 +465,19 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
       excludedAgents = [];
     } else {
       log("Existing agents: " + vaultAgents.join(", "));
-      const selected = await prompt.list("Which agents should this installation be allowed to run? (comma-separated)", vaultAgents.length === 1 ? vaultAgents : undefined);
-      allowedAgents = selected.length > 0 ? selected : vaultAgents;
-      const excluded = await prompt.list("Any agents to exclude on this installation? (comma-separated, or leave blank)", []);
+      // Default to the previously-allowed agents (intersected with vault agents
+      // so stale config can't silently re-enable a deleted agent). If none of
+      // the prior agents are still in the vault, fall back to all vault agents.
+      const defaultAllowed = filterToVaultAgents(priorAllowedAgents, vaultAgents);
+      const selected = await prompt.list(
+        "Which agents should this installation be allowed to run? (comma-separated)",
+        defaultAllowed.length > 0 ? defaultAllowed : undefined,
+      );
+      allowedAgents = selected.length > 0 ? selected : (defaultAllowed.length > 0 ? defaultAllowed : vaultAgents);
+      const excluded = await prompt.list(
+        "Any agents to exclude on this installation? (comma-separated, or leave blank)",
+        filterToVaultAgents(priorExcludedAgents, vaultAgents),
+      );
       excludedAgents = excluded;
     }
   } else {

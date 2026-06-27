@@ -14,6 +14,7 @@ export const KNOWN_COMMANDS = [
     "ask",
     "chat",
     "service",
+    "agent",
     "clean",
     "version",
 ];
@@ -31,6 +32,7 @@ export function parseArgs(argv) {
     let agentName;
     let force = false;
     let apply = false;
+    let yes = false;
     let help = false;
     let port;
     let host;
@@ -60,6 +62,9 @@ export function parseArgs(argv) {
         }
         else if (arg === "--apply") {
             apply = true;
+        }
+        else if (arg === "--yes" || arg === "-y") {
+            yes = true;
         }
         else if (arg === "-h" || arg === "--help") {
             help = true;
@@ -101,6 +106,7 @@ export function parseArgs(argv) {
         vaultRoot,
         piArgs,
         apply,
+        yes,
         help,
         port,
         host,

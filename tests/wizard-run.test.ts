@@ -228,3 +228,92 @@ describe("runWizard: model selection and gateway config", () => {
     expect(configContent).toContain("333444");
   });
 });
+
+describe("runWizard: remembers existing settings (value memory)", () => {
+  it("uses the existing config.yml vault_root as the default vault prompt", async () => {
+    // Pre-seed a vault and an existing config.yml pointing at it. Re-running
+    // setup should offer the recorded vault_root as the default instead of CWD.
+    const vault = join(root, "memvault");
+    await mkdir(join(vault, "team", "piren"), { recursive: true });
+    await writeFile(join(vault, ".piren-vault"), "");
+    await writeFile(join(vault, "steward-directives.md"), "# directives");
+    const configPath = join(root, "config.yml");
+    await writeFile(
+      configPath,
+      ["vault_root: " + vault, "", "allowed_agents:", "  - piren", ""].join("\n"),
+    );
+
+    let seenVaultDefault: string | undefined;
+    const prompts: WizardPrompt = {
+      async text(message: string, defaultValue?: string) {
+        if (message.toLowerCase().includes("vault")) {
+          seenVaultDefault = defaultValue;
+          return vault;
+        }
+        return defaultValue ?? "";
+      },
+      async secret() {
+        return "";
+      },
+      async confirm(message: string, defaultValue?: boolean) {
+        if (message.toLowerCase().includes("llm")) return false;
+        return defaultValue ?? false;
+      },
+      async select() {
+        return 0;
+      },
+      async list(_message: string, defaults?: string[]) {
+        return defaults ?? [];
+      },
+    };
+
+    await runWizard(prompts, { configPath, log: () => {} });
+
+    expect(seenVaultDefault).toBe(vault);
+  });
+
+  it("pre-selects the previously allowed agents when re-running over an existing vault", async () => {
+    const vault = join(root, "memvault2");
+    await mkdir(join(vault, "team", "thor"), { recursive: true });
+    await mkdir(join(vault, "team", "sage"), { recursive: true });
+    await writeFile(join(vault, ".piren-vault"), "");
+    await writeFile(join(vault, "steward-directives.md"), "# directives");
+    const configPath = join(root, "config.yml");
+    await writeFile(
+      configPath,
+      ["vault_root: " + vault, "", "allowed_agents:", "  - thor", "  - sage", ""].join("\n"),
+    );
+
+    let seenAllowedDefault: string[] | undefined;
+    const prompts: WizardPrompt = {
+      async text(message: string, defaultValue?: string) {
+        if (message.toLowerCase().includes("vault")) return vault;
+        return defaultValue ?? "";
+      },
+      async secret() {
+        return "";
+      },
+      async confirm(message: string, defaultValue?: boolean) {
+        if (message.toLowerCase().includes("llm")) return false;
+        return defaultValue ?? false;
+      },
+      async select() {
+        return 0;
+      },
+      async list(message: string, defaults?: string[]) {
+        if (message.toLowerCase().includes("allowed") || message.toLowerCase().includes("run")) {
+          seenAllowedDefault = defaults;
+          return defaults ?? [];
+        }
+        return [];
+      },
+    };
+
+    const result = await runWizard(prompts, { configPath, log: () => {} });
+
+    // The prior config order is preserved (value memory: remember the order the
+    // operator previously chose, not a re-sorted list).
+    expect(seenAllowedDefault).toEqual(["thor", "sage"]);
+    expect(result.allowedAgents).toEqual(["thor", "sage"]);
+  });
+});

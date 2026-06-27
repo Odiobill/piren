@@ -133,4 +133,17 @@ describe("parseArgs: preserved behavior", () => {
     expect(result.positionals).toEqual(["install", "gateway"]);
     expect(KNOWN_COMMANDS).toContain("service");
   });
+
+  it("recognizes the agent command with subcommands and positionals", () => {
+    expect(parseArgs(["agent", "add", "thor"]).command).toBe("agent");
+    expect(parseArgs(["agent", "add", "thor"]).positionals).toEqual(["add", "thor"]);
+    expect(parseArgs(["agent", "clone", "piren", "thor"]).positionals).toEqual(["clone", "piren", "thor"]);
+    expect(KNOWN_COMMANDS).toContain("agent");
+  });
+
+  it("parses --yes / -y as a confirmation flag (for non-interactive agent remove)", () => {
+    expect(parseArgs(["agent", "remove", "thor", "--yes"]).yes).toBe(true);
+    expect(parseArgs(["agent", "remove", "thor", "-y"]).yes).toBe(true);
+    expect(parseArgs(["agent", "remove", "thor"]).yes).toBe(false);
+  });
 });

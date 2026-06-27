@@ -83,6 +83,28 @@ Print the installed version:
 piren version
 ```
 
+## Manage agents
+
+Piren splits agent identity (vault `team/<agent>/` directories) from runtime
+permission (local `allowed_agents` in `~/.config/piren/config.yml`). The
+`piren agent` command manages both together so you never hand-edit two files.
+
+```bash
+piren agent list                  # show vault agents + permission status
+piren agent add thor              # scaffold team/thor/ and permit it
+piren agent clone piren sage      # copy team/piren/ to team/sage/ and permit sage
+piren agent remove thor           # drop permission; prompts before deleting the dir
+piren agent remove thor --yes     # non-interactive: also delete the vault dir
+```
+
+`add` scaffolds the agent directory (SOUL.md, MEMORY.md, config.yml, and the
+inbox/outbox/devices/logs/sessions/skills subdirectories). `clone` copies a
+source agent's directory verbatim, including its identity and memory. `remove`
+always drops the agent from `allowed_agents`; it only deletes the vault
+directory after an explicit confirmation (or `--yes`).
+
+See [Vault Layout](vault-layout.md) for the directory structure.
+
 ## Run an agent
 
 ```bash
