@@ -42,6 +42,7 @@ export interface GatewayHandle {
 export declare class GatewayServer {
     private readonly server;
     private client;
+    private currentTarget;
     private readonly streams;
     private readonly vaultRoot;
     private readonly runnableAgents;
@@ -83,6 +84,13 @@ export declare class GatewayServer {
      * existing stream bound to the active turn.
      */
     private handleAbort;
+    /**
+     * Start a fresh conversation by replacing the active RPC client with a new
+     * process for the current agent. A fresh Pi process has no transcript until
+     * the steward sends a message, so no empty conversation is persisted by
+     * Piren itself.
+     */
+    private handleNewConversation;
     /**
      * Return the full transcript of the current Pi session. Used to repopulate
      * the chat view after a browser reconnect so the steward sees prior context.

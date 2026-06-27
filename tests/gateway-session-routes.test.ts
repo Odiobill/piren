@@ -82,6 +82,37 @@ describe("Gateway session resume and abort routes", () => {
     }
   });
 
+  it("POST /api/chat/new starts a fresh conversation and clears the transcript", async () => {
+    const freshTarget = fakePiTarget();
+    freshTarget.env = { ...process.env, FAKE_PI_EMPTY_MESSAGES: "1" };
+    const server = new GatewayServer({
+      target: fakePiTarget(),
+      runnableAgents: ["piren"],
+      initialAgent: "piren",
+      targetBuilder: async () => freshTarget,
+    });
+    try {
+      const handle = await server.start();
+
+      const beforeRes = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/messages`);
+      const beforeBody = (await beforeRes.json()) as { messages: unknown[] };
+      expect(beforeBody.messages.length).toBeGreaterThan(0);
+
+      const newRes = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/new`, {
+        method: "POST",
+      });
+      expect(newRes.status).toBe(200);
+      const newBody = (await newRes.json()) as { ok: boolean; fresh: boolean };
+      expect(newBody).toEqual({ ok: true, fresh: true });
+
+      const afterRes = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/messages`);
+      const afterBody = (await afterRes.json()) as { messages: unknown[] };
+      expect(afterBody.messages).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("POST /api/chat/resume resumes a session and reports cancelled=false", async () => {
     const server = new GatewayServer({ target: fakePiTarget() });
     try {

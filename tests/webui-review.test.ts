@@ -54,4 +54,13 @@ describe("WebUI review affordances", () => {
     expect(app).toContain("steward-inbox/alerts");
     expect(app).toContain("openVaultFile(alert.path)");
   });
+
+  it("adds a new conversation button that clears the chat through the backend", async () => {
+    const html = await readPublic("index.html");
+    const app = await readPublic("app.js");
+    expect(html).toContain('id="new-conversation-btn"');
+    expect(app).toContain("startNewConversation");
+    expect(app).toContain('apiJson("/api/chat/new"');
+    expect(app).toContain('New conversation started.');
+  });
 });

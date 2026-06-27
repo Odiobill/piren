@@ -99,6 +99,7 @@ function closeStream(stream: ChatStream): void {
 export class GatewayServer {
   private readonly server: Server;
   private client: PiRpcClient;
+  private currentTarget: RpcSpawnTarget;
   private readonly streams = new Map<string, ChatStream>();
   private readonly vaultRoot: string | undefined;
   private readonly runnableAgents: string[];
@@ -109,6 +110,7 @@ export class GatewayServer {
   private shuttingDown = false;
 
   constructor(options: GatewayServerOptions) {
+    this.currentTarget = options.target;
     this.client = new PiRpcClient(options.target);
     this.vaultRoot = options.vaultRoot;
     this.runnableAgents = options.runnableAgents ?? [];
@@ -206,6 +208,8 @@ export class GatewayServer {
       await this.handleApprove(req, res);
     } else if (req.method === "POST" && url.pathname === "/api/chat/abort") {
       await this.handleAbort(res);
+    } else if (req.method === "POST" && url.pathname === "/api/chat/new") {
+      await this.handleNewConversation(res);
     } else if (req.method === "GET" && url.pathname === "/api/chat/messages") {
       await this.handleMessages(res);
     } else if (req.method === "POST" && url.pathname === "/api/chat/resume") {
@@ -660,6 +664,39 @@ export class GatewayServer {
   }
 
   /**
+   * Start a fresh conversation by replacing the active RPC client with a new
+   * process for the current agent. A fresh Pi process has no transcript until
+   * the steward sends a message, so no empty conversation is persisted by
+   * Piren itself.
+   */
+  private async handleNewConversation(res: ServerResponse): Promise<void> {
+    const oldClient = this.client;
+    try {
+      const target = this.targetBuilder && this.currentAgent
+        ? await this.targetBuilder(this.currentAgent)
+        : this.currentTarget;
+      const nextClient = new PiRpcClient(target);
+      await nextClient.start();
+      this.installExitHandler(nextClient);
+      this.client = nextClient;
+      this.currentTarget = target;
+
+      for (const stream of this.streams.values()) {
+        if (!stream.closed) {
+          enqueue(stream, { type: "error", data: { message: "New conversation started; stream closed." } });
+          closeStream(stream);
+        }
+      }
+      this.streams.clear();
+
+      await oldClient.stop();
+      this.writeJson(res, 200, { ok: true, fresh: true });
+    } catch (err) {
+      this.writeJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  /**
    * Return the full transcript of the current Pi session. Used to repopulate
    * the chat view after a browser reconnect so the steward sees prior context.
    */
@@ -764,6 +801,7 @@ export class GatewayServer {
       // Swap the active client before stopping the old one. The exit handler
       // guards against the old client's intentional stop leaking errors.
       this.client = nextClient;
+      this.currentTarget = target;
       this.currentAgent = agent;
 
       // Close any streams still bound to the old client; they cannot continue

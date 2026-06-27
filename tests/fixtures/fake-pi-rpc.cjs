@@ -118,7 +118,7 @@ function handle(cmd) {
       success: true,
       id: cmd.id,
       data: {
-        messages: [
+        messages: process.env.FAKE_PI_EMPTY_MESSAGES === "1" ? [] : [
           { role: "user", content: "Hello" },
           { role: "assistant", content: "Hi there!" },
         ],

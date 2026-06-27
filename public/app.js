@@ -548,6 +548,21 @@ async function switchAgent() {
   }
 }
 
+async function startNewConversation() {
+  try {
+    await apiJson("/api/chat/new", { method: "POST" });
+    state.activeSessionPath = null;
+    state.currentAssistantEl = null;
+    state.currentStreamId = null;
+    document.getElementById("messages").innerHTML = "";
+    addMessage("tool", "New conversation started.");
+    await loadState();
+    await loadSessions();
+  } catch (err) {
+    addMessage("error", "New conversation failed: " + err.message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Vault browser
 // ---------------------------------------------------------------------------
@@ -968,6 +983,7 @@ document.addEventListener("DOMContentLoaded", () => {
   input.addEventListener("input", () => autoGrowTextarea(input));
 
   document.getElementById("agent-switch-btn").addEventListener("click", switchAgent);
+  document.getElementById("new-conversation-btn").addEventListener("click", startNewConversation);
 
   document.getElementById("vault-browser-btn").addEventListener("click", openVaultBrowser);
   document.getElementById("vault-close").addEventListener("click", closeVaultBrowser);
