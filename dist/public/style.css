@@ -106,7 +106,7 @@ body {
   padding: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 1.1rem;
 }
 
 .sidebar-header {
@@ -181,14 +181,24 @@ body {
 .full-btn:hover { border-color: var(--accent); color: var(--text-bright); }
 
 .context-indicator {
-  margin-top: auto;
   font-size: 0.75rem;
   color: var(--text-muted);
-  padding: 0.6rem;
+  padding: 0.55rem;
   background: var(--bg-input);
   border-radius: 5px;
   word-break: break-word;
-  line-height: 1.5;
+  line-height: 1.4;
+}
+
+#context-model-line {
+  color: var(--text-bright);
+  font-size: 0.78rem;
+}
+
+#context-detail-line {
+  color: var(--accent);
+  font-size: 0.72rem;
+  margin-top: 0.15rem;
 }
 
 /* Main area */
@@ -370,15 +380,19 @@ body {
 
 /* Vault browser panel */
 .panel {
-  position: fixed;
-  top: 0; right: 0; bottom: 0;
-  width: 480px;
-  max-width: 90vw;
+  width: min(480px, 42vw);
+  min-width: 360px;
+  height: 100vh;
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   z-index: 100;
+}
+
+#app.vault-open #main {
+  flex: 1 1 auto;
+  min-width: 360px;
 }
 
 .panel-header {
@@ -594,3 +608,98 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+
+/* Modal dialogs */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 6, 12, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.modal-card {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.45);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+
+.modal-header h3 { font-size: 0.95rem; color: var(--text-bright); }
+.modal-card label {
+  display: block;
+  margin: 0.6rem 0 0.25rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+}
+
+.modal-card input,
+.modal-card textarea {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.modal-card input:focus,
+.modal-card textarea:focus { border-color: var(--accent); }
+.modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.9rem; }
+
+.notification-btn { position: relative; }
+.notification-badge {
+  position: absolute;
+  top: -0.45rem;
+  right: -0.45rem;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: #ef4444;
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--bg-panel);
+}
+
+.notification-entry {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 0.45rem;
+  color: var(--text);
+}
+
+.notification-entry:hover { border-color: var(--accent); color: var(--text-bright); }
+.session-entry { cursor: pointer; border-left: 2px solid transparent; }
+.session-entry.active { background: var(--bg-input); border-left-color: var(--accent); }
+
+@media (max-width: 900px) {
+  #app { flex-wrap: nowrap; }
+  .panel { width: 44vw; min-width: 300px; }
+  .composer-buttons { flex-wrap: wrap; }
+}

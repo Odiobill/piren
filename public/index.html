@@ -31,11 +31,19 @@
           <select id="agent-select"></select>
           <button id="agent-switch-btn" class="icon-btn" title="Switch agent">&#x21bb;</button>
         </div>
+        <div id="context-indicator" class="context-indicator">
+          <div id="context-model-line">Connecting...</div>
+          <div id="context-detail-line"></div>
+        </div>
       </div>
 
       <div class="sidebar-section">
         <button id="vault-browser-btn" class="full-btn">Vault Browser</button>
         <button id="inbox-create-btn" class="full-btn btn-secondary" title="Create an inbox task for the selected agent">+ Inbox Task</button>
+        <button id="notifications-btn" class="full-btn btn-secondary notification-btn" title="Open steward alerts">
+          Steward Alerts
+          <span id="notifications-badge" class="notification-badge hidden">0</span>
+        </button>
       </div>
 
       <div class="sidebar-section sidebar-sessions">
@@ -45,9 +53,6 @@
         </div>
       </div>
 
-      <div id="context-indicator" class="sidebar-section context-indicator">
-        <span id="context-text">Connecting...</span>
-      </div>
     </aside>
 
     <!-- Main chat area -->
@@ -104,6 +109,37 @@
         <div id="vault-content-rendered" class="markdown-body hidden"></div>
         <pre id="vault-content-pre"></pre>
       </div>
+    </div>
+  </div>
+
+
+  <!-- Inbox task modal -->
+  <div id="inbox-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="inbox-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="inbox-modal-title">Create Inbox Task</h3>
+        <button id="inbox-modal-close" class="icon-btn" title="Close">&#x2715;</button>
+      </div>
+      <label for="inbox-title-input">Title</label>
+      <input id="inbox-title-input" type="text" placeholder="Short task title">
+      <label for="inbox-body-input">Body</label>
+      <textarea id="inbox-body-input" rows="7" placeholder="What should the selected agent do?"></textarea>
+      <p id="inbox-modal-error" class="error-text"></p>
+      <div class="modal-actions">
+        <button id="inbox-submit" class="btn-green">Create task</button>
+        <button id="inbox-cancel" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Steward notifications modal -->
+  <div id="notifications-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="notifications-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="notifications-modal-title">Steward Alerts</h3>
+        <button id="notifications-modal-close" class="icon-btn" title="Close">&#x2715;</button>
+      </div>
+      <div id="notifications-list" class="notifications-list"></div>
     </div>
   </div>
 

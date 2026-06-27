@@ -72,6 +72,14 @@ export interface RpcSessionState {
   autoCompactionEnabled?: boolean;
   messageCount?: number;
   pendingMessageCount?: number;
+  /** Optional Pi context-window telemetry, when exposed by the runtime. */
+  contextWindow?: number;
+  contextWindowTokens?: number;
+  maxContextTokens?: number;
+  contextUsed?: number;
+  contextUsedTokens?: number;
+  usedTokens?: number;
+  inputTokens?: number;
 }
 
 /**

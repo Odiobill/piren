@@ -14,6 +14,8 @@ const state = {
   currentAssistantEl: null,
   pendingApproval: null,
   vaultPath: ".",
+  activeSessionPath: null,
+  notifications: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -105,6 +107,7 @@ async function initApp() {
   ]);
   await loadTranscript();
   await loadSessions();
+  await loadNotifications();
 }
 
 async function loadState() {
@@ -112,17 +115,32 @@ async function loadState() {
     const st = await apiJson("/api/chat/state");
     updateContextIndicator(st);
   } catch (err) {
-    document.getElementById("context-text").textContent = "Error: " + err.message;
+    document.getElementById("context-model-line").textContent = "Error";
+    document.getElementById("context-detail-line").textContent = err.message;
   }
 }
 
 function updateContextIndicator(st) {
-  const parts = [];
-  if (st.model && st.model.id) parts.push(st.model.id);
-  if (st.thinkingLevel) parts.push("think:" + st.thinkingLevel);
-  if (st.isStreaming) parts.push("streaming");
-  if (st.messageCount !== undefined) parts.push(st.messageCount + " msgs");
-  document.getElementById("context-text").textContent = parts.length ? parts.join(" | ") : "Connected";
+  const model = st.model && st.model.id ? st.model.id : "Connected";
+  const badges = [];
+  if (st.thinkingLevel) badges.push("think:" + st.thinkingLevel);
+  if (st.isStreaming) badges.push("streaming");
+  if (getContextWindow(st)) badges.push(formatContextWindow(st));
+  document.getElementById("context-model-line").textContent = model;
+  document.getElementById("context-detail-line").textContent = badges.join(" | ");
+}
+
+function getContextWindow(st) {
+  return st.contextWindow || st.contextWindowTokens || st.maxContextTokens || (st.model && st.model.contextWindow);
+}
+
+function formatContextWindow(st) {
+  const used = st.contextUsed || st.contextUsedTokens || st.usedTokens || st.inputTokens;
+  const total = getContextWindow(st);
+  if (!total) return "";
+  if (!used) return "ctx " + total;
+  const pct = Math.round((Number(used) / Number(total)) * 100);
+  return "ctx " + used + "/" + total + " (" + pct + "%)";
 }
 
 async function loadAgents() {
@@ -203,6 +221,9 @@ async function loadSessions() {
     for (const session of sessions) {
       const div = document.createElement("div");
       div.className = "session-entry";
+      if (session.path === state.activeSessionPath) div.classList.add("active");
+      div.title = "Resume this session";
+      div.onclick = () => resumeSession(session.path);
       const titleEl = document.createElement("div");
       titleEl.className = "session-title";
       titleEl.textContent = session.title || session.name;
@@ -218,6 +239,27 @@ async function loadSessions() {
   } catch (err) {
     // Sessions route requires a vaultRoot; absence is not fatal.
     list.innerHTML = '<div class="session-empty">Sessions unavailable</div>';
+  }
+}
+
+async function resumeSession(sessionPath) {
+  if (!sessionPath) return;
+  try {
+    const result = await apiJson("/api/chat/resume", {
+      method: "POST",
+      body: JSON.stringify({ sessionPath }),
+    });
+    if (result.cancelled) {
+      addMessage("tool", "Session resume cancelled.");
+      return;
+    }
+    state.activeSessionPath = sessionPath;
+    await loadTranscript();
+    await loadState();
+    await loadSessions();
+    addMessage("tool", "Resumed session: " + sessionPath);
+  } catch (err) {
+    addMessage("error", "Session resume failed: " + err.message);
   }
 }
 
@@ -518,12 +560,14 @@ async function openVaultBrowser() {
     return;
   }
   panel.classList.remove("hidden");
+  document.getElementById("app").classList.add("vault-open");
   state.vaultPath = ".";
   await browseVault(".");
 }
 
 function closeVaultBrowser() {
   document.getElementById("vault-panel").classList.add("hidden");
+  document.getElementById("app").classList.remove("vault-open");
   document.getElementById("vault-content").classList.add("hidden");
 }
 
@@ -575,6 +619,15 @@ async function browseVault(path) {
   } catch (err) {
     document.getElementById("vault-list").innerHTML = '<div class="error-text">' + err.message + "</div>";
   }
+}
+
+async function openVaultFile(path) {
+  const panel = document.getElementById("vault-panel");
+  panel.classList.remove("hidden");
+  document.getElementById("app").classList.add("vault-open");
+  const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".";
+  state.vaultPath = parent;
+  await readVaultFile(path);
 }
 
 async function readVaultFile(path) {
@@ -806,36 +859,83 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
-/**
- * Prompt the steward for a task title and body, then POST an inbox task to the
- * selected agent. This is a UI affordance for the existing send_to_agent
- * semantics: drop a task into an agent's inbox without asking the agent.
- */
-async function createInboxTaskPrompt() {
+function openInboxModal() {
   if (!state.currentAgent) {
     addMessage("error", "No agent selected.");
     return;
   }
+  document.getElementById("inbox-modal-title").textContent = "Create Inbox Task for " + state.currentAgent;
+  document.getElementById("inbox-title-input").value = "";
+  document.getElementById("inbox-body-input").value = "";
+  document.getElementById("inbox-modal-error").textContent = "";
+  document.getElementById("inbox-modal").classList.remove("hidden");
+  document.getElementById("inbox-title-input").focus();
+}
 
-  const title = window.prompt("Inbox task title for " + state.currentAgent + ":");
-  if (!title || !title.trim()) return;
+function closeInboxModal() {
+  document.getElementById("inbox-modal").classList.add("hidden");
+}
 
-  const body = window.prompt("Task body (what the agent should do):", "");
-  if (body === null) return;
-
+async function submitInboxTask() {
+  const title = document.getElementById("inbox-title-input").value.trim();
+  const body = document.getElementById("inbox-body-input").value.trim();
+  if (!title) {
+    document.getElementById("inbox-modal-error").textContent = "Title is required.";
+    return;
+  }
   try {
     const result = await apiJson("/api/vault/inbox", {
       method: "POST",
-      body: JSON.stringify({
-        to: state.currentAgent,
-        title: title.trim(),
-        body: body.trim(),
-      }),
+      body: JSON.stringify({ to: state.currentAgent, title, body }),
     });
+    closeInboxModal();
     addMessage("tool", "Created inbox task: " + result.path + " for " + state.currentAgent);
   } catch (err) {
-    addMessage("error", "Inbox task failed: " + err.message);
+    document.getElementById("inbox-modal-error").textContent = "Inbox task failed: " + err.message;
   }
+}
+
+async function loadNotifications() {
+  try {
+    const data = await apiJson("/api/vault/list?path=" + encodeURIComponent("steward-inbox/alerts"));
+    const alerts = (data.entries || []).filter((entry) => entry.type === "file");
+    state.notifications = alerts;
+    updateNotificationsBadge(alerts.length);
+  } catch {
+    state.notifications = [];
+    updateNotificationsBadge(0);
+  }
+}
+
+function updateNotificationsBadge(count) {
+  const badge = document.getElementById("notifications-badge");
+  badge.textContent = String(count);
+  badge.classList.toggle("hidden", count === 0);
+}
+
+function openNotificationsModal() {
+  const modal = document.getElementById("notifications-modal");
+  const list = document.getElementById("notifications-list");
+  list.innerHTML = "";
+  if (state.notifications.length === 0) {
+    list.innerHTML = '<div class="session-empty">No steward alerts.</div>';
+  } else {
+    for (const alert of state.notifications) {
+      const div = document.createElement("div");
+      div.className = "notification-entry";
+      div.textContent = alert.name;
+      div.onclick = async () => {
+        closeNotificationsModal();
+        await openVaultFile(alert.path);
+      };
+      list.appendChild(div);
+    }
+  }
+  modal.classList.remove("hidden");
+}
+
+function closeNotificationsModal() {
+  document.getElementById("notifications-modal").classList.add("hidden");
 }
 
 // ---------------------------------------------------------------------------
@@ -873,7 +973,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("vault-close").addEventListener("click", closeVaultBrowser);
   document.getElementById("vault-view-rendered").addEventListener("click", () => setVaultView("rendered"));
   document.getElementById("vault-view-raw").addEventListener("click", () => setVaultView("raw"));
-  document.getElementById("inbox-create-btn").addEventListener("click", createInboxTaskPrompt);
+  document.getElementById("inbox-create-btn").addEventListener("click", openInboxModal);
+  document.getElementById("inbox-submit").addEventListener("click", submitInboxTask);
+  document.getElementById("inbox-modal-close").addEventListener("click", closeInboxModal);
+  document.getElementById("inbox-cancel").addEventListener("click", closeInboxModal);
+  document.getElementById("notifications-btn").addEventListener("click", openNotificationsModal);
+  document.getElementById("notifications-modal-close").addEventListener("click", closeNotificationsModal);
 
   document.getElementById("approval-confirm").addEventListener("click", () => submitApproval(true));
   document.getElementById("approval-cancel").addEventListener("click", () => submitApproval(false));
