@@ -1,6 +1,7 @@
 import { type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
+import { type TransportFeedbackConfig } from "./transport-feedback.js";
 /**
  * Discord's message hard limit per message (documented as 2000).
  */
@@ -12,6 +13,7 @@ export declare const DISCORD_MESSAGE_LIMIT = 2000;
  */
 export declare function chunkDiscordMessage(text: string, limit?: number): string[];
 export interface DiscordMessage {
+    id?: string;
     guild_id?: string;
     channel_id?: string;
     thread_id?: string;
@@ -19,12 +21,19 @@ export interface DiscordMessage {
 }
 export interface DiscordBotApi {
     createMessage(channelId: string, text: string): Promise<void>;
+    /** Best-effort typing indicator. Discord typing expires after ~10s. */
+    sendTyping(channelId: string): Promise<void>;
+    /** Best-effort emoji reaction on a message. Must not throw on failure. */
+    addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
 }
 export declare class DiscordBotApiHttpClient implements DiscordBotApi {
     private readonly botToken;
     private readonly fetchImpl;
     constructor(botToken: string, fetchImpl?: typeof fetch);
     createMessage(channelId: string, text: string): Promise<void>;
+    sendTyping(channelId: string): Promise<void>;
+    addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
+    private authHeaders;
     private describeError;
 }
 export interface DiscordPromptClient extends TransportRpcClient {
@@ -40,6 +49,7 @@ export interface DiscordTransportOptions<TClient extends DiscordPromptClient> {
     targetBuilder: RpcTargetBuilder;
     clientFactory: (target: RpcSpawnTarget) => TClient;
     api: DiscordBotApi;
+    feedback?: TransportFeedbackConfig | undefined;
 }
 /**
  * Minimal Discord transport over the shared Pi RPC client.
@@ -57,10 +67,13 @@ export declare class DiscordTransport<TClient extends DiscordPromptClient> {
     private readonly runnableAgents;
     private readonly defaultAgent;
     private readonly api;
+    private readonly feedback;
     private readonly sessions;
     constructor(options: DiscordTransportOptions<TClient>);
     handleMessage(message: DiscordMessage): Promise<void>;
     close(): Promise<void>;
+    private sendPromptFeedbackStart;
+    private sendPromptFeedbackComplete;
     private handleAgentCommand;
 }
 /**

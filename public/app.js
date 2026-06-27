@@ -511,7 +511,13 @@ async function switchAgent() {
 // ---------------------------------------------------------------------------
 
 async function openVaultBrowser() {
-  document.getElementById("vault-panel").classList.remove("hidden");
+  const panel = document.getElementById("vault-panel");
+  // Toggle: if the panel is already open, close it instead of re-opening.
+  if (!panel.classList.contains("hidden")) {
+    closeVaultBrowser();
+    return;
+  }
+  panel.classList.remove("hidden");
   state.vaultPath = ".";
   await browseVault(".");
 }
@@ -574,7 +580,27 @@ async function browseVault(path) {
 async function readVaultFile(path) {
   try {
     const data = await apiJson("/api/vault/read?path=" + encodeURIComponent(path));
-    document.getElementById("vault-content-pre").textContent = data.content || "";
+    const content = data.content || "";
+    const pre = document.getElementById("vault-content-pre");
+    const rendered = document.getElementById("vault-content-rendered");
+    const toggle = document.getElementById("vault-view-toggle");
+
+    pre.textContent = content;
+
+    // Render Markdown for .md/.markdown files; show a toggle. Other files
+    // stay raw-only (frontmatter-heavy YAML, JSON, etc. render poorly).
+    const isMarkdown = /\.(md|markdown)$/i.test(path);
+    if (isMarkdown) {
+      rendered.innerHTML = renderMarkdown(stripFrontmatter(content));
+      toggle.classList.remove("hidden");
+      setVaultView("rendered");
+    } else {
+      rendered.innerHTML = "";
+      toggle.classList.add("hidden");
+      pre.classList.remove("hidden");
+      rendered.classList.add("hidden");
+    }
+
     document.getElementById("vault-content").classList.remove("hidden");
 
     const breadcrumb = document.getElementById("vault-breadcrumb");
@@ -586,7 +612,229 @@ async function readVaultFile(path) {
     breadcrumb.appendChild(backBtn);
   } catch (err) {
     document.getElementById("vault-content-pre").textContent = "Error: " + err.message;
+    document.getElementById("vault-content-rendered").innerHTML = "";
+    document.getElementById("vault-view-toggle").classList.add("hidden");
     document.getElementById("vault-content").classList.remove("hidden");
+  }
+}
+
+/**
+ * Switch the vault content area between rendered Markdown and raw source.
+ */
+function setVaultView(view) {
+  const pre = document.getElementById("vault-content-pre");
+  const rendered = document.getElementById("vault-content-rendered");
+  const btnRendered = document.getElementById("vault-view-rendered");
+  const btnRaw = document.getElementById("vault-view-raw");
+  if (view === "rendered") {
+    pre.classList.add("hidden");
+    rendered.classList.remove("hidden");
+    btnRendered.classList.add("active");
+    btnRaw.classList.remove("active");
+  } else {
+    pre.classList.remove("hidden");
+    rendered.classList.add("hidden");
+    btnRendered.classList.remove("active");
+    btnRaw.classList.add("active");
+  }
+}
+
+/**
+ * Remove a leading YAML frontmatter block for human-friendly rendering. The
+ * raw "Source" view preserves it. Returns the body after the closing ---.
+ */
+function stripFrontmatter(content) {
+  const match = content.match(/^---\n[\s\S]*?\n---\n/);
+  return match ? content.slice(match[0].length) : content;
+}
+
+/**
+ * Minimal, dependency-free Markdown renderer. Handles headings, bold, italic,
+ * inline code, fenced code blocks, unordered/ordered lists, blockquotes,
+ * horizontal rules, links, and paragraphs.
+ *
+ * XSS safety: structural detection runs on the RAW text (so markers like `>`
+ * for blockquotes are not pre-escaped), but every fragment that becomes HTML
+ * text is escaped via escapeHtml() either inside inline() or explicitly for
+ * code blocks. Inline formatting (bold/italic/links) is applied AFTER
+ * escaping, so markers in file content can never inject HTML.
+ */
+function renderMarkdown(md) {
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+  let inUl = false;
+  let inOl = false;
+
+  function closeLists() {
+    if (inUl) { out.push("</ul>"); inUl = false; }
+    if (inOl) { out.push("</ol>"); inOl = false; }
+  }
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block
+    const fence = line.match(/^```(.*)$/);
+    if (fence) {
+      closeLists();
+      const lang = (fence[1] || "").replace(/[^a-z0-9-]/gi, "");
+      const code = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) {
+        code.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing fence
+      out.push('<pre><code class="lang-' + lang + '">' + escapeHtml(code.join("\n")) + "</code></pre>");
+      continue;
+    }
+
+    // Blank line
+    if (/^\s*$/.test(line)) {
+      closeLists();
+      i++;
+      continue;
+    }
+
+    // Heading
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      closeLists();
+      const level = heading[1].length;
+      out.push("<h" + level + ">" + inline(heading[2]) + "</h" + level + ">");
+      i++;
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^\s*([-*_])\1\1[-*_\s]*$/.test(line)) {
+      closeLists();
+      out.push("<hr>");
+      i++;
+      continue;
+    }
+
+    // Blockquote
+    const quote = line.match(/^>\s?(.*)$/);
+    if (quote) {
+      closeLists();
+      const block = [quote[1]];
+      i++;
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        block.push(lines[i].replace(/^>\s?/, ""));
+        i++;
+      }
+      out.push("<blockquote>" + inline(block.join(" ")) + "</blockquote>");
+      continue;
+    }
+
+    // Ordered list item
+    const ol = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (ol) {
+      if (inUl) { out.push("</ul>"); inUl = false; }
+      if (!inOl) { out.push("<ol>"); inOl = true; }
+      out.push("<li>" + inline(ol[1]) + "</li>");
+      i++;
+      continue;
+    }
+
+    // Unordered list item
+    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+    if (ul) {
+      if (inOl) { out.push("</ol>"); inOl = false; }
+      if (!inUl) { out.push("<ul>"); inUl = true; }
+      out.push("<li>" + inline(ul[1]) + "</li>");
+      i++;
+      continue;
+    }
+
+    // Paragraph (collect consecutive non-blank, non-special lines)
+    closeLists();
+    const para = [line];
+    i++;
+    while (
+      i < lines.length &&
+      !/^\s*$/.test(lines[i]) &&
+      !/^(#{1,6})\s/.test(lines[i]) &&
+      !/^```/.test(lines[i]) &&
+      !/^>\s?/.test(lines[i]) &&
+      !/^\s*\d+\.\s/.test(lines[i]) &&
+      !/^\s*[-*+]\s/.test(lines[i])
+    ) {
+      para.push(lines[i]);
+      i++;
+    }
+    out.push("<p>" + inline(para.join(" ")) + "</p>");
+  }
+  closeLists();
+  return out.join("\n");
+
+  // Inline formatting: escape first, then apply code stash, links, bold,
+  // italic. Applied AFTER escaping so the markers in file content cannot
+  // inject HTML.
+  function inline(text) {
+    let s = escapeHtml(text);
+    // Inline code first to protect its content from other substitutions.
+    const codeStash = [];
+    s = s.replace(/`([^`]+)`/g, (_m, code) => {
+      codeStash.push(code);
+      return "\u0000CODE" + (codeStash.length - 1) + "\u0000";
+    });
+    // Links [text](url) — url restricted to safe schemes to avoid javascript: URIs.
+    s = s.replace(
+      /\[([^\]]+)\]\(([^)\s]+)\)/g,
+      (_m, label, url) => {
+        if (!/^(https?:|mailto:|#|\.\/|\.\.\/|\/)/i.test(url)) return label;
+        return '<a href="' + url + '" target="_blank" rel="noopener">' + label + "</a>";
+      },
+    );
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
+    // Restore inline code.
+    s = s.replace(/\u0000CODE(\d+)\u0000/g, (_m, idx) => "<code>" + codeStash[Number(idx)] + "</code>");
+    return s;
+  }
+}
+
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Prompt the steward for a task title and body, then POST an inbox task to the
+ * selected agent. This is a UI affordance for the existing send_to_agent
+ * semantics: drop a task into an agent's inbox without asking the agent.
+ */
+async function createInboxTaskPrompt() {
+  if (!state.currentAgent) {
+    addMessage("error", "No agent selected.");
+    return;
+  }
+
+  const title = window.prompt("Inbox task title for " + state.currentAgent + ":");
+  if (!title || !title.trim()) return;
+
+  const body = window.prompt("Task body (what the agent should do):", "");
+  if (body === null) return;
+
+  try {
+    const result = await apiJson("/api/vault/inbox", {
+      method: "POST",
+      body: JSON.stringify({
+        to: state.currentAgent,
+        title: title.trim(),
+        body: body.trim(),
+      }),
+    });
+    addMessage("tool", "Created inbox task: " + result.path + " for " + state.currentAgent);
+  } catch (err) {
+    addMessage("error", "Inbox task failed: " + err.message);
   }
 }
 
@@ -623,6 +871,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("vault-browser-btn").addEventListener("click", openVaultBrowser);
   document.getElementById("vault-close").addEventListener("click", closeVaultBrowser);
+  document.getElementById("vault-view-rendered").addEventListener("click", () => setVaultView("rendered"));
+  document.getElementById("vault-view-raw").addEventListener("click", () => setVaultView("raw"));
+  document.getElementById("inbox-create-btn").addEventListener("click", createInboxTaskPrompt);
 
   document.getElementById("approval-confirm").addEventListener("click", () => submitApproval(true));
   document.getElementById("approval-cancel").addEventListener("click", () => submitApproval(false));

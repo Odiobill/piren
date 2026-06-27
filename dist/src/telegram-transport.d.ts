@@ -1,7 +1,9 @@
 import { type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
+import { type TransportFeedbackConfig } from "./transport-feedback.js";
 export interface TelegramMessage {
+    message_id?: number;
     chat?: {
         id?: number | string;
     };
@@ -13,6 +15,13 @@ export interface TelegramUpdate {
 }
 export interface TelegramBotApi {
     sendMessage(chatId: number | string, text: string): Promise<void>;
+    /** Best-effort typing indicator. Telegram's chat action expires after ~5s. */
+    sendChatAction(chatId: number | string, action: string): Promise<void>;
+    /**
+     * Best-effort emoji reaction on a message. Must not throw on failure:
+     * reactions are advisory feedback and must never abort a turn.
+     */
+    setMessageReaction(chatId: number | string, messageId: number, emoji: string): Promise<void>;
 }
 export interface TelegramPollingApi extends TelegramBotApi {
     getUpdates(offset: number | undefined, timeoutSeconds: number): Promise<TelegramUpdate[]>;
@@ -22,6 +31,12 @@ export declare class TelegramBotApiHttpClient implements TelegramPollingApi {
     private readonly fetchImpl;
     constructor(botToken: string, fetchImpl?: typeof fetch);
     sendMessage(chatId: number | string, text: string): Promise<void>;
+    sendChatAction(chatId: number | string, action: string): Promise<void>;
+    /**
+     * Best-effort: a failed reaction (permissions, emoji not allowed, etc.)
+     * resolves silently rather than rejecting. Feedback must never abort a turn.
+     */
+    setMessageReaction(chatId: number | string, messageId: number, emoji: string): Promise<void>;
     getUpdates(offset: number | undefined, timeoutSeconds: number): Promise<TelegramUpdate[]>;
     private fetchJson;
 }
@@ -36,6 +51,7 @@ export interface TelegramTransportOptions<TClient extends TelegramPromptClient> 
     targetBuilder: RpcTargetBuilder;
     clientFactory: (target: RpcSpawnTarget) => TClient;
     api: TelegramBotApi;
+    feedback?: TransportFeedbackConfig | undefined;
 }
 /**
  * Minimal Telegram transport over the shared Pi RPC client.
@@ -50,10 +66,13 @@ export declare class TelegramTransport<TClient extends TelegramPromptClient> {
     private readonly runnableAgents;
     private readonly defaultAgent;
     private readonly api;
+    private readonly feedback;
     private readonly sessions;
     constructor(options: TelegramTransportOptions<TClient>);
     handleUpdate(update: TelegramUpdate): Promise<void>;
     close(): Promise<void>;
+    private sendPromptFeedbackStart;
+    private sendPromptFeedbackComplete;
     private handleAgentCommand;
 }
 /**

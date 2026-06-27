@@ -19,6 +19,7 @@
     <a href="." class="nav-brand">Piren</a>
     <div class="nav-links">
       <a href="#philosophy">Philosophy</a>
+      <a href="#portability">Portability</a>
       <a href="#features">Features</a>
       <a href="#knowledge">Knowledge</a>
       <a href="#compare">Compare</a>
@@ -85,6 +86,53 @@
         <span class="pillar-icon">🍓</span>
         <h3>Edge-friendly</h3>
         <p>Lightweight enough for a Raspberry Pi or UDOO X86. Transparency and debuggability over maximal framework surface area.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="portability">
+  <div class="container">
+    <h2 class="section-title">The agent lives in the vault, not the machine</h2>
+    <p class="section-sub">Install Piren on several devices, point them at one vault, and your agent is the same agent everywhere. If a device dies, the work continues on another.</p>
+    <div class="portability-grid">
+      <div class="portability-diagram">
+        <svg viewBox="0 0 360 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A vault in the center connected to three devices, one offline">
+          <title>One vault, many devices</title>
+          <!-- links -->
+          <line x1="180" y1="140" x2="70" y2="60"  stroke="#7c6ff0" stroke-width="1.4" stroke-opacity="0.5"/>
+          <line x1="180" y1="140" x2="290" y2="60" stroke="#7c6ff0" stroke-width="1.4" stroke-opacity="0.5"/>
+          <line x1="180" y1="140" x2="70" y2="250" stroke="#378add" stroke-width="1.4" stroke-dasharray="5 5" stroke-opacity="0.45"/>
+          <line x1="180" y1="140" x2="290" y2="250" stroke="#7c6ff0" stroke-width="1.4" stroke-opacity="0.5"/>
+          <!-- vault (office building) -->
+          <rect x="112" y="92" width="136" height="96" rx="12" fill="#181828" stroke="#7c6ff0" stroke-width="1.6"/>
+          <text x="180" y="122" text-anchor="middle" font-family="SF Mono, monospace" font-size="11" fill="#7c6ff0" font-weight="600">vault</text>
+          <text x="180" y="140" text-anchor="middle" font-family="SF Mono, monospace" font-size="9.5" fill="#6b6b80">the office building</text>
+          <text x="180" y="158" text-anchor="middle" font-family="SF Mono, monospace" font-size="9" fill="#1d9e75">identity · memory</text>
+          <text x="180" y="172" text-anchor="middle" font-family="SF Mono, monospace" font-size="9" fill="#1d9e75">tasks · skills · cron</text>
+          <!-- device: office (active) -->
+          <rect x="28" y="34" width="84" height="52" rx="9" fill="#181828" stroke="#1d9e75" stroke-width="1.3"/>
+          <text x="70" y="58" text-anchor="middle" font-family="SF Mono, monospace" font-size="10" fill="#1d9e75" font-weight="600">office-1</text>
+          <text x="70" y="74" text-anchor="middle" font-family="SF Mono, monospace" font-size="8.5" fill="#6b6b80">online</text>
+          <!-- device: office (active) -->
+          <rect x="248" y="34" width="84" height="52" rx="9" fill="#181828" stroke="#1d9e75" stroke-width="1.3"/>
+          <text x="290" y="58" text-anchor="middle" font-family="SF Mono, monospace" font-size="10" fill="#1d9e75" font-weight="600">office-2</text>
+          <text x="290" y="74" text-anchor="middle" font-family="SF Mono, monospace" font-size="8.5" fill="#6b6b80">online</text>
+          <!-- device: office (offline) -->
+          <rect x="28" y="226" width="84" height="52" rx="9" fill="#181828" stroke="#6b6b80" stroke-width="1.3" stroke-opacity="0.5"/>
+          <text x="70" y="250" text-anchor="middle" font-family="SF Mono, monospace" font-size="10" fill="#6b6b80" font-weight="600">office-3</text>
+          <text x="70" y="266" text-anchor="middle" font-family="SF Mono, monospace" font-size="8.5" fill="#6b6b80">offline</text>
+          <!-- device: office (active, picks up) -->
+          <rect x="248" y="226" width="84" height="52" rx="9" fill="#181828" stroke="#7c6ff0" stroke-width="1.3"/>
+          <text x="290" y="250" text-anchor="middle" font-family="SF Mono, monospace" font-size="10" fill="#7c6ff0" font-weight="600">office-4</text>
+          <text x="290" y="266" text-anchor="middle" font-family="SF Mono, monospace" font-size="8.5" fill="#6b6b80">claims the work</text>
+        </svg>
+      </div>
+      <div class="portability-text">
+        <p class="lead">Think of the vault as the office building and each Piren installation as an office in the same building on the same network. The agent is an employee whose identity, memory, and tools live in the building, not in any single office.</p>
+        <p>So when an engineer has the laptop and skills they need, they can do their job from any office. Install Piren on a Raspberry Pi in the closet, a desktop, and a laptop, point all three at one synced vault, and <code>heimdall</code> is the same agent on every machine: same <code>SOUL.md</code>, same pending inbox, same skills, same cron jobs.</p>
+        <p>This is what makes Piren fault-tolerant out of the box. Tasks and cron jobs are claimed by <strong>atomic file operations</strong> with active-device priority. If one device goes dark, the next eligible device picks up the pending inbox and the due cron jobs automatically, because the work lives in the shared substrate, not in a process on the dead machine.</p>
+        <p>Which machines may host which agents is an installation policy (<code>allowed_agents</code>), kept outside the vault. The vault carries the team; the installation decides which office it runs in today.</p>
       </div>
     </div>
   </div>

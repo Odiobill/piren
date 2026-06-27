@@ -17,6 +17,10 @@ telegram:
   bot_token: "123456:telegram-bot-token"
   allowed_chat_ids:
     - 123456789
+  feedback:
+    reaction_on_receive: "👀"
+    reaction_on_complete: "✅"
+    typing_while_working: true
   default_agent: piren
 ```
 
@@ -34,7 +38,7 @@ Commands:
 - `/whoami`: show active agent.
 - `/abort`: abort the active Pi turn for this chat.
 
-Plain text messages are forwarded to the active agent. Long assistant replies are split to fit Telegram message limits.
+Plain text messages are forwarded to the active agent. Long assistant replies are split to fit Telegram message limits. By default, Piren acknowledges incoming prompts with a receipt reaction, sends a typing indicator while the agent works, and swaps to a completion reaction when the turn finishes. Set `feedback.enabled: false` to disable all transport feedback.
 
 ## Discord
 
@@ -51,6 +55,10 @@ discord:
     - "222"
   allowed_thread_ids:
     - "333"
+  feedback:
+    reaction_on_receive: "👀"
+    reaction_on_complete: "✅"
+    typing_while_working: true
   default_agent: piren
 ```
 
@@ -68,7 +76,21 @@ Commands mirror Telegram:
 - `/whoami`
 - `/abort`
 
-Discord uses a platform-mandated WebSocket client connection to Discord's gateway. This does not add a WebSocket server to Piren's web UI.
+Discord uses a platform-mandated WebSocket client connection to Discord's gateway. This does not add a WebSocket server to Piren's web UI. Feedback uses Discord REST: `POST /channels/{id}/typing` and `PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`. Reaction failures are best-effort and never abort the assistant response.
+
+## Transport feedback
+
+The `feedback` block is optional and default-on for both Telegram and Discord. Missing values use:
+
+```yaml
+feedback:
+  enabled: true
+  reaction_on_receive: "👀"
+  reaction_on_complete: "✅"
+  typing_while_working: true
+```
+
+Set `feedback.enabled: false` to disable every feedback call for that transport, or override individual fields. Feedback failures are swallowed so platform reaction or typing problems never prevent Piren from sending the assistant response.
 
 ## Access control
 

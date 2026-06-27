@@ -105,6 +105,14 @@ export declare class GatewayServer {
     private handleSwitch;
     private handleVaultList;
     private handleVaultRead;
+    /**
+     * Create an inbox task for an agent from the web UI. This is a steward
+     * affordance: drop a one-file-per-task Markdown file into the target
+     * agent's inbox without invoking the agent. The `from` is always
+     * "steward" because the web UI has no agent identity of its own.
+     * Configured vaultRoot is required, otherwise 403 (no write surface).
+     */
+    private handleVaultInbox;
     private writeJson;
     private writeSse;
 }

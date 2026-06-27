@@ -76,4 +76,30 @@ describe("TelegramBotApiHttpClient", () => {
     const client = new TelegramBotApiHttpClient("123456:ABC", fakeFetch);
     await expect(client.getUpdates(undefined, 25)).rejects.toThrow("unauthorized");
   });
+
+  it("sendChatAction posts chat_id and action=typing", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new TelegramBotApiHttpClient("123456:ABC", fakeFetchOk(true, calls));
+    await client.sendChatAction(987654, "typing");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.telegram.org/bot123456:ABC/sendChatAction");
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ chat_id: 987654, action: "typing" });
+  });
+
+  it("setMessageReaction posts the emoji as reaction", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new TelegramBotApiHttpClient("123456:ABC", fakeFetchOk(true, calls));
+    await client.setMessageReaction(987654, 555, "👀");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://api.telegram.org/bot123456:ABC/setMessageReaction");
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ chat_id: 987654, message_id: 555, reaction: [{ type: "emoji", emoji: "👀" }] });
+  });
+
+  it("setMessageReaction is best-effort: a failed reaction does not throw", async () => {
+    const fakeFetch = async (): Promise<Response> =>
+      new Response(JSON.stringify({ ok: false, description: "reaction not allowed" }), { status: 200 });
+    const client = new TelegramBotApiHttpClient("123456:ABC", fakeFetch);
+    // Should resolve, not reject, because reactions are best-effort.
+    await expect(client.setMessageReaction(987654, 555, "👀")).resolves.toBeUndefined();
+  });
 });

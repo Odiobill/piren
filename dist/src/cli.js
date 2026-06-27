@@ -159,6 +159,7 @@ try {
             targetBuilder,
             clientFactory: (target) => new PiRpcClient(target),
             api,
+            feedback: telegramConfig?.feedback,
         });
         const controller = new AbortController();
         const shutdown = () => {
@@ -207,6 +208,7 @@ try {
             targetBuilder,
             clientFactory: (target) => new PiRpcClient(target),
             api,
+            feedback: discordConfig?.feedback,
         });
         const gatewayUrl = "https://gateway.discord.gg/?v=10&encoding=json";
         // Intents: GUILDS (1) | GUILD_MESSAGES (512) | MESSAGE_CONTENT (32768) = 33281

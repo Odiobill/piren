@@ -26,7 +26,11 @@ function buildTransport(): { transport: TelegramTransport<FakeTelegramClient>; r
     defaultAgent: "piren",
     targetBuilder: async () => ({ command: "fake", args: [], cwd: process.cwd(), env: process.env }),
     clientFactory: () => new FakeTelegramClient(),
-    api: { async sendMessage(_chatId, text) { replies.push(text); } },
+    api: {
+      async sendMessage(_chatId, text) { replies.push(text); },
+      async sendChatAction() {},
+      async setMessageReaction() {},
+    },
   });
   return { transport, replies };
 }
@@ -41,6 +45,8 @@ describe("runTelegramPolling", () => {
       async sendMessage(chatId: number | string, text: string): Promise<void> {
         await transport["api"].sendMessage(chatId, text);
       },
+      async sendChatAction(): Promise<void> {},
+      async setMessageReaction(): Promise<void> {},
       async getUpdates(offset: number | undefined, _timeoutSeconds: number): Promise<TelegramUpdate[]> {
         offsets.push(offset);
         batches += 1;
@@ -70,6 +76,8 @@ describe("runTelegramPolling", () => {
       async sendMessage(chatId: number | string, text: string): Promise<void> {
         await transport["api"].sendMessage(chatId, text);
       },
+      async sendChatAction(): Promise<void> {},
+      async setMessageReaction(): Promise<void> {},
       async getUpdates(_offset: number | undefined, _timeoutSeconds: number): Promise<TelegramUpdate[]> {
         calls += 1;
         if (calls === 1) throw new Error("transient telegram 502");
@@ -94,6 +102,8 @@ describe("runTelegramPolling", () => {
     const controller = new AbortController();
     const api = {
       async sendMessage(): Promise<void> {},
+      async sendChatAction(): Promise<void> {},
+      async setMessageReaction(): Promise<void> {},
       async getUpdates(): Promise<TelegramUpdate[]> {
         throw new Error("fatal");
       },

@@ -1,5 +1,6 @@
 import { extractAssistantText } from "./gateway-rpc.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
+import { resolveFeedback } from "./transport-feedback.js";
 export class TelegramBotApiHttpClient {
     botToken;
     fetchImpl;
@@ -14,6 +15,29 @@ export class TelegramBotApiHttpClient {
         });
         if (!response.ok) {
             throw new Error(response.description || "Telegram sendMessage failed");
+        }
+    }
+    async sendChatAction(chatId, action) {
+        const response = await this.fetchJson("sendChatAction", {
+            chat_id: chatId,
+            action,
+        });
+        if (!response.ok) {
+            throw new Error(response.description || "Telegram sendChatAction failed");
+        }
+    }
+    /**
+     * Best-effort: a failed reaction (permissions, emoji not allowed, etc.)
+     * resolves silently rather than rejecting. Feedback must never abort a turn.
+     */
+    async setMessageReaction(chatId, messageId, emoji) {
+        const response = await this.fetchJson("setMessageReaction", {
+            chat_id: chatId,
+            message_id: messageId,
+            reaction: [{ type: "emoji", emoji }],
+        });
+        if (!response.ok) {
+            return; // best-effort
         }
     }
     async getUpdates(offset, timeoutSeconds) {
@@ -48,6 +72,7 @@ export class TelegramTransport {
     runnableAgents;
     defaultAgent;
     api;
+    feedback;
     sessions;
     constructor(options) {
         this.transportName = options.transportName ?? "telegram";
@@ -55,6 +80,7 @@ export class TelegramTransport {
         this.runnableAgents = [...options.runnableAgents];
         this.defaultAgent = options.defaultAgent ?? this.runnableAgents[0] ?? "";
         this.api = options.api;
+        this.feedback = resolveFeedback(options.feedback);
         this.sessions = new TransportSessionManager({
             runnableAgents: this.runnableAgents,
             defaultAgent: this.defaultAgent,
@@ -97,8 +123,11 @@ export class TelegramTransport {
             await this.api.sendMessage(chatId, "Unknown Piren command. Use /agents, /agent <name>, /whoami, or /abort.");
             return;
         }
+        const messageId = update.message?.message_id;
+        await this.sendPromptFeedbackStart(chatId, messageId);
         const session = await this.sessions.getSession(this.transportName, String(chatId));
         const events = await session.client.promptAndWait(trimmed);
+        await this.sendPromptFeedbackComplete(chatId, messageId);
         const response = extractAssistantText(events).trim();
         if (response === "") {
             await this.api.sendMessage(chatId, "(no assistant text returned)");
@@ -110,6 +139,40 @@ export class TelegramTransport {
     }
     async close() {
         await this.sessions.closeAll();
+    }
+    async sendPromptFeedbackStart(chatId, messageId) {
+        if (!this.feedback.enabled)
+            return;
+        if (messageId !== undefined && this.feedback.reactionOnReceive !== "") {
+            try {
+                await this.api.setMessageReaction(chatId, messageId, this.feedback.reactionOnReceive);
+            }
+            catch {
+                // Best-effort feedback must never abort a turn.
+            }
+        }
+        if (this.feedback.typingWhileWorking) {
+            try {
+                await this.api.sendChatAction(chatId, "typing");
+            }
+            catch {
+                // Best-effort feedback must never abort a turn.
+            }
+        }
+    }
+    async sendPromptFeedbackComplete(chatId, messageId) {
+        if (!this.feedback.enabled)
+            return;
+        if (messageId === undefined)
+            return;
+        if (this.feedback.reactionOnComplete === "" || this.feedback.reactionOnComplete === this.feedback.reactionOnReceive)
+            return;
+        try {
+            await this.api.setMessageReaction(chatId, messageId, this.feedback.reactionOnComplete);
+        }
+        catch {
+            // Best-effort feedback must never abort sending the response.
+        }
     }
     async handleAgentCommand(chatId, text) {
         const parts = text.split(/\s+/).filter(Boolean);

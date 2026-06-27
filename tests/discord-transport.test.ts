@@ -16,9 +16,11 @@ class FakeDiscordClient {
   }
 }
 
-function buildTransport(options?: { allowedThreadIds?: string[] }) {
+function buildTransport(options?: { allowedThreadIds?: string[]; feedback?: { enabled?: boolean } }) {
   const replies: Array<{ channelId: string; text: string }> = [];
   const clients: FakeDiscordClient[] = [];
+  const typing: string[] = [];
+  const reactions: Array<{ channelId: string; messageId: string; emoji: string }> = [];
   const transport = new DiscordTransport<FakeDiscordClient>({
     transportName: "discord",
     allowedGuildIds: ["111"],
@@ -26,6 +28,7 @@ function buildTransport(options?: { allowedThreadIds?: string[] }) {
     allowedThreadIds: options?.allowedThreadIds,
     runnableAgents: ["piren", "thor"],
     defaultAgent: "piren",
+    feedback: options?.feedback,
     targetBuilder: async (agent) => ({ command: "fake", args: [agent], cwd: process.cwd(), env: process.env }),
     clientFactory: () => {
       const client = new FakeDiscordClient();
@@ -36,9 +39,15 @@ function buildTransport(options?: { allowedThreadIds?: string[] }) {
       async createMessage(channelId, text) {
         replies.push({ channelId, text });
       },
+      async sendTyping(channelId) {
+        typing.push(channelId);
+      },
+      async addReaction(channelId, messageId, emoji) {
+        reactions.push({ channelId, messageId, emoji });
+      },
     },
   });
-  return { transport, replies, clients };
+  return { transport, replies, clients, typing, reactions };
 }
 
 describe("DiscordTransport", () => {
@@ -151,7 +160,11 @@ describe("DiscordTransport", () => {
       defaultAgent: "piren",
       targetBuilder: async () => ({ command: "fake", args: [], cwd: process.cwd(), env: process.env }),
       clientFactory: () => new LongResponseClient(),
-      api: { async createMessage(_channelId, text) { replies.push(text); } },
+      api: {
+      async createMessage(_channelId, text) { replies.push(text); },
+      async sendTyping() {},
+      async addReaction() {},
+    },
     });
 
     await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "long answer please" });
@@ -161,5 +174,48 @@ describe("DiscordTransport", () => {
       expect(reply.length).toBeLessThanOrEqual(2000);
     }
     expect(replies.join("")).toBe(longText.trim());
+  });
+
+
+  it("sends a receipt reaction, typing, and a completion reaction around a prompt when feedback is on", async () => {
+    const { transport, replies, typing, reactions } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", id: "555", content: "ping" });
+
+    expect(reactions).toContainEqual({ channelId: "222", messageId: "555", emoji: "👀" });
+    expect(typing).toContain("222");
+    expect(reactions).toContainEqual({ channelId: "222", messageId: "555", emoji: "✅" });
+    expect(replies.map((r) => r.text)).toEqual(["pong"]);
+  });
+
+  it("does not send Discord feedback when feedback is disabled", async () => {
+    const { transport, typing, reactions } = buildTransport({ feedback: { enabled: false } });
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", id: "555", content: "ping" });
+
+    expect(typing).toEqual([]);
+    expect(reactions).toEqual([]);
+  });
+
+  it("Discord feedback failures never abort the turn: the response is still sent", async () => {
+    const replies: string[] = [];
+    const transport = new DiscordTransport<FakeDiscordClient>({
+      transportName: "discord",
+      allowedGuildIds: ["111"],
+      allowedChannelIds: ["222"],
+      runnableAgents: ["piren"],
+      defaultAgent: "piren",
+      targetBuilder: async () => ({ command: "fake", args: [], cwd: process.cwd(), env: process.env }),
+      clientFactory: () => new FakeDiscordClient(),
+      api: {
+        async createMessage(_channelId, text) { replies.push(text); },
+        async sendTyping() { throw new Error("typing failed"); },
+        async addReaction() { throw new Error("reaction failed"); },
+      },
+    });
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", id: "555", content: "ping" });
+
+    expect(replies).toEqual(["pong"]);
   });
 });

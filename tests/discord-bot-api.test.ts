@@ -54,4 +54,33 @@ describe("DiscordBotApiHttpClient", () => {
     const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetch);
     await expect(client.createMessage("123", "hello")).rejects.toThrow(/Discord createMessage failed/);
   });
+
+
+  it("sendTyping posts to the channel typing URL", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetchOk(calls, 200));
+    await client.sendTyping("123456789");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://discord.com/api/v10/channels/123456789/typing");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.headers["authorization"]).toBe("Bot BOT-TOKEN");
+  });
+
+  it("addReaction puts the URL-encoded emoji reaction and resolves on success", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetchOk(calls, 200));
+    await client.addReaction("123456789", "987654321", "👀");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://discord.com/api/v10/channels/123456789/messages/987654321/reactions/%F0%9F%91%80/@me");
+    expect(calls[0]?.method).toBe("PUT");
+    expect(calls[0]?.headers["authorization"]).toBe("Bot BOT-TOKEN");
+  });
+
+  it("addReaction is best-effort: a failed reaction does not throw", async () => {
+    const fakeFetch = async (): Promise<Response> => new Response(JSON.stringify({ message: "Missing permissions" }), { status: 403 });
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetch);
+    await expect(client.addReaction("123", "456", "👀")).resolves.toBeUndefined();
+  });
 });

@@ -7,6 +7,7 @@ import { piEventToSse, type SseEvent } from "./gateway-bridge.js";
 import { vaultBrowserList, vaultBrowserRead } from "./vault-browser.js";
 import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
+import { createInboxTask } from "./inbox.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -217,6 +218,8 @@ export class GatewayServer {
       await this.handleVaultList(res, url);
     } else if (req.method === "GET" && url.pathname === "/api/vault/read") {
       await this.handleVaultRead(res, url);
+    } else if (req.method === "POST" && url.pathname === "/api/vault/inbox") {
+      await this.handleVaultInbox(req, res);
     } else if (req.method === "GET" && this.publicDir) {
       await this.handleStatic(res, url.pathname);
     } else {
@@ -820,6 +823,61 @@ export class GatewayServer {
         this.writeJson(res, 403, { error: msg });
       } else if (msg.startsWith("ENOENT") || msg.includes("ENOENT")) {
         this.writeJson(res, 404, { error: "path not found" });
+      } else {
+        this.writeJson(res, 400, { error: msg });
+      }
+    }
+  }
+
+  /**
+   * Create an inbox task for an agent from the web UI. This is a steward
+   * affordance: drop a one-file-per-task Markdown file into the target
+   * agent's inbox without invoking the agent. The `from` is always
+   * "steward" because the web UI has no agent identity of its own.
+   * Configured vaultRoot is required, otherwise 403 (no write surface).
+   */
+  private async handleVaultInbox(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.vaultRoot) {
+      this.writeJson(res, 403, { error: "vault write surface not configured" });
+      return;
+    }
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const to = parsed.value.to;
+    const title = parsed.value.title;
+    if (typeof to !== "string" || to.trim() === "") {
+      this.writeJson(res, 400, { error: "to (agent name) is required" });
+      return;
+    }
+    if (typeof title !== "string" || title.trim() === "") {
+      this.writeJson(res, 400, { error: "title is required" });
+      return;
+    }
+    const body = typeof parsed.value.body === "string" ? parsed.value.body : "";
+    try {
+      const result = await createInboxTask({
+        vaultRoot: this.vaultRoot,
+        from: "steward",
+        to: to.trim(),
+        title: title.trim(),
+        body,
+      });
+      this.writeJson(res, 200, {
+        taskId: result.taskId,
+        path: result.path,
+        from: result.from,
+        to: result.to,
+        status: result.status,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("Invalid agent name")) {
+        this.writeJson(res, 400, { error: msg });
+      } else if (msg.startsWith("Target agent not found")) {
+        this.writeJson(res, 404, { error: msg });
       } else {
         this.writeJson(res, 400, { error: msg });
       }

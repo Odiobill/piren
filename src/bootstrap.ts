@@ -2,6 +2,7 @@ import { access, mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
+import type { TransportFeedbackConfig } from "./transport-feedback.js";
 
 export interface BootstrapOptions {
   cliAgentDir?: string | undefined;
@@ -14,6 +15,7 @@ export interface BootstrapOptions {
 export interface TelegramLocalConfig {
   bot_token?: string;
   allowed_chat_ids?: Array<number | string>;
+  feedback?: TransportFeedbackConfig;
   default_agent?: string;
 }
 
@@ -24,6 +26,7 @@ export interface DiscordLocalConfig {
   allowed_guild_ids?: Array<number | string>;
   allowed_channel_ids?: Array<number | string>;
   allowed_thread_ids?: Array<number | string>;
+  feedback?: TransportFeedbackConfig;
   default_agent?: string;
 }
 

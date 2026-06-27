@@ -1,3 +1,4 @@
+import type { TransportFeedbackConfig } from "./transport-feedback.js";
 export interface BootstrapOptions {
     cliAgentDir?: string | undefined;
     cliAgent?: string | undefined;
@@ -8,6 +9,7 @@ export interface BootstrapOptions {
 export interface TelegramLocalConfig {
     bot_token?: string;
     allowed_chat_ids?: Array<number | string>;
+    feedback?: TransportFeedbackConfig;
     default_agent?: string;
 }
 export interface DiscordLocalConfig {
@@ -17,6 +19,7 @@ export interface DiscordLocalConfig {
     allowed_guild_ids?: Array<number | string>;
     allowed_channel_ids?: Array<number | string>;
     allowed_thread_ids?: Array<number | string>;
+    feedback?: TransportFeedbackConfig;
     default_agent?: string;
 }
 export interface LocalPirenConfig {

@@ -35,6 +35,7 @@
 
       <div class="sidebar-section">
         <button id="vault-browser-btn" class="full-btn">Vault Browser</button>
+        <button id="inbox-create-btn" class="full-btn btn-secondary" title="Create an inbox task for the selected agent">+ Inbox Task</button>
       </div>
 
       <div class="sidebar-section sidebar-sessions">
@@ -94,6 +95,13 @@
       <div id="vault-breadcrumb" class="vault-breadcrumb"></div>
       <div id="vault-list" class="vault-list"></div>
       <div id="vault-content" class="vault-content hidden">
+        <div class="vault-content-toolbar">
+          <div id="vault-view-toggle" class="vault-view-toggle hidden">
+            <button id="vault-view-rendered" class="vault-view-btn active">Rendered</button>
+            <button id="vault-view-raw" class="vault-view-btn">Source</button>
+          </div>
+        </div>
+        <div id="vault-content-rendered" class="markdown-body hidden"></div>
         <pre id="vault-content-pre"></pre>
       </div>
     </div>

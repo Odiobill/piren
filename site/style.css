@@ -225,6 +225,31 @@ section { padding: 4rem 0; }
 }
 .pillar p { font-size: 0.9rem; color: var(--text-muted); line-height: 1.55; }
 
+/* ---- Portability section ---- */
+.portability-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) 1fr;
+  gap: 2rem;
+  align-items: center;
+}
+.portability-diagram svg {
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+.portability-text { font-size: 0.98rem; color: var(--text); line-height: 1.7; }
+.portability-text .lead { color: var(--text-bright); font-size: 1.08rem; margin-bottom: 1rem; }
+.portability-text p { margin-bottom: 1rem; }
+.portability-text p:last-child { margin-bottom: 0; }
+.portability-text code {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--green);
+}
+.portability-text strong { color: var(--text-bright); font-weight: 600; }
+
 /* ---- Features grid ---- */
 .features {
   display: grid;
@@ -451,6 +476,7 @@ footer .footer-links {
   section { padding: 3rem 0; }
   .install-line { font-size: 0.78rem; }
   .practice-grid { grid-template-columns: 1fr; }
+  .portability-grid { grid-template-columns: 1fr; gap: 1.25rem; }
 }
 
 /* Scrollbar (mirrors web UI) */

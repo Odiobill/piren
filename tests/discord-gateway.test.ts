@@ -27,7 +27,11 @@ function buildTransport() {
     defaultAgent: "piren",
     targetBuilder: async () => ({ command: "fake", args: [], cwd: process.cwd(), env: process.env }),
     clientFactory: () => new FakeDiscordClient(),
-    api: { async createMessage(_channelId, text) { replies.push(text); } },
+    api: {
+      async createMessage(_channelId, text) { replies.push(text); },
+      async sendTyping() {},
+      async addReaction() {},
+    },
   });
   return { transport, replies };
 }

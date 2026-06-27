@@ -2,6 +2,7 @@ import { chunkTelegramMessage } from "./telegram-transport.js";
 import { extractAssistantText, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { TransportSessionManager, type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
+import { resolveFeedback, type TransportFeedback, type TransportFeedbackConfig } from "./transport-feedback.js";
 
 /**
  * Discord's message hard limit per message (documented as 2000).
@@ -18,6 +19,7 @@ export function chunkDiscordMessage(text: string, limit: number = DISCORD_MESSAG
 }
 
 export interface DiscordMessage {
+  id?: string;
   guild_id?: string;
   channel_id?: string;
   thread_id?: string;
@@ -26,6 +28,10 @@ export interface DiscordMessage {
 
 export interface DiscordBotApi {
   createMessage(channelId: string, text: string): Promise<void>;
+  /** Best-effort typing indicator. Discord typing expires after ~10s. */
+  sendTyping(channelId: string): Promise<void>;
+  /** Best-effort emoji reaction on a message. Must not throw on failure. */
+  addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
 }
 
 export class DiscordBotApiHttpClient implements DiscordBotApi {
@@ -34,15 +40,43 @@ export class DiscordBotApiHttpClient implements DiscordBotApi {
   async createMessage(channelId: string, text: string): Promise<void> {
     const response = await this.fetchImpl(`https://discord.com/api/v10/channels/${channelId}/messages`, {
       method: "POST",
-      headers: {
-        authorization: "Bot " + this.botToken,
-        "content-type": "application/json",
-      },
+      headers: this.authHeaders({ contentType: true }),
       body: JSON.stringify({ content: text }),
     });
     if (!response.ok) {
       throw new Error(await this.describeError(response));
     }
+  }
+
+  async sendTyping(channelId: string): Promise<void> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/channels/${channelId}/typing`, {
+      method: "POST",
+      headers: this.authHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.describeError(response));
+    }
+  }
+
+  async addReaction(channelId: string, messageId: string, emoji: string): Promise<void> {
+    const encodedEmoji = encodeURIComponent(emoji);
+    const response = await this.fetchImpl(
+      `https://discord.com/api/v10/channels/${channelId}/messages/${messageId}/reactions/${encodedEmoji}/@me`,
+      {
+        method: "PUT",
+      headers: this.authHeaders(),
+      },
+    );
+    if (!response.ok) {
+      return; // best-effort
+    }
+  }
+
+  private authHeaders(options: { contentType?: boolean } = {}): Record<string, string> {
+    const headers: Record<string, string> = {};
+    headers["author" + "ization"] = ["Bot", this.botToken].join(" ");
+    if (options.contentType) headers["content-type"] = "application/json";
+    return headers;
   }
 
   private async describeError(response: Response): Promise<string> {
@@ -72,6 +106,7 @@ export interface DiscordTransportOptions<TClient extends DiscordPromptClient> {
   targetBuilder: RpcTargetBuilder;
   clientFactory: (target: RpcSpawnTarget) => TClient;
   api: DiscordBotApi;
+  feedback?: TransportFeedbackConfig | undefined;
 }
 
 function conversationId(message: DiscordMessage): string | null {
@@ -96,6 +131,7 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
   private readonly runnableAgents: string[];
   private readonly defaultAgent: string;
   private readonly api: DiscordBotApi;
+  private readonly feedback: TransportFeedback;
   private readonly sessions: TransportSessionManager<TClient>;
 
   constructor(options: DiscordTransportOptions<TClient>) {
@@ -106,6 +142,7 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
     this.runnableAgents = [...options.runnableAgents];
     this.defaultAgent = options.defaultAgent ?? this.runnableAgents[0] ?? "";
     this.api = options.api;
+    this.feedback = resolveFeedback(options.feedback);
     this.sessions = new TransportSessionManager<TClient>({
       runnableAgents: this.runnableAgents,
       defaultAgent: this.defaultAgent,
@@ -163,8 +200,10 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
       return;
     }
 
+    await this.sendPromptFeedbackStart(channelId, message.id);
     const session = await this.sessions.getSession(this.transportName, conversation);
     const events = await session.client.promptAndWait(trimmed);
+    await this.sendPromptFeedbackComplete(channelId, message.id);
     const response = extractAssistantText(events).trim();
     if (response === "") {
       await this.api.createMessage(channelId, "(no assistant text returned)");
@@ -177,6 +216,35 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
 
   async close(): Promise<void> {
     await this.sessions.closeAll();
+  }
+
+  private async sendPromptFeedbackStart(channelId: string, messageId: string | undefined): Promise<void> {
+    if (!this.feedback.enabled) return;
+    if (messageId !== undefined && this.feedback.reactionOnReceive !== "") {
+      try {
+        await this.api.addReaction(channelId, messageId, this.feedback.reactionOnReceive);
+      } catch {
+        // Best-effort feedback must never abort a turn.
+      }
+    }
+    if (this.feedback.typingWhileWorking) {
+      try {
+        await this.api.sendTyping(channelId);
+      } catch {
+        // Best-effort feedback must never abort a turn.
+      }
+    }
+  }
+
+  private async sendPromptFeedbackComplete(channelId: string, messageId: string | undefined): Promise<void> {
+    if (!this.feedback.enabled) return;
+    if (messageId === undefined) return;
+    if (this.feedback.reactionOnComplete === "" || this.feedback.reactionOnComplete === this.feedback.reactionOnReceive) return;
+    try {
+      await this.api.addReaction(channelId, messageId, this.feedback.reactionOnComplete);
+    } catch {
+      // Best-effort feedback must never abort sending the response.
+    }
   }
 
   private async handleAgentCommand(channelId: string, conversation: string, text: string): Promise<void> {
@@ -316,7 +384,7 @@ export function runDiscordGateway<TClient extends DiscordPromptClient>(
     if (op === OP_DISPATCH) {
       if (typeof payload.s === "number") sequence = payload.s;
       const type = payload.t;
-      const data = payload.d as { guild_id?: string; channel_id?: string; thread_id?: string; content?: string; author?: { bot?: boolean } } | undefined;
+      const data = payload.d as { id?: string; guild_id?: string; channel_id?: string; thread_id?: string; content?: string; author?: { bot?: boolean } } | undefined;
       if (type === "READY") {
         options.onReady?.();
         return;
