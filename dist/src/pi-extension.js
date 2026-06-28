@@ -13,6 +13,7 @@ import { createStewardAlert } from "./alerts.js";
 import { loadVaultSkills, formatSkillCatalogForContext } from "./skills.js";
 import { projectStatus, projectAppendLog, decisionRecord, projectUpdateHandoff, runbookWrite, skillCandidateWrite, } from "./knowledge.js";
 import { listCronJobs, listCronRuns, claimCronJob, recordCronRun, executeScriptCronJob, selectOwningDevice, listActiveDevices, isScheduleDue, } from "./cron.js";
+import { checkVaultConformance, createRealVaultDirReader, formatVaultConformanceReport } from "./okf.js";
 const PIREN_TOOL_NAMES = [
     "vault_read",
     "vault_read_cached",
@@ -38,6 +39,7 @@ const PIREN_TOOL_NAMES = [
     "cron_claim",
     "cron_record_run",
     "cron_runs",
+    "vault_conformance_check",
 ];
 function textResult(text, details = {}) {
     return {
@@ -180,6 +182,7 @@ function contextPrompt(context, skills = []) {
         "- cron_claim(job_path, stale_after_ms?)",
         "- cron_record_run(job_path, status, result, started_at, finished_at)",
         "- cron_runs(job_id?)",
+        "- vault_conformance_check()",
         "All vault paths resolve relative to vault_root and traversal outside the vault is rejected.",
         "",
         "## Knowledge Lifecycle",
@@ -205,6 +208,15 @@ function contextPrompt(context, skills = []) {
         "Script-mode jobs (mode: script, script: <vault path>) are executed directly by",
         "worker mode with no agent prompt and recorded as run records. Do not run cron jobs",
         "automatically in a direct conversation. Secrets never belong in cron job files or scripts.",
+        "",
+        "## Open Knowledge Format (ADR-0022)",
+        "Piren's vault follows OKF v0.1: every concept document (non-reserved .md file)",
+        "has YAML frontmatter with a required non-empty `type` field. The Piren type",
+        "taxonomy includes Concept, Entity, Runbook, ADR, Skill, Project Index,",
+        "Project Log, Session Summary, Task, Cron Job, Cron Run; unknown types are",
+        "tolerated. Use vault_conformance_check() to self-audit your writes. Reserved",
+        "filenames (index.md, log.md) and system files (SOUL.md, MEMORY.md, AGENTS.md,",
+        "steward-directives.md) are not concept documents.",
     ];
     const skillsSection = formatSkillCatalogForContext(skills);
     if (skillsSection) {
@@ -821,6 +833,21 @@ export default async function pirenExtension(pi, testOptions = {}) {
                     listOptions.jobId = params.job_id;
                 const result = await listCronRuns(listOptions);
                 return textResult(formatCronRuns(result.runs), { runs: result.runs });
+            }
+            catch (error) {
+                return errorResult(error);
+            }
+        },
+    });
+    pi.registerTool({
+        name: "vault_conformance_check",
+        label: "Vault OKF Conformance Check",
+        description: "Audit the Piren vault against the Open Knowledge Format (OKF) v0.1. Reports concept documents missing a required non-empty `type` frontmatter field or parseable frontmatter. Read-only. Run it after writing wiki concepts to self-audit your writes.",
+        parameters: Type.Object({}),
+        async execute() {
+            try {
+                const result = await checkVaultConformance({ root: context.vaultRoot, reader: createRealVaultDirReader() });
+                return textResult(formatVaultConformanceReport(result), result);
             }
             catch (error) {
                 return errorResult(error);

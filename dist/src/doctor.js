@@ -6,6 +6,7 @@ import { parse as parseYaml } from "yaml";
 import { defaultPiCommandResolver } from "./run.js";
 import { resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver } from "./packages.js";
+import { checkVaultConformance, createRealVaultDirReader } from "./okf.js";
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
 async function pathExists(path) {
     try {
@@ -252,6 +253,52 @@ function execFileText(command, args) {
         });
     });
 }
+/**
+ * Run OKF v0.1 conformance over the vault and return a `DoctorCheck`.
+ *
+ * OKF conformance is a WARNING, never a hard fail: a vault with entropy is not
+ * broken, it is drifting from the specified format. The check summarizes how
+ * many concept documents were checked and lists up to a handful of problem
+ * paths so the steward can fix the worst offenders without an overwhelming dump.
+ */
+export async function checkVaultOkfConformance(vaultRoot, options = {}) {
+    const reader = options.vaultDirReader ?? createRealVaultDirReader();
+    const conformanceOptions = {
+        root: vaultRoot,
+        reader,
+    };
+    if (options.exclude !== undefined)
+        conformanceOptions.exclude = options.exclude;
+    let result;
+    try {
+        result = await checkVaultConformance(conformanceOptions);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { id: "vault-okf-conformance", status: "warn", message: `OKF conformance check failed: ${message}` };
+    }
+    if (result.ok) {
+        const truncatedNote = result.truncated ? ` (truncated at ${result.checked})` : "";
+        return {
+            id: "vault-okf-conformance",
+            status: "ok",
+            message: `Vault is OKF v0.1 conformant. Checked ${result.checked} concept document(s)${truncatedNote}.`,
+        };
+    }
+    const shown = result.problems.slice(0, 5);
+    const shownPaths = shown
+        .map((p) => {
+        const detail = p.detail !== undefined ? ` (${p.detail})` : "";
+        return `${p.kind}: ${p.path}${detail}`;
+    })
+        .join("; ");
+    const more = result.problems.length > shown.length ? `; +${result.problems.length - shown.length} more` : "";
+    return {
+        id: "vault-okf-conformance",
+        status: "warn",
+        message: `OKF conformance problems in ${result.problems.length} of ${result.checked} concept document(s): ${shownPaths}${more}. Run 'piren doctor' or the vault_conformance_check tool for the full list.`,
+    };
+}
 export async function defaultPiRuntimeChecker(env = process.env) {
     try {
         const target = await defaultPiCommandResolver(env);
@@ -327,6 +374,10 @@ export async function doctorPiren(options = {}) {
         const staleCheck = await checkStaleAllowed(allowedAgents, vaultRoot);
         if (staleCheck)
             checks.push(staleCheck);
+        const okfReaderOptions = {};
+        if (options.vaultDirReader !== undefined)
+            okfReaderOptions.vaultDirReader = options.vaultDirReader;
+        checks.push(await checkVaultOkfConformance(vaultRoot, okfReaderOptions));
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);

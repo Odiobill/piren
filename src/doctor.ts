@@ -6,7 +6,7 @@ import { parse as parseYaml } from "yaml";
 import { defaultPiCommandResolver } from "./run.js";
 import { type BootstrapOptions, type LocalPirenConfig, type TelegramLocalConfig, type DiscordLocalConfig, type ServicesLocalConfig, resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
-import { checkVaultConformance, type VaultConformanceResult, type VaultDirReader } from "./okf.js";
+import { checkVaultConformance, createRealVaultDirReader, type VaultConformanceResult, type VaultDirReader } from "./okf.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -304,25 +304,6 @@ function execFileText(command: string, args: string[]): Promise<string> {
       resolvePromise(String(stdout || stderr).trim());
     });
   });
-}
-
-/**
- * A real-filesystem adapter implementing the `VaultDirReader` interface used by
- * the OKF conformance walker. Production doctor uses this; tests inject a fake
- * reader via `DoctorPirenOptions.vaultDirReader`.
- */
-function createRealVaultDirReader(): VaultDirReader {
-  return {
-    async list(dir: string) {
-      const entries = await readdir(dir, { withFileTypes: true });
-      return entries
-        .filter((entry) => entry.isDirectory() || entry.isFile())
-        .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }));
-    },
-    async readFile(path: string) {
-      return readFile(path, "utf8");
-    },
-  };
 }
 
 /**

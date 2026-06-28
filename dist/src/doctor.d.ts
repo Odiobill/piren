@@ -1,5 +1,6 @@
 import { type BootstrapOptions, type TelegramLocalConfig, type DiscordLocalConfig, type ServicesLocalConfig } from "./bootstrap.js";
 import { type PackageEntryResolver } from "./packages.js";
+import { type VaultDirReader } from "./okf.js";
 export type DoctorStatus = "ok" | "warn" | "fail";
 export interface DoctorCheck {
     id: string;
@@ -19,6 +20,7 @@ export interface DoctorReport {
 export interface DoctorPirenOptions extends BootstrapOptions {
     packageResolver?: PackageEntryResolver | undefined;
     piRuntimeChecker?: PiRuntimeChecker | undefined;
+    vaultDirReader?: VaultDirReader | undefined;
 }
 export interface PiRuntimeCheck {
     source: "path" | "npx-latest" | "unavailable";
@@ -60,6 +62,18 @@ export type ServiceConfig = ServicesLocalConfig;
  * installed, or installed but not running.
  */
 export declare function checkServiceConfig(config: ServiceConfig | undefined): DoctorCheck | null;
+/**
+ * Run OKF v0.1 conformance over the vault and return a `DoctorCheck`.
+ *
+ * OKF conformance is a WARNING, never a hard fail: a vault with entropy is not
+ * broken, it is drifting from the specified format. The check summarizes how
+ * many concept documents were checked and lists up to a handful of problem
+ * paths so the steward can fix the worst offenders without an overwhelming dump.
+ */
+export declare function checkVaultOkfConformance(vaultRoot: string, options?: {
+    vaultDirReader?: VaultDirReader;
+    exclude?: string[];
+}): Promise<DoctorCheck>;
 export declare function defaultPiRuntimeChecker(env?: NodeJS.ProcessEnv | Record<string, string | undefined>): Promise<PiRuntimeCheck>;
 export declare function doctorPiren(options?: DoctorPirenOptions): Promise<DoctorReport>;
 export declare function formatDoctorReport(report: DoctorReport): string;

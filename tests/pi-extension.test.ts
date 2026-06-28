@@ -60,7 +60,7 @@ describe("Pi extension", () => {
     expect(deviceRecord.status).toBe("active");
     expect(deviceRecord.last_seen).toBeTruthy();
 
-    expect(Object.keys(pi.tools).sort()).toEqual(["cron_claim", "cron_list", "cron_record_run", "cron_runs", "decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
+    expect(Object.keys(pi.tools).sort()).toEqual(["cron_claim", "cron_list", "cron_record_run", "cron_runs", "decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_conformance_check", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
     expect(pi.commands.piren_status).toBeDefined();
 
     const notifications: Array<{ message: string; level: string }> = [];
@@ -74,7 +74,7 @@ describe("Pi extension", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.level).toBe("info");
     expect(notifications[0]?.message).toContain("Piren status");
-    expect(notifications[0]?.message).toContain("registered_tools: cron_claim, cron_list, cron_record_run, cron_runs, decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
+    expect(notifications[0]?.message).toContain("registered_tools: cron_claim, cron_list, cron_record_run, cron_runs, decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_conformance_check, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
     expect(notifications[0]?.message).toContain("write_mode: authoritative-vault");
 
     const alert = await pi.tools.flag_steward.execute("call-alert", {
@@ -779,5 +779,47 @@ describe("Pi extension cron tools (ADR-0019)", () => {
     expect(content).toContain("cron_runs(job_id?)");
     expect(content).toContain("Vault-Backed Cron (ADR-0019 + ADR-0023)");
     expect(content).toContain("Script-mode jobs");
+  });
+});
+
+describe("Pi extension OKF conformance tool (ADR-0022)", () => {
+  async function loadOkfExtension() {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" }, configPath: join(root, "missing-config.yml") });
+    return pi;
+  }
+
+  it("reports a conformant vault", async () => {
+    await mkdir(join(root, "vault", "wiki", "concepts"), { recursive: true });
+    await writeFile(join(root, "vault", "wiki", "concepts", "ok.md"), "---\ntype: Concept\ntitle: Ok\n---\n\n# Ok\n");
+    const pi = await loadOkfExtension();
+
+    const result = await pi.tools.vault_conformance_check.execute("okf", {});
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("conformant");
+    expect(result.details.ok).toBe(true);
+    expect(result.details.checked).toBe(1);
+  });
+
+  it("reports problems for a non-conformant vault", async () => {
+    await mkdir(join(root, "vault", "wiki", "concepts"), { recursive: true });
+    await writeFile(join(root, "vault", "wiki", "concepts", "no-type.md"), "---\ntitle: No Type\n---\n\n# No Type\n");
+    const pi = await loadOkfExtension();
+
+    const result = await pi.tools.vault_conformance_check.execute("okf", {});
+    expect(result.isError).toBeUndefined();
+    expect(result.details.ok).toBe(false);
+    expect(result.details.problems[0].kind).toBe("missing-type");
+    expect(result.details.problems[0].path).toContain("no-type.md");
+  });
+
+  it("includes the OKF tool and guidance in the context prompt", async () => {
+    const pi = await loadOkfExtension();
+    const beforeStart = pi.events.before_agent_start?.[0];
+    expect(beforeStart).toBeDefined();
+    const out = await beforeStart?.();
+    const content = (out as { message: { content: string } }).message.content;
+    expect(content).toContain("vault_conformance_check()");
+    expect(content).toContain("Open Knowledge Format");
   });
 });

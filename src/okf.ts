@@ -1,3 +1,4 @@
+import { readFile, readdir } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
 
 /**
@@ -214,6 +215,24 @@ const DEFAULT_MAX_FILES = 10000;
 
 /** Directories that never hold OKF concepts and are always skipped. */
 const ALWAYS_EXCLUDED_DIRS = new Set([".git", "node_modules"]);
+
+/**
+ * A real-filesystem `VaultDirReader`. Shared by `piren doctor` and the
+ * `vault_conformance_check` extension tool so both walks behave identically.
+ */
+export function createRealVaultDirReader(): VaultDirReader {
+  return {
+    async list(dir: string) {
+      const entries = await readdir(dir, { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isDirectory() || entry.isFile())
+        .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }));
+    },
+    async readFile(path: string) {
+      return readFile(path, "utf8");
+    },
+  };
+}
 
 /** Expand `exclude` (a copy of ALWAYS_EXCLUDED plus caller-provided names). */
 function buildExcludeSet(extra?: string[]): Set<string> {
