@@ -371,6 +371,39 @@ section { padding: 4rem 0; }
 }
 
 /* ---- Knowledge ladder ---- */
+.okf-card {
+  max-width: 760px;
+  margin: 0 auto 2.5rem;
+  background: linear-gradient(135deg, rgba(124, 111, 240, 0.14), rgba(29, 158, 117, 0.08)), var(--bg-panel);
+  border: 1px solid rgba(124, 111, 240, 0.45);
+  border-radius: 12px;
+  padding: 1.6rem;
+}
+.okf-card .okf-label {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--orb-green);
+  margin-bottom: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.okf-card h3 {
+  color: var(--text-bright);
+  font-size: 1.15rem;
+  margin-bottom: 0.7rem;
+}
+.okf-card p {
+  color: var(--text);
+  font-size: 0.94rem;
+  margin-bottom: 0.8rem;
+}
+.okf-card p:last-child { margin-bottom: 0; }
+.okf-card code {
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  color: var(--green);
+}
 .ladder {
   max-width: 620px;
   margin: 0 auto 2.5rem;

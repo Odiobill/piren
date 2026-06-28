@@ -52,7 +52,7 @@
     <img class="hero-logo" src="assets/piren-logo-dark.svg" alt="Piren logo" style="margin-top:-1rem">
   </noscript>
   <h1 class="hero-tagline">An inspectable team of agents, grounded in a Markdown vault.</h1>
-  <p class="hero-sub">Piren does not reinvent the wheel. It starts with the right engine, Pi Coding Agent, then adds the tire local agents need: inspectable state, vault-native knowledge, explicit tools, safe gateways, and edge-device operations.</p>
+  <p class="hero-sub">Piren does not reinvent the wheel. It starts with the right engine, Pi Coding Agent, then adds the tire local agents need: inspectable state, an OKF-compliant Markdown knowledge bundle, explicit tools, safe gateways, and edge-device operations.</p>
   <div class="hero-actions">
     <a href="https://github.com/Odiobill/piren" target="_blank" rel="noopener" class="btn btn-primary">View on GitHub</a>
     <a href="#start" class="btn btn-secondary">Read the docs</a>
@@ -160,6 +160,10 @@
         <p>Scheduled work is Markdown job files with active-device ownership, atomic claiming, and inspectable run records. No central database.</p>
       </div>
       <div class="feature">
+        <h3>OKF-compliant vault</h3>
+        <p>The vault follows Open Knowledge Format v0.1: concepts carry typed frontmatter, <code>piren doctor</code> audits conformance, and other OKF-aware tools can read the bundle.</p>
+      </div>
+      <div class="feature">
         <h3>Service lifecycle</h3>
         <p>Keep transports always-on with one command. Piren generates systemd user units, with a tmux plus <code>@reboot</code> cron fallback for DietPi and stripped-down SBCs. Inspectable, reversible, no root.</p>
       </div>
@@ -220,7 +224,14 @@
 <section id="knowledge">
   <div class="container">
     <h2 class="section-title">Team knowledge that compounds</h2>
-    <p class="section-sub">Piren natively merges Karpathy's LLM-Wiki and Second Brain workflows with multi-agent task execution, so a team of agents learns and improves over time, from their own actions and each other's.</p>
+    <p class="section-sub">Piren natively merges Karpathy's LLM-Wiki and Second Brain workflows with multi-agent task execution, backed by an Open Knowledge Format v0.1 compliant vault that is portable outside Piren.</p>
+
+    <div class="okf-card">
+      <span class="okf-label">Open Knowledge Format</span>
+      <h3>A specified knowledge substrate, not just a folder convention</h3>
+      <p>Piren now treats the vault as an OKF v0.1 bundle. Concept documents carry a required non-empty <code>type:</code> frontmatter field, Piren ships a pure conformance checker, and both <code>piren doctor</code> and the read-only <code>vault_conformance_check()</code> tool can audit drift without blocking work.</p>
+      <p>That matters because your agents' memory is no longer trapped in an app-specific database. It is plain Markdown, typed, linked, inspectable in Obsidian, cloneable with Git, and consumable by any future OKF-aware tool.</p>
+    </div>
 
     <div class="ladder">
       <div class="ladder-step"><span class="ladder-layer">raw session</span><span class="ladder-desc">A task or session leaves an evidence trace, not silent memory.</span></div>
