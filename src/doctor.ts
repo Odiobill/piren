@@ -6,6 +6,7 @@ import { parse as parseYaml } from "yaml";
 import { defaultPiCommandResolver } from "./run.js";
 import { type BootstrapOptions, type LocalPirenConfig, type TelegramLocalConfig, type DiscordLocalConfig, type ServicesLocalConfig, resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
+import { checkVaultConformance, type VaultConformanceResult, type VaultDirReader } from "./okf.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -29,6 +30,7 @@ export interface DoctorReport {
 export interface DoctorPirenOptions extends BootstrapOptions {
   packageResolver?: PackageEntryResolver | undefined;
   piRuntimeChecker?: PiRuntimeChecker | undefined;
+  vaultDirReader?: VaultDirReader | undefined;
 }
 
 export interface PiRuntimeCheck {
@@ -304,6 +306,75 @@ function execFileText(command: string, args: string[]): Promise<string> {
   });
 }
 
+/**
+ * A real-filesystem adapter implementing the `VaultDirReader` interface used by
+ * the OKF conformance walker. Production doctor uses this; tests inject a fake
+ * reader via `DoctorPirenOptions.vaultDirReader`.
+ */
+function createRealVaultDirReader(): VaultDirReader {
+  return {
+    async list(dir: string) {
+      const entries = await readdir(dir, { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isDirectory() || entry.isFile())
+        .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }));
+    },
+    async readFile(path: string) {
+      return readFile(path, "utf8");
+    },
+  };
+}
+
+/**
+ * Run OKF v0.1 conformance over the vault and return a `DoctorCheck`.
+ *
+ * OKF conformance is a WARNING, never a hard fail: a vault with entropy is not
+ * broken, it is drifting from the specified format. The check summarizes how
+ * many concept documents were checked and lists up to a handful of problem
+ * paths so the steward can fix the worst offenders without an overwhelming dump.
+ */
+export async function checkVaultOkfConformance(
+  vaultRoot: string,
+  options: { vaultDirReader?: VaultDirReader; exclude?: string[] } = {},
+): Promise<DoctorCheck> {
+  const reader = options.vaultDirReader ?? createRealVaultDirReader();
+  const conformanceOptions: { root: string; reader: VaultDirReader; exclude?: string[] } = {
+    root: vaultRoot,
+    reader,
+  };
+  if (options.exclude !== undefined) conformanceOptions.exclude = options.exclude;
+  let result: VaultConformanceResult;
+  try {
+    result = await checkVaultConformance(conformanceOptions);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { id: "vault-okf-conformance", status: "warn", message: `OKF conformance check failed: ${message}` };
+  }
+
+  if (result.ok) {
+    const truncatedNote = result.truncated ? ` (truncated at ${result.checked})` : "";
+    return {
+      id: "vault-okf-conformance",
+      status: "ok",
+      message: `Vault is OKF v0.1 conformant. Checked ${result.checked} concept document(s)${truncatedNote}.`,
+    };
+  }
+
+  const shown = result.problems.slice(0, 5);
+  const shownPaths = shown
+    .map((p) => {
+      const detail = p.detail !== undefined ? ` (${p.detail})` : "";
+      return `${p.kind}: ${p.path}${detail}`;
+    })
+    .join("; ");
+  const more = result.problems.length > shown.length ? `; +${result.problems.length - shown.length} more` : "";
+  return {
+    id: "vault-okf-conformance",
+    status: "warn",
+    message: `OKF conformance problems in ${result.problems.length} of ${result.checked} concept document(s): ${shownPaths}${more}. Run 'piren doctor' or the vault_conformance_check tool for the full list.`,
+  };
+}
+
 export async function defaultPiRuntimeChecker(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): Promise<PiRuntimeCheck> {
   try {
     const target = await defaultPiCommandResolver(env);
@@ -381,6 +452,9 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
     checks.push(await checkRequiredPaths("agent-files", agentDir, ["SOUL.md", "MEMORY.md", "config.yml", "inbox", "outbox", "logs", "sessions"]));
     const staleCheck = await checkStaleAllowed(allowedAgents, vaultRoot);
     if (staleCheck) checks.push(staleCheck);
+    const okfReaderOptions: { vaultDirReader?: VaultDirReader } = {};
+    if (options.vaultDirReader !== undefined) okfReaderOptions.vaultDirReader = options.vaultDirReader;
+    checks.push(await checkVaultOkfConformance(vaultRoot, okfReaderOptions));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     checks.push({ id: "vault-layout", status: "fail", message });
