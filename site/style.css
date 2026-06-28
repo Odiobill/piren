@@ -181,6 +181,15 @@ nav {
 .install-line .prompt { color: var(--accent); }
 .install-line code { color: var(--green); }
 
+/* ---- Hero audience subtitle ---- */
+.hero-audience {
+  font-size: 1.05rem;
+  color: var(--orb-green);
+  max-width: 620px;
+  margin: 0 auto 1rem;
+  font-weight: 500;
+}
+
 /* ---- Section scaffolding ---- */
 section { padding: 4rem 0; }
 .section-title {
@@ -198,6 +207,41 @@ section { padding: 4rem 0; }
   margin: 0 auto 2.75rem;
   font-size: 1rem;
 }
+
+/* ---- Origin story ---- */
+.origin-story {
+  max-width: 680px;
+  margin: 0 auto;
+  background: linear-gradient(135deg, rgba(124, 111, 240, 0.10), rgba(29, 158, 117, 0.06));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.8rem 2rem;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--text);
+}
+.origin-story p { margin-bottom: 1rem; }
+.origin-story p:last-child {
+  margin-bottom: 0;
+  color: var(--text-bright);
+  font-weight: 500;
+}
+
+/* ---- Callout boxes ---- */
+.callout {
+  max-width: 720px;
+  margin: 2.5rem auto 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--orb-green);
+  border-radius: 8px;
+  padding: 1.2rem 1.5rem;
+  font-size: 0.92rem;
+  color: var(--text);
+  line-height: 1.6;
+}
+.callout p { margin: 0; }
+.callout strong { color: var(--text-bright); font-weight: 600; }
 
 /* ---- Philosophy pillars ---- */
 .pillars {
@@ -504,7 +548,7 @@ footer .footer-links {
 /* ---- Responsive ---- */
 @media (max-width: 640px) {
   .nav-links { gap: 1.1rem; }
-  .nav-links a:nth-child(n+3) { display: none; }
+  .nav-links a:nth-child(-n+6) { display: none; }
   .hero { padding: 3.5rem 1rem 2.5rem; }
   section { padding: 3rem 0; }
   .install-line { font-size: 0.78rem; }

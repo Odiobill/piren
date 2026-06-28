@@ -18,6 +18,7 @@
   <div class="nav-inner">
     <a href="." class="nav-brand">Piren</a>
     <div class="nav-links">
+      <a href="#origin">Origin</a>
       <a href="#philosophy">Philosophy</a>
       <a href="#portability">Portability</a>
       <a href="#features">Features</a>
@@ -51,8 +52,9 @@
   <noscript>
     <img class="hero-logo" src="assets/piren-logo-dark.svg" alt="Piren logo" style="margin-top:-1rem">
   </noscript>
-  <h1 class="hero-tagline">An inspectable team of agents, grounded in a Markdown vault.</h1>
-  <p class="hero-sub">Piren does not reinvent the wheel. It starts with the right engine, Pi Coding Agent, then adds the tire local agents need: inspectable state, an OKF-compliant Markdown knowledge bundle, explicit tools, safe gateways, and edge-device operations.</p>
+  <h1 class="hero-tagline">A lightweight runtime for a team of local agents you actually understand.</h1>
+  <p class="hero-audience">Built for developers and homelab enthusiasts who want full control over a local fleet of agents, without hidden state or heavyweight frameworks.</p>
+  <p class="hero-sub">Piren starts with Pi Coding Agent and adds what a multi-device fleet needs: inspectable state, explicit tools, safe gateways, and edge-device operations. All grounded in a Markdown vault you can read and debug.</p>
   <div class="hero-actions">
     <a href="https://github.com/Odiobill/piren" target="_blank" rel="noopener" class="btn btn-primary">View on GitHub</a>
     <a href="#start" class="btn btn-secondary">Read the docs</a>
@@ -61,6 +63,17 @@
     <span class="prompt">$</span> <code>npm install -g --install-links github:Odiobill/piren</code>
   </div>
 </header>
+
+<section id="origin">
+  <div class="container">
+    <h2 class="section-title">Why Piren exists</h2>
+    <div class="origin-story">
+      <p>A few months ago I was running ten agents across three devices using Hermes Agent. When I tried to get agents on different machines to collaborate, sharing a Kanban board and picking up each other's tasks, things broke in ways Hermes was never designed to handle.</p>
+      <p>What I needed was not a more powerful framework. I needed something lighter: explicit task hand-off, shared state that lives in a file system I can read and debug, and a runtime small enough to run on a Raspberry Pi. I needed to be in charge, not the framework.</p>
+      <p>That is what Piren is. A vault-native runtime for a stewarded team of agents, built from the bottom up so you only carry the complexity you actually need.</p>
+    </div>
+  </div>
+</section>
 
 <section id="philosophy">
   <div class="container">
@@ -87,6 +100,9 @@
         <h3>Edge-friendly</h3>
         <p>Lightweight enough for a Raspberry Pi or UDOO X86. Transparency and debuggability over maximal framework surface area.</p>
       </div>
+    </div>
+    <div class="callout">
+      <p><strong>Lower token cost in practice.</strong> Heavier frameworks load agent personas, tool definitions, and persistent context into every request. Piren keeps startup context lean and loads only what the current task needs: skills on demand, vault reads as explicit tool calls. The context stays small because you control what enters it.</p>
     </div>
   </div>
 </section>
@@ -313,6 +329,9 @@ vault/
 &nbsp;&nbsp;<span class="a-arrow">→</span> <span class="a-pi">Pi Coding Agent process</span> (normal or RPC mode)<br>
 &nbsp;&nbsp;<span class="a-arrow">→</span> <span class="a-piren">Piren Pi extension</span><br>
 &nbsp;&nbsp;<span class="a-arrow">→</span> <span class="a-vault">Markdown vault — the source of truth</span>
+    </div>
+    <div class="callout" style="margin-top:1.5rem;">
+      <p><strong>Pi dependency, vault portability.</strong> Piren is built on Pi Coding Agent and tracks its public API surface. The vault is the stable layer: plain Markdown, Git-cloneable, readable without Piren. If the underlying engine changes, your agent state, knowledge, and task history remain intact and portable.</p>
     </div>
   </div>
 </section>
