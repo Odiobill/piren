@@ -145,6 +145,8 @@ describe("Phase 4 knowledge lifecycle: decision_record", () => {
     expect(content).toContain("Agents can promote task lessons into project logs and ADRs.");
     expect(content).toContain("## Alternatives");
     expect(content).toContain("Rely on ad-hoc vault_write for all artifacts.");
+    // OKF v0.1 (ADR-0022): ADR documents carry a required non-empty type field.
+    expect(content).toContain("type: ADR");
   });
 
   it("writes an ADR without optional consequences and alternatives sections", async () => {
