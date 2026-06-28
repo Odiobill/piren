@@ -65,6 +65,10 @@ Cron:
 - `cron_record_run(job_path, status, result, started_at, finished_at)`
 - `cron_runs(job_id?)`
 
+OKF conformance (see [OKF](okf.md)):
+
+- `vault_conformance_check()`
+
 ## HTTP routes
 
 Auth:

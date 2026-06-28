@@ -114,6 +114,7 @@ function renderAdr(options) {
     const lines = [
         "---",
         `title: "${heading}"`,
+        "type: ADR",
         `created: ${options.created.slice(0, 10)}`,
         "updated: " + options.created.slice(0, 10),
         "tags: [piren, adr, decision]",

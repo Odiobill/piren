@@ -58,6 +58,7 @@ piren status
 - Service lifecycle: systemd user units with tmux plus `@reboot` cron fallback for gateway, Telegram, and Discord transports. Inspectable, reversible files under `~/.config/piren/services/`.
 - Interactive setup wizard: `piren setup` (no flags) guides vault, LLM provider key, and local config; `--help` on every command.
 - Inspectable self-improvement: agents can update handoffs, runbooks, ADRs, project logs, and skill candidates as visible vault artifacts.
+- Open Knowledge Format (OKF v0.1): the vault is a specified knowledge bundle. `piren doctor` and the `vault_conformance_check` tool enforce a required non-empty `type` frontmatter field on concept documents.
 
 ## Architecture sketch
 
@@ -85,6 +86,7 @@ Online landing page: **https://piren.org/**
 - [OpenAI-compatible API](docs/openai-api.md)
 - [Skills](docs/skills.md)
 - [Knowledge lifecycle](docs/knowledge-lifecycle.md)
+- [Open Knowledge Format (OKF)](docs/okf.md)
 - [Cron jobs](docs/cron.md)
 - [Operations](docs/operations.md)
 - [Service management](docs/service-management.md)
@@ -98,7 +100,7 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren 0.1.0-rc.1 is the first release candidate. Phase 3 gateway surfaces are implemented: minimal web UI, Telegram, Discord with default-on feedback, and OpenAI-compatible chat completions. Phase 4 RC features implemented so far include Pi package extensibility, lazy vault skills, knowledge lifecycle tools, inspectable self-improvement tools, and vault-backed cron.
 
-Current verification baseline: 63 test files, 466 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` passing.
+Current verification baseline: 69 test files, 540 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` passing.
 
 Known limitations:
 

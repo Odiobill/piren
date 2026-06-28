@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  67 passed (67)
-Tests       510 passed (510)
+Test Files  69 passed (69)
+Tests       540 passed (540)
 SMOKE PASSED
 ```
 
@@ -253,6 +253,7 @@ Implemented extension tools:
 - `cron_claim(job_path, device_id?, stale_after_ms?)`
 - `cron_record_run(job_path, status, result, started_at, finished_at)`
 - `cron_runs(job_id?)`
+- `vault_conformance_check()`
 
 Vault skills (ADR-0014 + ADR-0017, implemented):
 - `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName)` and `formatSkillCatalogForContext(skills)`. Skills are loaded from `vault/skills/` (shared) and `team/<agent>/skills/` (agent-specific, overrides shared on name collision). Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
@@ -294,6 +295,13 @@ Service lifecycle management (ADR-0021, implemented):
 - `src/doctor.ts` gained an opt-in `checkServiceConfig(config)` that reports a `services` check only when a `services.transports` block is present, warning on declared-but-not-installed or installed-but-not-running transports. `ServicesLocalConfig` and `ServiceStatusEntry` added to `src/bootstrap.ts`.
 - The CLI wires: `piren -h|--help` and `piren <cmd> --help`; `piren setup` interactive when bare in a TTY (explicit `process.exit(0)` after the wizard to avoid an unsettled top-level await from the readline interface); `piren service <action> <transport>` with real `systemctl --user`/`tmux`/`crontab` detection probes, best-effort service-status writeback to config.yml after install/remove (only when files were generated, i.e. manager is not `none`).
 - Tests: `tests/service-lifecycle.test.ts` (22), `tests/service-lifecycle-exec.test.ts` (7), `tests/service-status-yaml.test.ts` (5), `tests/help.test.ts` (12), `tests/wizard.test.ts` (16), `tests/wizard-models.test.ts` (10), `tests/wizard-agent-config.test.ts` (4), `tests/wizard-transport-config.test.ts` (5), `tests/wizard-run.test.ts` (7), `tests/doctor-service.test.ts` (7), plus parser help tests.
+
+Open Knowledge Format conformance (ADR-0022, implemented):
+- `src/okf.ts` is the pure OKF v0.1 conformance core, callable directly from tests without Pi auth or a real filesystem. It exports `parseOkfFrontmatter(src)` (splits frontmatter/body, flags unterminated blocks and malformed YAML), `checkOkfConceptDocument(path, src)` (enforces the single hard delta, a required non-empty `type` field; tolerates unknown types per OKF 4.1), `PIREN_OKF_TYPES` (descriptive taxonomy: Concept, Entity, Runbook, ADR, Skill, Project Index, Project Log, Session Summary, Task, Cron Job, Cron Run), the filename predicates `isOkfReservedFilename` / `isOkfSystemFilename` / `isOkfConceptFilename` / `isClaimedFilename`, `checkVaultConformance({root, reader, exclude?, maxFiles?})` (a tree walk over an injected `VaultDirReader` that skips dotfiles, reserved filenames, system files, claimed coordination files, and excluded dirs), `createRealVaultDirReader()` (the shared real-fs adapter used by both doctor and the extension tool), and `formatVaultConformanceReport(result)`.
+- `src/doctor.ts` gained `checkVaultOkfConformance(vaultRoot, {vaultDirReader?, exclude?})`, wired into `doctorPiren` as a `vault-okf-conformance` WARNING check (never a hard fail). `DoctorPirenOptions` gained `vaultDirReader` for test injection.
+- `src/pi-extension.ts` registers the read-only `vault_conformance_check()` extension tool and adds an "Open Knowledge Format (ADR-0022)" section to the startup context prompt.
+- `src/knowledge.ts` ADR renderer now emits `type: ADR` so `decision_record` output is OKF-conformant. Runbook and skill-candidate renderers already carried a non-empty type.
+- Tests: `tests/okf.test.ts` (23), `tests/doctor-okf.test.ts` (4), plus 3 new in `tests/pi-extension.test.ts` and 1 in `tests/knowledge.test.ts`.
 
 ## Common pitfalls
 
