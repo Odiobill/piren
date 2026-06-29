@@ -19,6 +19,10 @@ export interface SetupReport {
 export interface SetupPirenOptions extends BootstrapOptions {
     piHome?: string | undefined;
     apply?: boolean | undefined;
+    provider?: string | undefined;
+    model?: string | undefined;
+    thinking?: string | undefined;
+    apiKey?: string | undefined;
 }
 export declare function setupPiren(options?: SetupPirenOptions): Promise<SetupReport>;
 export declare function formatSetupReport(report: SetupReport): string;

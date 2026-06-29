@@ -87,6 +87,30 @@ describe("parseArgs: preserved behavior", () => {
     expect(result.positionals).toEqual(["hi"]);
   });
 
+  it("parses equals-form global flags like --agent=thor", () => {
+    const result = parseArgs(["status", "--vault-root=/tmp/vault", "--agent=thor"]);
+    expect(result.command).toBe("status");
+    expect(result.vaultRoot).toBe("/tmp/vault");
+    expect(result.agentName).toBe("thor");
+  });
+
+  it("parses equals-form command flags used by setup --apply", () => {
+    const result = parseArgs([
+      "setup",
+      "--apply",
+      "--provider=deepseek",
+      "--model=deepseek-v4-flash",
+      "--thinking=minimal",
+      "--api-key=sk-test",
+    ]);
+    expect(result.command).toBe("setup");
+    expect(result.apply).toBe(true);
+    expect(result.provider).toBe("deepseek");
+    expect(result.model).toBe("deepseek-v4-flash");
+    expect(result.thinking).toBe("minimal");
+    expect(result.apiKey).toBe("sk-test");
+  });
+
   it("preserves -- passthrough after the command", () => {
     const result = parseArgs(["run", "--", "--print", "hello"]);
     expect(result.command).toBe("run");

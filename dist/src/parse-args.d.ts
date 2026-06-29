@@ -29,6 +29,10 @@ export interface ParsedArgs {
     port: number | undefined;
     host: string | undefined;
     token: string | undefined;
+    provider: string | undefined;
+    model: string | undefined;
+    thinking: string | undefined;
+    apiKey: string | undefined;
     command: string;
     positionals: string[];
     piArgs: string[];

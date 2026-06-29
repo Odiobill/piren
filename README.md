@@ -25,6 +25,8 @@ piren setup --apply --vault-root /tmp/piren-vault --agent piren
 piren --vault-root /tmp/piren-vault --agent piren status
 ```
 
+For one-command model provisioning, add `--provider`, `--model`, optional `--thinking`, and optional `--api-key` to `setup --apply`; the key is merged into Pi's native `~/.pi/agent/auth.json`.
+
 Start an interactive Pi-backed Piren agent:
 
 ```bash
@@ -100,7 +102,7 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren 0.1.0-rc.1 is the first release candidate. Phase 3 gateway surfaces are implemented: minimal web UI, Telegram, Discord with default-on feedback, and OpenAI-compatible chat completions. Phase 4 RC features implemented so far include Pi package extensibility, lazy vault skills, knowledge lifecycle tools, inspectable self-improvement tools, and vault-backed cron.
 
-Current verification baseline: 69 test files, 540 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` passing.
+Current verification baseline: 69 test files, 544 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` passing.
 
 Known limitations:
 

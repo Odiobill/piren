@@ -1,4 +1,4 @@
-import { access, mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readdir, rm, writeFile, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -121,11 +121,51 @@ describe("Piren setup onboarding", () => {
       expect.objectContaining({ id: "agent-local-config", status: "ok" }),
     ]));
 
-    // Agent-local config must exist and contain model preferences
-    const { readFile } = await import("node:fs/promises");
+    // Agent-local config must exist and be explicit that no model was selected.
     const written = await readFile(join(agentDir, "config.yml"), "utf8");
-    expect(written).toContain("model:");
-    expect(written).toContain("id:");
+    expect(written).not.toContain("model: {}");
+    expect(written).toContain("No model is configured yet");
+    expect(written).toContain("poll_interval_active_seconds");
+  });
+
+  it("setup --apply writes requested provider, model, thinking, and Pi auth", async () => {
+    const vault = join(root, "vault");
+    const agentDir = join(vault, "team", "deep");
+    const configPath = join(root, "config.yml");
+    const piHome = join(root, "pi-home");
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(piHome, { recursive: true });
+    await writeFile(join(piHome, "settings.json"), "{}");
+    await writeFile(join(piHome, "auth.json"), JSON.stringify({ anthropic: { type: "api_key", key: "old" } }, null, 2));
+
+    const report = await setupPiren({
+      configPath,
+      cliVaultRoot: vault,
+      cliAgent: "deep",
+      piHome,
+      apply: true,
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      thinking: "minimal",
+      apiKey: "sk-deep",
+    });
+
+    expect(report.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "local-config", status: "ok" }),
+      expect.objectContaining({ id: "agent-local-config", status: "ok" }),
+      expect.objectContaining({ id: "pi-auth", status: "ok" }),
+    ]));
+
+    const agentConfig = await readFile(join(agentDir, "config.yml"), "utf8");
+    expect(agentConfig).toContain("model:");
+    expect(agentConfig).toContain("id: deepseek/deepseek-v4-flash");
+    expect(agentConfig).toContain("thinking: minimal");
+
+    const auth = JSON.parse(await readFile(join(piHome, "auth.json"), "utf8"));
+    expect(auth.anthropic.key).toBe("old");
+    expect(auth.deepseek).toEqual({ type: "api_key", key: "sk-deep" });
+    const mode = (await stat(join(piHome, "auth.json"))).mode & 0o777;
+    expect(mode).toBe(0o600);
   });
 
   it("does not overwrite existing agent-local config when apply is requested", async () => {

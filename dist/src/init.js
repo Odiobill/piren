@@ -5,6 +5,21 @@ async function writeNewFile(path, content, force, created) {
     await writeFile(path, content, { encoding: "utf8", flag: force ? "w" : "wx" });
     created.push(path);
 }
+function defaultAgentConfigContent() {
+    return [
+        "# Agent-local Piren preferences.",
+        "# Installation authority lives in ~/.config/piren/config.yml, not here.",
+        "# No model is configured yet. Add a model block here or run setup --apply with --provider and --model.",
+        "# Example:",
+        "# model:",
+        "#   id: anthropic/claude-sonnet-4-6",
+        "#   thinking: medium",
+        "# Polling is used by `piren worker` only. Interactive `piren run` does not auto-poll inboxes.",
+        "poll_interval_active_seconds: 60",
+        "poll_interval_idle_seconds: 300",
+        "",
+    ].join("\n");
+}
 function titleCaseAgentName(agentName) {
     return agentName
         .split("-")
@@ -54,14 +69,7 @@ export async function initVault(options) {
             "",
         ].join("\n"), force, created);
         await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
-        await writeNewFile(join(agentDir, "config.yml"), [
-            "# Agent-local Piren preferences.",
-            "# Installation authority lives in ~/.config/piren/config.yml, not here.",
-            "model: {}",
-            "poll_interval_active_seconds: 60",
-            "poll_interval_idle_seconds: 300",
-            "",
-        ].join("\n"), force, created);
+        await writeNewFile(join(agentDir, "config.yml"), defaultAgentConfigContent(), force, created);
     }
     catch (error) {
         if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
@@ -104,14 +112,7 @@ export async function scaffoldAgentDirectory(options) {
         "",
     ].join("\n"), force, created);
     await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
-    await writeNewFile(join(agentDir, "config.yml"), [
-        "# Agent-local Piren preferences.",
-        "# Installation authority lives in ~/.config/piren/config.yml, not here.",
-        "model: {}",
-        "poll_interval_active_seconds: 60",
-        "poll_interval_idle_seconds: 300",
-        "",
-    ].join("\n"), force, created);
+    await writeNewFile(join(agentDir, "config.yml"), defaultAgentConfigContent(), force, created);
     return { vaultRoot, agentName, agentDir, created };
 }
 //# sourceMappingURL=init.js.map

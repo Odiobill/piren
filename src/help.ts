@@ -32,8 +32,8 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
   {
     command: "setup",
     short: "Interactive setup wizard, or batch scaffold with --apply.",
-    flags: ["--apply", "--vault-root <path>", "--agent <name>"],
-    example: "piren setup --apply --vault-root /tmp/piren-vault --agent piren",
+    flags: ["--apply", "--vault-root <path>", "--agent <name>", "--provider <id>", "--model <id>", "--thinking <level>", "--api-key <key>"],
+    example: "piren setup --apply --vault-root /tmp/piren-vault --agent piren --provider anthropic --model claude-sonnet-4-6 --thinking medium",
   },
   {
     command: "agents",

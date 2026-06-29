@@ -8,7 +8,7 @@ This reference lists Piren's user-facing CLI, Pi extension tools, and HTTP route
 - `piren status`
 - `piren agents`
 - `piren doctor`
-- `piren setup [--apply] [--vault-root <path>] [--agent <name>]`
+- `piren setup [--apply] [--vault-root <path>] [--agent <name>] [--provider <id>] [--model <id>] [--thinking <level>] [--api-key <key>]`
 - `piren run`
 - `piren chat`, alias for `run`
 - `piren worker`
@@ -18,7 +18,7 @@ This reference lists Piren's user-facing CLI, Pi extension tools, and HTTP route
 - `piren ask "message"`
 - `piren clean [--force]`
 
-Global options include `--vault-root`, `--agent`, `-a`, and `--agent-dir`.
+Global options include `--vault-root`, `--agent`, `-a`, and `--agent-dir`. Long options accept either `--flag value` or `--flag=value`.
 
 ## Extension command
 

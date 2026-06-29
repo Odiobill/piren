@@ -37,6 +37,7 @@ Preferred selection methods:
 ```bash
 piren --agent piren status
 piren -a piren status
+piren --agent=piren status
 PIREN_AGENT=piren piren status
 ```
 
@@ -92,6 +93,22 @@ models:
 ```
 
 Piren translates this to Pi-native `--model` and `--models` flags. Provider credentials and custom providers remain in Pi's native config under `~/.pi/agent/`.
+
+Freshly scaffolded agent configs intentionally do not contain `model: {}`. They include comments explaining that no model is configured yet, plus the worker-only polling defaults. If no model block is present, Piren does not pass `--model` and Pi falls back to its native defaults.
+
+For non-interactive provisioning, `setup --apply` can write both Pi-native auth and the agent-local model preference:
+
+```bash
+piren setup --apply \
+  --vault-root /tmp/piren-vault \
+  --agent piren \
+  --provider anthropic \
+  --model claude-sonnet-4-6 \
+  --thinking medium \
+  --api-key sk-...
+```
+
+`--api-key` merges into `~/.pi/agent/auth.json` and preserves existing provider entries. If `--provider` and `--model` are supplied, Piren writes `team/<agent>/config.yml` with a concrete `model:` block. Omit `--api-key` when credentials are already available through Pi-native auth or provider environment variables.
 
 ## Package extensions
 

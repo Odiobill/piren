@@ -7,7 +7,7 @@ This guide gets Piren running from source with a disposable vault.
 - Linux or macOS.
 - Node.js 22 or newer. Discord transport uses native `WebSocket`.
 - npm.
-- Pi Coding Agent credentials configured separately if you want real model calls. Piren does not manage provider auth.
+- Pi Coding Agent credentials configured separately if you want real model calls, or provide `--provider` plus `--api-key` to `piren setup --apply`.
 
 ## Install Piren
 
@@ -49,7 +49,19 @@ You can scaffold it safely:
 piren setup --apply --vault-root /tmp/piren-vault --agent piren
 ```
 
-`setup --apply` does not overwrite existing config values. Running `piren setup`
+To configure the first model and provider key in the same non-interactive step:
+
+```bash
+piren setup --apply \
+  --vault-root /tmp/piren-vault \
+  --agent piren \
+  --provider anthropic \
+  --model claude-sonnet-4-6 \
+  --thinking medium \
+  --api-key sk-...
+```
+
+`setup --apply` does not overwrite existing local installation config values. When `--provider` and `--model` are supplied it writes the selected agent's model block; otherwise a fresh agent config is left without a model so Pi can use native defaults. Running `piren setup`
 with no flags is a dry-run health check, or, when connected to a terminal,
 launches an interactive wizard. The wizard:
 

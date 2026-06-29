@@ -31,6 +31,25 @@ describe("init: scaffoldAgentDirectory", () => {
       // The SOUL title is derived from the name.
       const soul = await readFile(join(vault, "team", "thor", "SOUL.md"), "utf8");
       expect(soul).toContain("# Thor");
+
+      const config = await readFile(join(vault, "team", "thor", "config.yml"), "utf8");
+      expect(config).not.toContain("model: {}");
+      expect(config).toContain("No model is configured yet");
+      expect(config).toContain("used by `piren worker`");
+    } finally {
+      await rm(vault, { recursive: true, force: true });
+    }
+  });
+
+  it("initializes the first agent with explanatory empty config comments", async () => {
+    const vault = await mkdtemp(join(tmpdir(), "piren-init-config-"));
+    try {
+      await initVault({ vaultRoot: vault, agentName: "piren" });
+      const config = await readFile(join(vault, "team", "piren", "config.yml"), "utf8");
+      expect(config).not.toContain("model: {}");
+      expect(config).toContain("No model is configured yet");
+      expect(config).toContain("poll_interval_active_seconds");
+      expect(config).toContain("used by `piren worker`");
     } finally {
       await rm(vault, { recursive: true, force: true });
     }

@@ -287,7 +287,15 @@ try {
       // top-level await. The wizard is done, so exit cleanly.
       process.exit(0);
     } else {
-      const report = await setupPiren({ ...bootstrapOptions(parsed), apply: parsed.apply });
+      const setupOptions = {
+        ...bootstrapOptions(parsed),
+        apply: parsed.apply,
+        ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
+        ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+        ...(parsed.thinking !== undefined ? { thinking: parsed.thinking } : {}),
+        ...(parsed.apiKey !== undefined ? { apiKey: parsed.apiKey } : {}),
+      };
+      const report = await setupPiren(setupOptions);
       console.log(formatSetupReport(report));
       if (report.checks.some((check) => check.status === "fail")) process.exit(1);
     }

@@ -37,6 +37,10 @@ export function parseArgs(argv) {
     let port;
     let host;
     let token;
+    let provider;
+    let model;
+    let thinking;
+    let apiKey;
     let command = "status";
     let positionals = [];
     const passthroughIndex = argv.indexOf("--");
@@ -45,17 +49,42 @@ export function parseArgs(argv) {
     let commandFound = false;
     for (let index = 0; index < pirenArgs.length; index += 1) {
         const arg = pirenArgs[index];
-        if (arg === "--agent-dir") {
-            agentDir = pirenArgs[index + 1];
-            index += 1;
+        const readFlagValue = (name) => {
+            const equalsPrefix = `${name}=`;
+            if (arg === name) {
+                index += 1;
+                return pirenArgs[index];
+            }
+            if (arg?.startsWith(equalsPrefix))
+                return arg.slice(equalsPrefix.length);
+            return undefined;
+        };
+        const readAnyFlagValue = (names) => {
+            for (const name of names) {
+                const value = readFlagValue(name);
+                if (value !== undefined)
+                    return value;
+            }
+            return undefined;
+        };
+        const agentDirValue = readFlagValue("--agent-dir");
+        const vaultRootValue = agentDirValue === undefined ? readAnyFlagValue(["--vault-root", "--root"]) : undefined;
+        const agentValue = agentDirValue === undefined && vaultRootValue === undefined ? readAnyFlagValue(["--agent", "-a"]) : undefined;
+        const portValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined ? readFlagValue("--port") : undefined;
+        const hostValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined ? readFlagValue("--host") : undefined;
+        const tokenValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined ? readFlagValue("--token") : undefined;
+        const providerValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined ? readFlagValue("--provider") : undefined;
+        const modelValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined ? readFlagValue("--model") : undefined;
+        const thinkingValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined ? readFlagValue("--thinking") : undefined;
+        const apiKeyValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined && thinkingValue === undefined ? readFlagValue("--api-key") : undefined;
+        if (agentDirValue !== undefined) {
+            agentDir = agentDirValue;
         }
-        else if (arg === "--vault-root" || arg === "--root") {
-            vaultRoot = pirenArgs[index + 1];
-            index += 1;
+        else if (vaultRootValue !== undefined) {
+            vaultRoot = vaultRootValue;
         }
-        else if (arg === "--agent" || arg === "-a") {
-            agentName = pirenArgs[index + 1];
-            index += 1;
+        else if (agentValue !== undefined) {
+            agentName = agentValue;
         }
         else if (arg === "--force") {
             force = true;
@@ -69,17 +98,26 @@ export function parseArgs(argv) {
         else if (arg === "-h" || arg === "--help") {
             help = true;
         }
-        else if (arg === "--port") {
-            port = Number(pirenArgs[index + 1]);
-            index += 1;
+        else if (portValue !== undefined) {
+            port = Number(portValue);
         }
-        else if (arg === "--host") {
-            host = pirenArgs[index + 1];
-            index += 1;
+        else if (hostValue !== undefined) {
+            host = hostValue;
         }
-        else if (arg === "--token") {
-            token = pirenArgs[index + 1];
-            index += 1;
+        else if (tokenValue !== undefined) {
+            token = tokenValue;
+        }
+        else if (providerValue !== undefined) {
+            provider = providerValue;
+        }
+        else if (modelValue !== undefined) {
+            model = modelValue;
+        }
+        else if (thinkingValue !== undefined) {
+            thinking = thinkingValue;
+        }
+        else if (apiKeyValue !== undefined) {
+            apiKey = apiKeyValue;
         }
         else if (arg && !arg.startsWith("-")) {
             // First non-flag token is the command. After the command, every further
@@ -111,6 +149,10 @@ export function parseArgs(argv) {
         port,
         host,
         token,
+        provider,
+        model,
+        thinking,
+        apiKey,
         positionals,
     };
 }

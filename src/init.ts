@@ -21,6 +21,22 @@ async function writeNewFile(path: string, content: string, force: boolean, creat
   created.push(path);
 }
 
+function defaultAgentConfigContent(): string {
+  return [
+    "# Agent-local Piren preferences.",
+    "# Installation authority lives in ~/.config/piren/config.yml, not here.",
+    "# No model is configured yet. Add a model block here or run setup --apply with --provider and --model.",
+    "# Example:",
+    "# model:",
+    "#   id: anthropic/claude-sonnet-4-6",
+    "#   thinking: medium",
+    "# Polling is used by `piren worker` only. Interactive `piren run` does not auto-poll inboxes.",
+    "poll_interval_active_seconds: 60",
+    "poll_interval_idle_seconds: 300",
+    "",
+  ].join("\n");
+}
+
 function titleCaseAgentName(agentName: string): string {
   return agentName
     .split("-")
@@ -87,14 +103,7 @@ export async function initVault(options: InitVaultOptions): Promise<InitVaultRes
     await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
     await writeNewFile(
       join(agentDir, "config.yml"),
-      [
-        "# Agent-local Piren preferences.",
-        "# Installation authority lives in ~/.config/piren/config.yml, not here.",
-        "model: {}",
-        "poll_interval_active_seconds: 60",
-        "poll_interval_idle_seconds: 300",
-        "",
-      ].join("\n"),
+      defaultAgentConfigContent(),
       force,
       created,
     );
@@ -145,14 +154,7 @@ export async function scaffoldAgentDirectory(options: InitVaultOptions): Promise
     "",
   ].join("\n"), force, created);
   await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
-  await writeNewFile(join(agentDir, "config.yml"), [
-    "# Agent-local Piren preferences.",
-    "# Installation authority lives in ~/.config/piren/config.yml, not here.",
-    "model: {}",
-    "poll_interval_active_seconds: 60",
-    "poll_interval_idle_seconds: 300",
-    "",
-  ].join("\n"), force, created);
+  await writeNewFile(join(agentDir, "config.yml"), defaultAgentConfigContent(), force, created);
 
   return { vaultRoot, agentName, agentDir, created };
 }

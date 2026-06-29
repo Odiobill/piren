@@ -11,7 +11,7 @@ npm run build
 npm run smoke
 ```
 
-Current expected baseline: 69 test files, 540 tests, typecheck/build/smoke passing.
+Current expected baseline: 69 test files, 544 tests, typecheck/build/smoke passing.
 
 ## Clean install checklist
 
@@ -34,6 +34,7 @@ Example from a global install:
 npm install -g --install-links github:Odiobill/piren
 piren init --vault-root /tmp/piren-vault
 piren setup --apply --vault-root /tmp/piren-vault --agent piren
+piren setup --apply --vault-root /tmp/piren-vault --agent piren --provider anthropic --model claude-sonnet-4-6 --thinking medium
 piren doctor
 piren status
 ```
