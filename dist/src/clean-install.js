@@ -52,13 +52,9 @@ export function assessCleanInstall(probe) {
         runtimeStatus = "ok";
         runtimeMessage = `Pi binary resolved on PATH${probe.piRuntimeVersion ? ` version ${probe.piRuntimeVersion}` : ""}.`;
     }
-    else if (probe.piRuntimeSource === "npx-latest") {
-        runtimeStatus = "ok";
-        runtimeMessage = "No local pi on PATH; Piren will use npx --yes -p @earendil-works/pi-coding-agent@latest pi.";
-    }
     else {
-        runtimeStatus = "warn";
-        runtimeMessage = `Could not verify Pi runtime: ${probe.piRuntimeError ?? "unknown error"}.`;
+        runtimeStatus = "fail";
+        runtimeMessage = `Pi is required on PATH. Install Pi with: curl -fsSL https://pi.dev/install.sh | sh. Details: ${probe.piRuntimeError ?? "unknown error"}.`;
     }
     checks.push({ id: "pi-runtime", status: runtimeStatus, message: runtimeMessage });
     return {
@@ -165,16 +161,13 @@ export async function runCleanInstallCheck(options) {
             if (m && m[1])
                 piRuntimeVersion = m[1];
         }
-        else if (text.includes("npx --yes -p @earendil-works/pi-coding-agent@latest")) {
-            piRuntimeSource = "npx-latest";
-        }
         else if (text.includes("Could not verify Pi runtime")) {
             piRuntimeSource = "unavailable";
             piRuntimeError = "doctor reported it could not verify the Pi runtime.";
         }
-        else if (text.includes("Neither pi nor npx was found")) {
+        else if (text.includes("Pi is required") || text.includes("Pi Coding Agent not found")) {
             piRuntimeSource = "unavailable";
-            piRuntimeError = "Neither pi nor npx was found on PATH.";
+            piRuntimeError = "Pi was not found on PATH.";
         }
     }
     const probe = {

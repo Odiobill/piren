@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { WizardPrompt } from "./prompt.js";
 import { initVault } from "./init.js";
+import { defaultPiCommandResolver } from "./run.js";
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -318,13 +319,20 @@ export function parseCommaList(input: string): string[] {
 
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 
+export type PiCommandCheck = { ok: true; command: string; version?: string } | { ok: false; error?: string };
+export type PiCommandChecker = () => Promise<PiCommandCheck>;
+export type WizardExitReason = "missing-pi" | "pi-not-configured";
+
 export interface WizardDeps {
   configPath?: string;
   piHome?: string;
+  piCommandChecker?: PiCommandChecker;
   log?: (message: string) => void;
 }
 
 export interface WizardResult {
+  completed: boolean;
+  exitReason?: WizardExitReason;
   vaultRoot: string;
   allowedAgents: string[];
   excludedAgents: string[];
@@ -344,6 +352,34 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function defaultPiCommandChecker(): Promise<PiCommandCheck> {
+  try {
+    const target = await defaultPiCommandResolver(process.env);
+    return { ok: true, command: target.command };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function hasConfiguredPiAuth(auth: Record<string, AuthJsonCredential>): boolean {
+  return Object.keys(auth).length > 0;
+}
+
+function earlyExitResult(reason: WizardExitReason): WizardResult {
+  return {
+    completed: false,
+    exitReason: reason,
+    vaultRoot: "",
+    allowedAgents: [],
+    excludedAgents: [],
+    newVault: false,
+    wroteAuthJson: false,
+    wroteAgentConfig: false,
+    wroteConfig: false,
+    configuredTransports: [],
+  };
 }
 
 /**
@@ -419,21 +455,58 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
   const log = deps.log ?? ((message: string) => console.log(message));
   const configPath = deps.configPath ?? join(homedir(), ".config", "piren", "config.yml");
   const piHome = deps.piHome ?? join(homedir(), ".pi", "agent");
+  const piCommandChecker = deps.piCommandChecker ?? defaultPiCommandChecker;
 
-  log("Welcome to Piren setup. This wizard configures your vault, LLM provider, and local config.");
+  log("Welcome to Piren setup. This first-run flow creates a vault and local agent after Pi is installed and configured.");
   log("");
 
-  // Value memory: read any existing config.yml so re-running the wizard offers
-  // the previously entered vault path and previously allowed agents as the
-  // defaults instead of restarting from CWD / empty each time. This makes the
-  // "re-run setup to add another provider" flow frictionless.
+  log("Step 1: Checking Pi Coding Agent...");
+  const piCheck = await piCommandChecker();
+  if (!piCheck.ok) {
+    log("  pi: not found");
+    if (piCheck.error) log(`  details: ${piCheck.error}`);
+    log("");
+    log("Piren requires Pi Coding Agent on PATH.");
+    log("Install it with:");
+    log("");
+    log("  curl -fsSL https://pi.dev/install.sh | sh");
+    log("");
+    log("Then restart your shell and run:");
+    log("");
+    log("  piren setup");
+    log("");
+    log("No Piren files were changed.");
+    return earlyExitResult("missing-pi");
+  }
+  log(`  pi: ${piCheck.command}${piCheck.version ? ` ${piCheck.version}` : ""}`);
+
+  const piAuth = await readAuthJson(piHome);
+  if (!hasConfiguredPiAuth(piAuth)) {
+    log("  model/auth: not configured");
+    log("");
+    log("Before Piren can launch agents, configure Pi itself:");
+    log("");
+    log("  pi");
+    log("");
+    log("Use Pi's login/model setup flow, then run:");
+    log("");
+    log("  piren setup");
+    log("");
+    log("No Piren vault was created yet.");
+    return earlyExitResult("pi-not-configured");
+  }
+  log(`  model/auth: found ${Object.keys(piAuth).length} provider credential(s) in ${join(piHome, "auth.json")}`);
+  log("");
+
+  // Value memory: read any existing config.yml so re-running setup offers
+  // the previously entered vault path and previously allowed agents as defaults.
   const priorConfig = await readExistingLocalConfig(configPath);
   const priorVaultRoot = priorConfig.vaultRoot;
   const priorAllowedAgents = priorConfig.allowedAgents;
   const priorExcludedAgents = priorConfig.excludedAgents;
 
-  // --- Step 1: Vault ---
-  const vaultDefault = priorVaultRoot ?? process.cwd();
+  // --- Step 2: Vault + first/local agents ---
+  const vaultDefault = priorVaultRoot ?? join(homedir(), "Piren");
   const vaultAnswer = await prompt.text("Path to your Piren vault", vaultDefault);
   const vaultRoot = resolve(vaultAnswer);
 
@@ -444,7 +517,6 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
   if (await isExistingVault(vaultRoot)) {
     newVault = false;
     log(`Found an existing vault at ${vaultRoot}.`);
-    // Detect agents under team/.
     const teamDir = join(vaultRoot, "team");
     let vaultAgents: string[] = [];
     if (await pathExists(teamDir)) {
@@ -455,7 +527,7 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
         .sort((a, b) => a.localeCompare(b));
     }
     if (vaultAgents.length === 0) {
-      log("No agents found under team/. You can still proceed; configure allowed_agents manually.");
+      log("No agents found under team/. A first agent will be created.");
       const first = await prompt.text("Name the first agent for this vault", "piren");
       if (!AGENT_NAME_PATTERN.test(first)) {
         throw new Error("Invalid agent name. Use lowercase kebab-case, for example 'piren'.");
@@ -465,15 +537,12 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
       excludedAgents = [];
     } else {
       log("Existing agents: " + vaultAgents.join(", "));
-      // Default to the previously-allowed agents (intersected with vault agents
-      // so stale config can't silently re-enable a deleted agent). If none of
-      // the prior agents are still in the vault, fall back to all vault agents.
       const defaultAllowed = filterToVaultAgents(priorAllowedAgents, vaultAgents);
       const selected = await prompt.list(
         "Which agents should this installation be allowed to run? (comma-separated)",
-        defaultAllowed.length > 0 ? defaultAllowed : undefined,
+        defaultAllowed.length > 0 ? defaultAllowed : [vaultAgents[0]!],
       );
-      allowedAgents = selected.length > 0 ? selected : (defaultAllowed.length > 0 ? defaultAllowed : vaultAgents);
+      allowedAgents = selected.length > 0 ? selected : (defaultAllowed.length > 0 ? defaultAllowed : [vaultAgents[0]!]);
       const excluded = await prompt.list(
         "Any agents to exclude on this installation? (comma-separated, or leave blank)",
         filterToVaultAgents(priorExcludedAgents, vaultAgents),
@@ -495,82 +564,6 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
 
   log("");
 
-  // --- Step 2: LLM provider + key + model ---
-  let providerId: string | undefined;
-  let modelId: string | undefined;
-  let wroteAuthJson = false;
-  let wroteAgentConfig = false;
-  const setupLlm = await prompt.confirm("Configure a Pi LLM provider and API key now?", true);
-  if (setupLlm) {
-    log(formatProviderMenu());
-    const idx = await prompt.select("Provider", PI_PROVIDERS.map((p) => `${p.name} (${p.id})`), 0);
-    const provider = PI_PROVIDERS[idx] ?? PI_PROVIDERS[0]!;
-    providerId = provider.id;
-    const key = await prompt.secret(`Enter your ${provider.name} API key (${provider.envVar})`);
-    if (key.trim() === "") {
-      log("No key entered. Skipping auth.json write; you can set it later with Pi's login or an env var.");
-    } else {
-      const existing = await readAuthJson(piHome);
-      const entry = buildAuthJsonEntry(provider.id, key.trim());
-      const serialized = serializeAuthJson(existing, entry);
-      await mkdir(piHome, { recursive: true });
-      const authPath = join(piHome, "auth.json");
-      await writeFile(authPath, serialized, "utf8");
-      await chmod(authPath, 0o600);
-      wroteAuthJson = true;
-      log(`Wrote ${provider.name} key to ${authPath} (mode 0600).`);
-    }
-
-    log("");
-
-    // Model selection: offer the curated catalog, then a custom/manual option.
-    log(formatModelMenu(provider.id));
-    const modelCount = (MODEL_CATALOG[provider.id] ?? []).length;
-    const customIndex = modelCount; // the "enter manually" slot is 0-based == modelCount
-    const modelIdx = await prompt.select("Model", Array.from({ length: modelCount + 1 }, (_, i) => {
-      const m = MODEL_CATALOG[provider.id]?.[i];
-      return m ? `${m.name} (${m.id})` : "Enter a model id manually (or skip)";
-    }), 0);
-    let chosenModelId: string | undefined;
-    if (modelIdx === customIndex) {
-      const manual = await prompt.text("Model id (e.g. claude-sonnet-4-6), or leave blank to skip", "");
-      if (manual.trim() !== "") {
-        chosenModelId = manual.trim();
-      }
-    } else {
-      const resolved = resolveModelChoice(provider.id, modelIdx);
-      if (resolved) chosenModelId = resolved.id;
-    }
-
-    if (chosenModelId) {
-      const wantsThinking = await prompt.confirm("Set a thinking level? (off/minimal/low/medium/high/xhigh)", false);
-      let thinking: string | undefined;
-      if (wantsThinking) {
-        thinking = (await prompt.text("Thinking level", "medium")).trim();
-      }
-      const modelConfig = buildAgentModelConfig({
-        provider: provider.id,
-        id: chosenModelId,
-        ...(thinking !== undefined ? { thinking } : {}),
-      });
-      modelId = modelConfig.id;
-      // Write the agent-local config.yml for the first agent.
-      const agentConfigPath = join(vaultRoot, "team", allowedAgents[0] ?? "piren", "config.yml");
-      const agentConfigContent = buildAgentConfigYaml({ model: modelConfig });
-      await mkdir(dirname(agentConfigPath), { recursive: true });
-      await writeFile(agentConfigPath, agentConfigContent, "utf8");
-      wroteAgentConfig = true;
-      log(`Wrote model selection to ${agentConfigPath}.`);
-      log("");
-      log("To add more providers or models later:");
-      log(`  - Add another provider key: re-run \`piren setup\` (it merges without overwriting others).`);
-      log(`  - See all models for a provider: \`pi --list-models <search>\``);
-      log(`  - Edit the agent model anytime: edit ${agentConfigPath}`);
-    }
-  }
-
-  log("");
-
   // --- Step 3: write local config ---
   const configContent = buildLocalConfigPatch({ vaultRoot, allowedAgents, excludedAgents });
   log("The following will be written to " + configPath + ":");
@@ -580,85 +573,35 @@ export async function runWizard(prompt: WizardPrompt, deps: WizardDeps = {}): Pr
     .join("\n"));
   const confirmWrite = await prompt.confirm("Write this configuration?", true);
   let wroteConfig = false;
-  let configOnDisk = "";
   if (confirmWrite) {
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, configContent, "utf8");
     wroteConfig = true;
-    configOnDisk = configContent;
     log(`Wrote ${configPath}.`);
   } else {
-    // If the file already exists, read it so the gateway merge can preserve it.
-    try {
-      configOnDisk = await readFile(configPath, "utf8");
-    } catch {
-      configOnDisk = "";
-    }
     log("Skipped writing local config. Re-run piren setup when ready.");
   }
 
   log("");
-
-  // --- Step 4: gateways (telegram / discord) ---
-  const configuredTransports: string[] = [];
-  const wantsGateway = await prompt.confirm("Configure a messaging gateway (Telegram or Discord)?", false);
-  if (wantsGateway) {
-    const which = await prompt.select("Gateway", ["Telegram", "Discord", "Both", "Skip"], 0);
-    if (which === 0 || which === 2) {
-      const token = (await prompt.secret("Telegram bot token (from @BotFather)")).trim();
-      if (token !== "") {
-        const chatIdsRaw = await prompt.text("Allowed Telegram chat IDs (comma-separated)", "");
-        const chatIds = parseCommaList(chatIdsRaw)
-          .map((id) => Number(id))
-          .filter((id) => Number.isFinite(id) && id !== 0);
-        const merged = mergeTransportConfigYaml(configOnDisk, { telegram: { bot_token: token, allowed_chat_ids: chatIds } });
-        await mkdir(dirname(configPath), { recursive: true });
-        await writeFile(configPath, merged, "utf8");
-        configOnDisk = merged;
-        configuredTransports.push("telegram");
-        log(`Wrote telegram block to ${configPath}.`);
-      }
-    }
-    if (which === 1 || which === 2) {
-      const token = (await prompt.secret("Discord bot token")).trim();
-      if (token !== "") {
-        const guildIds = parseCommaList(await prompt.text("Allowed Discord guild (server) IDs (comma-separated)", ""));
-        const channelIds = parseCommaList(await prompt.text("Allowed Discord channel IDs (comma-separated)", ""));
-        const merged = mergeTransportConfigYaml(configOnDisk, {
-          discord: { bot_token: token, allowed_guild_ids: guildIds, allowed_channel_ids: channelIds },
-        });
-        await mkdir(dirname(configPath), { recursive: true });
-        await writeFile(configPath, merged, "utf8");
-        configOnDisk = merged;
-        configuredTransports.push("discord");
-        log(`Wrote discord block to ${configPath}.`);
-      }
-    }
-    if (configuredTransports.length > 0) {
-      log("Keep a gateway always-on with: piren service install <gateway|telegram|discord>");
-    }
-  }
-
-  log("");
   log("Setup complete. Next steps:");
-  log(`  piren doctor`);
-  if (allowedAgents.length === 1) {
-    log(`  piren --vault-root ${vaultRoot} --agent ${allowedAgents[0]!} run`);
-  } else {
-    log(`  piren --vault-root ${vaultRoot} --agent ${allowedAgents[0]!} run  (or pick from: ${allowedAgents.join(", ")})`);
-  }
+  log("  piren status");
+  log("  piren run");
+  log("");
+  log("Optional always-on services:");
+  log("  piren service install gateway");
+  log("  piren service install telegram");
+  log("  piren service install discord");
 
   const result: WizardResult = {
+    completed: true,
     vaultRoot,
     allowedAgents,
     excludedAgents,
     newVault,
-    wroteAuthJson,
-    wroteAgentConfig,
+    wroteAuthJson: false,
+    wroteAgentConfig: false,
     wroteConfig,
-    configuredTransports,
+    configuredTransports: [],
   };
-  if (providerId !== undefined) result.providerId = providerId;
-  if (modelId !== undefined) result.modelId = modelId;
   return result;
 }

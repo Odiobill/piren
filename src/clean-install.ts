@@ -25,7 +25,7 @@ export interface CleanInstallCheck {
   message: string;
 }
 
-export type PiRuntimeSource = "path" | "npx-latest" | "unavailable";
+export type PiRuntimeSource = "path" | "unavailable";
 
 /**
  * The observed state of one fresh install. The orchestration script gathers
@@ -105,12 +105,9 @@ export function assessCleanInstall(probe: CleanInstallProbe): CleanInstallAssess
   } else if (probe.piRuntimeSource === "path") {
     runtimeStatus = "ok";
     runtimeMessage = `Pi binary resolved on PATH${probe.piRuntimeVersion ? ` version ${probe.piRuntimeVersion}` : ""}.`;
-  } else if (probe.piRuntimeSource === "npx-latest") {
-    runtimeStatus = "ok";
-    runtimeMessage = "No local pi on PATH; Piren will use npx --yes -p @earendil-works/pi-coding-agent@latest pi.";
   } else {
-    runtimeStatus = "warn";
-    runtimeMessage = `Could not verify Pi runtime: ${probe.piRuntimeError ?? "unknown error"}.`;
+    runtimeStatus = "fail";
+    runtimeMessage = `Pi is required on PATH. Install Pi with: curl -fsSL https://pi.dev/install.sh | sh. Details: ${probe.piRuntimeError ?? "unknown error"}.`;
   }
   checks.push({ id: "pi-runtime", status: runtimeStatus, message: runtimeMessage });
 
@@ -145,9 +142,9 @@ export interface CleanInstallOptions {
   /** Isolated HOME for the install + verification (clean config dir). */
   cleanHome: string;
   /**
-   * PATH for the verification commands. Should contain node, npm, and at
-   * least one of pi/npx so the Pi runtime policy can be exercised. If the
-   * caller wants to force the npx-latest branch, omit pi from this PATH.
+   * PATH for the verification commands. Should contain node, npm, and pi so
+   * the Pi runtime policy can be exercised. If the caller wants to exercise
+   * the missing-Pi branch, omit pi from this PATH.
    */
   pathEnv: string;
   /** Node binary, defaults to process.execPath. */
@@ -257,14 +254,12 @@ export async function runCleanInstallCheck(options: CleanInstallOptions): Promis
       piRuntimeSource = "path";
       const m = text.match(/version\s+([0-9][0-9A-Za-z.\-]*)/);
       if (m && m[1]) piRuntimeVersion = m[1];
-    } else if (text.includes("npx --yes -p @earendil-works/pi-coding-agent@latest")) {
-      piRuntimeSource = "npx-latest";
     } else if (text.includes("Could not verify Pi runtime")) {
       piRuntimeSource = "unavailable";
       piRuntimeError = "doctor reported it could not verify the Pi runtime.";
-    } else if (text.includes("Neither pi nor npx was found")) {
+    } else if (text.includes("Pi is required") || text.includes("Pi Coding Agent not found")) {
       piRuntimeSource = "unavailable";
-      piRuntimeError = "Neither pi nor npx was found on PATH.";
+      piRuntimeError = "Pi was not found on PATH.";
     }
   }
 

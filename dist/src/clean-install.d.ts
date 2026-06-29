@@ -17,7 +17,7 @@ export interface CleanInstallCheck {
     status: CleanInstallStatus;
     message: string;
 }
-export type PiRuntimeSource = "path" | "npx-latest" | "unavailable";
+export type PiRuntimeSource = "path" | "unavailable";
 /**
  * The observed state of one fresh install. The orchestration script gathers
  * this by running real `npm install` + `piren` commands; tests construct it
@@ -49,9 +49,9 @@ export interface CleanInstallOptions {
     /** Isolated HOME for the install + verification (clean config dir). */
     cleanHome: string;
     /**
-     * PATH for the verification commands. Should contain node, npm, and at
-     * least one of pi/npx so the Pi runtime policy can be exercised. If the
-     * caller wants to force the npx-latest branch, omit pi from this PATH.
+     * PATH for the verification commands. Should contain node, npm, and pi so
+     * the Pi runtime policy can be exercised. If the caller wants to exercise
+     * the missing-Pi branch, omit pi from this PATH.
      */
     pathEnv: string;
     /** Node binary, defaults to process.execPath. */

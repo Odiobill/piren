@@ -23,7 +23,7 @@ export interface DoctorPirenOptions extends BootstrapOptions {
     vaultDirReader?: VaultDirReader | undefined;
 }
 export interface PiRuntimeCheck {
-    source: "path" | "npx-latest" | "unavailable";
+    source: "path" | "unavailable";
     version?: string | undefined;
     error?: string | undefined;
 }

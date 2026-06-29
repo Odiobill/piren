@@ -67,16 +67,7 @@ export async function defaultPiCommandResolver(env = process.env) {
             return { command: "pi", argsPrefix: [], source: "path" };
         }
     }
-    for (const dir of pathValue.split(delimiter).filter(Boolean)) {
-        if (await executableExists(join(dir, "npx"))) {
-            return {
-                command: "npx",
-                argsPrefix: ["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"],
-                source: "npx-latest",
-            };
-        }
-    }
-    throw new Error("Neither pi nor npx was found on PATH.");
+    throw new Error("Pi Coding Agent not found on PATH. Install it with: curl -fsSL https://pi.dev/install.sh | sh");
 }
 export async function buildPiRunCommand(options = {}) {
     const context = await loadPirenContext(options);

@@ -112,7 +112,7 @@ piren setup --apply \
 
 ## Package extensions
 
-Piren itself does not pin Pi as a package dependency. At runtime it prefers `pi` on `PATH`; if missing, it uses `npx --yes -p @earendil-works/pi-coding-agent@latest pi`. `piren doctor` reports which route will be used.
+Piren itself does not pin Pi as a package dependency. At runtime it requires `pi` on `PATH`; if missing, `piren setup` tells the operator to install Pi with `curl -fsSL https://pi.dev/install.sh | sh` and exits without mutating Piren files. `piren doctor` reports the missing runtime as a failure.
 
 Additional Pi extensions are declared in local config:
 

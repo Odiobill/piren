@@ -11,7 +11,7 @@ export interface BuildPiRunCommandOptions extends BootstrapOptions {
 export interface PiCommandTarget {
     command: string;
     argsPrefix: string[];
-    source: "path" | "npx-latest";
+    source: "path";
 }
 export type PiCommandResolver = (env?: NodeJS.ProcessEnv | Record<string, string | undefined>) => Promise<PiCommandTarget>;
 export interface PiRunCommand {

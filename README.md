@@ -14,15 +14,16 @@ Piren is a lightweight, local-first agent runtime on top of [Pi Coding Agent](ht
 
 Piren exists for stewarded teams of local agents: small enough for edge and homelab devices, explicit enough to debug from a terminal, and transparent enough that Obsidian can be the source of truth. It borrows self-improvement ideas from larger agent systems, but keeps them reviewable: agents write visible vault artifacts instead of hidden memory mutations.
 
-Pi runtime policy: Piren prefers a `pi` binary already available on `PATH`. If none is found, it falls back to `npx --yes -p @earendil-works/pi-coding-agent@latest pi`.
+Pi runtime policy: Piren requires a `pi` binary already available on `PATH`. If none is found, `piren setup` prints the official Pi installer command and exits without changing Piren files.
 
 ## Five-minute quickstart
 
 ```bash
 npm install -g --install-links github:Odiobill/piren
-piren init --vault-root /tmp/piren-vault
-piren setup --apply --vault-root /tmp/piren-vault --agent piren
-piren --vault-root /tmp/piren-vault --agent piren status
+curl -fsSL https://pi.dev/install.sh | sh   # if pi is not already installed
+pi                                           # configure Pi model/auth first
+piren setup                                  # create the Piren vault + first agent
+piren status
 ```
 
 For one-command model provisioning, add `--provider`, `--model`, optional `--thinking`, and optional `--api-key` to `setup --apply`; the key is merged into Pi's native `~/.pi/agent/auth.json`.
@@ -58,7 +59,7 @@ piren status
 - Minimal web UI: agent selection, chat streaming, steering, approval gates, read-only vault browser, and read-only context indicator. No model or configuration controls.
 - Vault-backed cron: Markdown cron job files with active-device ownership, atomic claiming, and inspectable run records.
 - Service lifecycle: systemd user units with tmux plus `@reboot` cron fallback for gateway, Telegram, and Discord transports. Inspectable, reversible files under `~/.config/piren/services/`.
-- Interactive setup wizard: `piren setup` (no flags) guides vault, LLM provider key, and local config; `--help` on every command.
+- First-run setup: `piren setup` (no flags) checks Pi, creates or reuses a vault, writes local config, and suggests optional service commands; `--help` on every command.
 - Inspectable self-improvement: agents can update handoffs, runbooks, ADRs, project logs, and skill candidates as visible vault artifacts.
 - Open Knowledge Format (OKF v0.1): the vault is a specified knowledge bundle. `piren doctor` and the `vault_conformance_check` tool enforce a required non-empty `type` frontmatter field on concept documents.
 

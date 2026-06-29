@@ -10,11 +10,6 @@ let agentDir: string;
 let configPath: string;
 
 const localPi = async (): Promise<PiCommandTarget> => ({ command: "pi", argsPrefix: [], source: "path" });
-const npxLatestPi = async (): Promise<PiCommandTarget> => ({
-  command: "npx",
-  argsPrefix: ["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"],
-  source: "npx-latest",
-});
 
 async function makeFixture(agentConfig: string) {
   root = await mkdtemp(join(tmpdir(), "piren-run-"));
@@ -55,20 +50,14 @@ describe("Pi command resolver", () => {
     expect(target).toEqual({ command: "pi", argsPrefix: [], source: "path" });
   });
 
-  it("falls back to explicit latest npx package invocation when pi is not on PATH", async () => {
+  it("requires a local pi binary instead of falling back to npx", async () => {
     const bin = join(root, "bin-npx");
     await mkdir(bin, { recursive: true });
     const npx = join(bin, "npx");
     await writeFile(npx, "#!/bin/sh\n");
     await chmod(npx, 0o755);
 
-    const target = await defaultPiCommandResolver({ PATH: bin });
-
-    expect(target).toEqual({
-      command: "npx",
-      argsPrefix: ["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"],
-      source: "npx-latest",
-    });
+    await expect(defaultPiCommandResolver({ PATH: bin })).rejects.toThrow(/Pi Coding Agent.*not found|pi.*not found/i);
   });
 });
 
@@ -89,13 +78,6 @@ describe("piren run command construction", () => {
     ]);
   });
 
-  it("falls back to latest Pi through explicit npx package invocation when no local pi binary is resolved", async () => {
-    const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: npxLatestPi });
-
-    expect(command.command).toBe("npx");
-    expect(command.args.slice(0, 4)).toEqual(["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"]);
-    expect(command.args).toContain("--vault-root");
-  });
 
   it("builds a Pi model flag from expanded provider plus id config", async () => {
     await writeFile(join(agentDir, "config.yml"), "model:\n  provider: anthropic\n  id: claude-sonnet-4-20250514\n  thinking: medium\n");

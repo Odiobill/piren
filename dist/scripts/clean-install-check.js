@@ -8,8 +8,7 @@
  *   1. dist/src/cli.js, dist/public/index.html, dist/src/pi-extension.js exist
  *      (catches failed git-install prepare builds).
  *   2. The installed piren binary actually runs.
- *   3. The Pi runtime policy resolves: pi on PATH preferred, otherwise the
- *      explicit npx --yes -p @earendil-works/pi-coding-agent@latest pi fallback.
+ *   3. The Pi runtime policy resolves: pi must be installed on PATH.
  *
  * Usage:
  *   npm run clean-install:check

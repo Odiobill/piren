@@ -302,11 +302,8 @@ export async function checkVaultOkfConformance(vaultRoot, options = {}) {
 export async function defaultPiRuntimeChecker(env = process.env) {
     try {
         const target = await defaultPiCommandResolver(env);
-        if (target.source === "path") {
-            const version = await execFileText(target.command, ["--version"]);
-            return { source: "path", version };
-        }
-        return { source: "npx-latest" };
+        const version = await execFileText(target.command, ["--version"]);
+        return { source: "path", version };
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -319,10 +316,7 @@ async function checkPiRuntime(checker, env) {
         const versionText = runtime.version ? ` version ${runtime.version}` : "";
         return { id: "pi-runtime", status: "ok", message: `Pi binary found on PATH${versionText}.` };
     }
-    if (runtime.source === "npx-latest") {
-        return { id: "pi-runtime", status: "ok", message: "No local pi binary found on PATH. Piren will use npx --yes -p @earendil-works/pi-coding-agent@latest pi." };
-    }
-    return { id: "pi-runtime", status: "warn", message: `Could not verify Pi runtime: ${runtime.error ?? "unknown error"}.` };
+    return { id: "pi-runtime", status: "fail", message: `Pi is required but was not found or could not be verified. Install Pi with: curl -fsSL https://pi.dev/install.sh | sh. Details: ${runtime.error ?? "unknown error"}.` };
 }
 export async function doctorPiren(options = {}) {
     const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;

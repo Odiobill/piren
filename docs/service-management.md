@@ -105,27 +105,31 @@ For systemd these map to `systemctl --user start|stop|restart|status`. For
 tmux-cron, start runs the launch script, stop kills the tmux session, and
 status reports whether the session exists.
 
-## Interactive setup wizard
+## First-run setup
 
-Running `piren setup` with no flags launches an interactive wizard that guides
-you through vault configuration, LLM provider setup, and writes the local
-config. This is the easiest path from a fresh install to a working Piren:
+Running `piren setup` with no flags launches the minimal first-run flow. It
+requires a local `pi` binary on PATH and existing Pi-native auth first, then
+guides you through vault/local-agent configuration and writes the local Piren
+config:
 
 ```bash
 piren setup
 ```
 
-The wizard:
+The setup flow:
 
 1. **Vault**: point at an existing vault (it detects agents and asks which to
    enable) or initializes a new one (asks for the location and first agent name,
    default `piren`).
-2. **LLM**: choose a Pi provider (Anthropic, OpenAI, Google, DeepSeek, and
-   others), enter the API key, and write it to `~/.pi/agent/auth.json` at mode
-   `0600`.
-3. **Local config**: writes `~/.config/piren/config.yml` with the resolved
+2. **Local config**: writes `~/.config/piren/config.yml` with the resolved
    vault root and allowed agents, after showing you the content and asking for
    confirmation.
+3. **Next commands**: prints `piren status`, `piren run`, and optional
+   `piren service install gateway|telegram|discord` commands.
+
+Bare setup does not configure provider keys, model choices, Telegram, Discord,
+or services interactively. Pi owns provider/model setup; Piren service commands
+own always-on transport setup.
 
 Batch mode is unchanged for automation:
 

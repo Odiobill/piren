@@ -137,12 +137,25 @@ export declare function buildLocalConfigPatch(input: LocalConfigInput): string;
  * wizard when the operator enters multiple agents in one line.
  */
 export declare function parseCommaList(input: string): string[];
+export type PiCommandCheck = {
+    ok: true;
+    command: string;
+    version?: string;
+} | {
+    ok: false;
+    error?: string;
+};
+export type PiCommandChecker = () => Promise<PiCommandCheck>;
+export type WizardExitReason = "missing-pi" | "pi-not-configured";
 export interface WizardDeps {
     configPath?: string;
     piHome?: string;
+    piCommandChecker?: PiCommandChecker;
     log?: (message: string) => void;
 }
 export interface WizardResult {
+    completed: boolean;
+    exitReason?: WizardExitReason;
     vaultRoot: string;
     allowedAgents: string[];
     excludedAgents: string[];

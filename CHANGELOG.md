@@ -42,9 +42,8 @@ and a verified clean-install path.
   records, and worker-mode surfacing that does not auto-run jobs.
 - **Clean-install validation.** `npm run clean-install:check` installs from
   the real GitHub source into an isolated clean HOME and verifies the dist
-  build, the installed binary, and the Pi runtime policy (`pi` on PATH
-  preferred, `npx --yes -p @earendil-works/pi-coding-agent@latest pi`
-  fallback).
+  build, the installed binary, and the Pi runtime policy (`pi` required on
+  PATH).
 - **`piren version` command.** A released binary self-reports its version,
   resolved from package.json so it never drifts.
 - **CLI commands.** `init`, `status`, `agents`, `doctor`, `setup` (with
@@ -57,11 +56,9 @@ and a verified clean-install path.
 
 ### Changed
 
-- **Pi runtime policy (ADR-0006 amended).** Piren now prefers a `pi` binary
-  already on `PATH` and falls back to
-  `npx --yes -p @earendil-works/pi-coding-agent@latest pi`, rather than
-  hard-pinning an exact package version. `piren doctor` reports the detected
-  runtime source and version.
+- **Pi runtime policy (ADR-0027).** Piren now requires a `pi` binary already
+  on `PATH` and no longer falls back to npx. `piren setup` prints the official
+  Pi install command and exits without changes when Pi is missing.
 
 ### Security
 

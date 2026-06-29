@@ -115,4 +115,4 @@ Fix by rebuilding and committing `dist/`, then reinstalling from GitHub after th
 npm pack
 ```
 
-If `[FAIL] pi-runtime` appears alongside a passing binary, the clean environment has neither `pi` nor `npx` on PATH. Install Pi, or ensure Node's `npx` is available so Piren can use the `npx --yes -p @earendil-works/pi-coding-agent@latest pi` fallback.
+If `[FAIL] pi-runtime` appears alongside a passing binary, the clean environment does not have `pi` on PATH. Install Pi with `curl -fsSL https://pi.dev/install.sh | sh`, restart the shell, and rerun the check.

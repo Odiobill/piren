@@ -39,7 +39,7 @@ export interface BuildPiRunCommandOptions extends BootstrapOptions {
 export interface PiCommandTarget {
   command: string;
   argsPrefix: string[];
-  source: "path" | "npx-latest";
+  source: "path";
 }
 
 export type PiCommandResolver = (env?: NodeJS.ProcessEnv | Record<string, string | undefined>) => Promise<PiCommandTarget>;
@@ -105,16 +105,7 @@ export async function defaultPiCommandResolver(env: NodeJS.ProcessEnv | Record<s
       return { command: "pi", argsPrefix: [], source: "path" };
     }
   }
-  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
-    if (await executableExists(join(dir, "npx"))) {
-      return {
-        command: "npx",
-        argsPrefix: ["--yes", "-p", "@earendil-works/pi-coding-agent@latest", "pi"],
-        source: "npx-latest",
-      };
-    }
-  }
-  throw new Error("Neither pi nor npx was found on PATH.");
+  throw new Error("Pi Coding Agent not found on PATH. Install it with: curl -fsSL https://pi.dev/install.sh | sh");
 }
 
 export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}): Promise<PiRunCommand> {

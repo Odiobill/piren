@@ -8,7 +8,7 @@ import { initVault } from "../src/init.js";
 let root: string;
 
 const localPiRuntime = async (): Promise<PiRuntimeCheck> => ({ source: "path", version: "0.80.2" });
-const npxPiRuntime = async (): Promise<PiRuntimeCheck> => ({ source: "npx-latest" });
+const missingPiRuntime = async (): Promise<PiRuntimeCheck> => ({ source: "unavailable", error: "Pi Coding Agent not found on PATH." });
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "piren-doctor-"));
@@ -36,16 +36,16 @@ describe("Piren doctor", () => {
     ]));
   });
 
-  it("reports npx latest fallback as ok when no local pi runtime is found", async () => {
+  it("reports missing local pi as a failure", async () => {
     await initVault({ vaultRoot: root, agentName: "thor" });
     const configPath = join(root, "config.yml");
     await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: npxPiRuntime });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: missingPiRuntime });
 
-    expect(report.ok).toBe(true);
+    expect(report.ok).toBe(false);
     expect(report.checks).toContainEqual(
-      expect.objectContaining({ id: "pi-runtime", status: "ok", message: expect.stringContaining("latest") }),
+      expect.objectContaining({ id: "pi-runtime", status: "fail", message: expect.stringContaining("curl -fsSL https://pi.dev/install.sh | sh") }),
     );
   });
 

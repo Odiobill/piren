@@ -54,8 +54,7 @@ an isolated clean HOME, then checks:
 - `dist/src/cli.js`, `dist/public/index.html`, and `dist/src/pi-extension.js`
   are present (catches a missing build).
 - The installed `piren` binary actually runs.
-- The Pi runtime policy resolves: a local `pi` on PATH is preferred, otherwise
-  Piren falls back to `npx --yes -p @earendil-works/pi-coding-agent@latest pi`.
+- The Pi runtime policy resolves: a local `pi` on PATH is required.
 
 The script exits non-zero on any failure, so it is safe in CI. Options:
 

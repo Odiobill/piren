@@ -80,27 +80,7 @@ describe("assessCleanInstall", () => {
     expect(result.checks.find((c) => c.id === "pi-runtime")!.status).toBe("fail");
   });
 
-  it("accepts npx-latest pi runtime when no local pi binary is present", () => {
-    const probe: CleanInstallProbe = {
-      installDir: "/prefix/node_modules/piren",
-      cliJsExists: true,
-      publicIndexExists: true,
-      extensionJsExists: true,
-      binaryRuns: true,
-      binaryVersion: "0.1.0",
-      piRuntimeSource: "npx-latest",
-      piRuntimeVersion: undefined,
-    };
-
-    const result = assessCleanInstall(probe);
-
-    expect(result.ok).toBe(true);
-    const runtime = result.checks.find((c) => c.id === "pi-runtime")!;
-    expect(runtime.status).toBe("ok");
-    expect(runtime.message).toMatch(/npx/i);
-  });
-
-  it("warns on an unavailable pi runtime", () => {
+  it("fails when no local pi binary is present", () => {
     const probe: CleanInstallProbe = {
       installDir: "/prefix/node_modules/piren",
       cliJsExists: true,
@@ -114,9 +94,29 @@ describe("assessCleanInstall", () => {
 
     const result = assessCleanInstall(probe);
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     const runtime = result.checks.find((c) => c.id === "pi-runtime")!;
-    expect(runtime.status).toBe("warn");
+    expect(runtime.status).toBe("fail");
+    expect(runtime.message).toMatch(/pi.*required/i);
+  });
+
+  it("fails on an unavailable pi runtime", () => {
+    const probe: CleanInstallProbe = {
+      installDir: "/prefix/node_modules/piren",
+      cliJsExists: true,
+      publicIndexExists: true,
+      extensionJsExists: true,
+      binaryRuns: true,
+      binaryVersion: "0.1.0",
+      piRuntimeSource: "unavailable",
+      piRuntimeVersion: undefined,
+    };
+
+    const result = assessCleanInstall(probe);
+
+    expect(result.ok).toBe(false);
+    const runtime = result.checks.find((c) => c.id === "pi-runtime")!;
+    expect(runtime.status).toBe("fail");
   });
 
   it("fails when the public frontend asset is missing", () => {
