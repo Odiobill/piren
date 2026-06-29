@@ -51,6 +51,14 @@ async function seedPiAuth(piHome: string): Promise<void> {
   await writeFile(join(piHome, "auth.json"), JSON.stringify({ anthropic: { type: "api_key", key: "sk-test" } }, null, 2));
 }
 
+async function seedPiSettings(piHome: string): Promise<void> {
+  await mkdir(piHome, { recursive: true });
+  await writeFile(
+    join(piHome, "settings.json"),
+    JSON.stringify({ defaultProvider: "deepseek", defaultModel: "deepseek-v4-pro", defaultThinkingLevel: "high" }, null, 2),
+  );
+}
+
 describe("runWizard: first-run preflight", () => {
   it("exits before prompting or mutating when pi is missing", async () => {
     const vault = join(root, "newvault");
@@ -88,6 +96,8 @@ describe("runWizard: first-run preflight", () => {
     expect(result.completed).toBe(false);
     expect(result.exitReason).toBe("pi-not-configured");
     expect(logs.join("\n")).toContain("pi");
+    expect(logs.join("\n")).toContain("/login");
+    expect(logs.join("\n")).toContain("/quit");
     expect(logs.join("\n")).toContain("piren setup");
     await expect(access(configPath)).rejects.toThrow();
     await expect(access(vault)).rejects.toThrow();
@@ -95,12 +105,13 @@ describe("runWizard: first-run preflight", () => {
 });
 
 describe("runWizard: minimal first-run setup", () => {
-  it("initializes a new vault and writes only local Piren config when Pi is ready", async () => {
+  it("initializes a new vault and writes local Piren config plus Pi default model", async () => {
     const vault = join(root, "newvault");
     const configPath = join(root, "config.yml");
     const piHome = join(root, "pi-home");
     const logs: string[] = [];
     await seedPiAuth(piHome);
+    await seedPiSettings(piHome);
 
     const result = await runWizard(fakePrompt({ vaultPath: vault, firstAgent: "piren" }), {
       configPath,
@@ -114,7 +125,7 @@ describe("runWizard: minimal first-run setup", () => {
     expect(result.vaultRoot).toBe(vault);
     expect(result.allowedAgents).toEqual(["piren"]);
     expect(result.wroteAuthJson).toBe(false);
-    expect(result.wroteAgentConfig).toBe(false);
+    expect(result.wroteAgentConfig).toBe(true);
     expect(result.configuredTransports).toEqual([]);
     await expect(access(join(vault, ".piren-vault"))).resolves.toBeUndefined();
     await expect(access(join(vault, "team", "piren", "SOUL.md"))).resolves.toBeUndefined();
@@ -124,8 +135,10 @@ describe("runWizard: minimal first-run setup", () => {
     expect(configContent).toContain("- piren");
 
     const agentConfig = await readFile(join(vault, "team", "piren", "config.yml"), "utf8");
-    expect(agentConfig).not.toContain("\nmodel:\n");
-    expect(agentConfig).toContain("No model is configured yet");
+    expect(agentConfig).toContain("model:");
+    expect(agentConfig).toContain("id: deepseek/deepseek-v4-pro");
+    expect(agentConfig).toContain("thinking: high");
+    expect(agentConfig).toContain("Change this per-agent model anytime");
 
     const logText = logs.join("\n");
     expect(logText).toContain("piren status");

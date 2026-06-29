@@ -1,10 +1,12 @@
 /**
  * Interactive setup wizard (pure helpers + runner).
  *
- * The wizard (`piren setup` with no flags) guides an operator through:
- *   1. Vault: existing (detect agents, enable/disable) or new (init + first agent).
- *   2. LLM: pick a Pi provider, enter the key, write ~/.pi/agent/auth.json at 0600.
- *   3. (Optional) gateways + service install.
+ * The wizard (`piren setup` with no flags) guides an operator through minimal
+ * first-run onboarding:
+ *   1. Preflight: require local `pi` and Pi-native auth/settings.
+ *   2. Vault: existing (detect agents, enable/disable) or new (init + first agent).
+ *   3. Local config: write ~/.config/piren/config.yml and copy Pi's default
+ *      model into the newly created agent config when available.
  *
  * The pure helpers here are unit-tested directly (tests/wizard.test.ts). The
  * impure runner `runWizard(prompt, deps)` takes an injected WizardPrompt and fs
@@ -126,6 +128,7 @@ export function buildAgentConfigYaml(input) {
         "# Installation authority lives in ~/.config/piren/config.yml, not here.",
     ];
     if (input.model) {
+        lines.push("# Change this per-agent model anytime, or update Pi defaults with /model inside pi.");
         lines.push("model:");
         lines.push(`  id: ${input.model.id}`);
         if (input.model.thinking) {
@@ -326,6 +329,31 @@ async function readAuthJson(piHome) {
         return {};
     }
 }
+async function readPiDefaultModel(piHome) {
+    const settingsPath = join(piHome, "settings.json");
+    if (!(await pathExists(settingsPath)))
+        return undefined;
+    try {
+        const content = await readFile(settingsPath, "utf8");
+        const parsed = JSON.parse(content);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+            return undefined;
+        const settings = parsed;
+        const provider = typeof settings.defaultProvider === "string" ? settings.defaultProvider.trim() : "";
+        const model = typeof settings.defaultModel === "string" ? settings.defaultModel.trim() : "";
+        if (provider === "" || model === "")
+            return undefined;
+        const thinking = typeof settings.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel.trim() : "";
+        return buildAgentModelConfig({
+            provider,
+            id: model,
+            ...(thinking !== "" ? { thinking } : {}),
+        });
+    }
+    catch {
+        return undefined;
+    }
+}
 export async function runWizard(prompt, deps = {}) {
     const log = deps.log ?? ((message) => console.log(message));
     const configPath = deps.configPath ?? join(homedir(), ".config", "piren", "config.yml");
@@ -361,7 +389,12 @@ export async function runWizard(prompt, deps = {}) {
         log("");
         log("  pi");
         log("");
-        log("Use Pi's login/model setup flow, then run:");
+        log("Inside Pi, run:");
+        log("");
+        log("  /login");
+        log("  /quit");
+        log("");
+        log("Then run:");
         log("");
         log("  piren setup");
         log("");
@@ -427,6 +460,15 @@ export async function runWizard(prompt, deps = {}) {
         excludedAgents = [];
     }
     log("");
+    const piDefaultModel = await readPiDefaultModel(piHome);
+    let wroteAgentConfig = false;
+    if (newVault && piDefaultModel && allowedAgents[0]) {
+        const agentConfigPath = join(vaultRoot, "team", allowedAgents[0], "config.yml");
+        await writeFile(agentConfigPath, buildAgentConfigYaml({ model: piDefaultModel }), "utf8");
+        wroteAgentConfig = true;
+        log(`Applied Pi default model to ${agentConfigPath}.`);
+        log("");
+    }
     // --- Step 3: write local config ---
     const configContent = buildLocalConfigPatch({ vaultRoot, allowedAgents, excludedAgents });
     log("The following will be written to " + configPath + ":");
@@ -461,7 +503,7 @@ export async function runWizard(prompt, deps = {}) {
         excludedAgents,
         newVault,
         wroteAuthJson: false,
-        wroteAgentConfig: false,
+        wroteAgentConfig,
         wroteConfig,
         configuredTransports: [],
     };

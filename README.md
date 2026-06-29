@@ -21,7 +21,7 @@ Pi runtime policy: Piren requires a `pi` binary already available on `PATH`. If 
 ```bash
 npm install -g --install-links github:Odiobill/piren
 curl -fsSL https://pi.dev/install.sh | sh   # if pi is not already installed
-pi                                           # configure Pi model/auth first
+pi                                           # inside Pi: /login, then /quit
 piren setup                                  # create the Piren vault + first agent
 piren status
 ```
@@ -103,7 +103,7 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren 0.1.0-rc.1 is the first release candidate. Phase 3 gateway surfaces are implemented: minimal web UI, Telegram, Discord with default-on feedback, and OpenAI-compatible chat completions. Phase 4 RC features implemented so far include Pi package extensibility, lazy vault skills, knowledge lifecycle tools, inspectable self-improvement tools, and vault-backed cron.
 
-Current verification baseline: 69 test files, 544 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` passing.
+Current verification baseline: 69 test files, 538 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` passing.
 
 Known limitations:
 

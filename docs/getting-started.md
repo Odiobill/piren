@@ -31,6 +31,9 @@ Then restart your shell and run Pi's own setup flow:
 
 ```bash
 pi
+# inside Pi:
+#   /login
+#   /quit
 ```
 
 ## Create a vault
@@ -81,9 +84,12 @@ Pi-native auth first, then:
 
 1. Detects an existing vault and asks which agents to enable, or initializes a
    new one with a first agent name (default `piren`).
-2. Writes the local installation config after showing the content and asking
+2. Copies Pi's `defaultProvider`, `defaultModel`, and `defaultThinkingLevel`
+   from `~/.pi/agent/settings.json` into the newly created agent config when
+   available.
+3. Writes the local installation config after showing the content and asking
    for confirmation.
-3. Prints next commands plus optional service install commands for gateway,
+4. Prints next commands plus optional service install commands for gateway,
    Telegram, and Discord.
 
 Bare `piren setup` does not configure provider keys, model selection, Telegram,

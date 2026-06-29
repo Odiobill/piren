@@ -1,10 +1,12 @@
 /**
  * Interactive setup wizard (pure helpers + runner).
  *
- * The wizard (`piren setup` with no flags) guides an operator through:
- *   1. Vault: existing (detect agents, enable/disable) or new (init + first agent).
- *   2. LLM: pick a Pi provider, enter the key, write ~/.pi/agent/auth.json at 0600.
- *   3. (Optional) gateways + service install.
+ * The wizard (`piren setup` with no flags) guides an operator through minimal
+ * first-run onboarding:
+ *   1. Preflight: require local `pi` and Pi-native auth/settings.
+ *   2. Vault: existing (detect agents, enable/disable) or new (init + first agent).
+ *   3. Local config: write ~/.config/piren/config.yml and copy Pi's default
+ *      model into the newly created agent config when available.
  *
  * The pure helpers here are unit-tested directly (tests/wizard.test.ts). The
  * impure runner `runWizard(prompt, deps)` takes an injected WizardPrompt and fs

@@ -121,10 +121,13 @@ The setup flow:
 1. **Vault**: point at an existing vault (it detects agents and asks which to
    enable) or initializes a new one (asks for the location and first agent name,
    default `piren`).
-2. **Local config**: writes `~/.config/piren/config.yml` with the resolved
+2. **Agent model**: copies Pi's default provider/model/thinking settings from
+   `~/.pi/agent/settings.json` into the newly created agent config when
+   available, so the agent is ready to run immediately.
+3. **Local config**: writes `~/.config/piren/config.yml` with the resolved
    vault root and allowed agents, after showing you the content and asking for
    confirmation.
-3. **Next commands**: prints `piren status`, `piren run`, and optional
+4. **Next commands**: prints `piren status`, `piren run`, and optional
    `piren service install gateway|telegram|discord` commands.
 
 Bare setup does not configure provider keys, model choices, Telegram, Discord,
