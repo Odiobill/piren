@@ -259,3 +259,116 @@ export function buildAutoNudgeNotification(message: string): AutoNudgeNotificati
     suggestions,
   };
 }
+
+export interface ReviewLoopConfigResolution {
+  enabled: boolean;
+  source: "env" | "config" | "default";
+  intervalTurns: number;
+  recentMessages: number;
+  timeoutMs: number;
+}
+
+const DEFAULT_REVIEW_INTERVAL_TURNS = 10;
+const DEFAULT_REVIEW_RECENT_MESSAGES = 20;
+const DEFAULT_REVIEW_TIMEOUT_MS = 120_000;
+
+function positiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
+export function resolveReviewLoopConfig(input: AutoNudgeConfigInput = {}): ReviewLoopConfigResolution {
+  const block = input.config?.self_improvement;
+  const reviewLoop = block && typeof block === "object" && !Array.isArray(block)
+    ? (block as Record<string, unknown>).review_loop
+    : undefined;
+  const reviewConfig = reviewLoop && typeof reviewLoop === "object" && !Array.isArray(reviewLoop)
+    ? reviewLoop as Record<string, unknown>
+    : {};
+
+  const intervalTurns = positiveInteger(
+    input.env?.PIREN_REVIEW_INTERVAL_TURNS ?? reviewConfig.interval_turns,
+    DEFAULT_REVIEW_INTERVAL_TURNS,
+  );
+  const recentMessages = positiveInteger(
+    input.env?.PIREN_REVIEW_RECENT_MESSAGES ?? reviewConfig.recent_messages,
+    DEFAULT_REVIEW_RECENT_MESSAGES,
+  );
+  const timeoutMs = positiveInteger(
+    input.env?.PIREN_REVIEW_TIMEOUT_MS ?? reviewConfig.timeout_ms,
+    DEFAULT_REVIEW_TIMEOUT_MS,
+  );
+
+  const envEnabled = parseBooleanEnv(input.env?.PIREN_REVIEW_LOOP);
+  if (envEnabled !== null) {
+    return { enabled: envEnabled, source: "env", intervalTurns, recentMessages, timeoutMs };
+  }
+  if (typeof reviewConfig.enabled === "boolean") {
+    return { enabled: reviewConfig.enabled, source: "config", intervalTurns, recentMessages, timeoutMs };
+  }
+  return { enabled: false, source: "default", intervalTurns, recentMessages, timeoutMs };
+}
+
+function contentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block): block is { type: string; text: string } =>
+      typeof block === "object" && block !== null &&
+      (block as { type?: unknown }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string",
+    )
+    .map((block) => block.text)
+    .join("\n");
+}
+
+export function collectReviewConversation(entries: readonly unknown[], recentMessages = DEFAULT_REVIEW_RECENT_MESSAGES): string[] {
+  const lines: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const candidate = (entry as { message?: unknown }).message ?? entry;
+    if (typeof candidate !== "object" || candidate === null) continue;
+    const role = (candidate as { role?: unknown }).role;
+    if (role !== "user" && role !== "assistant") continue;
+    const text = contentToText((candidate as { content?: unknown }).content).trim();
+    if (text === "") continue;
+    lines.push(`${role}: ${text}`);
+  }
+  return lines.slice(-Math.max(1, recentMessages));
+}
+
+export interface SelfImprovementReviewPromptInput {
+  agentName: string;
+  vaultRoot: string;
+  conversation: readonly string[];
+}
+
+export function buildSelfImprovementReviewPrompt(input: SelfImprovementReviewPromptInput): string {
+  return [
+    "ADR-0024 inspectable self-improvement review.",
+    "",
+    `Agent: ${input.agentName}`,
+    `Vault root: ${input.vaultRoot}`,
+    "",
+    "Review the recent conversation and decide whether any durable knowledge delta should be promoted into Piren's visible vault artifacts.",
+    "No hidden memory store. No SQLite. No out-of-vault persistence. No silent memory mutation.",
+    "Use only existing visible Piren tools when action is warranted:",
+    "- project_append_log: chronological project evidence",
+    "- decision_record: durable architecture or policy decisions",
+    "- project_update_handoff: next-session project state",
+    "- runbook_write: operational procedure",
+    "- skill_candidate_write: reusable procedure draft for steward review",
+    "- wiki_update_concept: OKF Concept for reusable knowledge",
+    "- wiki_update_entity: OKF Entity for corrected facts about people/systems/services/providers",
+    "",
+    "Choose the minimum useful artifact. Do not create skills directly. Do not author ADRs unless the conversation clearly sets direction.",
+    "If there is no durable knowledge delta, reply exactly: Nothing to promote.",
+    "",
+    "--- Recent conversation ---",
+    input.conversation.length === 0 ? "(empty)" : input.conversation.join("\n\n"),
+  ].join("\n");
+}

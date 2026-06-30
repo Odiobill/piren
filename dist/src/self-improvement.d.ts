@@ -39,3 +39,18 @@ export interface AutoNudgeNotification {
     suggestions: CorrectionArtifactSuggestion[];
 }
 export declare function buildAutoNudgeNotification(message: string): AutoNudgeNotification | null;
+export interface ReviewLoopConfigResolution {
+    enabled: boolean;
+    source: "env" | "config" | "default";
+    intervalTurns: number;
+    recentMessages: number;
+    timeoutMs: number;
+}
+export declare function resolveReviewLoopConfig(input?: AutoNudgeConfigInput): ReviewLoopConfigResolution;
+export declare function collectReviewConversation(entries: readonly unknown[], recentMessages?: number): string[];
+export interface SelfImprovementReviewPromptInput {
+    agentName: string;
+    vaultRoot: string;
+    conversation: readonly string[];
+}
+export declare function buildSelfImprovementReviewPrompt(input: SelfImprovementReviewPromptInput): string;

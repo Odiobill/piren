@@ -360,6 +360,50 @@ async function main() {
     }
     console.log("self_improvement auto-nudge ADR-0024 opt-in wiring: ok");
 
+    // ADR-0024 third slice: opt-in review loop. It is disabled by default,
+    // but PIREN_REVIEW_LOOP=1 registers a turn_end handler that spawns a
+    // child Pi prompt after the configured interval. The prompt is fenced to
+    // visible vault tools only and allows "Nothing to promote."
+    if ((pi.events.turn_end ?? []).length !== 0) {
+      throw new Error("default-off review loop unexpectedly registered a turn_end handler");
+    }
+    const reviewPi = fakePi() as FakePi & { exec: any };
+    const reviewExecCalls: Array<{ command: string; args: string[]; options: { timeout?: number } }> = [];
+    reviewPi.exec = async (command: string, args: string[], options: { timeout?: number }) => {
+      reviewExecCalls.push({ command, args, options });
+      return { code: 0, stdout: "Nothing to promote." };
+    };
+    await extension(reviewPi as any, {
+      cliAgentDir: fixture.agentDir,
+      env: { ...env, PIREN_REVIEW_LOOP: "1", PIREN_REVIEW_INTERVAL_TURNS: "1" },
+      configPath,
+    });
+    const reviewHandler = reviewPi.events.turn_end?.[0];
+    if (typeof reviewHandler !== "function") {
+      throw new Error("PIREN_REVIEW_LOOP=1 did not register a review turn_end handler");
+    }
+    await reviewHandler(
+      { message: { role: "assistant", content: "done" } },
+      {
+        sessionManager: {
+          getBranch: () => [
+            { message: { role: "user", content: "Actually, capture this as a concept." } },
+            { message: { role: "assistant", content: "I will use wiki_update_concept." } },
+          ],
+        },
+        ui: { notify: () => undefined },
+      },
+    );
+    await Promise.resolve();
+    if (reviewExecCalls.length !== 1) {
+      throw new Error(`review loop fired ${reviewExecCalls.length} child prompts, expected 1`);
+    }
+    const reviewPrompt = reviewExecCalls[0]?.args.at(-1) ?? "";
+    if (!reviewPrompt.includes("ADR-0024 inspectable self-improvement review") || !reviewPrompt.includes("Nothing to promote")) {
+      throw new Error("review loop prompt missing ADR-0024 review instructions");
+    }
+    console.log("self_improvement review loop ADR-0024 opt-in child prompt: ok");
+
     // ADR-0019: vault-backed cron. A shared job file is listed as due, claimed
     // atomically, run with an inspectable run record, restored with last_run
     // set, and visible in cron_runs history. Secrets never go in job files.

@@ -22,6 +22,14 @@ interface ExtensionAPI {
         execute?: () => Promise<string> | string;
     }) => void;
     on: (event: string, handler: (...args: any[]) => Promise<unknown> | unknown) => void;
+    exec?: (command: string, args: string[], options?: {
+        signal?: AbortSignal;
+        timeout?: number;
+    }) => Promise<{
+        code: number;
+        stdout?: string;
+        stderr?: string;
+    }>;
 }
 export default function pirenExtension(pi: ExtensionAPI, testOptions?: BootstrapOptions): Promise<void>;
 export {};

@@ -96,6 +96,20 @@ Piren translates this to Pi-native `--model` and `--models` flags. Provider cred
 
 Freshly scaffolded agent configs intentionally do not contain `model: {}`. They include comments explaining that no model is configured yet, plus the worker-only polling defaults. If no model block is present, Piren does not pass `--model` and Pi falls back to its native defaults.
 
+Inspectable self-improvement is configured per agent and defaults to off:
+
+```yaml
+self_improvement:
+  auto_nudge: true
+  review_loop:
+    enabled: true
+    interval_turns: 10
+    recent_messages: 20
+    timeout_ms: 120000
+```
+
+`auto_nudge` emits an advisory notification when a steward correction is detected. `review_loop` runs an opt-in child Pi prompt after the configured turn interval to decide whether a visible vault artifact should be updated. Both features avoid hidden memory stores and never write outside the vault.
+
 For non-interactive provisioning, `setup --apply` can write both Pi-native auth and the agent-local model preference:
 
 ```bash
@@ -169,3 +183,8 @@ Common overrides:
 - `PIREN_LOCAL_CACHE_DIR`: override non-authoritative cache directory.
 - `PIREN_TOKEN`: gateway Bearer token.
 - `PIREN_CRON_STALE_MS`: cron active-device staleness threshold.
+- `PIREN_AUTO_NUDGE`: override `self_improvement.auto_nudge` (`1/true/on` or `0/false/off`).
+- `PIREN_REVIEW_LOOP`: override `self_improvement.review_loop.enabled` (`1/true/on` or `0/false/off`).
+- `PIREN_REVIEW_INTERVAL_TURNS`: override review loop turn interval.
+- `PIREN_REVIEW_RECENT_MESSAGES`: override how many recent user/assistant messages the review prompt sees.
+- `PIREN_REVIEW_TIMEOUT_MS`: override the child Pi review timeout.

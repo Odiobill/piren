@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { parse as parseYaml } from "yaml";
 import { loadPirenContext, type BootstrapOptions, type PirenContext } from "./bootstrap.js";
@@ -36,9 +37,12 @@ import {
 import { checkVaultConformance, createRealVaultDirReader, formatVaultConformanceReport } from "./okf.js";
 import {
   buildAutoNudgeNotification,
+  buildSelfImprovementReviewPrompt,
+  collectReviewConversation,
   detectCorrectionTrigger,
   formatCorrectionArtifactNudge,
   resolveAutoNudgeConfig,
+  resolveReviewLoopConfig,
   suggestCorrectionArtifacts,
 } from "./self-improvement.js";
 
@@ -61,6 +65,7 @@ interface ExtensionAPI {
     },
   ) => void;
   on: (event: string, handler: (...args: any[]) => Promise<unknown> | unknown) => void;
+  exec?: (command: string, args: string[], options?: { signal?: AbortSignal; timeout?: number }) => Promise<{ code: number; stdout?: string; stderr?: string }>;
 }
 
 const PIREN_TOOL_NAMES = [
@@ -239,6 +244,21 @@ function extractUserMessageText(payload: unknown): string | null {
   return null;
 }
 
+function buildReviewChildPiArgs(context: PirenContext, prompt: string): string[] {
+  return [
+    "-p",
+    "--no-session",
+    "--no-extensions",
+    "--extension",
+    fileURLToPath(import.meta.url),
+    "--vault-root",
+    context.vaultRoot,
+    "--agent",
+    context.agentName,
+    prompt,
+  ];
+}
+
 // Build isScheduleDue options respecting exactOptionalPropertyTypes: lastRun
 // is omitted (never passed as explicit undefined) when the job has no last run.
 function jobIsDue(job: { schedule: CronSchedule; lastRun?: Date }, now: Date): boolean {
@@ -326,7 +346,7 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "Correction detection is advisory and inspectable. If the steward corrects you,",
     "use self_improvement_trigger_check(message) to classify the correction and pick",
     "the minimum visible vault artifact. No hidden memory store, no SQLite, and no",
-    "silent pi.exec writes. Durable corrections should be captured through existing",
+    "always-on silent pi.exec writes. Durable corrections should be captured through existing",
     "tools such as project_append_log, skill_candidate_write, decision_record,",
     "wiki_update_concept, or wiki_update_entity.",
     "Auto-nudge is opt-in and off by default. Enable it by setting",
@@ -334,6 +354,10 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "PIREN_AUTO_NUDGE=1 in the environment. When enabled, Piren emits an advisory",
     "ctx.ui.notify on detected user corrections; it never writes to the vault on",
     "its own.",
+    "The review loop is also opt-in and off by default. Enable it with",
+    "self_improvement.review_loop.enabled: true or PIREN_REVIEW_LOOP=1. It runs a",
+    "child Pi prompt after the configured turn interval and may use only visible",
+    "vault tools. If there is no durable knowledge delta, it must reply Nothing to promote.",
   ];
 
   const skillsSection = formatSkillCatalogForContext(skills);
@@ -409,6 +433,48 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
       } catch {
         // Auto-nudge is best-effort. A handler failure must never abort a turn.
       }
+    });
+  }
+
+  const reviewLoop = resolveReviewLoopConfig({
+    env: env as Record<string, string | undefined>,
+    config: agentConfigRaw,
+  });
+  const reviewExec = pi.exec;
+  if (reviewLoop.enabled && typeof reviewExec === "function") {
+    const execReview: NonNullable<ExtensionAPI["exec"]> = reviewExec;
+    let turnsSinceReview = 0;
+    let reviewInProgress = false;
+    pi.on("turn_end", async (_event: unknown, ctx: unknown) => {
+      turnsSinceReview++;
+      if (reviewInProgress) return;
+      if (turnsSinceReview < reviewLoop.intervalTurns) return;
+      turnsSinceReview = 0;
+
+      const sessionManager = (ctx as { sessionManager?: { getBranch?: () => unknown[] } } | null)?.sessionManager;
+      if (typeof sessionManager?.getBranch !== "function") return;
+      const conversation = collectReviewConversation(sessionManager.getBranch(), reviewLoop.recentMessages);
+      if (conversation.length < 2) return;
+
+      const prompt = buildSelfImprovementReviewPrompt({
+        agentName: context.agentName,
+        vaultRoot: context.vaultRoot,
+        conversation,
+      });
+      reviewInProgress = true;
+      void execReview("pi", buildReviewChildPiArgs(context, prompt), { timeout: reviewLoop.timeoutMs })
+        .then((result) => {
+          reviewInProgress = false;
+          const output = result.stdout?.trim();
+          if (result.code !== 0 || !output || output === "Nothing to promote.") return;
+          const notify = (ctx as { ui?: { notify?: (message: string, level?: string) => void } } | null)?.ui?.notify;
+          if (typeof notify === "function") {
+            notify("ADR-0024 self-improvement review completed. Visible vault artifacts may have been updated.", "info");
+          }
+        })
+        .catch(() => {
+          reviewInProgress = false;
+        });
     });
   }
 

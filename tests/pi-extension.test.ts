@@ -997,7 +997,48 @@ describe("Pi extension OKF conformance tool (ADR-0022)", () => {
     ).resolves.not.toThrow();
   });
 
-  it("includes an opt-in auto-nudge note in the startup context prompt", async () => {
+  it("runs the opt-in ADR-0024 review loop through a child Pi prompt after the configured turn interval", async () => {
+    const pi = fakePi() as ReturnType<typeof fakePi> & { exec: any };
+    const execCalls: Array<{ command: string; args: string[]; options: { timeout?: number } }> = [];
+    pi.exec = async (command: string, args: string[], options: { timeout?: number }) => {
+      execCalls.push({ command, args, options });
+      return { code: 0, stdout: "Nothing to promote." };
+    };
+
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_REVIEW_LOOP: "1", PIREN_REVIEW_INTERVAL_TURNS: "2", PIREN_REVIEW_RECENT_MESSAGES: "3" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const handler = pi.events.turn_end?.[0];
+    expect(handler).toBeDefined();
+    const ctx = {
+      sessionManager: {
+        getBranch: () => [
+          { message: { role: "user", content: "Actually, write that down." } },
+          { message: { role: "assistant", content: "I will use a visible artifact." } },
+        ],
+      },
+      ui: { notify: () => undefined },
+    };
+
+    await handler?.({ message: { role: "assistant", content: "first" } }, ctx);
+    expect(execCalls).toHaveLength(0);
+    await handler?.({ message: { role: "assistant", content: "second" } }, ctx);
+    await Promise.resolve();
+
+    expect(execCalls).toHaveLength(1);
+    expect(execCalls[0]?.command).toBe("pi");
+    expect(execCalls[0]?.options.timeout).toBe(120000);
+    expect(execCalls[0]?.args).toEqual(expect.arrayContaining(["-p", "--no-session", "--no-extensions", "--vault-root", join(root, "vault"), "--agent", "thor"]));
+    const prompt = execCalls[0]?.args.at(-1) ?? "";
+    expect(prompt).toContain("ADR-0024 inspectable self-improvement review");
+    expect(prompt).toContain("user: Actually, write that down.");
+    expect(prompt).toContain("Nothing to promote");
+  });
+
+  it("includes opt-in self-improvement notes in the startup context prompt", async () => {
     const pi = fakePi();
     await extension(pi as any, {
       cliAgentDir: agentDir,
@@ -1010,5 +1051,9 @@ describe("Pi extension OKF conformance tool (ADR-0022)", () => {
     expect(content).toContain("opt-in");
     expect(content).toContain("PIREN_AUTO_NUDGE");
     expect(content).toContain("self_improvement.auto_nudge");
+    expect(content).toContain("review loop");
+    expect(content).toContain("PIREN_REVIEW_LOOP=1");
+    expect(content).toContain("self_improvement.review_loop.enabled");
+    expect(content).toContain("Nothing to promote");
   });
 });

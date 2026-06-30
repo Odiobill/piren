@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAutoNudgeNotification,
+  buildSelfImprovementReviewPrompt,
+  collectReviewConversation,
   detectCorrectionTrigger,
   formatCorrectionArtifactNudge,
   resolveAutoNudgeConfig,
+  resolveReviewLoopConfig,
   suggestCorrectionArtifacts,
 } from "../src/self-improvement.js";
 
@@ -118,5 +121,65 @@ describe("ADR-0024 auto-nudge notification builder", () => {
 
   it("returns null for negative-pattern matches such as 'no worries'", () => {
     expect(buildAutoNudgeNotification("No worries, this is fine.")).toBeNull();
+  });
+});
+
+describe("ADR-0024 review loop primitives", () => {
+  it("defaults the review loop to disabled and supports config/env opt-in", () => {
+    expect(resolveReviewLoopConfig({ env: {} })).toEqual({
+      enabled: false,
+      source: "default",
+      intervalTurns: 10,
+      recentMessages: 20,
+      timeoutMs: 120000,
+    });
+
+    expect(resolveReviewLoopConfig({
+      env: {},
+      config: { self_improvement: { review_loop: { enabled: true, interval_turns: 3, recent_messages: 8, timeout_ms: 90000 } } },
+    })).toEqual({
+      enabled: true,
+      source: "config",
+      intervalTurns: 3,
+      recentMessages: 8,
+      timeoutMs: 90000,
+    });
+
+    expect(resolveReviewLoopConfig({
+      env: { PIREN_REVIEW_LOOP: "0", PIREN_REVIEW_INTERVAL_TURNS: "2" },
+      config: { self_improvement: { review_loop: { enabled: true } } },
+    }).enabled).toBe(false);
+  });
+
+  it("collects recent user and assistant text from Pi session entries", () => {
+    const conversation = collectReviewConversation([
+      { message: { role: "system", content: "ignored" } },
+      { message: { role: "user", content: "Actually, use project_append_log." } },
+      { message: { role: "assistant", content: [{ type: "text", text: "Understood." }, { type: "toolCall", name: "ignored" }] } },
+      { role: "user", content: "Please don't put secrets in the vault." },
+    ], 2);
+
+    expect(conversation).toEqual([
+      "assistant: Understood.",
+      "user: Please don't put secrets in the vault.",
+    ]);
+  });
+
+  it("builds an inspectable review prompt that can only target visible Piren tools", () => {
+    const prompt = buildSelfImprovementReviewPrompt({
+      agentName: "thor",
+      vaultRoot: "/vault",
+      conversation: [
+        "user: Actually, write this as a concept.",
+        "assistant: I will use wiki_update_concept.",
+      ],
+    });
+
+    expect(prompt).toContain("ADR-0024");
+    expect(prompt).toContain("No hidden memory store");
+    expect(prompt).toContain("project_append_log");
+    expect(prompt).toContain("wiki_update_concept");
+    expect(prompt).toContain("If there is no durable knowledge delta, reply exactly: Nothing to promote.");
+    expect(prompt).toContain("user: Actually, write this as a concept.");
   });
 });

@@ -74,6 +74,8 @@ This read-only ADR-0024 tool ports Hermes-style correction heuristics and sugges
 
 Opt-in auto-nudge wiring is also available. Set `self_improvement.auto_nudge: true` in `team/<agent>/config.yml`, or set `PIREN_AUTO_NUDGE=1` in the environment, and Piren installs a `message_end` listener that emits an advisory `ctx.ui.notify` whenever a user message looks like a correction. The notification names the same visible vault tools (`project_append_log`, `skill_candidate_write`, `decision_record`, `wiki_update_concept`, `wiki_update_entity`); it never writes on its own. Default is OFF.
 
+Opt-in review-loop wiring is available for agents that should periodically ask whether recent turns produced a durable knowledge delta. Set `self_improvement.review_loop.enabled: true` in `team/<agent>/config.yml`, or set `PIREN_REVIEW_LOOP=1` in the environment. The loop runs a child Pi prompt after the configured turn interval and gives that child only the visible Piren artifact tools as valid targets. If there is no durable knowledge delta, the child prompt must reply `Nothing to promote.` Default is OFF.
+
 ## Inspectability rule
 
 Piren v1 avoids hidden memory mutation and unreviewed self-modification. Knowledge changes should be visible in Markdown and reviewable by the steward.
