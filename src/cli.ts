@@ -15,6 +15,7 @@ import { PiRpcClient } from "./gateway-rpc.js";
 import { askAgent } from "./ask.js";
 import { cleanPiren, formatCleanReport } from "./clean.js";
 import { readVersion } from "./version.js";
+import { executePirenUpdate, formatUpdateReport } from "./update.js";
 import {
   validateAgentName,
   agentDirPath,
@@ -426,6 +427,10 @@ try {
     // way the package.json is two levels up.
     const packageJsonPath = join(thisDir, "..", "..", "package.json");
     console.log(readVersion(packageJsonPath));
+  } else if (command === "update") {
+    const report = await executePirenUpdate({ runCommand: runCommandWithArgs });
+    console.log(formatUpdateReport(report));
+    if (!report.ok) process.exit(1);
   } else if (command === "agent") {
     await runAgentCommand({
       subcommand: positionals[0],
@@ -735,6 +740,17 @@ function runShell(command: string): Promise<CommandResult> {
       // execFile sets exitCode via the error's `code` for non-zero exits; normalize.
       const normalizedExit = error && typeof error.code === "number" ? error.code : exitCode;
       resolvePromise({ exitCode: normalizedExit < 0 ? 1 : normalizedExit, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+    });
+  });
+}
+
+/** Run a command without shell interpolation. Used by `piren update`. */
+function runCommandWithArgs(command: string, args: string[]): Promise<CommandResult> {
+  return new Promise((resolvePromise) => {
+    execFile(command, args, { timeout: 120000 }, (error, stdout, stderr) => {
+      const fallbackExit = error ? 1 : 0;
+      const exitCode = error && typeof error.code === "number" ? error.code : fallbackExit;
+      resolvePromise({ exitCode, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
     });
   });
 }

@@ -139,6 +139,12 @@ describe("parseArgs: preserved behavior", () => {
     expect(KNOWN_COMMANDS).toContain("version");
   });
 
+  it("recognizes the update command", () => {
+    const result = parseArgs(["update"]);
+    expect(result.command).toBe("update");
+    expect(KNOWN_COMMANDS).toContain("update");
+  });
+
   it("sets help=true for --help anywhere before the -- passthrough", () => {
     expect(parseArgs(["--help"]).help).toBe(true);
     expect(parseArgs(["gateway", "--help"]).help).toBe(true);

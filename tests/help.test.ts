@@ -31,6 +31,11 @@ describe("help: top-level help", () => {
     expect(formatHelp()).toContain("version");
   });
 
+  it("includes the update command", () => {
+    expect(formatHelp()).toContain("update");
+    expect(formatCommandHelp("update")).toContain("github:Odiobill/piren");
+  });
+
   it("mentions global flags", () => {
     const text = formatHelp();
     expect(text).toContain("--vault-root");

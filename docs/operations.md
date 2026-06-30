@@ -11,7 +11,7 @@ npm run build
 npm run smoke
 ```
 
-Current expected baseline: 69 test files, 542 tests, typecheck/build/smoke passing.
+Current expected baseline: 70 test files, 547 tests, typecheck/build/smoke passing.
 
 ## Clean install checklist
 
@@ -38,6 +38,14 @@ piren setup --apply --vault-root /tmp/piren-vault --agent piren --provider anthr
 piren doctor
 piren status
 ```
+
+## Update a global install
+
+```bash
+piren update
+```
+
+`piren update` runs `npm install -g --install-links github:Odiobill/piren`, then prints the command output and exits non-zero if npm fails. Use it when a device already has a working global `piren` binary and should pull the latest `origin/main` release artifacts.
 
 ## Automated clean-install validation
 

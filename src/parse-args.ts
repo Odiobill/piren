@@ -58,6 +58,7 @@ export const KNOWN_COMMANDS = [
   "agent",
   "clean",
   "version",
+  "update",
 ] as const;
 
 /**

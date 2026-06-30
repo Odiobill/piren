@@ -19,6 +19,15 @@ npm install -g --install-links github:Odiobill/piren
 copy the package into the global prefix instead of leaving the `piren` command
 pointing into npm's temporary Git cache.
 
+To update an existing global install later:
+
+```bash
+piren update
+```
+
+This runs the same GitHub install command internally:
+`npm install -g --install-links github:Odiobill/piren`.
+
 ## Configure Pi
 
 If `pi` is not installed yet:

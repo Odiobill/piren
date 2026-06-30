@@ -17,6 +17,7 @@ export const KNOWN_COMMANDS = [
     "agent",
     "clean",
     "version",
+    "update",
 ];
 /**
  * Parse Piren CLI arguments (typically `process.argv.slice(2)`).

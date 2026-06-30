@@ -102,6 +102,11 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
     command: "version",
     short: "Print the installed Piren version.",
   },
+  {
+    command: "update",
+    short: "Update the global Piren install from GitHub.",
+    example: "piren update  # runs npm install -g --install-links github:Odiobill/piren",
+  },
 ];
 
 const GLOBAL_FLAGS = ["--vault-root <path>", "--agent <name>", "--agent-dir <path>", "-h, --help"];

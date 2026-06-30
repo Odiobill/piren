@@ -17,6 +17,8 @@ This reference lists Piren's user-facing CLI, Pi extension tools, and HTTP route
 - `piren discord`
 - `piren ask "message"`
 - `piren clean [--force]`
+- `piren version`
+- `piren update`
 
 Global options include `--vault-root`, `--agent`, `-a`, and `--agent-dir`. Long options accept either `--flag value` or `--flag=value`.
 

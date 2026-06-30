@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  69 passed (69)
-Tests       542 passed (542)
+Test Files  70 passed (70)
+Tests       547 passed (547)
 SMOKE PASSED
 ```
 
@@ -221,6 +221,7 @@ Implemented CLI:
 - `piren agent <add|remove|clone|list> [name]` (manages team/<agent>/ identity AND local allowed_agents; remove prompts before deleting the vault dir, `--yes` skips; clone copies a source agent verbatim)
 - `piren clean`
 - `piren version`
+- `piren update` (runs `npm install -g --install-links github:Odiobill/piren`)
 - `piren -h|--help` and `piren <command> --help`
 
 Implemented extension command:
