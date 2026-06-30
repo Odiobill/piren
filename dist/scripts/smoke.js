@@ -313,6 +313,29 @@ async function main() {
             throw new Error("self_improvement_trigger_check did not return expected advisory nudge");
         }
         console.log("self_improvement_trigger_check ADR-0024 advisory nudge: ok");
+        // ADR-0024 second slice: opt-in auto-nudge wiring. With PIREN_AUTO_NUDGE=1
+        // the extension installs a message_end handler that emits a ctx.ui.notify
+        // when a user correction is detected. Default-off behavior is exercised
+        // implicitly by the earlier extension load (which uses env without the
+        // PIREN_AUTO_NUDGE key and therefore registers no message_end handler).
+        if ((pi.events.message_end ?? []).length !== 0) {
+            throw new Error("default-off auto-nudge unexpectedly registered a message_end handler");
+        }
+        const nudgePi = await load("auto-nudge", fixture.agentDir, configPath, { ...env, PIREN_AUTO_NUDGE: "1" });
+        const nudgeHandler = nudgePi.events.message_end?.[0];
+        if (typeof nudgeHandler !== "function") {
+            throw new Error("PIREN_AUTO_NUDGE=1 did not register an auto-nudge message_end handler");
+        }
+        const nudgeNotifications = [];
+        await nudgeHandler({ message: { role: "user", content: "Please don't use a hidden memory store." } }, { ui: { notify: (message, level) => nudgeNotifications.push({ message, level }) } });
+        await nudgeHandler({ message: { role: "user", content: "No worries, all good." } }, { ui: { notify: (message, level) => nudgeNotifications.push({ message, level }) } });
+        if (nudgeNotifications.length !== 1) {
+            throw new Error(`auto-nudge fired ${nudgeNotifications.length} notifications, expected 1`);
+        }
+        if (!nudgeNotifications[0]?.message.includes("ADR-0024") || !nudgeNotifications[0]?.message.includes("Correction detected")) {
+            throw new Error("auto-nudge notification missing ADR-0024 advisory text");
+        }
+        console.log("self_improvement auto-nudge ADR-0024 opt-in wiring: ok");
         // ADR-0019: vault-backed cron. A shared job file is listed as due, claimed
         // atomically, run with an inspectable run record, restored with last_run
         // set, and visible in cron_runs history. Secrets never go in job files.

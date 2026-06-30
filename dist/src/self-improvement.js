@@ -148,4 +148,52 @@ export function formatCorrectionArtifactNudge(result) {
     ];
     return lines.join("\n");
 }
+function parseBooleanEnv(value) {
+    if (value === undefined)
+        return null;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "")
+        return null;
+    if (["1", "true", "yes", "on"].includes(normalized))
+        return true;
+    if (["0", "false", "no", "off"].includes(normalized))
+        return false;
+    return null;
+}
+export function resolveAutoNudgeConfig(input = {}) {
+    const envValue = parseBooleanEnv(input.env?.PIREN_AUTO_NUDGE);
+    if (envValue !== null) {
+        return { enabled: envValue, source: "env" };
+    }
+    const block = input.config?.self_improvement;
+    if (block && typeof block === "object" && !Array.isArray(block)) {
+        const candidate = block.auto_nudge;
+        if (typeof candidate === "boolean") {
+            return { enabled: candidate, source: "config" };
+        }
+    }
+    return { enabled: false, source: "default" };
+}
+const AUTO_NUDGE_HEADER = "[ADR-0024 self-improvement nudge — advisory only, no hidden mutation]";
+export function buildAutoNudgeNotification(message) {
+    if (typeof message !== "string")
+        return null;
+    const trimmed = message.trim();
+    if (trimmed === "")
+        return null;
+    const trigger = detectCorrectionTrigger(trimmed);
+    if (!trigger.triggered)
+        return null;
+    if (trigger.confidence === "none")
+        return null;
+    const suggestions = suggestCorrectionArtifacts(trimmed);
+    const body = formatCorrectionArtifactNudge(trigger);
+    return {
+        text: `${AUTO_NUDGE_HEADER}\n${body}`,
+        confidence: trigger.confidence,
+        directive: trigger.directive,
+        matchedPattern: trigger.matchedPattern,
+        suggestions,
+    };
+}
 //# sourceMappingURL=self-improvement.js.map

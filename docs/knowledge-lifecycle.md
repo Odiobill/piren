@@ -72,6 +72,8 @@ self_improvement_trigger_check(message)
 
 This read-only ADR-0024 tool ports Hermes-style correction heuristics and suggests the minimum visible vault artifact to use next. It only advises. It does not mutate hidden memory, create SQLite state, or run silent background writes.
 
+Opt-in auto-nudge wiring is also available. Set `self_improvement.auto_nudge: true` in `team/<agent>/config.yml`, or set `PIREN_AUTO_NUDGE=1` in the environment, and Piren installs a `message_end` listener that emits an advisory `ctx.ui.notify` whenever a user message looks like a correction. The notification names the same visible vault tools (`project_append_log`, `skill_candidate_write`, `decision_record`, `wiki_update_concept`, `wiki_update_entity`); it never writes on its own. Default is OFF.
+
 ## Inspectability rule
 
 Piren v1 avoids hidden memory mutation and unreviewed self-modification. Knowledge changes should be visible in Markdown and reviewable by the steward.

@@ -886,4 +886,129 @@ describe("Pi extension OKF conformance tool (ADR-0022)", () => {
     expect(result.content[0].text).toContain("Correction detected");
     expect(result.content[0].text).toContain("wiki_update_concept");
   });
+
+  it("does not register an auto-nudge message_end handler when auto-nudge is disabled (default)", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+    expect(pi.events.message_end ?? []).toHaveLength(0);
+  });
+
+  it("registers a message_end handler that nudges on a correction when PIREN_AUTO_NUDGE=1", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_AUTO_NUDGE: "1" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const handler = pi.events.message_end?.[0];
+    expect(handler).toBeDefined();
+
+    const notifications: Array<{ message: string; level: string }> = [];
+    const ctx = {
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    };
+
+    await handler?.(
+      { message: { role: "user", content: "Please don't use a hidden memory store." } },
+      ctx,
+    );
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.level).toBe("info");
+    expect(notifications[0]?.message).toContain("ADR-0024");
+    expect(notifications[0]?.message).toContain("Correction detected");
+    expect(notifications[0]?.message).toContain("skill_candidate_write");
+  });
+
+  it("registers a message_end handler when team config opts in via self_improvement.auto_nudge", async () => {
+    await writeFile(
+      join(agentDir, "config.yml"),
+      "model: {}\nself_improvement:\n  auto_nudge: true\n",
+    );
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const handler = pi.events.message_end?.[0];
+    expect(handler).toBeDefined();
+
+    const notifications: Array<{ message: string; level: string }> = [];
+    await handler?.(
+      { message: { role: "user", content: [{ type: "text", text: "Actually, use wiki_update_concept for tool quirks." }] } },
+      { ui: { notify: (message: string, level: string) => notifications.push({ message, level }) } },
+    );
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.message).toContain("wiki_update_concept");
+  });
+
+  it("auto-nudge handler ignores assistant messages, non-corrections, and unknown shapes without throwing", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_AUTO_NUDGE: "1" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const handler = pi.events.message_end?.[0];
+    expect(handler).toBeDefined();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const ctx = { ui: { notify: (m: string, l: string) => notifications.push({ message: m, level: l }) } };
+
+    await handler?.({ message: { role: "assistant", content: "No, that is wrong." } }, ctx);
+    await handler?.({ message: { role: "user", content: "Looks great, thanks!" } }, ctx);
+    await handler?.({ message: { role: "user", content: "No worries, this is fine." } }, ctx);
+    await handler?.({}, ctx);
+    await handler?.({ message: null }, ctx);
+
+    expect(notifications).toHaveLength(0);
+  });
+
+  it("auto-nudge handler swallows internal errors so it never aborts a turn", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_AUTO_NUDGE: "1" },
+      configPath: join(root, "missing-config.yml"),
+    });
+    const handler = pi.events.message_end?.[0];
+    expect(handler).toBeDefined();
+    const ctx = {
+      ui: {
+        notify() {
+          throw new Error("ui.notify exploded");
+        },
+      },
+    };
+    await expect(
+      handler?.({ message: { role: "user", content: "Please don't use a hidden memory store." } }, ctx),
+    ).resolves.not.toThrow();
+  });
+
+  it("includes an opt-in auto-nudge note in the startup context prompt", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+    const beforeStart = pi.events.before_agent_start?.[0];
+    const out = await beforeStart?.();
+    const content = (out as { message: { content: string } }).message.content;
+    expect(content).toContain("opt-in");
+    expect(content).toContain("PIREN_AUTO_NUDGE");
+    expect(content).toContain("self_improvement.auto_nudge");
+  });
 });

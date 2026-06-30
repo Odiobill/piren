@@ -22,3 +22,20 @@ export interface CorrectionArtifactSuggestion {
 export declare function detectCorrectionTrigger(text: string, config?: CorrectionTriggerConfig): CorrectionTriggerResult;
 export declare function suggestCorrectionArtifacts(text: string): CorrectionArtifactSuggestion[];
 export declare function formatCorrectionArtifactNudge(result: CorrectionTriggerResult): string;
+export interface AutoNudgeConfigInput {
+    env?: Record<string, string | undefined>;
+    config?: Record<string, unknown> | null;
+}
+export interface AutoNudgeConfigResolution {
+    enabled: boolean;
+    source: "env" | "config" | "default";
+}
+export declare function resolveAutoNudgeConfig(input?: AutoNudgeConfigInput): AutoNudgeConfigResolution;
+export interface AutoNudgeNotification {
+    text: string;
+    confidence: "strong" | "weak";
+    directive: string;
+    matchedPattern: string;
+    suggestions: CorrectionArtifactSuggestion[];
+}
+export declare function buildAutoNudgeNotification(message: string): AutoNudgeNotification | null;

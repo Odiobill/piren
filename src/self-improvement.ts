@@ -197,3 +197,65 @@ export function formatCorrectionArtifactNudge(result: CorrectionTriggerResult): 
   ];
   return lines.join("\n");
 }
+
+export interface AutoNudgeConfigInput {
+  env?: Record<string, string | undefined>;
+  config?: Record<string, unknown> | null;
+}
+
+export interface AutoNudgeConfigResolution {
+  enabled: boolean;
+  source: "env" | "config" | "default";
+}
+
+function parseBooleanEnv(value: string | undefined): boolean | null {
+  if (value === undefined) return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "") return null;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+
+export function resolveAutoNudgeConfig(input: AutoNudgeConfigInput = {}): AutoNudgeConfigResolution {
+  const envValue = parseBooleanEnv(input.env?.PIREN_AUTO_NUDGE);
+  if (envValue !== null) {
+    return { enabled: envValue, source: "env" };
+  }
+  const block = input.config?.self_improvement;
+  if (block && typeof block === "object" && !Array.isArray(block)) {
+    const candidate = (block as Record<string, unknown>).auto_nudge;
+    if (typeof candidate === "boolean") {
+      return { enabled: candidate, source: "config" };
+    }
+  }
+  return { enabled: false, source: "default" };
+}
+
+export interface AutoNudgeNotification {
+  text: string;
+  confidence: "strong" | "weak";
+  directive: string;
+  matchedPattern: string;
+  suggestions: CorrectionArtifactSuggestion[];
+}
+
+const AUTO_NUDGE_HEADER = "[ADR-0024 self-improvement nudge — advisory only, no hidden mutation]";
+
+export function buildAutoNudgeNotification(message: string): AutoNudgeNotification | null {
+  if (typeof message !== "string") return null;
+  const trimmed = message.trim();
+  if (trimmed === "") return null;
+  const trigger = detectCorrectionTrigger(trimmed);
+  if (!trigger.triggered) return null;
+  if (trigger.confidence === "none") return null;
+  const suggestions = suggestCorrectionArtifacts(trimmed);
+  const body = formatCorrectionArtifactNudge(trigger);
+  return {
+    text: `${AUTO_NUDGE_HEADER}\n${body}`,
+    confidence: trigger.confidence,
+    directive: trigger.directive,
+    matchedPattern: trigger.matchedPattern,
+    suggestions,
+  };
+}

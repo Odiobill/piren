@@ -14,7 +14,7 @@ import { loadVaultSkills, formatSkillCatalogForContext } from "./skills.js";
 import { projectStatus, projectAppendLog, decisionRecord, projectUpdateHandoff, runbookWrite, skillCandidateWrite, wikiUpdateConcept, wikiUpdateEntity, } from "./knowledge.js";
 import { listCronJobs, listCronRuns, claimCronJob, recordCronRun, executeScriptCronJob, selectOwningDevice, listActiveDevices, isScheduleDue, } from "./cron.js";
 import { checkVaultConformance, createRealVaultDirReader, formatVaultConformanceReport } from "./okf.js";
-import { detectCorrectionTrigger, formatCorrectionArtifactNudge, suggestCorrectionArtifacts } from "./self-improvement.js";
+import { buildAutoNudgeNotification, detectCorrectionTrigger, formatCorrectionArtifactNudge, resolveAutoNudgeConfig, suggestCorrectionArtifacts, } from "./self-improvement.js";
 const PIREN_TOOL_NAMES = [
     "vault_read",
     "vault_read_cached",
@@ -142,6 +142,47 @@ function scriptCronTimeoutMs(env) {
     }
     return 60_000;
 }
+// Best-effort read of the agent-local config.yml. Returns null when missing or
+// malformed; auto-nudge defaults to off in that case (see resolveAutoNudgeConfig).
+async function readAgentConfig(configPath) {
+    try {
+        const parsed = parseYaml(await readFile(configPath, "utf8"));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed;
+        }
+    }
+    catch {
+        // Missing or malformed agent config is a no-op for auto-nudge wiring.
+    }
+    return null;
+}
+// Extract the user-facing text from a Pi message event payload, tolerating
+// both string and TextContent[] content shapes. Returns null for unknown shapes,
+// non-user roles, or empty text.
+function extractUserMessageText(payload) {
+    if (typeof payload !== "object" || payload === null)
+        return null;
+    const message = payload.message;
+    if (typeof message !== "object" || message === null)
+        return null;
+    const role = message.role;
+    if (role !== "user")
+        return null;
+    const content = message.content;
+    if (typeof content === "string") {
+        return content.length > 0 ? content : null;
+    }
+    if (Array.isArray(content)) {
+        const text = content
+            .filter((block) => typeof block === "object" && block !== null &&
+            block.type === "text" &&
+            typeof block.text === "string")
+            .map((block) => block.text)
+            .join("\n");
+        return text.length > 0 ? text : null;
+    }
+    return null;
+}
 // Build isScheduleDue options respecting exactOptionalPropertyTypes: lastRun
 // is omitted (never passed as explicit undefined) when the job has no last run.
 function jobIsDue(job, now) {
@@ -232,6 +273,11 @@ function contextPrompt(context, skills = []) {
         "silent pi.exec writes. Durable corrections should be captured through existing",
         "tools such as project_append_log, skill_candidate_write, decision_record,",
         "wiki_update_concept, or wiki_update_entity.",
+        "Auto-nudge is opt-in and off by default. Enable it by setting",
+        "self_improvement.auto_nudge: true in team/<agent>/config.yml, or by setting",
+        "PIREN_AUTO_NUDGE=1 in the environment. When enabled, Piren emits an advisory",
+        "ctx.ui.notify on detected user corrections; it never writes to the vault on",
+        "its own.",
     ];
     const skillsSection = formatSkillCatalogForContext(skills);
     if (skillsSection) {
@@ -277,6 +323,36 @@ export default async function pirenExtension(pi, testOptions = {}) {
     // override shared skills with the same name. Skills are injected into the
     // agent context prompt as available procedures.
     const { skills } = await loadVaultSkills(context.vaultRoot, context.agentName);
+    // ADR-0024 auto-nudge wiring. Default OFF. Enable per agent via
+    // team/<agent>/config.yml -> self_improvement.auto_nudge: true, or via
+    // PIREN_AUTO_NUDGE=1/0 to override at runtime. When enabled, Piren listens
+    // for user message_end events and emits an advisory ctx.ui.notify when a
+    // correction is detected. It never writes to the vault on its own; the
+    // agent decides which visible artifact to capture, if any.
+    const agentConfigRaw = await readAgentConfig(context.paths.config);
+    const autoNudge = resolveAutoNudgeConfig({
+        env: env,
+        config: agentConfigRaw,
+    });
+    if (autoNudge.enabled) {
+        pi.on("message_end", async (event, ctx) => {
+            try {
+                const text = extractUserMessageText(event);
+                if (text === null)
+                    return;
+                const notification = buildAutoNudgeNotification(text);
+                if (!notification)
+                    return;
+                const notify = ctx?.ui?.notify;
+                if (typeof notify !== "function")
+                    return;
+                notify(notification.text, "info");
+            }
+            catch {
+                // Auto-nudge is best-effort. A handler failure must never abort a turn.
+            }
+        });
+    }
     pi.registerTool({
         name: "vault_read",
         label: "Vault Read",
