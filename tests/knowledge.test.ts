@@ -9,6 +9,8 @@ import {
   projectUpdateHandoff,
   runbookWrite,
   skillCandidateWrite,
+  wikiUpdateConcept,
+  wikiUpdateEntity,
 } from "../src/knowledge.js";
 
 let root: string;
@@ -178,6 +180,64 @@ describe("Phase 4 knowledge lifecycle: decision_record", () => {
         decision: "dec",
       }),
     ).rejects.toThrow(/invalid.*id/i);
+  });
+});
+
+describe("Phase C OKF wiki tools", () => {
+  it("writes an OKF-conformant concept document under wiki/concepts/", async () => {
+    const result = await wikiUpdateConcept({
+      vaultRoot: vault,
+      title: "Inspectable Self-Improvement Triggers",
+      description: "Detection heuristics that nudge agents to promote knowledge into visible vault artifacts.",
+      tags: ["piren", "self-improvement", "okf"],
+      content: "Correction detection should create reviewable artifacts, not hidden memories.",
+      links: ["/Projects/Piren/decisions/ADR-0024-inspectable-self-improvement-triggers.md"],
+      now: () => new Date("2026-06-28T09:00:00.000Z"),
+    });
+
+    expect(result.path).toBe("wiki/concepts/inspectable-self-improvement-triggers.md");
+    expect(result.created).toBe("2026-06-28T09:00:00.000Z");
+    expect(result.atomic).toBe(true);
+
+    const content = await readFile(join(vault, result.path), "utf8");
+    expect(content).toContain("type: Concept");
+    expect(content).toContain('title: "Inspectable Self-Improvement Triggers"');
+    expect(content).toContain('description: "Detection heuristics that nudge agents to promote knowledge into visible vault artifacts."');
+    expect(content).toContain("tags: [piren, self-improvement, okf]");
+    expect(content).toContain("created: 2026-06-28");
+    expect(content).toContain("updated: 2026-06-28");
+    expect(content).toContain("# Inspectable Self-Improvement Triggers");
+    expect(content).toContain("Correction detection should create reviewable artifacts");
+    expect(content).toContain("## Links");
+    expect(content).toContain("- /Projects/Piren/decisions/ADR-0024-inspectable-self-improvement-triggers.md");
+  });
+
+  it("writes an OKF-conformant entity document under wiki/entities/", async () => {
+    const result = await wikiUpdateEntity({
+      vaultRoot: vault,
+      title: "Pi Coding Agent",
+      description: "Local coding agent runtime that Piren extends.",
+      tags: ["pi", "runtime"],
+      content: "Piren runs as a Pi extension and keeps vault writes explicit.",
+      links: ["/Projects/Piren/decisions/ADR-0001-build-on-pi.md"],
+      now: () => new Date("2026-06-28T10:00:00.000Z"),
+    });
+
+    expect(result.path).toBe("wiki/entities/pi-coding-agent.md");
+    const content = await readFile(join(vault, result.path), "utf8");
+    expect(content).toContain("type: Entity");
+    expect(content).toContain('title: "Pi Coding Agent"');
+    expect(content).toContain("Piren runs as a Pi extension");
+    expect(content).toContain("- /Projects/Piren/decisions/ADR-0001-build-on-pi.md");
+  });
+
+  it("rejects empty wiki titles and path traversal links", async () => {
+    await expect(
+      wikiUpdateConcept({ vaultRoot: vault, title: "   ", content: "body" }),
+    ).rejects.toThrow(/title is required/i);
+    await expect(
+      wikiUpdateEntity({ vaultRoot: vault, title: "Bad Link", content: "body", links: ["../outside.md"] }),
+    ).rejects.toThrow(/invalid wiki link/i);
   });
 });
 

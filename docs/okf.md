@@ -75,6 +75,24 @@ Returns a human-readable report plus a structured `details` object (`ok`, `check
 
 Agents should run `vault_conformance_check()` after writing wiki concepts to catch a missing `type` immediately.
 
+## Wiki authoring tools
+
+Agents should use the explicit wiki tools instead of raw `vault_write` for curated concepts and entities:
+
+```text
+wiki_update_concept(title, content, description?, tags?, links?)
+wiki_update_entity(title, content, description?, tags?, links?)
+```
+
+`wiki_update_concept` writes `wiki/concepts/<slug>.md` with `type: Concept`. `wiki_update_entity` writes `wiki/entities/<slug>.md` with `type: Entity`. Both include `title`, optional `description`, optional `tags`, `created`, `updated`, the Markdown body, and optional bundle-relative links.
+
+Example link values:
+
+```text
+/Projects/Piren/knowledge-lifecycle.md
+/Projects/Piren/decisions/ADR-0024-inspectable-self-improvement-triggers.md
+```
+
 ## Link semantics
 
 OKF supports three link forms that coexist in a Piren vault:

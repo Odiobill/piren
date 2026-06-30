@@ -18,6 +18,8 @@ import {
   projectUpdateHandoff,
   runbookWrite,
   skillCandidateWrite,
+  wikiUpdateConcept,
+  wikiUpdateEntity,
 } from "./knowledge.js";
 import {
   listCronJobs,
@@ -80,6 +82,8 @@ const PIREN_TOOL_NAMES = [
   "cron_record_run",
   "cron_runs",
   "vault_conformance_check",
+  "wiki_update_concept",
+  "wiki_update_entity",
 ];
 
 function textResult(text: string, details: unknown = {}) {
@@ -231,6 +235,8 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "- cron_record_run(job_path, status, result, started_at, finished_at)",
     "- cron_runs(job_id?)",
     "- vault_conformance_check()",
+    "- wiki_update_concept(title, content, description?, tags?, links?)",
+    "- wiki_update_entity(title, content, description?, tags?, links?)",
     "All vault paths resolve relative to vault_root and traversal outside the vault is rejected.",
     "",
     "## Knowledge Lifecycle",
@@ -264,7 +270,8 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "Project Log, Session Summary, Task, Cron Job, Cron Run; unknown types are",
     "tolerated. Use vault_conformance_check() to self-audit your writes. Reserved",
     "filenames (index.md, log.md) and system files (SOUL.md, MEMORY.md, AGENTS.md,",
-    "steward-directives.md) are not concept documents.",
+    "steward-directives.md) are not concept documents. Use wiki_update_concept() and",
+    "wiki_update_entity() for curated OKF documents under wiki/concepts/ and wiki/entities/.",
   ];
 
   const skillsSection = formatSkillCatalogForContext(skills);
@@ -798,6 +805,78 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
         if (params.scope !== undefined) candidateOptions.scope = params.scope;
         const result = await skillCandidateWrite(candidateOptions);
         return textResult(`Wrote skill candidate ${result.path} (${result.bytes} bytes, atomic)`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "wiki_update_concept",
+    label: "Wiki Update Concept",
+    description: "Write an OKF-conformant Concept document under wiki/concepts/<slug>.md. Links should be bundle-relative, for example /Projects/Piren/knowledge-lifecycle.md.",
+    parameters: Type.Object({
+      title: Type.String({ description: "Concept title" }),
+      content: Type.String({ description: "Curated concept Markdown body" }),
+      description: Type.Optional(Type.String({ description: "Optional one-line description" })),
+      tags: Type.Optional(Type.Array(Type.String({ description: "Optional tag" }))),
+      links: Type.Optional(Type.Array(Type.String({ description: "Optional bundle-relative or HTTP link" }))),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const updateOptions = {
+          vaultRoot: context.vaultRoot,
+          title: params.title,
+          content: params.content,
+        } as {
+          vaultRoot: string;
+          title: string;
+          content: string;
+          description?: string;
+          tags?: string[];
+          links?: string[];
+        };
+        if (params.description !== undefined) updateOptions.description = params.description;
+        if (params.tags !== undefined) updateOptions.tags = params.tags;
+        if (params.links !== undefined) updateOptions.links = params.links;
+        const result = await wikiUpdateConcept(updateOptions);
+        return textResult(`Wrote wiki concept ${result.path} (${result.bytes} bytes, atomic)`, result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "wiki_update_entity",
+    label: "Wiki Update Entity",
+    description: "Write an OKF-conformant Entity document under wiki/entities/<slug>.md. Links should be bundle-relative, for example /Projects/Piren/index.md.",
+    parameters: Type.Object({
+      title: Type.String({ description: "Entity title" }),
+      content: Type.String({ description: "Curated entity Markdown body" }),
+      description: Type.Optional(Type.String({ description: "Optional one-line description" })),
+      tags: Type.Optional(Type.Array(Type.String({ description: "Optional tag" }))),
+      links: Type.Optional(Type.Array(Type.String({ description: "Optional bundle-relative or HTTP link" }))),
+    }),
+    async execute(_toolCallId, params) {
+      try {
+        const updateOptions = {
+          vaultRoot: context.vaultRoot,
+          title: params.title,
+          content: params.content,
+        } as {
+          vaultRoot: string;
+          title: string;
+          content: string;
+          description?: string;
+          tags?: string[];
+          links?: string[];
+        };
+        if (params.description !== undefined) updateOptions.description = params.description;
+        if (params.tags !== undefined) updateOptions.tags = params.tags;
+        if (params.links !== undefined) updateOptions.links = params.links;
+        const result = await wikiUpdateEntity(updateOptions);
+        return textResult(`Wrote wiki entity ${result.path} (${result.bytes} bytes, atomic)`, result);
       } catch (error) {
         return errorResult(error);
       }

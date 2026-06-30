@@ -57,6 +57,8 @@ Knowledge lifecycle:
 - `project_update_handoff(project, content)`
 - `runbook_write(project, title, content)`
 - `skill_candidate_write(name, description, body, scope?)`
+- `wiki_update_concept(title, content, description?, tags?, links?)`
+- `wiki_update_entity(title, content, description?, tags?, links?)`
 
 Cron:
 

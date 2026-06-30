@@ -295,6 +295,32 @@ async function main() {
     }
     console.log("skill_candidate_write Projects/Piren/skill-candidates: ok");
 
+    const wikiConceptResult = await pi.tools.wiki_update_concept.execute("smoke-wiki-concept", {
+      title: "Vault as Memory",
+      description: "Visible vault artifacts replace hidden memory stores.",
+      tags: ["piren", "memory"],
+      content: "Piren's memory is the vault, represented as OKF documents.",
+      links: ["/Projects/Piren/knowledge-lifecycle.md"],
+    });
+    if (wikiConceptResult.isError) throw new Error(`wiki_update_concept smoke failed: ${wikiConceptResult.content[0].text}`);
+    const wikiConceptContent = await readFile(join(fixture.vault, "wiki", "concepts", "vault-as-memory.md"), "utf8");
+    if (!wikiConceptContent.includes("type: Concept") || !wikiConceptContent.includes('title: "Vault as Memory"') || !wikiConceptContent.includes("/Projects/Piren/knowledge-lifecycle.md")) {
+      throw new Error("wiki concept did not contain expected OKF content");
+    }
+    console.log("wiki_update_concept wiki/concepts: ok");
+
+    const wikiEntityResult = await pi.tools.wiki_update_entity.execute("smoke-wiki-entity", {
+      title: "Pi Coding Agent",
+      content: "Piren runs as a Pi extension and keeps vault writes explicit.",
+      links: ["/Projects/Piren/decisions/ADR-0001-build-on-pi.md"],
+    });
+    if (wikiEntityResult.isError) throw new Error(`wiki_update_entity smoke failed: ${wikiEntityResult.content[0].text}`);
+    const wikiEntityContent = await readFile(join(fixture.vault, "wiki", "entities", "pi-coding-agent.md"), "utf8");
+    if (!wikiEntityContent.includes("type: Entity") || !wikiEntityContent.includes("Piren runs as a Pi extension")) {
+      throw new Error("wiki entity did not contain expected OKF content");
+    }
+    console.log("wiki_update_entity wiki/entities: ok");
+
     // ADR-0019: vault-backed cron. A shared job file is listed as due, claimed
     // atomically, run with an inspectable run record, restored with last_run
     // set, and visible in cron_runs history. Secrets never go in job files.

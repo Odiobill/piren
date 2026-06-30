@@ -201,6 +201,82 @@ function assertValidSkillCandidateName(name) {
 function yamlString(value) {
     return JSON.stringify(value);
 }
+function yamlInlineStringList(values) {
+    return `[${values.map((value) => value.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "")).filter((value) => value !== "").join(", ")}]`;
+}
+function assertValidWikiLink(link) {
+    const trimmed = link.trim();
+    if (!trimmed) {
+        throw new Error("Invalid wiki link: empty link");
+    }
+    if (trimmed.includes("\\") || trimmed.includes("..")) {
+        throw new Error(`Invalid wiki link: ${link}`);
+    }
+    if (/^https?:\/\//i.test(trimmed)) {
+        return trimmed;
+    }
+    if (!trimmed.startsWith("/")) {
+        throw new Error(`Invalid wiki link: ${link}`);
+    }
+    return trimmed;
+}
+function renderWikiDocument(options) {
+    const date = options.created.slice(0, 10);
+    const frontmatter = [
+        "---",
+        `type: ${options.type}`,
+        `title: ${yamlString(options.title)}`,
+    ];
+    if (options.description !== undefined)
+        frontmatter.push(`description: ${yamlString(options.description)}`);
+    if (options.tags !== undefined && options.tags.length > 0)
+        frontmatter.push(`tags: ${yamlInlineStringList(options.tags)}`);
+    frontmatter.push(`created: ${date}`, `updated: ${date}`, "---");
+    const lines = [
+        ...frontmatter,
+        "",
+        `# ${options.title}`,
+        "",
+        options.content,
+        "",
+    ];
+    if (options.links !== undefined && options.links.length > 0) {
+        lines.push("## Links", "", ...options.links.map((link) => `- ${link}`), "");
+    }
+    return lines.join("\n");
+}
+async function wikiUpdate(options, type, directory) {
+    const title = assertNonEmpty(options.title, "Wiki title");
+    const body = assertNonEmpty(options.content, "Wiki content");
+    const description = options.description?.trim();
+    const tags = options.tags?.map((tag) => tag.trim()).filter((tag) => tag !== "");
+    const links = options.links?.map(assertValidWikiLink);
+    const now = options.now ?? (() => new Date());
+    const created = now().toISOString();
+    const path = `wiki/${directory}/${slugifyTitle(title)}.md`;
+    const renderOptions = { type, title, content: body, created };
+    if (description !== undefined && description !== "")
+        renderOptions.description = description;
+    if (tags !== undefined && tags.length > 0)
+        renderOptions.tags = tags;
+    if (links !== undefined && links.length > 0)
+        renderOptions.links = links;
+    const content = renderWikiDocument(renderOptions);
+    const result = await writeAuthoritative({ vaultRoot: options.vaultRoot, path, content, now, label: `Wiki ${type.toLowerCase()}` });
+    return {
+        path: result.path,
+        absolutePath: result.absolutePath,
+        bytes: result.bytes,
+        atomic: true,
+        created,
+    };
+}
+export async function wikiUpdateConcept(options) {
+    return wikiUpdate(options, "Concept", "concepts");
+}
+export async function wikiUpdateEntity(options) {
+    return wikiUpdate(options, "Entity", "entities");
+}
 async function writeAuthoritative(options) {
     const toolOptions = { vaultRoot: options.vaultRoot };
     if (options.now !== undefined)

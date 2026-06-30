@@ -80,6 +80,17 @@ export interface SkillCandidateWriteOptions {
     scope?: string;
     now?: () => Date;
 }
+export interface WikiUpdateOptions {
+    vaultRoot: string;
+    title: string;
+    description?: string;
+    tags?: string[];
+    content: string;
+    links?: string[];
+    now?: () => Date;
+}
+export declare function wikiUpdateConcept(options: WikiUpdateOptions): Promise<ArtifactWriteResult>;
+export declare function wikiUpdateEntity(options: WikiUpdateOptions): Promise<ArtifactWriteResult>;
 export declare function projectUpdateHandoff(options: ProjectUpdateHandoffOptions): Promise<ProjectUpdateHandoffResult>;
 export declare function runbookWrite(options: RunbookWriteOptions): Promise<ArtifactWriteResult>;
 export declare function skillCandidateWrite(options: SkillCandidateWriteOptions): Promise<ArtifactWriteResult>;

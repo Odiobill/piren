@@ -60,7 +60,7 @@ describe("Pi extension", () => {
     expect(deviceRecord.status).toBe("active");
     expect(deviceRecord.last_seen).toBeTruthy();
 
-    expect(Object.keys(pi.tools).sort()).toEqual(["cron_claim", "cron_list", "cron_record_run", "cron_runs", "decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_conformance_check", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write"]);
+    expect(Object.keys(pi.tools).sort()).toEqual(["cron_claim", "cron_list", "cron_record_run", "cron_runs", "decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_conformance_check", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write", "wiki_update_concept", "wiki_update_entity"]);
     expect(pi.commands.piren_status).toBeDefined();
 
     const notifications: Array<{ message: string; level: string }> = [];
@@ -74,7 +74,7 @@ describe("Pi extension", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.level).toBe("info");
     expect(notifications[0]?.message).toContain("Piren status");
-    expect(notifications[0]?.message).toContain("registered_tools: cron_claim, cron_list, cron_record_run, cron_runs, decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_conformance_check, vault_list, vault_patch, vault_read, vault_read_cached, vault_write");
+    expect(notifications[0]?.message).toContain("registered_tools: cron_claim, cron_list, cron_record_run, cron_runs, decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_conformance_check, vault_list, vault_patch, vault_read, vault_read_cached, vault_write, wiki_update_concept, wiki_update_entity");
     expect(notifications[0]?.message).toContain("write_mode: authoritative-vault");
 
     const alert = await pi.tools.flag_steward.execute("call-alert", {
@@ -261,6 +261,48 @@ describe("Pi extension", () => {
     const missing = await pi.tools.project_status.execute("call-missing", { project: "NoSuchProject" });
     expect(missing.isError).toBeUndefined();
     expect(missing.details.available).toBe(false);
+  });
+
+  it("registers and exercises OKF wiki concept and entity tools", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const concept = await pi.tools.wiki_update_concept.execute("call-wiki-concept", {
+      title: "Vault as Memory",
+      description: "Visible vault artifacts replace hidden memory stores.",
+      tags: ["piren", "memory"],
+      content: "Piren's memory is the vault, represented as OKF documents.",
+      links: ["/Projects/Piren/knowledge-lifecycle.md"],
+    });
+    expect(concept.isError).toBeUndefined();
+    expect(concept.content[0].text).toContain("Wrote wiki concept wiki/concepts/vault-as-memory.md");
+    const conceptContent = await readFile(join(root, "vault", "wiki", "concepts", "vault-as-memory.md"), "utf8");
+    expect(conceptContent).toContain("type: Concept");
+    expect(conceptContent).toContain('title: "Vault as Memory"');
+    expect(conceptContent).toContain("- /Projects/Piren/knowledge-lifecycle.md");
+
+    const entity = await pi.tools.wiki_update_entity.execute("call-wiki-entity", {
+      title: "Pi Coding Agent",
+      content: "Piren runs as a Pi extension.",
+      links: ["/Projects/Piren/decisions/ADR-0001-build-on-pi.md"],
+    });
+    expect(entity.isError).toBeUndefined();
+    expect(entity.content[0].text).toContain("Wrote wiki entity wiki/entities/pi-coding-agent.md");
+    const entityContent = await readFile(join(root, "vault", "wiki", "entities", "pi-coding-agent.md"), "utf8");
+    expect(entityContent).toContain("type: Entity");
+    expect(entityContent).toContain("Piren runs as a Pi extension.");
+
+    const bad = await pi.tools.wiki_update_concept.execute("call-wiki-bad", {
+      title: "Bad",
+      content: "Bad link.",
+      links: ["../outside.md"],
+    });
+    expect(bad.isError).toBe(true);
+    expect(bad.content[0].text).toMatch(/invalid wiki link/i);
   });
 
   it("allows task_claim to reclaim stale claims using device heartbeat timestamps", async () => {
@@ -821,5 +863,7 @@ describe("Pi extension OKF conformance tool (ADR-0022)", () => {
     const content = (out as { message: { content: string } }).message.content;
     expect(content).toContain("vault_conformance_check()");
     expect(content).toContain("Open Knowledge Format");
+    expect(content).toContain("wiki_update_concept(title, content, description?, tags?, links?)");
+    expect(content).toContain("wiki_update_entity(title, content, description?, tags?, links?)");
   });
 });

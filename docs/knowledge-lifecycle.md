@@ -55,6 +55,15 @@ Draft a reviewable skill candidate:
 skill_candidate_write(name, description, body, scope?)
 ```
 
+Promote curated wiki knowledge as OKF documents:
+
+```text
+wiki_update_concept(title, content, description?, tags?, links?)
+wiki_update_entity(title, content, description?, tags?, links?)
+```
+
+These write `type: Concept` documents under `wiki/concepts/` and `type: Entity` documents under `wiki/entities/`. Use bundle-relative links such as `/Projects/Piren/knowledge-lifecycle.md` for agent-authored relationships.
+
 ## Inspectability rule
 
 Piren v1 avoids hidden memory mutation and unreviewed self-modification. Knowledge changes should be visible in Markdown and reviewable by the steward.
