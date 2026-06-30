@@ -1,0 +1,151 @@
+export const CORRECTION_STRONG_PATTERN_SOURCES = [
+    "don'?t do that",
+    "not like that",
+    "^I said\\b",
+    "^I told you\\b",
+    "we already discussed",
+    "^please don'?t",
+    "^that'?s not what I",
+];
+export const CORRECTION_WEAK_PATTERN_SOURCES = [
+    "^no[,\\.\\s!]",
+    "^wrong[,\\.\\s!]",
+    "^actually[,\\.\\s]",
+    "^stop[,\\.\\s!]",
+];
+export const CORRECTION_NEGATIVE_PATTERN_SOURCES = [
+    "^no worries",
+    "^no problem",
+    "^no thanks",
+    "^no need",
+    "^actually.{0,10}(looks? great|perfect|good|correct|right)",
+    "^stop.{0,5}(there|here|for now)",
+];
+export const CORRECTION_DIRECTIVE_WORDS = [
+    "use",
+    "don't",
+    "dont",
+    "do",
+    "try",
+    "make",
+    "run",
+    "install",
+    "add",
+    "remove",
+    "delete",
+    "change",
+    "fix",
+    "put",
+    "set",
+    "write",
+    "go",
+    "stop",
+    "start",
+    "the",
+    "that",
+    "this",
+    "it",
+];
+function compilePattern(source) {
+    try {
+        return new RegExp(source, "i");
+    }
+    catch {
+        return null;
+    }
+}
+function escapeRegexLiteral(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function hasDirectiveWord(remainder, words) {
+    if (words.length === 0)
+        return false;
+    const source = words.map(escapeRegexLiteral).join("|");
+    return new RegExp(`\\b(${source})\\b`, "i").test(remainder);
+}
+function firstMatch(text, sources) {
+    for (const source of sources) {
+        const pattern = compilePattern(source);
+        if (!pattern)
+            continue;
+        const match = pattern.exec(text);
+        if (match)
+            return { source, pattern, match };
+    }
+    return null;
+}
+function extractDirective(text, match) {
+    const afterMatch = match && match.index === 0 ? text.slice(match[0].length).trim() : text;
+    const cleaned = afterMatch
+        .replace(/^(please\s+)?don'?t\s+/i, "")
+        .replace(/^(please\s+)?/i, "")
+        .replace(/^(no|wrong|actually|stop|that'?s not|I said|I told you)[,\.\s!]+/i, "")
+        .trim();
+    return cleaned || text.trim();
+}
+export function detectCorrectionTrigger(text, config = {}) {
+    const trimmed = text.trim();
+    const negativeSources = config.negativePatterns ?? CORRECTION_NEGATIVE_PATTERN_SOURCES;
+    if (firstMatch(trimmed, negativeSources)) {
+        return { triggered: false, confidence: "none", text: trimmed, directive: "", matchedPattern: "" };
+    }
+    const strongSources = config.strongPatterns ?? CORRECTION_STRONG_PATTERN_SOURCES;
+    const strong = firstMatch(trimmed, strongSources);
+    if (strong) {
+        return {
+            triggered: true,
+            confidence: "strong",
+            text: trimmed,
+            directive: extractDirective(trimmed, strong.match),
+            matchedPattern: strong.source,
+        };
+    }
+    const weakSources = config.weakPatterns ?? CORRECTION_WEAK_PATTERN_SOURCES;
+    const directiveWords = config.directiveWords ?? CORRECTION_DIRECTIVE_WORDS;
+    const weak = firstMatch(trimmed, weakSources);
+    if (weak && weak.match.index === 0) {
+        const remainder = trimmed.slice(weak.match[0].length).trim();
+        if (hasDirectiveWord(remainder, directiveWords)) {
+            return {
+                triggered: true,
+                confidence: "weak",
+                text: trimmed,
+                directive: extractDirective(trimmed, weak.match),
+                matchedPattern: weak.source,
+            };
+        }
+    }
+    return { triggered: false, confidence: "none", text: trimmed, directive: "", matchedPattern: "" };
+}
+export function suggestCorrectionArtifacts(text) {
+    const lower = text.toLowerCase();
+    const suggestions = [];
+    if (lower.includes("project") || lower.includes("convention") || lower.includes("adr") || lower.includes("decision")) {
+        suggestions.push({ tool: "project_append_log", reason: "Record the correction in the project's chronological visible history." }, { tool: "skill_candidate_write", reason: "Draft a reusable procedure if this correction changes future agent workflow." }, { tool: "decision_record", reason: "Capture durable architecture or policy corrections as an ADR when they set direction." }, { tool: "wiki_update_concept", reason: "Promote the convention into an OKF Concept when it is reusable knowledge." });
+        return suggestions;
+    }
+    if (lower.includes("tool") || lower.includes("quirk") || lower.includes("command") || lower.includes("api")) {
+        suggestions.push({ tool: "wiki_update_concept", reason: "Capture reusable tool behavior or quirks as an OKF Concept." }, { tool: "skill_candidate_write", reason: "Draft a procedure when the correction changes how a tool should be used." }, { tool: "project_append_log", reason: "Record project-scoped tool corrections in the project log." });
+        return suggestions;
+    }
+    if (lower.includes("person") || lower.includes("service") || lower.includes("system") || lower.includes("provider")) {
+        suggestions.push({ tool: "wiki_update_entity", reason: "Capture corrected facts about a person, system, service, or provider as an OKF Entity." }, { tool: "project_append_log", reason: "Record project-scoped entity corrections in the project log." });
+        return suggestions;
+    }
+    suggestions.push({ tool: "skill_candidate_write", reason: "Draft a reusable procedure if the correction prevents repeated mistakes." }, { tool: "project_append_log", reason: "Record project-scoped corrections visibly in the project log." }, { tool: "wiki_update_concept", reason: "Promote durable reusable knowledge into an OKF Concept." });
+    return suggestions;
+}
+export function formatCorrectionArtifactNudge(result) {
+    if (!result.triggered)
+        return "No correction trigger detected.";
+    const suggestions = suggestCorrectionArtifacts(result.text);
+    const lines = [
+        `Correction detected (${result.confidence}).`,
+        result.directive ? `Directive: ${result.directive}` : "Directive: (not extracted)",
+        "No hidden memory store, no SQLite, no silent pi.exec write.",
+        "If this correction is durable, choose the minimum visible vault artifact:",
+        ...suggestions.map((suggestion) => `- ${suggestion.tool}: ${suggestion.reason}`),
+    ];
+    return lines.join("\n");
+}
+//# sourceMappingURL=self-improvement.js.map

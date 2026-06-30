@@ -61,6 +61,7 @@ Knowledge lifecycle:
 - `skill_candidate_write(name, description, body, scope?)`
 - `wiki_update_concept(title, content, description?, tags?, links?)`
 - `wiki_update_entity(title, content, description?, tags?, links?)`
+- `self_improvement_trigger_check(message)`
 
 Cron:
 

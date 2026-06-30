@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  70 passed (70)
-Tests       547 passed (547)
+Test Files  71 passed (71)
+Tests       553 passed (553)
 SMOKE PASSED
 ```
 
@@ -252,6 +252,7 @@ Implemented extension tools:
 - `skill_candidate_write(name, description, body, scope?)`
 - `wiki_update_concept(title, content, description?, tags?, links?)`
 - `wiki_update_entity(title, content, description?, tags?, links?)`
+- `self_improvement_trigger_check(message)`
 - `cron_list()`
 - `cron_claim(job_path, device_id?, stale_after_ms?)`
 - `cron_record_run(job_path, status, result, started_at, finished_at)`
@@ -278,7 +279,8 @@ Phase 4 knowledge lifecycle tools (ADR-0015 + ADR-0018, implemented):
 - ADR-0018 inspectable self-improvement tools are also implemented in `src/knowledge.ts`: `projectUpdateHandoff(options)` writes `Projects/<project>/handoff-prompt.md`, `runbookWrite(options)` writes `Projects/<project>/runbooks/<slug>.md` with runbook frontmatter, and `skillCandidateWrite(options)` writes reviewable drafts under `skill-candidates/<name>.md` or `Projects/<scope>/skill-candidates/<name>.md`. Skill candidates are not active skills until promoted.
 - Phase C OKF wiki tools are implemented in `src/knowledge.ts`: `wikiUpdateConcept(options)` writes `type: Concept` documents under `wiki/concepts/<slug>.md`, and `wikiUpdateEntity(options)` writes `type: Entity` documents under `wiki/entities/<slug>.md`. Both accept title, body content, optional description/tags, and bundle-relative or HTTP links, and reuse the authoritative `vaultWrite` path boundary.
 - Registered as `project_status`, `project_append_log`, `decision_record`, `project_update_handoff`, `runbook_write`, `skill_candidate_write`, `wiki_update_concept`, and `wiki_update_entity` extension tools. The context prompt gains a "Knowledge Lifecycle" section guiding agents to leave durable artifacts after non-trivial work.
-- Tests: `tests/knowledge.test.ts` (17 tests), `tests/pi-extension.test.ts` (extension coverage for all knowledge and wiki tools, context prompt assertions). Smoke covers all six knowledge/self-improvement tools plus wiki concept/entity writes.
+- ADR-0024 first slice is implemented in `src/self-improvement.ts`: Hermes-style correction trigger heuristics (strong/weak/negative regex patterns plus directive-word filtering), visible artifact suggestions retargeted at `project_append_log`, `skill_candidate_write`, `decision_record`, `wiki_update_concept`, and `wiki_update_entity`, and the read-only `self_improvement_trigger_check(message)` extension tool. It is advisory only: no hidden memory store, no SQLite, and no silent background writes.
+- Tests: `tests/knowledge.test.ts` (17 tests), `tests/self-improvement.test.ts` (5 tests), `tests/pi-extension.test.ts` (extension coverage for all knowledge, wiki, and trigger tools, context prompt assertions). Smoke covers all six knowledge/self-improvement tools plus wiki concept/entity writes and the trigger-check nudge.
 
 Vault-backed cron (ADR-0019, implemented):
 - `src/cron.ts` is the pure scheduling + coordination core, callable directly from tests without Pi auth. It exports `parseSchedule` (five-field cron strings and interval syntax `30m`/`6h`/`1d`), `isScheduleDue` (interval elapsed-time logic and cron field matching with once-per-minute dedup), `readCronJob`/`listCronJobs` (frontmatter parsing of `id`, `agent`, `schedule`, `mode`, `script`, `enabled`, `device_policy`, `stale_after_seconds`, `last_run`, `last_claimed_by` plus the `# Prompt` body; shared `cron/jobs/` and agent-scoped `team/<agent>/cron/jobs/`), `selectOwningDevice` (highest-priority, lowest-number selection among eligible active devices, restricted by `device_policy.allowed_devices`), `listActiveDevices` (reads `team/<agent>/devices/*.json` heartbeats, filters stale), `claimCronJob` (atomic rename to `.claimed.<device>.md` with `last_claimed_by` injected and stale recovery via device heartbeats), `recordCronRun` (writes inspectable run records under `cron/runs/` or `team/<agent>/cron/runs/`, restores the unclaimed job with `last_run` set and the stale claim line removed), `executeScriptCronJob` (ADR-0023 script-mode executor: resolves a vault-relative script inside the vault, runs it with `PIREN_VAULT_ROOT` and `PIREN_AGENT`, captures capped stdout/stderr, records status/output, and restores the job), and `listCronRuns` (run history newest-first, optional `job_id` filter).

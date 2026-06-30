@@ -34,6 +34,7 @@ import {
   type IsScheduleDueOptions,
 } from "./cron.js";
 import { checkVaultConformance, createRealVaultDirReader, formatVaultConformanceReport } from "./okf.js";
+import { detectCorrectionTrigger, formatCorrectionArtifactNudge, suggestCorrectionArtifacts } from "./self-improvement.js";
 
 interface ExtensionAPI {
   registerFlag?: (name: string, options: { description?: string; type?: string }) => void;
@@ -82,6 +83,7 @@ const PIREN_TOOL_NAMES = [
   "cron_record_run",
   "cron_runs",
   "vault_conformance_check",
+  "self_improvement_trigger_check",
   "wiki_update_concept",
   "wiki_update_entity",
 ];
@@ -272,6 +274,14 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "filenames (index.md, log.md) and system files (SOUL.md, MEMORY.md, AGENTS.md,",
     "steward-directives.md) are not concept documents. Use wiki_update_concept() and",
     "wiki_update_entity() for curated OKF documents under wiki/concepts/ and wiki/entities/.",
+    "",
+    "## Inspectable Self-Improvement Triggers (ADR-0024)",
+    "Correction detection is advisory and inspectable. If the steward corrects you,",
+    "use self_improvement_trigger_check(message) to classify the correction and pick",
+    "the minimum visible vault artifact. No hidden memory store, no SQLite, and no",
+    "silent pi.exec writes. Durable corrections should be captured through existing",
+    "tools such as project_append_log, skill_candidate_write, decision_record,",
+    "wiki_update_concept, or wiki_update_entity.",
   ];
 
   const skillsSection = formatSkillCatalogForContext(skills);
@@ -1024,6 +1034,25 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
       try {
         const result = await checkVaultConformance({ root: context.vaultRoot, reader: createRealVaultDirReader() });
         return textResult(formatVaultConformanceReport(result), result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "self_improvement_trigger_check",
+    label: "Self-Improvement Trigger Check",
+    description: "Read-only ADR-0024 correction detector. Given a steward message, reports whether it looks like a correction and suggests existing visible vault tools. It never writes hidden memory or mutates the vault.",
+    parameters: Type.Object({
+      message: Type.String({ description: "Steward/user message to evaluate for correction-trigger heuristics" }),
+    }),
+    execute(_toolCallId, params) {
+      try {
+        const trigger = detectCorrectionTrigger(params.message);
+        const suggestions = trigger.triggered ? suggestCorrectionArtifacts(params.message) : [];
+        const text = trigger.triggered ? formatCorrectionArtifactNudge(trigger) : "No correction trigger detected.";
+        return textResult(text, { trigger, suggestions, advisory: true, writes: false });
       } catch (error) {
         return errorResult(error);
       }

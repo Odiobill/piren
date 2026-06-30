@@ -304,6 +304,15 @@ async function main() {
             throw new Error("wiki entity did not contain expected OKF content");
         }
         console.log("wiki_update_entity wiki/entities: ok");
+        const triggerResult = await pi.tools.self_improvement_trigger_check.execute("smoke-self-improvement-trigger", {
+            message: "Actually, use wiki_update_concept for tool quirks.",
+        });
+        if (triggerResult.isError)
+            throw new Error(`self_improvement_trigger_check smoke failed: ${triggerResult.content[0].text}`);
+        if (!triggerResult.content[0].text.includes("Correction detected") || !triggerResult.content[0].text.includes("wiki_update_concept") || triggerResult.details.writes !== false) {
+            throw new Error("self_improvement_trigger_check did not return expected advisory nudge");
+        }
+        console.log("self_improvement_trigger_check ADR-0024 advisory nudge: ok");
         // ADR-0019: vault-backed cron. A shared job file is listed as due, claimed
         // atomically, run with an inspectable run record, restored with last_run
         // set, and visible in cron_runs history. Secrets never go in job files.

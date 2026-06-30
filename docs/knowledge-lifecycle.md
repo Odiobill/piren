@@ -64,6 +64,14 @@ wiki_update_entity(title, content, description?, tags?, links?)
 
 These write `type: Concept` documents under `wiki/concepts/` and `type: Entity` documents under `wiki/entities/`. Use bundle-relative links such as `/Projects/Piren/knowledge-lifecycle.md` for agent-authored relationships.
 
+Detect correction moments without writing hidden memory:
+
+```text
+self_improvement_trigger_check(message)
+```
+
+This read-only ADR-0024 tool ports Hermes-style correction heuristics and suggests the minimum visible vault artifact to use next. It only advises. It does not mutate hidden memory, create SQLite state, or run silent background writes.
+
 ## Inspectability rule
 
 Piren v1 avoids hidden memory mutation and unreviewed self-modification. Knowledge changes should be visible in Markdown and reviewable by the steward.

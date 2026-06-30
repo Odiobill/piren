@@ -60,7 +60,7 @@ describe("Pi extension", () => {
     expect(deviceRecord.status).toBe("active");
     expect(deviceRecord.last_seen).toBeTruthy();
 
-    expect(Object.keys(pi.tools).sort()).toEqual(["cron_claim", "cron_list", "cron_record_run", "cron_runs", "decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_conformance_check", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write", "wiki_update_concept", "wiki_update_entity"]);
+    expect(Object.keys(pi.tools).sort()).toEqual(["cron_claim", "cron_list", "cron_record_run", "cron_runs", "decision_record", "flag_steward", "inbox_list", "project_append_log", "project_status", "project_update_handoff", "runbook_write", "self_improvement_trigger_check", "send_to_agent", "session_write_summary", "skill_candidate_write", "skill_list", "skill_read", "task_claim", "task_update_status", "vault_append_log", "vault_conformance_check", "vault_list", "vault_patch", "vault_read", "vault_read_cached", "vault_write", "wiki_update_concept", "wiki_update_entity"]);
     expect(pi.commands.piren_status).toBeDefined();
 
     const notifications: Array<{ message: string; level: string }> = [];
@@ -74,7 +74,7 @@ describe("Pi extension", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.level).toBe("info");
     expect(notifications[0]?.message).toContain("Piren status");
-    expect(notifications[0]?.message).toContain("registered_tools: cron_claim, cron_list, cron_record_run, cron_runs, decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_conformance_check, vault_list, vault_patch, vault_read, vault_read_cached, vault_write, wiki_update_concept, wiki_update_entity");
+    expect(notifications[0]?.message).toContain("registered_tools: cron_claim, cron_list, cron_record_run, cron_runs, decision_record, flag_steward, inbox_list, project_append_log, project_status, project_update_handoff, runbook_write, self_improvement_trigger_check, send_to_agent, session_write_summary, skill_candidate_write, skill_list, skill_read, task_claim, task_update_status, vault_append_log, vault_conformance_check, vault_list, vault_patch, vault_read, vault_read_cached, vault_write, wiki_update_concept, wiki_update_entity");
     expect(notifications[0]?.message).toContain("write_mode: authoritative-vault");
 
     const alert = await pi.tools.flag_steward.execute("call-alert", {
@@ -865,5 +865,25 @@ describe("Pi extension OKF conformance tool (ADR-0022)", () => {
     expect(content).toContain("Open Knowledge Format");
     expect(content).toContain("wiki_update_concept(title, content, description?, tags?, links?)");
     expect(content).toContain("wiki_update_entity(title, content, description?, tags?, links?)");
+    expect(content).toContain("Inspectable Self-Improvement Triggers");
+    expect(content).toContain("self_improvement_trigger_check(message)");
+  });
+
+  it("registers a read-only self-improvement trigger check tool", async () => {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const result = await pi.tools.self_improvement_trigger_check.execute("call-trigger", {
+      message: "Actually, use wiki_update_concept for tool quirks.",
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.details.trigger.triggered).toBe(true);
+    expect(result.content[0].text).toContain("Correction detected");
+    expect(result.content[0].text).toContain("wiki_update_concept");
   });
 });
