@@ -562,8 +562,11 @@ async function main() {
         if (!piCommand.args.includes("--model") || !piCommand.args.includes("anthropic/claude-sonnet-4-20250514:medium")) {
             throw new Error(`piren run command did not include expected model flag: ${piCommandText}`);
         }
-        if (!piCommandText.includes("--extension") || !piCommandText.includes(`--vault-root ${fixture.vault}`) || !piCommandText.includes("--agent thor")) {
-            throw new Error(`piren run command did not include expected bootstrap flags: ${piCommandText}`);
+        if (!piCommandText.includes("--extension") || piCommand.args.includes("--vault-root") || piCommand.args.includes("--agent")) {
+            throw new Error(`piren run command should pass Piren bootstrap through env, not Pi flags: ${piCommandText}`);
+        }
+        if (piCommand.env.PIREN_VAULT_ROOT !== fixture.vault || piCommand.env.PIREN_AGENT !== "thor") {
+            throw new Error(`piren run command did not set expected bootstrap env: PIREN_VAULT_ROOT=${piCommand.env.PIREN_VAULT_ROOT} PIREN_AGENT=${piCommand.env.PIREN_AGENT}`);
         }
         if (!piCommandText.endsWith("--print hello")) {
             throw new Error(`piren run command did not forward extra args: ${piCommandText}`);

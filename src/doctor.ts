@@ -103,7 +103,17 @@ async function checkRequiredPaths(id: string, root: string, required: string[]):
   if (missing.length > 0) {
     return { id, status: "fail", message: `Missing required paths: ${missing.join(", ")}.` };
   }
-  return { id, status: "ok", message: `Required paths present: ${required.join(", ")}.` };
+  return { id, status: "ok", message: `Required paths present in ${root}: ${required.join(", ")}.` };
+}
+
+async function listVaultAgentNames(vaultRoot: string): Promise<string[]> {
+  const teamDir = join(vaultRoot, "team");
+  if (!(await pathExists(teamDir))) return [];
+  const entries = await readdir(teamDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 function checkPolicyGap(allowedAgents: string[], vaultRoot?: string): DoctorCheck | null {
@@ -406,6 +416,54 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
 
   const serviceCheck = checkServiceConfig(config.services);
   if (serviceCheck) checks.push(serviceCheck);
+
+  const env = options.env ?? process.env;
+  const hasExplicitAgentSelection = Boolean(
+    options.cliAgentDir ??
+    options.cliAgent ??
+    env.PIREN_AGENT_DIR ??
+    env.PIREN_AGENT ??
+    config.agent_dir,
+  );
+  const configuredVaultRoot = options.cliVaultRoot ?? env.PIREN_VAULT_ROOT ?? config.vault_root;
+  const runnableAgents = allowedAgents.length > 0
+    ? allowedAgents.filter((agent) => !excludedAgents.includes(agent))
+    : [];
+
+  if (!hasExplicitAgentSelection && configuredVaultRoot !== undefined && runnableAgents.length !== 1) {
+    const vaultRoot = resolve(configuredVaultRoot);
+    try {
+      checks.push(await checkRequiredPaths("vault-layout", vaultRoot, [".piren-vault", "steward-directives.md", "team"]));
+      const staleCheck = await checkStaleAllowed(allowedAgents, vaultRoot);
+      if (staleCheck) checks.push(staleCheck);
+      const okfReaderOptions: { vaultDirReader?: VaultDirReader } = {};
+      if (options.vaultDirReader !== undefined) okfReaderOptions.vaultDirReader = options.vaultDirReader;
+      checks.push(await checkVaultOkfConformance(vaultRoot, okfReaderOptions));
+
+      const enabledAgents = runnableAgents.length > 0
+        ? runnableAgents
+        : (await listVaultAgentNames(vaultRoot)).filter((agent) => !excludedAgents.includes(agent));
+      if (enabledAgents.length === 0) {
+        checks.push({ id: "enabled-agents", status: "warn", message: "No enabled agents found to check." });
+      }
+      for (const agent of enabledAgents) {
+        const agentDir = resolve(vaultRoot, "team", agent);
+        checks.push(await checkRequiredPaths(`agent-files:${agent}`, agentDir, ["SOUL.md", "MEMORY.md", "config.yml", "inbox", "outbox", "logs", "sessions"]));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      checks.push({ id: "vault-layout", status: "fail", message });
+    }
+    checks.push(await checkPiRuntime(piRuntimeChecker, options.env));
+    return {
+      ok: checks.every((check) => check.status !== "fail"),
+      vaultRoot,
+      allowedAgents,
+      excludedAgents,
+      packages,
+      checks,
+    };
+  }
 
   let agentDir: string;
   try {

@@ -136,7 +136,7 @@ export async function resolveAgentDir(options: BootstrapOptions = {}): Promise<s
   const directCandidate = options.cliAgentDir ?? env.PIREN_AGENT_DIR ?? config.agent_dir;
   if (directCandidate) return resolve(directCandidate);
 
-  const vaultRoot = options.cliVaultRoot ?? config.vault_root;
+  const vaultRoot = options.cliVaultRoot ?? env.PIREN_VAULT_ROOT ?? config.vault_root;
   const agentName = resolveRequestedAgent(options, env, config);
   if (vaultRoot && agentName) return resolve(vaultRoot, "team", agentName);
 

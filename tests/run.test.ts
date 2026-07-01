@@ -69,13 +69,11 @@ describe("piren run command construction", () => {
     expect(command.args).toEqual([
       "--extension",
       "./src/pi-extension.ts",
-      "--vault-root",
-      vault,
-      "--agent",
-      "piren",
       "--model",
       "anthropic/claude-sonnet-4-20250514:medium",
     ]);
+    expect(command.env.PIREN_VAULT_ROOT).toBe(vault);
+    expect(command.env.PIREN_AGENT).toBe("piren");
   });
 
 
@@ -107,10 +105,6 @@ describe("piren run command construction", () => {
     expect(command.args).toEqual([
       "--extension",
       "./src/pi-extension.ts",
-      "--vault-root",
-      vault,
-      "--agent",
-      "piren",
       "--models",
       "anthropic/claude-sonnet-4-20250514:medium,openai/gpt-4.1:off",
       "--print",
@@ -124,10 +118,6 @@ describe("piren run command construction", () => {
     expect(command.args).toEqual([
       "--extension",
       "./src/pi-extension.ts",
-      "--vault-root",
-      vault,
-      "--agent",
-      "piren",
       "--model",
       "anthropic/claude-sonnet-4-20250514:medium",
     ]);
@@ -140,10 +130,6 @@ describe("piren run command construction", () => {
     expect(command.args).toEqual([
       "--extension",
       "./src/pi-extension.ts",
-      "--vault-root",
-      vault,
-      "--agent",
-      "piren",
       "--model",
       "anthropic/claude-sonnet-4-20250514:medium",
       "--mode",

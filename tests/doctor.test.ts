@@ -36,6 +36,40 @@ describe("Piren doctor", () => {
     ]));
   });
 
+  it("checks every enabled agent when no specific agent is selected", async () => {
+    const thor = await initVault({ vaultRoot: root, agentName: "thor" });
+    const heimdall = await initVault({ vaultRoot: root, agentName: "heimdall", force: true });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n  - heimdall\n`);
+
+    const report = await doctorPiren({ env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.ok).toBe(true);
+    expect(report.agentName).toBeUndefined();
+    expect(report.agentDir).toBeUndefined();
+    expect(report.vaultRoot).toBe(root);
+    expect(report.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "agent-files:thor", status: "ok", message: expect.stringContaining(thor.agentDir) }),
+      expect.objectContaining({ id: "agent-files:heimdall", status: "ok", message: expect.stringContaining(heimdall.agentDir) }),
+      expect.objectContaining({ id: "pi-runtime", status: "ok" }),
+    ]));
+  });
+
+  it("fails all-agent doctor when one enabled agent is missing required files", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const heimdall = await initVault({ vaultRoot: root, agentName: "heimdall", force: true });
+    await unlink(join(heimdall.agentDir, "SOUL.md"));
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n  - heimdall\n`);
+
+    const report = await doctorPiren({ env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "agent-files:heimdall", status: "fail", message: expect.stringContaining("SOUL.md") }),
+    ]));
+  });
+
   it("reports missing local pi as a failure", async () => {
     await initVault({ vaultRoot: root, agentName: "thor" });
     const configPath = join(root, "config.yml");

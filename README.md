@@ -103,7 +103,7 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren 0.1.0-rc.1 is the first release candidate. Phase 3 gateway surfaces are implemented: minimal web UI, Telegram, Discord with default-on feedback, and OpenAI-compatible chat completions. Phase 4 RC features implemented so far include Pi package extensibility, lazy vault skills, knowledge lifecycle tools, inspectable self-improvement tools, and vault-backed cron.
 
-Current verification baseline: 71 test files, 570 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and post-push `npm run clean-install:check` passing.
+Current verification baseline: 71 test files, 575 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and post-push `npm run clean-install:check` passing.
 
 Update an existing global install with:
 

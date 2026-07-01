@@ -122,10 +122,6 @@ export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}):
     ...piCommand.argsPrefix,
     "--extension",
     extensionPath,
-    "--vault-root",
-    context.vaultRoot,
-    "--agent",
-    context.agentName,
   ];
 
   // ADR-0013: resolve declared packages to their entry points and append
@@ -150,7 +146,13 @@ export async function buildPiRunCommand(options: BuildPiRunCommandOptions = {}):
   }
   args.push(...extraArgs);
 
-  const env = options.workerMode ? { ...process.env, PIREN_WORKER: "1" } : process.env;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(options.env ?? {}),
+    PIREN_VAULT_ROOT: context.vaultRoot,
+    PIREN_AGENT: context.agentName,
+  };
+  if (options.workerMode) env.PIREN_WORKER = "1";
 
   return {
     command: piCommand.command,
