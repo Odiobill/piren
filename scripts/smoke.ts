@@ -788,10 +788,26 @@ async function main() {
       if (readBody.path !== "steward-directives.md") {
         throw new Error(`vault browser read path mismatch: ${readBody.path}`);
       }
+
+      // ADR-0026 Layer C: read-only OKF graph route over the same vaultRoot.
+      const graphRes = await fetch(
+        `http://${browserHandle.hostname}:${browserHandle.port}/api/vault/graph`,
+      );
+      if (graphRes.status !== 200) throw new Error(`vault graph HTTP ${graphRes.status}`);
+      const graphBody = (await graphRes.json()) as {
+        nodes: Array<{ path: string; type: string }>;
+        edges: Array<{ source: string; target: string }>;
+      };
+      if (!graphBody.nodes.some((node) => node.path === "wiki/concepts/vault-as-memory.md" && node.type === "Concept")) {
+        throw new Error("vault graph did not include the smoke concept node");
+      }
+      if (!graphBody.nodes.some((node) => node.path === "wiki/entities/pi-coding-agent.md" && node.type === "Entity")) {
+        throw new Error("vault graph did not include the smoke entity node");
+      }
     } finally {
       await browserServer.close();
     }
-    console.log("gateway vault browser list+read round trip: ok");
+    console.log("gateway vault browser list+read+graph round trip: ok");
 
     // piren ask: the same PiRpcClient, but as a CLI one-shot wrapper.
     // The askAgent function drives the same fake Pi, streaming tokens live.

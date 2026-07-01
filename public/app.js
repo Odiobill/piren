@@ -574,6 +574,7 @@ async function openVaultBrowser() {
     closeVaultBrowser();
     return;
   }
+  closeKnowledgeGraph();
   panel.classList.remove("hidden");
   document.getElementById("app").classList.add("vault-open");
   state.vaultPath = ".";
@@ -954,6 +955,116 @@ function closeNotificationsModal() {
 }
 
 // ---------------------------------------------------------------------------
+// Knowledge graph
+// ---------------------------------------------------------------------------
+
+async function openKnowledgeGraph() {
+  const panel = document.getElementById("graph-panel");
+  if (!panel.classList.contains("hidden")) {
+    closeKnowledgeGraph();
+    return;
+  }
+  closeVaultBrowser();
+  panel.classList.remove("hidden");
+  document.getElementById("app").classList.add("vault-open");
+  document.getElementById("graph-summary").textContent = "Loading graph...";
+  document.getElementById("graph-empty").classList.add("hidden");
+  try {
+    const graph = await apiJson("/api/vault/graph");
+    renderKnowledgeGraph(graph);
+  } catch (err) {
+    document.getElementById("graph-summary").textContent = "Graph unavailable: " + err.message;
+    document.getElementById("graph-canvas").innerHTML = "";
+  }
+}
+
+function closeKnowledgeGraph() {
+  const panel = document.getElementById("graph-panel");
+  if (!panel) return;
+  panel.classList.add("hidden");
+  if (document.getElementById("vault-panel")?.classList.contains("hidden")) {
+    document.getElementById("app").classList.remove("vault-open");
+  }
+}
+
+function renderKnowledgeGraph(graph) {
+  const svg = document.getElementById("graph-canvas");
+  const summary = document.getElementById("graph-summary");
+  const empty = document.getElementById("graph-empty");
+  svg.innerHTML = "";
+
+  const nodes = graph.nodes || [];
+  const edges = graph.edges || [];
+  summary.textContent = nodes.length + " nodes, " + edges.length + " links" + (graph.truncated ? " (truncated)" : "");
+  if (nodes.length === 0) {
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  const width = 420;
+  const height = 360;
+  const cx = width / 2;
+  const cy = height / 2;
+  const radius = Math.max(80, Math.min(width, height) / 2 - 58);
+  svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+
+  const positions = new Map();
+  nodes.forEach((node, index) => {
+    const angle = nodes.length === 1 ? -Math.PI / 2 : (Math.PI * 2 * index) / nodes.length - Math.PI / 2;
+    positions.set(node.id, {
+      x: cx + Math.cos(angle) * radius,
+      y: cy + Math.sin(angle) * radius,
+    });
+  });
+
+  for (const edge of edges) {
+    const from = positions.get(edge.source);
+    const to = positions.get(edge.target);
+    if (!from || !to) continue;
+    const line = svgEl("line");
+    line.setAttribute("class", "graph-edge");
+    line.setAttribute("x1", String(from.x));
+    line.setAttribute("y1", String(from.y));
+    line.setAttribute("x2", String(to.x));
+    line.setAttribute("y2", String(to.y));
+    svg.appendChild(line);
+  }
+
+  for (const node of nodes) {
+    const pos = positions.get(node.id);
+    if (!pos) continue;
+    const group = svgEl("g");
+    group.setAttribute("class", "graph-node");
+    group.setAttribute("tabindex", "0");
+    group.setAttribute("role", "button");
+    group.setAttribute("aria-label", "Open " + node.title);
+    group.addEventListener("click", () => openVaultFile(node.path));
+    group.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") openVaultFile(node.path);
+    });
+
+    const circle = svgEl("circle");
+    circle.setAttribute("cx", String(pos.x));
+    circle.setAttribute("cy", String(pos.y));
+    circle.setAttribute("r", node.type === "Entity" ? "18" : "22");
+    circle.setAttribute("class", node.type === "Entity" ? "graph-node-entity" : "graph-node-concept");
+    group.appendChild(circle);
+
+    const label = svgEl("text");
+    label.setAttribute("x", String(pos.x));
+    label.setAttribute("y", String(pos.y + 36));
+    label.textContent = node.title;
+    group.appendChild(label);
+    svg.appendChild(group);
+  }
+}
+
+function svgEl(name) {
+  return document.createElementNS("http://www.w3.org/2000/svg", name);
+}
+
+// ---------------------------------------------------------------------------
 // Event wiring
 // ---------------------------------------------------------------------------
 
@@ -987,6 +1098,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("vault-browser-btn").addEventListener("click", openVaultBrowser);
   document.getElementById("vault-close").addEventListener("click", closeVaultBrowser);
+  document.getElementById("knowledge-graph-btn").addEventListener("click", openKnowledgeGraph);
+  document.getElementById("graph-close").addEventListener("click", closeKnowledgeGraph);
   document.getElementById("vault-view-rendered").addEventListener("click", () => setVaultView("rendered"));
   document.getElementById("vault-view-raw").addEventListener("click", () => setVaultView("raw"));
   document.getElementById("inbox-create-btn").addEventListener("click", openInboxModal);

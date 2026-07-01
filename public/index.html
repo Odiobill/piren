@@ -40,6 +40,7 @@
       <div class="sidebar-section">
         <button id="new-conversation-btn" class="full-btn btn-secondary" title="Start a fresh conversation">+ New Conversation</button>
         <button id="vault-browser-btn" class="full-btn">Vault Browser</button>
+        <button id="knowledge-graph-btn" class="full-btn btn-secondary" title="Open the read-only OKF knowledge graph">Knowledge Graph</button>
         <button id="inbox-create-btn" class="full-btn btn-secondary" title="Create an inbox task for the selected agent">+ Inbox Task</button>
         <button id="notifications-btn" class="full-btn btn-secondary notification-btn" title="Open steward alerts">
           Steward Alerts
@@ -110,6 +111,17 @@
         <div id="vault-content-rendered" class="markdown-body hidden"></div>
         <pre id="vault-content-pre"></pre>
       </div>
+    </div>
+
+    <!-- Knowledge graph panel -->
+    <div id="graph-panel" class="panel graph-panel hidden">
+      <div class="panel-header">
+        <h3>Knowledge Graph</h3>
+        <button id="graph-close" class="icon-btn" title="Close">&#x2715;</button>
+      </div>
+      <div id="graph-summary" class="graph-summary">Loading graph...</div>
+      <svg id="graph-canvas" class="graph-canvas" role="img" aria-label="Read-only OKF knowledge graph"></svg>
+      <div id="graph-empty" class="session-empty hidden">No OKF concepts or entities found.</div>
     </div>
   </div>
 

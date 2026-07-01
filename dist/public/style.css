@@ -698,6 +698,44 @@ body {
 .session-entry { cursor: pointer; border-left: 2px solid transparent; }
 .session-entry.active { background: var(--bg-input); border-left-color: var(--accent); }
 
+/* Read-only OKF knowledge graph. Lightweight SVG, no framework or graph lib. */
+.graph-panel { width: min(520px, 46vw); }
+.graph-summary {
+  padding: 0.55rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+.graph-canvas {
+  flex: 1;
+  min-height: 320px;
+  width: 100%;
+  background: radial-gradient(circle at center, rgba(124, 111, 240, 0.09), transparent 58%);
+}
+.graph-edge {
+  stroke: rgba(124, 111, 240, 0.45);
+  stroke-width: 1.4;
+}
+.graph-node { cursor: pointer; outline: none; }
+.graph-node circle {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  transition: fill 0.12s, stroke 0.12s;
+}
+.graph-node:focus circle,
+.graph-node:hover circle {
+  fill: var(--accent-hover);
+  stroke: var(--text-bright);
+}
+.graph-node-concept { fill: rgba(124, 111, 240, 0.35); }
+.graph-node-entity { fill: rgba(74, 222, 128, 0.28); }
+.graph-node text {
+  fill: var(--text);
+  font-size: 0.68rem;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
 @media (max-width: 900px) {
   #app { flex-wrap: nowrap; }
   .panel { width: 44vw; min-width: 300px; }

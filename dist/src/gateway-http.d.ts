@@ -113,6 +113,7 @@ export declare class GatewayServer {
     private handleSwitch;
     private handleVaultList;
     private handleVaultRead;
+    private handleVaultGraph;
     /**
      * Create an inbox task for an agent from the web UI. This is a steward
      * affordance: drop a one-file-per-task Markdown file into the target

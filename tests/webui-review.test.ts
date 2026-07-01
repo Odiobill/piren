@@ -63,4 +63,19 @@ describe("WebUI review affordances", () => {
     expect(app).toContain('apiJson("/api/chat/new"');
     expect(app).toContain('New conversation started.');
   });
+
+  it("adds a minimal read-only knowledge graph surface that opens graph nodes in the vault browser", async () => {
+    const html = await readPublic("index.html");
+    const app = await readPublic("app.js");
+    const css = await readPublic("style.css");
+
+    expect(html).toContain('id="knowledge-graph-btn"');
+    expect(html).toContain('id="graph-panel"');
+    expect(html).toContain('id="graph-canvas"');
+    expect(app).toContain('apiJson("/api/vault/graph"');
+    expect(app).toContain("renderKnowledgeGraph");
+    expect(app).toContain("openVaultFile(node.path)");
+    expect(css).toContain(".graph-node");
+    expect(css).toContain(".graph-edge");
+  });
 });

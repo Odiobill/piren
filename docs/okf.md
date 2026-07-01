@@ -103,6 +103,16 @@ OKF supports three link forms that coexist in a Piren vault:
 
 A link from concept A to concept B asserts a directed relationship (OKF 5.3). The kind of relationship is conveyed by surrounding prose, not the link itself. Broken links are not malformed; they may represent not-yet-written knowledge.
 
+## Knowledge graph
+
+The gateway exposes a read-only graph route for the integrated Web UI:
+
+```text
+GET /api/vault/graph
+```
+
+It returns JSON with `nodes`, `edges`, `problems`, and `truncated`. Nodes are OKF `type: Concept` and `type: Entity` documents. Edges are directed links extracted from wikilinks, bundle-relative links, relative Markdown links, and external URLs. The Web UI renders this as a minimal SVG Knowledge Graph; selecting a node opens the corresponding vault document in the existing read-only browser.
+
 ## Exchange
 
 Because the vault is a plain OKF bundle, it can be `git clone`d and consumed by any OKF-aware tool. Piren treats the vault as the single source of truth: no hidden database, no opaque memory store. The format is the contract.

@@ -102,10 +102,11 @@ Approval:
 
 - `POST /api/chat/approve`
 
-Vault browser:
+Vault browser and graph:
 
 - `GET /api/vault/list?path=...`
 - `GET /api/vault/read?path=...`
+- `GET /api/vault/graph`
 
 OpenAI-compatible:
 

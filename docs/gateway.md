@@ -55,6 +55,7 @@ The UI provides:
 - steering and follow-up
 - approval gates
 - read-only vault browser
+- read-only OKF knowledge graph
 - session list and resume support
 - abort button for runaway turns
 - read-only context indicator
@@ -68,14 +69,15 @@ Localhost can run without auth for friction-free local use. Non-localhost binds 
 
 See [Security](security.md).
 
-## Vault browser
+## Vault browser and graph
 
 Routes:
 
 - `GET /api/vault/list?path=...`
 - `GET /api/vault/read?path=...`
+- `GET /api/vault/graph`
 
-The browser is read-only, hides dotfiles, caps listings and reads, and enforces vault path boundaries.
+The browser is read-only, hides dotfiles, caps listings and reads, and enforces vault path boundaries. The graph route is also read-only: it computes OKF `Concept`/`Entity` nodes and directed links from the vault and returns JSON for the Web UI Knowledge Graph panel.
 
 ## Session management
 

@@ -1,6 +1,6 @@
 import { type IncomingMessage, type ServerResponse, createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve, relative, join, extname } from "node:path";
 import { PiRpcClient, extractAssistantText, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { piEventToSse, type SseEvent } from "./gateway-bridge.js";
@@ -8,6 +8,8 @@ import { vaultBrowserList, vaultBrowserRead } from "./vault-browser.js";
 import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
 import { createInboxTask } from "./inbox.js";
+import { buildOkfGraph } from "./okf-graph.js";
+import type { VaultDirReader } from "./okf.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -24,6 +26,31 @@ const MIME_TYPES: Record<string, string> = {
   ".woff": "font/woff",
   ".map": "application/json; charset=utf-8",
 };
+
+function createVaultRelativeDirReader(vaultRoot: string): VaultDirReader {
+  const root = resolve(vaultRoot);
+
+  function resolveInsideVault(path: string): string {
+    const resolved = path === "" ? root : resolve(join(root, path));
+    const rel = relative(root, resolved);
+    if (rel.startsWith("..") || rel === "..") {
+      throw new Error("Path resolves outside vault");
+    }
+    return resolved;
+  }
+
+  return {
+    async list(dir: string) {
+      const entries = await readdir(resolveInsideVault(dir), { withFileTypes: true });
+      return entries
+        .filter((entry) => entry.isDirectory() || entry.isFile())
+        .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }));
+    },
+    async readFile(path: string) {
+      return readFile(resolveInsideVault(path), "utf8");
+    },
+  };
+}
 
 export type RpcTargetBuilder = (agent: string) => Promise<RpcSpawnTarget>;
 
@@ -222,6 +249,8 @@ export class GatewayServer {
       await this.handleVaultList(res, url);
     } else if (req.method === "GET" && url.pathname === "/api/vault/read") {
       await this.handleVaultRead(res, url);
+    } else if (req.method === "GET" && url.pathname === "/api/vault/graph") {
+      await this.handleVaultGraph(res);
     } else if (req.method === "POST" && url.pathname === "/api/vault/inbox") {
       await this.handleVaultInbox(req, res);
     } else if (req.method === "GET" && this.publicDir) {
@@ -855,6 +884,26 @@ export class GatewayServer {
     try {
       const result = await vaultBrowserRead(this.vaultRoot, path);
       this.writeJson(res, 200, result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("Path resolves outside vault")) {
+        this.writeJson(res, 403, { error: msg });
+      } else if (msg.startsWith("ENOENT") || msg.includes("ENOENT")) {
+        this.writeJson(res, 404, { error: "path not found" });
+      } else {
+        this.writeJson(res, 400, { error: msg });
+      }
+    }
+  }
+
+  private async handleVaultGraph(res: ServerResponse): Promise<void> {
+    if (!this.vaultRoot) {
+      this.writeJson(res, 404, { error: "vault graph not configured" });
+      return;
+    }
+    try {
+      const graph = await buildOkfGraph({ root: "", reader: createVaultRelativeDirReader(this.vaultRoot) });
+      this.writeJson(res, 200, graph);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.startsWith("Path resolves outside vault")) {
