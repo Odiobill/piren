@@ -15,8 +15,9 @@ export interface CorrectionTriggerResult {
     directive: string;
     matchedPattern: string;
 }
+export type SelfImprovementVisibleTool = "project_append_log" | "skill_candidate_write" | "decision_record" | "wiki_update_concept" | "wiki_update_entity" | "project_update_handoff" | "runbook_write";
 export interface CorrectionArtifactSuggestion {
-    tool: "project_append_log" | "skill_candidate_write" | "decision_record" | "wiki_update_concept" | "wiki_update_entity";
+    tool: SelfImprovementVisibleTool;
     reason: string;
 }
 export declare function detectCorrectionTrigger(text: string, config?: CorrectionTriggerConfig): CorrectionTriggerResult;
@@ -52,5 +53,23 @@ export interface SelfImprovementReviewPromptInput {
     agentName: string;
     vaultRoot: string;
     conversation: readonly string[];
+    consolidationCandidates?: readonly ConsolidationPromotionCandidate[];
 }
+export type ConsolidationPromotionCandidateKind = "project-log" | "agent-notes" | "session-summaries";
+export interface ConsolidationPromotionFile {
+    path: string;
+    bytes: number;
+}
+export interface ConsolidationPromotionOptions {
+    thresholdBytes?: number;
+    maxCandidates?: number;
+}
+export interface ConsolidationPromotionCandidate {
+    path: string;
+    bytes: number;
+    kind: ConsolidationPromotionCandidateKind;
+    reason: string;
+    suggestedTools: CorrectionArtifactSuggestion["tool"][];
+}
+export declare function findConsolidationPromotionCandidates(files: readonly ConsolidationPromotionFile[], options?: ConsolidationPromotionOptions): ConsolidationPromotionCandidate[];
 export declare function buildSelfImprovementReviewPrompt(input: SelfImprovementReviewPromptInput): string;

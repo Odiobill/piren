@@ -4,6 +4,7 @@ import {
   buildSelfImprovementReviewPrompt,
   collectReviewConversation,
   detectCorrectionTrigger,
+  findConsolidationPromotionCandidates,
   formatCorrectionArtifactNudge,
   resolveAutoNudgeConfig,
   resolveReviewLoopConfig,
@@ -181,5 +182,45 @@ describe("ADR-0024 review loop primitives", () => {
     expect(prompt).toContain("wiki_update_concept");
     expect(prompt).toContain("If there is no durable knowledge delta, reply exactly: Nothing to promote.");
     expect(prompt).toContain("user: Actually, write this as a concept.");
+  });
+
+  it("identifies large raw vault artifacts as consolidation-as-promotion candidates", () => {
+    const candidates = findConsolidationPromotionCandidates([
+      { path: "Projects/Piren/log.md", bytes: 80_000 },
+      { path: "team/thor/MEMORY.md", bytes: 60_000 },
+      { path: "wiki/concepts/piren.md", bytes: 90_000 },
+      { path: "Projects/Piren/index.md", bytes: 120_000 },
+    ], { thresholdBytes: 50_000 });
+
+    expect(candidates.map((candidate) => candidate.path)).toEqual([
+      "Projects/Piren/log.md",
+      "team/thor/MEMORY.md",
+    ]);
+    expect(candidates[0]?.kind).toBe("project-log");
+    expect(candidates[0]?.suggestedTools).toContain("wiki_update_concept");
+    expect(candidates[1]?.kind).toBe("agent-notes");
+    expect(candidates[1]?.suggestedTools).toContain("skill_candidate_write");
+  });
+
+  it("adds consolidation-as-promotion guidance to the review prompt when raw artifacts are large", () => {
+    const prompt = buildSelfImprovementReviewPrompt({
+      agentName: "thor",
+      vaultRoot: "/vault",
+      conversation: ["user: Continue the work."],
+      consolidationCandidates: [
+        {
+          path: "Projects/Piren/log.md",
+          bytes: 80_000,
+          kind: "project-log",
+          reason: "Project log is over the consolidation threshold.",
+          suggestedTools: ["wiki_update_concept", "decision_record"],
+        },
+      ],
+    });
+
+    expect(prompt).toContain("Consolidation-as-promotion candidates");
+    expect(prompt).toContain("Projects/Piren/log.md");
+    expect(prompt).toContain("raw entries stay as evidence");
+    expect(prompt).toContain("wiki_update_concept");
   });
 });

@@ -65,8 +65,17 @@ export interface CorrectionTriggerResult {
   matchedPattern: string;
 }
 
+export type SelfImprovementVisibleTool =
+  | "project_append_log"
+  | "skill_candidate_write"
+  | "decision_record"
+  | "wiki_update_concept"
+  | "wiki_update_entity"
+  | "project_update_handoff"
+  | "runbook_write";
+
 export interface CorrectionArtifactSuggestion {
-  tool: "project_append_log" | "skill_candidate_write" | "decision_record" | "wiki_update_concept" | "wiki_update_entity";
+  tool: SelfImprovementVisibleTool;
   reason: string;
 }
 
@@ -345,9 +354,102 @@ export interface SelfImprovementReviewPromptInput {
   agentName: string;
   vaultRoot: string;
   conversation: readonly string[];
+  consolidationCandidates?: readonly ConsolidationPromotionCandidate[];
+}
+
+export type ConsolidationPromotionCandidateKind = "project-log" | "agent-notes" | "session-summaries";
+
+export interface ConsolidationPromotionFile {
+  path: string;
+  bytes: number;
+}
+
+export interface ConsolidationPromotionOptions {
+  thresholdBytes?: number;
+  maxCandidates?: number;
+}
+
+export interface ConsolidationPromotionCandidate {
+  path: string;
+  bytes: number;
+  kind: ConsolidationPromotionCandidateKind;
+  reason: string;
+  suggestedTools: CorrectionArtifactSuggestion["tool"][];
+}
+
+const DEFAULT_CONSOLIDATION_THRESHOLD_BYTES = 50_000;
+const DEFAULT_CONSOLIDATION_MAX_CANDIDATES = 5;
+
+function classifyConsolidationCandidate(path: string): Omit<ConsolidationPromotionCandidate, "path" | "bytes"> | null {
+  if (/^Projects\/[^/]+\/log\.md$/i.test(path)) {
+    return {
+      kind: "project-log",
+      reason: "Project log is over the consolidation threshold; promote repeated raw entries into synthesized project knowledge while leaving the log as evidence.",
+      suggestedTools: ["wiki_update_concept", "decision_record", "runbook_write", "skill_candidate_write", "project_update_handoff"],
+    };
+  }
+
+  if (/^team\/[^/]+\/(MEMORY|USER)\.md$/i.test(path)) {
+    return {
+      kind: "agent-notes",
+      reason: "Agent notes are over the consolidation threshold; promote stable preferences, conventions, or procedures into curated visible artifacts.",
+      suggestedTools: ["skill_candidate_write", "wiki_update_concept", "wiki_update_entity", "project_append_log"],
+    };
+  }
+
+  if (/^team\/[^/]+\/sessions\/[^/]+\.md$/i.test(path)) {
+    return {
+      kind: "session-summaries",
+      reason: "Session summaries are accumulating; promote recurring lessons into current project docs, runbooks, concepts, or skill candidates.",
+      suggestedTools: ["project_append_log", "wiki_update_concept", "runbook_write", "skill_candidate_write"],
+    };
+  }
+
+  return null;
+}
+
+export function findConsolidationPromotionCandidates(
+  files: readonly ConsolidationPromotionFile[],
+  options: ConsolidationPromotionOptions = {},
+): ConsolidationPromotionCandidate[] {
+  const thresholdBytes = positiveInteger(options.thresholdBytes, DEFAULT_CONSOLIDATION_THRESHOLD_BYTES);
+  const maxCandidates = positiveInteger(options.maxCandidates, DEFAULT_CONSOLIDATION_MAX_CANDIDATES);
+  const candidates: ConsolidationPromotionCandidate[] = [];
+
+  for (const file of files) {
+    if (file.bytes < thresholdBytes) continue;
+    const classification = classifyConsolidationCandidate(file.path);
+    if (!classification) continue;
+    candidates.push({
+      path: file.path,
+      bytes: file.bytes,
+      kind: classification.kind,
+      reason: classification.reason,
+      suggestedTools: classification.suggestedTools,
+    });
+  }
+
+  return candidates
+    .sort((left, right) => right.bytes - left.bytes)
+    .slice(0, maxCandidates);
+}
+
+function formatConsolidationCandidates(candidates: readonly ConsolidationPromotionCandidate[]): string[] {
+  if (candidates.length === 0) return [];
+  return [
+    "",
+    "## Consolidation-as-promotion candidates",
+    "The following visible raw artifacts are large enough to review for promotion. Do not delete or rewrite the raw source; raw entries stay as evidence. If recurring lessons are present, synthesize them into the minimum higher-ladder artifact.",
+    ...candidates.map((candidate) => [
+      `- ${candidate.path} (${candidate.bytes} bytes, ${candidate.kind})`,
+      `  Reason: ${candidate.reason}`,
+      `  Candidate tools: ${candidate.suggestedTools.join(", ")}`,
+    ].join("\n")),
+  ];
 }
 
 export function buildSelfImprovementReviewPrompt(input: SelfImprovementReviewPromptInput): string {
+  const consolidationLines = formatConsolidationCandidates(input.consolidationCandidates ?? []);
   return [
     "ADR-0024 inspectable self-improvement review.",
     "",
@@ -366,6 +468,7 @@ export function buildSelfImprovementReviewPrompt(input: SelfImprovementReviewPro
     "- wiki_update_entity: OKF Entity for corrected facts about people/systems/services/providers",
     "",
     "Choose the minimum useful artifact. Do not create skills directly. Do not author ADRs unless the conversation clearly sets direction.",
+    ...consolidationLines,
     "If there is no durable knowledge delta, reply exactly: Nothing to promote.",
     "",
     "--- Recent conversation ---",

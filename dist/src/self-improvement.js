@@ -259,7 +259,70 @@ export function collectReviewConversation(entries, recentMessages = DEFAULT_REVI
     }
     return lines.slice(-Math.max(1, recentMessages));
 }
+const DEFAULT_CONSOLIDATION_THRESHOLD_BYTES = 50_000;
+const DEFAULT_CONSOLIDATION_MAX_CANDIDATES = 5;
+function classifyConsolidationCandidate(path) {
+    if (/^Projects\/[^/]+\/log\.md$/i.test(path)) {
+        return {
+            kind: "project-log",
+            reason: "Project log is over the consolidation threshold; promote repeated raw entries into synthesized project knowledge while leaving the log as evidence.",
+            suggestedTools: ["wiki_update_concept", "decision_record", "runbook_write", "skill_candidate_write", "project_update_handoff"],
+        };
+    }
+    if (/^team\/[^/]+\/(MEMORY|USER)\.md$/i.test(path)) {
+        return {
+            kind: "agent-notes",
+            reason: "Agent notes are over the consolidation threshold; promote stable preferences, conventions, or procedures into curated visible artifacts.",
+            suggestedTools: ["skill_candidate_write", "wiki_update_concept", "wiki_update_entity", "project_append_log"],
+        };
+    }
+    if (/^team\/[^/]+\/sessions\/[^/]+\.md$/i.test(path)) {
+        return {
+            kind: "session-summaries",
+            reason: "Session summaries are accumulating; promote recurring lessons into current project docs, runbooks, concepts, or skill candidates.",
+            suggestedTools: ["project_append_log", "wiki_update_concept", "runbook_write", "skill_candidate_write"],
+        };
+    }
+    return null;
+}
+export function findConsolidationPromotionCandidates(files, options = {}) {
+    const thresholdBytes = positiveInteger(options.thresholdBytes, DEFAULT_CONSOLIDATION_THRESHOLD_BYTES);
+    const maxCandidates = positiveInteger(options.maxCandidates, DEFAULT_CONSOLIDATION_MAX_CANDIDATES);
+    const candidates = [];
+    for (const file of files) {
+        if (file.bytes < thresholdBytes)
+            continue;
+        const classification = classifyConsolidationCandidate(file.path);
+        if (!classification)
+            continue;
+        candidates.push({
+            path: file.path,
+            bytes: file.bytes,
+            kind: classification.kind,
+            reason: classification.reason,
+            suggestedTools: classification.suggestedTools,
+        });
+    }
+    return candidates
+        .sort((left, right) => right.bytes - left.bytes)
+        .slice(0, maxCandidates);
+}
+function formatConsolidationCandidates(candidates) {
+    if (candidates.length === 0)
+        return [];
+    return [
+        "",
+        "## Consolidation-as-promotion candidates",
+        "The following visible raw artifacts are large enough to review for promotion. Do not delete or rewrite the raw source; raw entries stay as evidence. If recurring lessons are present, synthesize them into the minimum higher-ladder artifact.",
+        ...candidates.map((candidate) => [
+            `- ${candidate.path} (${candidate.bytes} bytes, ${candidate.kind})`,
+            `  Reason: ${candidate.reason}`,
+            `  Candidate tools: ${candidate.suggestedTools.join(", ")}`,
+        ].join("\n")),
+    ];
+}
 export function buildSelfImprovementReviewPrompt(input) {
+    const consolidationLines = formatConsolidationCandidates(input.consolidationCandidates ?? []);
     return [
         "ADR-0024 inspectable self-improvement review.",
         "",
@@ -278,6 +341,7 @@ export function buildSelfImprovementReviewPrompt(input) {
         "- wiki_update_entity: OKF Entity for corrected facts about people/systems/services/providers",
         "",
         "Choose the minimum useful artifact. Do not create skills directly. Do not author ADRs unless the conversation clearly sets direction.",
+        ...consolidationLines,
         "If there is no durable knowledge delta, reply exactly: Nothing to promote.",
         "",
         "--- Recent conversation ---",

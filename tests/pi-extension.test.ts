@@ -1038,6 +1038,42 @@ describe("Pi extension OKF conformance tool (ADR-0022)", () => {
     expect(prompt).toContain("Nothing to promote");
   });
 
+  it("passes large raw vault artifacts into the ADR-0024 review prompt as promotion candidates", async () => {
+    await mkdir(join(root, "vault", "Projects", "Piren"), { recursive: true });
+    await writeFile(join(root, "vault", "Projects", "Piren", "log.md"), "x".repeat(60_000));
+    const pi = fakePi() as ReturnType<typeof fakePi> & { exec: any };
+    const execCalls: Array<{ command: string; args: string[]; options: { timeout?: number } }> = [];
+    pi.exec = async (command: string, args: string[], options: { timeout?: number }) => {
+      execCalls.push({ command, args, options });
+      return { code: 0, stdout: "Nothing to promote." };
+    };
+
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_REVIEW_LOOP: "1", PIREN_REVIEW_INTERVAL_TURNS: "1" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    const handler = pi.events.turn_end?.[0];
+    const ctx = {
+      sessionManager: {
+        getBranch: () => [
+          { message: { role: "user", content: "Continue Piren." } },
+          { message: { role: "assistant", content: "Done." } },
+        ],
+      },
+      ui: { notify: () => undefined },
+    };
+
+    await handler?.({ message: { role: "assistant", content: "done" } }, ctx);
+    await Promise.resolve();
+
+    const prompt = execCalls[0]?.args.at(-1) ?? "";
+    expect(prompt).toContain("Consolidation-as-promotion candidates");
+    expect(prompt).toContain("Projects/Piren/log.md");
+    expect(prompt).toContain("raw entries stay as evidence");
+  });
+
   it("includes opt-in self-improvement notes in the startup context prompt", async () => {
     const pi = fakePi();
     await extension(pi as any, {

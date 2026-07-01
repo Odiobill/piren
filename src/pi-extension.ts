@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,7 @@ import {
   buildSelfImprovementReviewPrompt,
   collectReviewConversation,
   detectCorrectionTrigger,
+  findConsolidationPromotionCandidates,
   formatCorrectionArtifactNudge,
   resolveAutoNudgeConfig,
   resolveReviewLoopConfig,
@@ -259,6 +260,54 @@ function buildReviewChildPiArgs(context: PirenContext, prompt: string): string[]
   ];
 }
 
+async function collectConsolidationPromotionFiles(context: PirenContext): Promise<Array<{ path: string; bytes: number }>> {
+  const files: Array<{ path: string; bytes: number }> = [];
+
+  try {
+    const projectsDir = join(context.vaultRoot, "Projects");
+    const projectEntries = await readdir(projectsDir, { withFileTypes: true });
+    for (const entry of projectEntries) {
+      if (!entry.isDirectory()) continue;
+      const path = `Projects/${entry.name}/log.md`;
+      try {
+        const metadata = await stat(join(projectsDir, entry.name, "log.md"));
+        if (metadata.isFile()) files.push({ path, bytes: metadata.size });
+      } catch {
+        // Missing or unreadable project logs are not review-loop blockers.
+      }
+    }
+  } catch {
+    // Projects are optional in a vault; consolidation scanning is best-effort.
+  }
+
+  for (const filename of ["MEMORY.md", "USER.md"]) {
+    try {
+      const metadata = await stat(join(context.agentDir, filename));
+      if (metadata.isFile()) files.push({ path: `team/${context.agentName}/${filename}`, bytes: metadata.size });
+    } catch {
+      // Agent notes are optional.
+    }
+  }
+
+  try {
+    const sessionsDir = join(context.agentDir, "sessions");
+    const sessionEntries = await readdir(sessionsDir, { withFileTypes: true });
+    for (const entry of sessionEntries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      try {
+        const metadata = await stat(join(sessionsDir, entry.name));
+        files.push({ path: `team/${context.agentName}/sessions/${entry.name}`, bytes: metadata.size });
+      } catch {
+        // Skip unreadable session summaries.
+      }
+    }
+  } catch {
+    // Sessions are optional.
+  }
+
+  return files;
+}
+
 // Build isScheduleDue options respecting exactOptionalPropertyTypes: lastRun
 // is omitted (never passed as explicit undefined) when the job has no last run.
 function jobIsDue(job: { schedule: CronSchedule; lastRun?: Date }, now: Date): boolean {
@@ -357,7 +406,11 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
     "The review loop is also opt-in and off by default. Enable it with",
     "self_improvement.review_loop.enabled: true or PIREN_REVIEW_LOOP=1. It runs a",
     "child Pi prompt after the configured turn interval and may use only visible",
-    "vault tools. If there is no durable knowledge delta, it must reply Nothing to promote.",
+    "vault tools. It also scans large visible raw artifacts such as project logs,",
+    "agent notes, and session summaries as consolidation-as-promotion candidates:",
+    "raw entries stay as evidence, and recurring lessons should be promoted into",
+    "concepts, ADRs, runbooks, handoff updates, or skill candidates. If there is no",
+    "durable knowledge delta, it must reply Nothing to promote.",
   ];
 
   const skillsSection = formatSkillCatalogForContext(skills);
@@ -456,10 +509,13 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
       const conversation = collectReviewConversation(sessionManager.getBranch(), reviewLoop.recentMessages);
       if (conversation.length < 2) return;
 
+      const files = await collectConsolidationPromotionFiles(context);
+      const consolidationCandidates = findConsolidationPromotionCandidates(files);
       const prompt = buildSelfImprovementReviewPrompt({
         agentName: context.agentName,
         vaultRoot: context.vaultRoot,
         conversation,
+        consolidationCandidates,
       });
       reviewInProgress = true;
       void execReview("pi", buildReviewChildPiArgs(context, prompt), { timeout: reviewLoop.timeoutMs })
