@@ -1,6 +1,18 @@
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
+function nestedToolPayload(event) {
+    const candidates = [event, event.toolCall, event.tool, event.toolExecution, event.call];
+    for (const candidate of candidates) {
+        if (!isRecord(candidate))
+            continue;
+        const name = candidate.name ?? candidate.toolName;
+        const args = candidate.args ?? candidate.arguments ?? candidate.input;
+        if (typeof name === "string" && name.trim() !== "")
+            return { name, args };
+    }
+    return {};
+}
 /**
  * Translate a Pi RPC event into an SSE event for the browser.
  *
@@ -23,9 +35,10 @@ export function piEventToSse(event) {
             return null;
         }
         case "tool_execution_start": {
+            const tool = nestedToolPayload(event);
             return {
                 type: "tool",
-                data: { phase: "start", name: event.name, args: event.args },
+                data: { phase: "start", name: tool.name, args: tool.args },
             };
         }
         case "tool_execution_end": {

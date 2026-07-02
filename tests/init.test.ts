@@ -29,6 +29,16 @@ describe("Piren vault initialization", () => {
     await expect(stat(join(root, "team", "thor", "devices"))).resolves.toBeDefined();
     await expect(stat(join(root, "team", "thor", "logs"))).resolves.toBeDefined();
     await expect(stat(join(root, "team", "thor", "sessions"))).resolves.toBeDefined();
+    await expect(stat(join(root, "Projects"))).resolves.toBeDefined();
+    await expect(stat(join(root, "wiki", "concepts"))).resolves.toBeDefined();
+    await expect(stat(join(root, "wiki", "entities"))).resolves.toBeDefined();
+
+    const directives = await readFile(join(root, "steward-directives.md"), "utf8");
+    expect(directives).toContain("Use OKF frontmatter with a non-empty type field");
+    expect(directives).toContain("wiki_update_concept");
+    const soul = await readFile(join(root, "team", "thor", "SOUL.md"), "utf8");
+    expect(soul).toContain("When importing existing project material");
+    expect(soul).toContain("wiki/concepts");
 
     const config = await readFile(join(root, "team", "thor", "config.yml"), "utf8");
     expect(config).not.toContain("allowed_agents:");

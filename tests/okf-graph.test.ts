@@ -36,7 +36,7 @@ function fakeReader(files: Record<string, string>): VaultDirReader {
 }
 
 describe("OKF graph core", () => {
-  it("builds read-only graph nodes for OKF concepts and entities", async () => {
+  it("builds read-only graph nodes for all OKF typed documents from the vault root", async () => {
     const graph = await buildOkfGraph({
       root: "",
       reader: fakeReader({
@@ -65,6 +65,12 @@ describe("OKF graph core", () => {
 
     expect(graph.nodes).toEqual([
       {
+        id: "Projects/Piren/decisions/ADR-0022-open-knowledge-format.md",
+        path: "Projects/Piren/decisions/ADR-0022-open-knowledge-format.md",
+        type: "ADR",
+        title: "ADR-0022",
+      },
+      {
         id: "wiki/concepts/vault-knowledge.md",
         path: "wiki/concepts/vault-knowledge.md",
         type: "Concept",
@@ -80,6 +86,43 @@ describe("OKF graph core", () => {
     ]);
     expect(graph.edges).toEqual([]);
     expect(graph.problems).toEqual([]);
+  });
+
+  it("extracts graph edges from project documents as well as wiki documents", async () => {
+    const graph = await buildOkfGraph({
+      root: "",
+      reader: fakeReader({
+        "Projects/GymSync/index.md": [
+          "---",
+          "type: Project Index",
+          "title: GymSync",
+          "---",
+          "",
+          "# GymSync",
+          "",
+          "See [[SaaS Ownership]] and /wiki/entities/cardano.md.",
+        ].join("\n"),
+        "wiki/concepts/saas-ownership.md": "---\ntype: Concept\ntitle: SaaS Ownership\n---\n\n# SaaS Ownership\n",
+        "wiki/entities/cardano.md": "---\ntype: Entity\ntitle: Cardano\n---\n\n# Cardano\n",
+      }),
+    });
+
+    expect(graph.edges).toEqual([
+      {
+        source: "Projects/GymSync/index.md",
+        target: "wiki/concepts/saas-ownership.md",
+        href: "SaaS Ownership",
+        kind: "wikilink",
+        external: false,
+      },
+      {
+        source: "Projects/GymSync/index.md",
+        target: "wiki/entities/cardano.md",
+        href: "/wiki/entities/cardano.md",
+        kind: "bundle",
+        external: false,
+      },
+    ]);
   });
 
   it("extracts directed edges from wikilinks, OKF bundle links, relative markdown links, and external URLs", async () => {

@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  71 passed (71)
-Tests       575 passed (575)
+Test Files  73 passed (73)
+Tests       583 passed (583)
 SMOKE PASSED
 ```
 
@@ -301,6 +301,11 @@ Service lifecycle management (ADR-0021, implemented):
 - `src/doctor.ts` gained an opt-in `checkServiceConfig(config)` that reports a `services` check only when a `services.transports` block is present, warning on declared-but-not-installed or installed-but-not-running transports. `ServicesLocalConfig` and `ServiceStatusEntry` added to `src/bootstrap.ts`.
 - The CLI wires: `piren -h|--help` and `piren <cmd> --help`; `piren setup` interactive when bare in a TTY (explicit `process.exit(0)` after the wizard to avoid an unsettled top-level await from the readline interface); `piren service <action> <transport>` with real `systemctl --user`/`tmux`/`crontab` detection probes, best-effort service-status writeback to config.yml after install/remove (only when files were generated, i.e. manager is not `none`).
 - Tests: `tests/service-lifecycle.test.ts` (22), `tests/service-lifecycle-exec.test.ts` (7), `tests/service-status-yaml.test.ts` (5), `tests/help.test.ts` (12), `tests/wizard.test.ts` (16), `tests/wizard-models.test.ts` (10), `tests/wizard-agent-config.test.ts` (4), `tests/wizard-transport-config.test.ts` (5), `tests/wizard-run.test.ts` (7), `tests/doctor-service.test.ts` (7), plus parser help tests.
+
+Open Knowledge Format conformance and graph surface (ADR-0022/0026):
+- `piren init` creates the top-level `Projects/` directory as part of the default OKF vault shape, alongside `wiki/`, `team/`, shared `skills/`, and `templates/`.
+- Fresh `steward-directives.md` and agent `SOUL.md` files tell agents importing older project material to preserve project-specific docs under `Projects/<Project>/` while promoting reusable concepts/entities through `wiki_update_concept` and `wiki_update_entity`, so the Knowledge Graph has linked OKF nodes instead of a copied folder tree.
+- The Knowledge Graph indexes all OKF-typed Markdown from the vault root, not only `wiki/concepts/` and `wiki/entities/`.
 
 Open Knowledge Format conformance (ADR-0022, implemented):
 - `src/okf.ts` is the pure OKF v0.1 conformance core, callable directly from tests without Pi auth or a real filesystem. It exports `parseOkfFrontmatter(src)` (splits frontmatter/body, flags unterminated blocks and malformed YAML), `checkOkfConceptDocument(path, src)` (enforces the single hard delta, a required non-empty `type` field; tolerates unknown types per OKF 4.1), `PIREN_OKF_TYPES` (descriptive taxonomy: Concept, Entity, Runbook, ADR, Skill, Project Index, Project Log, Session Summary, Task, Cron Job, Cron Run), the filename predicates `isOkfReservedFilename` / `isOkfSystemFilename` / `isOkfConceptFilename` / `isClaimedFilename`, `checkVaultConformance({root, reader, exclude?, maxFiles?})` (a tree walk over an injected `VaultDirReader` that skips dotfiles, reserved filenames, system files, claimed coordination files, and excluded dirs), `createRealVaultDirReader()` (the shared real-fs adapter used by both doctor and the extension tool), and `formatVaultConformanceReport(result)`.

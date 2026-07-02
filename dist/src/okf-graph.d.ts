@@ -1,5 +1,5 @@
 import { type OkfTreeProblem, type VaultDirReader } from "./okf.js";
-export type OkfGraphNodeType = "Concept" | "Entity";
+export type OkfGraphNodeType = string;
 export interface OkfGraphNode {
     id: string;
     path: string;

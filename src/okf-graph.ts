@@ -1,13 +1,13 @@
 import { posix as pathPosix } from "node:path";
 import {
   isClaimedFilename,
-  isOkfConceptFilename,
+  isOkfSystemFilename,
   parseOkfFrontmatter,
   type OkfTreeProblem,
   type VaultDirReader,
 } from "./okf.js";
 
-export type OkfGraphNodeType = "Concept" | "Entity";
+export type OkfGraphNodeType = string;
 
 export interface OkfGraphNode {
   id: string;
@@ -56,6 +56,10 @@ interface ExtractedLink {
 
 const DEFAULT_MAX_FILES = 10000;
 const ALWAYS_EXCLUDED_DIRS = new Set([".git", "node_modules"]);
+
+function isGraphMarkdownFilename(name: string): boolean {
+  return name.endsWith(".md") && !isOkfSystemFilename(name) && !isClaimedFilename(name);
+}
 
 function buildExcludeSet(extra?: string[]): Set<string> {
   const set = new Set<string>(ALWAYS_EXCLUDED_DIRS);
@@ -111,8 +115,7 @@ async function collectDocuments(options: BuildOkfGraphOptions): Promise<{
         continue;
       }
 
-      if (!isOkfConceptFilename(entry.name)) continue;
-      if (isClaimedFilename(entry.name)) continue;
+      if (!isGraphMarkdownFilename(entry.name)) continue;
       if (checked >= maxFiles) {
         truncated = true;
         return;
@@ -139,6 +142,7 @@ async function collectDocuments(options: BuildOkfGraphOptions): Promise<{
   }
 
   await walk(options.root);
+  documents.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { documents, problems, truncated };
 }
 
@@ -261,7 +265,7 @@ export async function buildOkfGraph(options: BuildOkfGraphOptions): Promise<OkfG
   const seenEdges = new Set<string>();
 
   for (const doc of documents) {
-    if (doc.type === "Concept" || doc.type === "Entity") {
+    if (doc.type !== null) {
       const node: OkfGraphNode = {
         id: doc.path,
         path: doc.path,
@@ -274,7 +278,7 @@ export async function buildOkfGraph(options: BuildOkfGraphOptions): Promise<OkfG
   }
 
   for (const doc of documents) {
-    if (doc.type !== "Concept" && doc.type !== "Entity") continue;
+    if (doc.type === null) continue;
     for (const link of extractLinks(doc.body)) {
       const target = resolveTarget(link, doc.path, lookup);
       if (target === null) continue;

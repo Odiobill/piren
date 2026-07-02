@@ -111,7 +111,9 @@ The gateway exposes a read-only graph route for the integrated Web UI:
 GET /api/vault/graph
 ```
 
-It returns JSON with `nodes`, `edges`, `problems`, and `truncated`. Nodes are OKF `type: Concept` and `type: Entity` documents. Edges are directed links extracted from wikilinks, bundle-relative links, relative Markdown links, and external URLs. The Web UI renders this as a minimal SVG Knowledge Graph; selecting a node opens the corresponding vault document in the existing read-only browser.
+It returns JSON with `nodes`, `edges`, `problems`, and `truncated`. Nodes are all OKF-typed Markdown documents found from the vault root, including `Concept`, `Entity`, `Project Index`, `ADR`, `Runbook`, and other typed documents. Edges are directed links extracted from wikilinks, bundle-relative links, relative Markdown links, and external URLs. The Web UI renders this as a minimal SVG Knowledge Graph; selecting a node opens the corresponding vault document in the existing read-only browser.
+
+If the graph is empty, the vault has no readable Markdown files with a non-empty `type` frontmatter field. For imports, keep working project material under `Projects/<Project>/`, but promote reusable knowledge and named systems into `wiki/concepts/` and `wiki/entities/` with the explicit wiki tools so they become durable, linked graph nodes.
 
 ## Exchange
 

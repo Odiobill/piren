@@ -5,6 +5,26 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-rc.2] - 2026-07-02
+
+Post-RC closeout polish before the next public release candidate.
+
+### Added
+
+- Knowledge Graph now indexes all OKF-typed Markdown documents from the vault root, not only `wiki/concepts/` and `wiki/entities/`. Project indexes, ADRs, runbooks, and other typed documents can appear as graph nodes and can emit directed links.
+- Fresh vault scaffolds now create `Projects/` and include import guidance in `steward-directives.md` and agent `SOUL.md`, so agents preserve project material while promoting reusable knowledge into `wiki/concepts/` and `wiki/entities/`.
+
+### Changed
+
+- Web UI side panels for Vault Browser and Knowledge Graph now use the same width and can be horizontally resized, letting the chat area stretch with the remaining viewport.
+- Web UI model badge now shows model plus best-effort context usage percentage when Pi exposes telemetry, and no longer shows thinking level.
+- Live chat turns are finalized through the same Markdown renderer used by reloaded transcripts, so formatting is consistent before and after refresh.
+- Tool execution SSE translation now extracts names from nested Pi tool payloads, avoiding `[tool] unknown` for newer event shapes.
+
+### Verification
+
+73 test files, 583 tests. `npm run typecheck`, `npm run build`, and `npm run smoke` pass locally. Run `npm run clean-install:check` after pushing so it verifies the GitHub source install.
+
 ## [0.1.0-rc.1] - 2026-06-26
 
 The first release candidate. Piren is a lightweight, local-first agent runtime
@@ -88,4 +108,5 @@ and a verified clean-install path.
 `npm run smoke`, and `npm run clean-install:check` all pass against the real
 GitHub source install.
 
+[0.1.0-rc.2]: https://github.com/Odiobill/piren/releases/tag/v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/Odiobill/piren/releases/tag/v0.1.0-rc.1

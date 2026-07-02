@@ -1,7 +1,10 @@
 import { posix as pathPosix } from "node:path";
-import { isClaimedFilename, isOkfConceptFilename, parseOkfFrontmatter, } from "./okf.js";
+import { isClaimedFilename, isOkfSystemFilename, parseOkfFrontmatter, } from "./okf.js";
 const DEFAULT_MAX_FILES = 10000;
 const ALWAYS_EXCLUDED_DIRS = new Set([".git", "node_modules"]);
+function isGraphMarkdownFilename(name) {
+    return name.endsWith(".md") && !isOkfSystemFilename(name) && !isClaimedFilename(name);
+}
 function buildExcludeSet(extra) {
     const set = new Set(ALWAYS_EXCLUDED_DIRS);
     if (extra !== undefined) {
@@ -52,9 +55,7 @@ async function collectDocuments(options) {
                     return;
                 continue;
             }
-            if (!isOkfConceptFilename(entry.name))
-                continue;
-            if (isClaimedFilename(entry.name))
+            if (!isGraphMarkdownFilename(entry.name))
                 continue;
             if (checked >= maxFiles) {
                 truncated = true;
@@ -81,6 +82,7 @@ async function collectDocuments(options) {
         }
     }
     await walk(options.root);
+    documents.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     return { documents, problems, truncated };
 }
 function stripTrailingUrlPunctuation(url) {
@@ -194,7 +196,7 @@ export async function buildOkfGraph(options) {
     const edges = [];
     const seenEdges = new Set();
     for (const doc of documents) {
-        if (doc.type === "Concept" || doc.type === "Entity") {
+        if (doc.type !== null) {
             const node = {
                 id: doc.path,
                 path: doc.path,
@@ -207,7 +209,7 @@ export async function buildOkfGraph(options) {
         }
     }
     for (const doc of documents) {
-        if (doc.type !== "Concept" && doc.type !== "Entity")
+        if (doc.type === null)
             continue;
         for (const link of extractLinks(doc.body)) {
             const target = resolveTarget(link, doc.path, lookup);

@@ -36,6 +36,18 @@ describe("piEventToSse bridge translation", () => {
     });
   });
 
+  it("extracts tool names from nested Pi tool execution payloads", () => {
+    const event: RpcEvent = {
+      type: "tool_execution_start",
+      toolCall: { name: "wiki_update_concept", args: { title: "GymSync" } },
+    };
+
+    expect(piEventToSse(event)).toEqual({
+      type: "tool",
+      data: { phase: "start", name: "wiki_update_concept", args: { title: "GymSync" } },
+    });
+  });
+
   it("translates a tool_execution_end into a tool end event", () => {
     const event: RpcEvent = {
       type: "tool_execution_end",

@@ -123,9 +123,9 @@ async function loadState() {
 function updateContextIndicator(st) {
   const model = st.model && st.model.id ? st.model.id : "Connected";
   const badges = [];
-  if (st.thinkingLevel) badges.push("think:" + st.thinkingLevel);
   if (st.isStreaming) badges.push("streaming");
-  if (getContextWindow(st)) badges.push(formatContextWindow(st));
+  const contextUsage = formatContextUsage(st);
+  if (contextUsage) badges.push(contextUsage);
   document.getElementById("context-model-line").textContent = model;
   document.getElementById("context-detail-line").textContent = badges.join(" | ");
 }
@@ -134,13 +134,17 @@ function getContextWindow(st) {
   return st.contextWindow || st.contextWindowTokens || st.maxContextTokens || (st.model && st.model.contextWindow);
 }
 
-function formatContextWindow(st) {
-  const used = st.contextUsed || st.contextUsedTokens || st.usedTokens || st.inputTokens;
+function getContextUsed(st) {
+  return st.contextUsed || st.contextUsedTokens || st.usedTokens || st.inputTokens;
+}
+
+function formatContextUsage(st) {
   const total = getContextWindow(st);
   if (!total) return "";
+  const used = getContextUsed(st);
   if (!used) return "ctx " + total;
   const pct = Math.round((Number(used) / Number(total)) * 100);
-  return "ctx " + used + "/" + total + " (" + pct + "%)";
+  return "ctx " + total + " (" + pct + "% used)";
 }
 
 async function loadAgents() {
@@ -284,10 +288,25 @@ function formatSessionDate(iso) {
 function addMessage(role, text) {
   const div = document.createElement("div");
   div.className = "message message-" + role;
-  div.textContent = text;
+  if (role === "assistant") {
+    div.classList.add("markdown-body");
+    div.dataset.rawText = text;
+    div.innerHTML = renderMessageMarkdown(text);
+  } else {
+    div.textContent = text;
+  }
   document.getElementById("messages").appendChild(div);
   scrollMessages();
   return div;
+}
+
+function renderMessageMarkdown(text) {
+  return renderMarkdown(text || "");
+}
+
+function finalizeAssistantMessage(div) {
+  if (!div) return;
+  div.innerHTML = renderMessageMarkdown(div.dataset.rawText || div.textContent || "");
 }
 
 function scrollMessages() {
@@ -418,7 +437,9 @@ function handleToken(data) {
   if (!state.currentAssistantEl) {
     state.currentAssistantEl = addMessage("assistant", "");
   }
-  state.currentAssistantEl.textContent += data.text || "";
+  const nextText = (state.currentAssistantEl.dataset.rawText || "") + (data.text || "");
+  state.currentAssistantEl.dataset.rawText = nextText;
+  state.currentAssistantEl.textContent = nextText;
   scrollMessages();
 }
 
@@ -440,6 +461,7 @@ function handleTool(data) {
 }
 
 function handleDone() {
+  finalizeAssistantMessage(state.currentAssistantEl);
   state.currentAssistantEl = null;
   state.currentStreamId = null;
   hideQueue();
@@ -1047,8 +1069,8 @@ function renderKnowledgeGraph(graph) {
     const circle = svgEl("circle");
     circle.setAttribute("cx", String(pos.x));
     circle.setAttribute("cy", String(pos.y));
-    circle.setAttribute("r", node.type === "Entity" ? "18" : "22");
-    circle.setAttribute("class", node.type === "Entity" ? "graph-node-entity" : "graph-node-concept");
+    circle.setAttribute("r", node.type === "Entity" ? "18" : node.type === "Concept" ? "22" : "16");
+    circle.setAttribute("class", node.type === "Entity" ? "graph-node-entity" : node.type === "Concept" ? "graph-node-concept" : "graph-node-document");
     group.appendChild(circle);
 
     const label = svgEl("text");

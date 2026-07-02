@@ -238,6 +238,10 @@ body {
   margin-right: auto;
 }
 
+.message-assistant.markdown-body { white-space: normal; }
+.message-assistant.markdown-body > :first-child { margin-top: 0; }
+.message-assistant.markdown-body > :last-child { margin-bottom: 0; }
+
 .message-tool {
   background: var(--bg-message-tool);
   border: 1px solid var(--border);
@@ -382,11 +386,14 @@ body {
 .panel {
   width: min(480px, 42vw);
   min-width: 360px;
+  max-width: calc(100vw - 580px);
   height: 100vh;
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  resize: horizontal;
+  overflow: auto;
   z-index: 100;
 }
 
@@ -699,7 +706,7 @@ body {
 .session-entry.active { background: var(--bg-input); border-left-color: var(--accent); }
 
 /* Read-only OKF knowledge graph. Lightweight SVG, no framework or graph lib. */
-.graph-panel { width: min(520px, 46vw); }
+.graph-panel { width: min(480px, 42vw); }
 .graph-summary {
   padding: 0.55rem 1.5rem;
   border-bottom: 1px solid var(--border);
@@ -729,6 +736,7 @@ body {
 }
 .graph-node-concept { fill: rgba(124, 111, 240, 0.35); }
 .graph-node-entity { fill: rgba(74, 222, 128, 0.28); }
+.graph-node-document { fill: rgba(251, 191, 36, 0.2); }
 .graph-node text {
   fill: var(--text);
   font-size: 0.68rem;

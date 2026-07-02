@@ -8,6 +8,7 @@ The vault is Piren's inspectable source of truth. It is Markdown-first and Obsid
 vault/
 ├── .piren-vault
 ├── steward-directives.md
+├── Projects/
 ├── steward-inbox/
 │   └── alerts/
 ├── wiki/
@@ -59,12 +60,15 @@ Do not put `.env` or `AGENTS.md` under `team/<agent>/`. Secrets live outside the
 
 ## Shared directories
 
+- `Projects/`: project-specific working knowledge, decisions, logs, handoffs, runbooks, and imported source material. Project files should use OKF frontmatter such as `type: Project Index`, `type: Project Log`, `type: ADR`, or `type: Runbook` when durable.
 - `skills/`: shared vault skills available to all agents.
 - `cron/jobs/`: shared scheduled jobs.
 - `cron/runs/`: shared scheduled run records.
 - `steward-inbox/alerts/`: alert files created by `flag_steward`.
 - `wiki/concepts/` and `wiki/entities/`: curated reference knowledge.
 - `wiki/runbooks/`: reusable operational procedures.
+
+For imports from an older vault or project folder, do not only copy the source tree. Preserve project-specific material under `Projects/<Project>/`, then promote reusable concepts into `wiki/concepts/` and named people, products, services, or systems into `wiki/entities/`. The Knowledge Graph indexes OKF-typed Markdown from the vault root and is most useful when project docs link to those curated wiki nodes.
 
 ## Task files
 

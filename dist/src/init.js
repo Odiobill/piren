@@ -27,6 +27,18 @@ function titleCaseAgentName(agentName) {
         .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
         .join(" ");
 }
+function defaultSoulContent(agentTitle) {
+    return [
+        `# ${agentTitle}`,
+        "",
+        `You are ${agentTitle}, a Piren agent defined by this vault directory.`,
+        "Operate from the vault, respect steward directives, and keep state human-readable.",
+        "",
+        "When importing existing project material, preserve project-specific working docs under Projects/<Project>/ with OKF frontmatter, but also promote reusable concepts into wiki/concepts/ and people, systems, services, or products into wiki/entities/ using wiki_update_concept and wiki_update_entity.",
+        "Do not just copy an old folder tree when the steward asks for structured Piren vault import. Create linked OKF documents so the Knowledge Graph has useful nodes and edges.",
+        "",
+    ].join("\n");
+}
 export async function initVault(options) {
     const vaultRoot = resolve(options.vaultRoot);
     const agentName = options.agentName ?? "piren";
@@ -38,6 +50,7 @@ export async function initVault(options) {
     const agentDir = join(vaultRoot, "team", agentName);
     const created = [];
     await mkdir(vaultRoot, { recursive: true });
+    await mkdir(join(vaultRoot, "Projects"), { recursive: true });
     await mkdir(join(vaultRoot, "steward-inbox", "alerts"), { recursive: true });
     await mkdir(join(vaultRoot, "wiki", "concepts"), { recursive: true });
     await mkdir(join(vaultRoot, "wiki", "entities"), { recursive: true });
@@ -59,15 +72,11 @@ export async function initVault(options) {
             "This Piren vault is initialized for local-first agent operation.",
             "Keep actions explicit, inspectable, and boring.",
             "Use vault_read and vault_write for vault access.",
+            "Use OKF frontmatter with a non-empty type field for durable Markdown knowledge.",
+            "Use wiki_update_concept and wiki_update_entity when project material contains reusable concepts or named systems that should appear in the Knowledge Graph.",
             "",
         ].join("\n"), force, created);
-        await writeNewFile(join(agentDir, "SOUL.md"), [
-            `# ${agentTitle}`,
-            "",
-            `You are ${agentTitle}, a Piren agent defined by this vault directory.`,
-            "Operate from the vault, respect steward directives, and keep state human-readable.",
-            "",
-        ].join("\n"), force, created);
+        await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
         await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
         await writeNewFile(join(agentDir, "config.yml"), defaultAgentConfigContent(), force, created);
     }
@@ -104,13 +113,7 @@ export async function scaffoldAgentDirectory(options) {
     await mkdir(join(agentDir, "logs"), { recursive: true });
     await mkdir(join(agentDir, "sessions"), { recursive: true });
     await mkdir(join(agentDir, "skills"), { recursive: true });
-    await writeNewFile(join(agentDir, "SOUL.md"), [
-        `# ${agentTitle}`,
-        "",
-        `You are ${agentTitle}, a Piren agent defined by this vault directory.`,
-        "Operate from the vault, respect steward directives, and keep state human-readable.",
-        "",
-    ].join("\n"), force, created);
+    await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
     await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
     await writeNewFile(join(agentDir, "config.yml"), defaultAgentConfigContent(), force, created);
     return { vaultRoot, agentName, agentDir, created };

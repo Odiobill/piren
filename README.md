@@ -56,7 +56,7 @@ piren status
 - Lazy vault skills: compact skill catalog at startup, full skill bodies loaded on demand with `skill_read(name)`.
 - Pi package extensibility: install extra Pi extensions through npm packages declared in local Piren config.
 - Gateway process isolation: web, Telegram, Discord, and OpenAI-compatible API surfaces drive Pi through RPC, not in-process embedding.
-- Minimal web UI: agent selection, chat streaming, steering, approval gates, read-only vault browser, and read-only context indicator. No model or configuration controls.
+- Minimal web UI: agent selection, chat streaming with Markdown rendering, steering, approval gates, read-only vault browser, read-only knowledge graph, and read-only context usage indicator. No model or configuration controls.
 - Vault-backed cron: Markdown cron job files with active-device ownership, atomic claiming, and inspectable run records.
 - Service lifecycle: systemd user units with tmux plus `@reboot` cron fallback for gateway, Telegram, and Discord transports. Inspectable, reversible files under `~/.config/piren/services/`.
 - First-run setup: `piren setup` (no flags) checks Pi, creates or reuses a vault, writes local config, and suggests optional service commands; `--help` on every command.
@@ -101,9 +101,9 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 ## Current release status
 
-Piren 0.1.0-rc.1 is the first release candidate. Phase 3 gateway surfaces are implemented: minimal web UI, Telegram, Discord with default-on feedback, and OpenAI-compatible chat completions. Phase 4 RC features implemented so far include Pi package extensibility, lazy vault skills, knowledge lifecycle tools, inspectable self-improvement tools, and vault-backed cron.
+Piren 0.1.0-rc.2 is the current release candidate. It keeps the rc.1 core and adds post-RC closeout polish: whole-vault OKF graph nodes, better Web UI Markdown/chat formatting, equal resizable side panels, context usage percentage, robust tool-name display, and stronger default vault import guidance.
 
-Current verification baseline: 71 test files, 575 tests, `npm run typecheck`, `npm run build`, `npm run smoke`, and post-push `npm run clean-install:check` passing.
+Current verification baseline: 73 test files, 583 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing. `npm run clean-install:check` should be run after pushing because it fetches the GitHub source.
 
 Update an existing global install with:
 

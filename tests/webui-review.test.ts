@@ -9,12 +9,15 @@ async function readPublic(name: string): Promise<string> {
 }
 
 describe("WebUI review affordances", () => {
-  it("places the model badge directly below the agent selector and removes message count from it", async () => {
+  it("places the model badge below the agent selector with context percentage but no thinking level", async () => {
     const html = await readPublic("index.html");
     const app = await readPublic("app.js");
     expect(html).toMatch(/<select id="agent-select"><\/select>[\s\S]*?<div id="context-indicator"/);
     expect(app).not.toContain('messageCount + " msgs"');
+    expect(app).not.toContain('think:" + st.thinkingLevel');
     expect(app).toContain('context-model-line');
+    expect(app).toContain('formatContextUsage');
+    expect(app).toContain('"ctx " + total + " (" + pct + "% used)"');
   });
 
   it("uses an in-page modal for inbox task creation instead of browser prompt popups", async () => {
@@ -27,13 +30,15 @@ describe("WebUI review affordances", () => {
     expect(app).toContain("openInboxModal");
   });
 
-  it("opens the vault browser as a layout panel that resizes chat instead of covering it", async () => {
+  it("opens side panels as equal-width resizable panels that stretch the chat", async () => {
     const app = await readPublic("app.js");
     const css = await readPublic("style.css");
     expect(app).toContain('document.getElementById("app").classList.add("vault-open")');
     expect(css).toMatch(/#app\.vault-open\s+#main/);
     const panelBlock = css.match(/\.panel\s*{[\s\S]*?}/)?.[0] || "";
     expect(panelBlock).not.toContain("position: fixed");
+    expect(panelBlock).toContain("resize: horizontal");
+    expect(css).toContain(".graph-panel { width: min(480px, 42vw); }");
   });
 
   it("makes past sessions clickable with an active visual indicator", async () => {
@@ -72,10 +77,14 @@ describe("WebUI review affordances", () => {
     expect(html).toContain('id="knowledge-graph-btn"');
     expect(html).toContain('id="graph-panel"');
     expect(html).toContain('id="graph-canvas"');
+    expect(html).toContain("No OKF typed documents found.");
     expect(app).toContain('apiJson("/api/vault/graph"');
     expect(app).toContain("renderKnowledgeGraph");
     expect(app).toContain("openVaultFile(node.path)");
+    expect(app).toContain('renderMessageMarkdown');
+    expect(app).toContain('finalizeAssistantMessage');
     expect(css).toContain(".graph-node");
     expect(css).toContain(".graph-edge");
+    expect(css).toContain(".message-assistant.markdown-body");
   });
 });

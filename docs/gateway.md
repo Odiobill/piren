@@ -58,10 +58,10 @@ The UI provides:
 - read-only OKF knowledge graph
 - session list and resume support
 - abort button for runaway turns
-- read-only context indicator
+- read-only context usage indicator
 - in-memory Bearer token entry when auth is required
 
-The UI intentionally does not provide model selection, thinking controls, or configuration editing. Those belong in vault config and local config. API routes remain available for external integrations.
+The UI intentionally does not provide model selection, thinking controls, or configuration editing. Those belong in vault config and local config. The model badge shows the live model plus best-effort context-window usage percentage when Pi exposes token telemetry. API routes remain available for external integrations.
 
 ## Auth
 
@@ -77,7 +77,7 @@ Routes:
 - `GET /api/vault/read?path=...`
 - `GET /api/vault/graph`
 
-The browser is read-only, hides dotfiles, caps listings and reads, and enforces vault path boundaries. The graph route is also read-only: it computes OKF `Concept`/`Entity` nodes and directed links from the vault and returns JSON for the Web UI Knowledge Graph panel.
+The browser is read-only, hides dotfiles, caps listings and reads, and enforces vault path boundaries. The graph route is also read-only: it indexes OKF-typed Markdown documents across the vault from the root, including project indexes, ADRs, runbooks, concepts, and entities, then extracts directed links and returns JSON for the Web UI Knowledge Graph panel. Side panels share the same width and are horizontally resizable so the chat stretches with the available space.
 
 ## Session management
 
