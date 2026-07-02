@@ -32,7 +32,7 @@ Type values are not centrally registered and consumers tolerate unknown types. T
 | `Entity` | A described person, system, service, or product | `wiki/entities/` |
 | `Runbook` | Operational procedure | `wiki/runbooks/`, `Projects/<p>/runbooks/` |
 | `ADR` | Architecture decision record | `Projects/<p>/decisions/` |
-| `Skill` | Reusable agent procedure | `vault/skills/`, `team/<agent>/skills/` |
+| `Skill` | Reusable agent procedure | `vault/skills/`, `team/groups/<group>/skills/`, `team/<agent>/skills/` |
 | `Project Index` | A project's `index.md` | `Projects/<p>/index.md` |
 | `Project Log` | A project's `log.md` | `Projects/<p>/log.md` |
 | `Session Summary` | A session trace summary | `team/<agent>/sessions/` |

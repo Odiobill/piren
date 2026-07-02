@@ -58,6 +58,7 @@ export async function initVault(options) {
     await mkdir(join(vaultRoot, "wiki", "inbox"), { recursive: true });
     await mkdir(join(vaultRoot, "skills"), { recursive: true });
     await mkdir(join(vaultRoot, "templates"), { recursive: true });
+    await mkdir(join(vaultRoot, "team", "groups"), { recursive: true });
     await mkdir(join(agentDir, "inbox"), { recursive: true });
     await mkdir(join(agentDir, "outbox"), { recursive: true });
     await mkdir(join(agentDir, "devices"), { recursive: true });

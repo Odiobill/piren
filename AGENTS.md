@@ -115,7 +115,7 @@ The integrated web UI is intentionally minimal per ADR-0012. It is an emergency 
 
 ## Extensibility
 
-Piren core is minimal. Additional capabilities come from Pi packages (ADR-0013), declared in `~/.config/piren/config.yml` and loaded as additional `--extension` flags. Vault skills (ADR-0014) provide reusable procedures stored in `vault/skills/` and `team/<agent>/skills/`, injected into agent context at startup.
+Piren core is minimal. Additional capabilities come from Pi packages (ADR-0013), declared in `~/.config/piren/config.yml` and loaded as additional `--extension` flags. Vault skills (ADR-0014/ADR-0028) provide reusable procedures stored in `vault/skills/`, future group-scoped `team/groups/<group>/skills/`, and `team/<agent>/skills/`, injected into agent context at startup.
 
 ## Development workflow
 
@@ -260,7 +260,7 @@ Implemented extension tools:
 - `vault_conformance_check()`
 
 Vault skills (ADR-0014 + ADR-0017, implemented):
-- `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName)` and `formatSkillCatalogForContext(skills)`. Skills are loaded from `vault/skills/` (shared) and `team/<agent>/skills/` (agent-specific, overrides shared on name collision). Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
+- `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName)` and `formatSkillCatalogForContext(skills)`. Skills are currently loaded from `vault/skills/` (shared) and `team/<agent>/skills/` (agent-specific, overrides shared on name collision). ADR-0028 reserves `team/groups/<group>/skills/` as the group-scoped middle layer; fresh scaffolds create `team/groups/` so vaults are compatible before group resolution is implemented. Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
 - The startup context prompt now injects a compact "Available Skills" catalog only: name, source, description, and vault-relative path. Full skill bodies are not injected at startup.
 - `skill_list()` returns the same compact catalog. `skill_read(name)` returns the selected full skill body and rejects unknown names with a clear error. Agent-specific overrides are resolved at startup by the loader, so the tools use the same precedence as the prompt.
 - `piren_status` reports `skills_loaded: <count>`.
@@ -303,7 +303,7 @@ Service lifecycle management (ADR-0021, implemented):
 - Tests: `tests/service-lifecycle.test.ts` (22), `tests/service-lifecycle-exec.test.ts` (7), `tests/service-status-yaml.test.ts` (5), `tests/help.test.ts` (12), `tests/wizard.test.ts` (16), `tests/wizard-models.test.ts` (10), `tests/wizard-agent-config.test.ts` (4), `tests/wizard-transport-config.test.ts` (5), `tests/wizard-run.test.ts` (7), `tests/doctor-service.test.ts` (7), plus parser help tests.
 
 Open Knowledge Format conformance and graph surface (ADR-0022/0026):
-- `piren init` creates the top-level `Projects/` directory as part of the default OKF vault shape, alongside `wiki/`, `team/`, shared `skills/`, and `templates/`.
+- `piren init` creates the top-level `Projects/` directory as part of the default OKF vault shape, alongside `wiki/`, `team/`, `team/groups/`, shared `skills/`, and `templates/`.
 - Fresh `steward-directives.md` and agent `SOUL.md` files tell agents importing older project material to preserve project-specific docs under `Projects/<Project>/` while promoting reusable concepts/entities through `wiki_update_concept` and `wiki_update_entity`, so the Knowledge Graph has linked OKF nodes instead of a copied folder tree.
 - The Knowledge Graph indexes all OKF-typed Markdown from the vault root, not only `wiki/concepts/` and `wiki/entities/`.
 

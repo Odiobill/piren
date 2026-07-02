@@ -38,7 +38,7 @@ async function readVaultAgents(vaultRoot) {
         return [];
     const entries = await readdir(teamDir, { withFileTypes: true });
     return entries
-        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "groups")
         .map((entry) => entry.name)
         .sort((a, b) => a.localeCompare(b));
 }

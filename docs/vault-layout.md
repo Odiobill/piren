@@ -22,6 +22,7 @@ vault/
 │   ├── jobs/
 │   └── runs/
 └── team/
+    ├── groups/
     └── piren/
         ├── SOUL.md
         ├── MEMORY.md
@@ -57,6 +58,16 @@ Operational directories:
 - `cron/jobs/` and `cron/runs/`: agent-scoped scheduled work and run history.
 
 Do not put `.env` or `AGENTS.md` under `team/<agent>/`. Secrets live outside the vault, and Piren identity is `SOUL.md`.
+
+## Agent groups
+
+`team/groups/` is scaffolded as the compatibility parent for ADR-0028 agent groups. A concrete group can later use:
+
+```text
+team/groups/<group>/skills/
+```
+
+Group-scoped skills sit between shared skills and agent-specific skills. Fresh vaults create only the parent directory; concrete groups are steward-defined and should not imply automatic fallback or task routing by themselves.
 
 ## Shared directories
 
