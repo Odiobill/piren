@@ -147,4 +147,39 @@ describe("Piren vault initialization", () => {
     expect(operatingModel, "operating model must link to the Piren entity").toContain("wiki/entities/piren.md");
     expect(operatingModel, "operating model must link to the piren-vault concept").toContain("[[Piren Vault]]");
   });
+
+  it("seeds the knowledge-lifecycle and okf-knowledge-bundle concept docs", async () => {
+    await initVault({ vaultRoot: root, agentName: "piren" });
+
+    const knowledgeLifecyclePath = join(root, "wiki", "concepts", "knowledge-lifecycle.md");
+    const okfBundlePath = join(root, "wiki", "concepts", "okf-knowledge-bundle.md");
+
+    await expect(stat(knowledgeLifecyclePath)).resolves.toBeDefined();
+    await expect(stat(okfBundlePath)).resolves.toBeDefined();
+
+    const knowledgeLifecycle = await readFile(knowledgeLifecyclePath, "utf8");
+    const okfBundle = await readFile(okfBundlePath, "utf8");
+
+    const docs: Array<readonly [string, string]> = [
+      ["knowledge-lifecycle concept", knowledgeLifecycle],
+      ["okf-knowledge-bundle concept", okfBundle],
+    ];
+
+    for (const [label, doc] of docs) {
+      const lines = doc.split("\n");
+      expect(lines[0], `${label}: frontmatter must open with ---`).toBe("---");
+      const closeIndex = lines.indexOf("---", 1);
+      expect(closeIndex, `${label}: frontmatter must have a closing ---`).toBeGreaterThan(0);
+      const frontmatter = lines.slice(1, closeIndex).join("\n");
+      expect(frontmatter, `${label}: frontmatter must contain type: Concept`).toContain("type: Concept");
+      expect(frontmatter, `${label}: frontmatter must contain created`).toContain("created:");
+      expect(frontmatter, `${label}: frontmatter must contain updated`).toContain("updated:");
+    }
+
+    // Both docs must connect to the existing starter graph.
+    expect(knowledgeLifecycle, "knowledge-lifecycle must link to the Piren entity").toContain("wiki/entities/piren.md");
+    expect(knowledgeLifecycle, "knowledge-lifecycle must link to the piren-vault concept").toContain("[[Piren Vault]]");
+    expect(okfBundle, "okf-knowledge-bundle must link to the OKF concept").toContain("[[Open Knowledge Format]]");
+    expect(okfBundle, "okf-knowledge-bundle must link to the piren-vault concept").toContain("[[Piren Vault]]");
+  });
 });

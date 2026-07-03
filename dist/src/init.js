@@ -160,6 +160,69 @@ function defaultPirenAgentOperatingModelConceptContent() {
         "",
     ].join("\n");
 }
+function defaultKnowledgeLifecycleConceptContent() {
+    const today = new Date().toISOString().slice(0, 10);
+    return [
+        "---",
+        "type: Concept",
+        "title: \"Knowledge Lifecycle\"",
+        "created: " + today,
+        "updated: " + today,
+        "tags: [piren, knowledge, lifecycle, okf]",
+        "status: reference",
+        "---",
+        "",
+        "# Knowledge Lifecycle",
+        "",
+        "The knowledge lifecycle is how a Piren team turns raw work into",
+        "durable, inspectable artifacts without losing the evidence trail.",
+        "",
+        "Raw task and session traces are evidence. Current project docs and",
+        "ADRs are synthesized truth. Promote the minimum useful delta from",
+        "evidence into logs, then into docs, ADRs, runbooks, or skills.",
+        "",
+        "The [[Piren Vault]] is the substrate, and Piren itself is an OKF",
+        "[[Entity]] at wiki/entities/piren.md.",
+        "",
+        "## Stages",
+        "",
+        "1. Capture raw evidence through tasks and sessions.",
+        "2. Append chronological project log entries.",
+        "3. Synthesize docs, ADRs, runbooks, and skills.",
+        "4. Promote reusable concepts into the shared wiki.",
+        "",
+    ].join("\n");
+}
+function defaultOkfKnowledgeBundleConceptContent() {
+    const today = new Date().toISOString().slice(0, 10);
+    return [
+        "---",
+        "type: Concept",
+        "title: \"OKF Knowledge Bundle\"",
+        "created: " + today,
+        "updated: " + today,
+        "tags: [okf, knowledge-bundle, piren]",
+        "status: reference",
+        "---",
+        "",
+        "# OKF Knowledge Bundle",
+        "",
+        "An OKF knowledge bundle is the vault-rooted collection of",
+        "frontmatter-typed Markdown documents that forms the Knowledge Graph.",
+        "",
+        "It follows the [[Open Knowledge Format]]: every concept document",
+        "carries a non-empty `type` field so the graph has linkable nodes.",
+        "The bundle lives inside the [[Piren Vault]] as the durable memory of",
+        "a stewarded agent team.",
+        "",
+        "## Composition",
+        "",
+        "The bundle spans project working directories, the shared wiki, agent",
+        "team directories, and the steward inbox. Each durable artifact is an",
+        "explicit file written through visible vault tools.",
+        "",
+    ].join("\n");
+}
 export async function initVault(options) {
     const vaultRoot = resolve(options.vaultRoot);
     const agentName = options.agentName ?? "piren";
@@ -205,6 +268,8 @@ export async function initVault(options) {
         await writeNewFile(join(vaultRoot, "wiki", "concepts", "open-knowledge-format.md"), defaultOkfConceptContent(), force, created);
         await writeNewFile(join(vaultRoot, "wiki", "concepts", "piren-vault.md"), defaultPirenVaultConceptContent(), force, created);
         await writeNewFile(join(vaultRoot, "wiki", "concepts", "piren-agent-operating-model.md"), defaultPirenAgentOperatingModelConceptContent(), force, created);
+        await writeNewFile(join(vaultRoot, "wiki", "concepts", "knowledge-lifecycle.md"), defaultKnowledgeLifecycleConceptContent(), force, created);
+        await writeNewFile(join(vaultRoot, "wiki", "concepts", "okf-knowledge-bundle.md"), defaultOkfKnowledgeBundleConceptContent(), force, created);
     }
     catch (error) {
         if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
