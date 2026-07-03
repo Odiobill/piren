@@ -67,4 +67,17 @@ describe("Piren agents listing", () => {
     const output = formatAgentsReport(report);
     expect(output).toContain("[stale] heimdall");
   });
+
+  it("does not special-case a legacy team/groups directory as non-agent state", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    await mkdir(join(root, "team", "groups"), { recursive: true });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n");
+
+    const report = await listPirenAgents({ configPath });
+
+    expect(report.vaultAgents).toEqual(["groups", "thor"]);
+    expect(report.staleVaultAgents).toEqual(["groups"]);
+    expect(report.runnableAgents).toEqual(["thor"]);
+  });
 });

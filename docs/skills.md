@@ -13,7 +13,7 @@ skills/
 Group-scoped skills, for role procedures shared by several agents:
 
 ```text
-team/groups/<group>/skills/
+agent-groups/<group>/skills/
 ```
 
 Agent-specific skills:
@@ -22,7 +22,7 @@ Agent-specific skills:
 team/<agent>/skills/
 ```
 
-Precedence is: shared skills, then group-scoped skills, then agent-specific skills. Agent-specific skills override lower scopes with the same name. Group loading is introduced by ADR-0028; fresh scaffolds already create the `team/groups/` parent so vaults are compatible with that feature.
+Precedence is: shared skills, then group-scoped skills, then agent-specific skills. Agent-specific skills override lower scopes with the same name. Group loading is introduced by ADR-0028; fresh scaffolds already create the `agent-groups/` parent so vaults are compatible with that feature.
 
 ## File formats
 
