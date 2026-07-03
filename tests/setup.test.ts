@@ -1,5 +1,5 @@
 import { access, mkdtemp, mkdir, readdir, rm, writeFile, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { formatSetupReport, setupPiren } from "../src/setup.js";
@@ -22,7 +22,7 @@ describe("Piren setup onboarding", () => {
     await writeFile(join(configPath), `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
     await writeFile(join(agentDir, "config.yml"), "model:\n  id: anthropic/claude-sonnet-4-20250514\n  thinking: medium\n");
 
-    const report = await setupPiren({ configPath, cliAgent: "thor", piHome });
+    const report = await setupPiren({ configPath, cliAgent: "thor", piHome, env: {} });
 
     expect(report.ok).toBe(false);
     expect(report.configPath).toBe(configPath);
@@ -53,7 +53,7 @@ describe("Piren setup onboarding", () => {
     await writeFile(join(agentDir, "config.yml"), "model:\n  id: test\n");
 
     // configPath does not exist — intentionally not created
-    const report = await setupPiren({ configPath, cliAgent: "thor", piHome });
+    const report = await setupPiren({ configPath, cliAgent: "thor", piHome, env: {} });
 
     // The missing config should be a warning/fail, not silently created
     expect(report.checks).toEqual(expect.arrayContaining([
@@ -83,7 +83,7 @@ describe("Piren setup onboarding", () => {
     await writeFile(join(piHome, "auth.json"), "{}");
 
     // --vault-root and --agent simulate CLI: piren setup --apply --vault-root /path --agent thor
-    const report = await setupPiren({ configPath, cliVaultRoot: vault, cliAgent: "thor", piHome, apply: true });
+    const report = await setupPiren({ configPath, cliVaultRoot: vault, cliAgent: "thor", piHome, apply: true, env: {} });
 
     // Report should now show OK for local config (since we scaffolded it)
     expect(report.checks).toEqual(expect.arrayContaining([
@@ -114,7 +114,7 @@ describe("Piren setup onboarding", () => {
     await writeFile(join(piHome, "auth.json"), "{}");
     // agent-local config.yml is intentionally missing
 
-    const report = await setupPiren({ configPath, cliAgent: "thor", piHome, apply: true });
+    const report = await setupPiren({ configPath, cliAgent: "thor", piHome, apply: true, env: {} });
 
     // The agent-local check should now be OK since we scaffolded it
     expect(report.checks).toEqual(expect.arrayContaining([
@@ -148,6 +148,7 @@ describe("Piren setup onboarding", () => {
       model: "deepseek-v4-flash",
       thinking: "minimal",
       apiKey: "sk-deep",
+      env: {},
     });
 
     expect(report.checks).toEqual(expect.arrayContaining([
@@ -168,6 +169,30 @@ describe("Piren setup onboarding", () => {
     expect(mode).toBe(0o600);
   });
 
+  it("is isolated from live PIREN_AGENT_DIR and PIREN_VAULT_ROOT environment pollution", async () => {
+    const vault = join(root, "vault");
+    const agentDir = join(vault, "team", "thor");
+    const configPath = join(root, "config.yml");
+    const piHome = join(root, "pi-home");
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(configPath), `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(join(agentDir, "config.yml"), "model:\n  id: test\n");
+
+    const pollutedEnv = {
+      PIREN_AGENT_DIR: join(root, "wrong-agent-dir"),
+      PIREN_VAULT_ROOT: join(root, "wrong-vault-root"),
+    };
+    const pollutedReport = await setupPiren({ configPath, cliAgent: "thor", piHome, env: pollutedEnv });
+    expect(pollutedReport.agentDir).toBe(resolve(pollutedEnv.PIREN_AGENT_DIR));
+
+    // With env: {}, setup tests must ignore live environment variables and use
+    // only the explicit config + cliAgent options.
+    const isolatedReport = await setupPiren({ configPath, cliAgent: "thor", piHome, env: {} });
+
+    expect(isolatedReport.agentDir).toBe(agentDir);
+    expect(isolatedReport.agentName).toBe("thor");
+  });
+
   it("does not overwrite existing agent-local config when apply is requested", async () => {
     const vault = join(root, "vault");
     const agentDir = join(vault, "team", "thor");
@@ -180,7 +205,7 @@ describe("Piren setup onboarding", () => {
     await writeFile(join(piHome, "settings.json"), "{}");
     await writeFile(join(piHome, "auth.json"), "{}");
 
-    const report = await setupPiren({ configPath, cliAgent: "thor", piHome, apply: true });
+    const report = await setupPiren({ configPath, cliAgent: "thor", piHome, apply: true, env: {} });
 
     expect(report.checks).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "agent-local-config", status: "ok" }),
