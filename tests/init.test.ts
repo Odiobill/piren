@@ -100,5 +100,16 @@ describe("Piren vault initialization", () => {
     expect(concept).toContain("type: Concept");
     // links back to the Piren entity so the starter graph is connected
     expect(concept).toContain("wiki/entities/piren.md");
+
+    // Structural frontmatter assertions: closed YAML block with created/updated
+    for (const [label, doc] of [["Piren entity", entity], ["OKF concept", concept]] as const) {
+      const lines = doc.split("\n");
+      expect(lines[0], `${label}: frontmatter must open with ---`).toBe("---");
+      const closeIndex = lines.indexOf("---", 1);
+      expect(closeIndex, `${label}: frontmatter must have a closing ---`).toBeGreaterThan(0);
+      const frontmatter = lines.slice(1, closeIndex).join("\n");
+      expect(frontmatter, `${label}: frontmatter must contain created`).toContain("created:");
+      expect(frontmatter, `${label}: frontmatter must contain updated`).toContain("updated:");
+    }
   });
 });
