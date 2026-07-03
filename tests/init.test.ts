@@ -193,6 +193,12 @@ describe("Piren vault initialization", () => {
     // Agent-scoped cron coordination directories.
     await expect(stat(join(root, "team", "thor", "cron", "jobs"))).resolves.toBeDefined();
     await expect(stat(join(root, "team", "thor", "cron", "runs"))).resolves.toBeDefined();
+
+    // Fresh scaffold cron directories must be empty: no jobs or runs are seeded.
+    await expect(readdir(join(root, "cron", "jobs"))).resolves.toEqual([]);
+    await expect(readdir(join(root, "cron", "runs"))).resolves.toEqual([]);
+    await expect(readdir(join(root, "team", "thor", "cron", "jobs"))).resolves.toEqual([]);
+    await expect(readdir(join(root, "team", "thor", "cron", "runs"))).resolves.toEqual([]);
   });
 
   it("seeds exactly the intended six starter graph markdown documents, no more and no less", async () => {

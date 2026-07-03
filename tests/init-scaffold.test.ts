@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, writeFile, rm, readFile, access } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile, access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { initVault, scaffoldAgentDirectory } from "../src/init.js";
@@ -26,6 +26,10 @@ describe("init: scaffoldAgentDirectory", () => {
       await expect(access(join(vault, "team", "thor", "sessions"))).resolves.toBeUndefined();
       await expect(access(join(vault, "team", "thor", "cron", "jobs"))).resolves.toBeUndefined();
       await expect(access(join(vault, "team", "thor", "cron", "runs"))).resolves.toBeUndefined();
+
+      // Fresh scaffolded cron directories must be empty: no jobs or runs are seeded.
+      await expect(readdir(join(vault, "team", "thor", "cron", "jobs"))).resolves.toEqual([]);
+      await expect(readdir(join(vault, "team", "thor", "cron", "runs"))).resolves.toEqual([]);
 
       // The existing piren agent is untouched.
       await expect(access(join(vault, "team", "piren", "SOUL.md"))).resolves.toBeUndefined();

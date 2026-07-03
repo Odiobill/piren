@@ -360,8 +360,10 @@ export async function initVault(options: InitVaultOptions): Promise<InitVaultRes
  * a second agent does not trip initVault's "vault file already exists" guard.
  *
  * Creates the same subdirectories and identity files initVault writes for a
- * fresh agent: inbox/outbox/devices/logs/sessions/skills, plus SOUL.md,
- * MEMORY.md, and config.yml. Respects `force` to overwrite identity files.
+ * fresh agent: inbox/outbox/devices/logs/sessions/skills plus cron/jobs and
+ * cron/runs (agent-scoped vault-backed cron coordination directories, kept
+ * empty on a fresh scaffold), as well as SOUL.md, MEMORY.md, and config.yml.
+ * Respects `force` to overwrite identity files.
  */
 export async function scaffoldAgentDirectory(options: InitVaultOptions): Promise<InitVaultResult> {
   const vaultRoot = resolve(options.vaultRoot);
