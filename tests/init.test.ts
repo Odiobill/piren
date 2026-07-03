@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -181,5 +181,28 @@ describe("Piren vault initialization", () => {
     expect(knowledgeLifecycle, "knowledge-lifecycle must link to the piren-vault concept").toContain("[[Piren Vault]]");
     expect(okfBundle, "okf-knowledge-bundle must link to the OKF concept").toContain("[[Open Knowledge Format]]");
     expect(okfBundle, "okf-knowledge-bundle must link to the piren-vault concept").toContain("[[Piren Vault]]");
+  });
+
+  it("seeds exactly the intended six starter graph markdown documents, no more and no less", async () => {
+    await initVault({ vaultRoot: root, agentName: "piren" });
+
+    const expected = [
+      "wiki/entities/piren.md",
+      "wiki/concepts/open-knowledge-format.md",
+      "wiki/concepts/piren-vault.md",
+      "wiki/concepts/piren-agent-operating-model.md",
+      "wiki/concepts/knowledge-lifecycle.md",
+      "wiki/concepts/okf-knowledge-bundle.md",
+    ].sort();
+
+    const entityDocs = (await readdir(join(root, "wiki", "entities")))
+      .filter((name) => name.endsWith(".md"))
+      .map((name) => `wiki/entities/${name}`);
+    const conceptDocs = (await readdir(join(root, "wiki", "concepts")))
+      .filter((name) => name.endsWith(".md"))
+      .map((name) => `wiki/concepts/${name}`);
+    const found = [...entityDocs, ...conceptDocs].sort();
+
+    expect(found, "fresh init must seed exactly the six intended starter graph docs").toEqual(expected);
   });
 });
