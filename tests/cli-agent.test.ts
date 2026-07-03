@@ -42,6 +42,11 @@ describe("piren agent (CLI dispatch)", () => {
       join(home, ".config", "piren", "config.yml"),
       ["vault_root: " + vault, "", "allowed_agents:", "  - piren", ""].join("\n"),
     );
+    await mkdir(join(home, ".pi", "agent"), { recursive: true });
+    await writeFile(
+      join(home, ".pi", "agent", "settings.json"),
+      JSON.stringify({ defaultProvider: "deepseek", defaultModel: "deepseek-v4-pro", defaultThinkingLevel: "medium" }),
+    );
   });
 
   it("lists agents showing the existing one as allowed", () => {
@@ -60,6 +65,10 @@ describe("piren agent (CLI dispatch)", () => {
     // The team dir was scaffolded with identity files.
     const soul = await readFile(join(vault, "team", "thor", "SOUL.md"), "utf8");
     expect(soul.length).toBeGreaterThan(0);
+    const agentConfig = await readFile(join(vault, "team", "thor", "config.yml"), "utf8");
+    expect(agentConfig).toContain("model:");
+    expect(agentConfig).toContain("id: deepseek/deepseek-v4-pro");
+    expect(agentConfig).toContain("thinking: medium");
 
     // Config now lists thor.
     const config = await readFile(join(home, ".config", "piren", "config.yml"), "utf8");

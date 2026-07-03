@@ -2,6 +2,7 @@ export interface InitVaultOptions {
     vaultRoot: string;
     agentName?: string;
     force?: boolean;
+    agentConfigContent?: string;
 }
 export interface InitVaultResult {
     vaultRoot: string;

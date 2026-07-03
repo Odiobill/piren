@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { initVault, scaffoldAgentDirectory } from "./init.js";
 import { spawnPiRun, buildPiRunCommand } from "./run.js";
 import { formatSetupReport, setupPiren } from "./setup.js";
-import { runWizard } from "./wizard.js";
+import { buildAgentConfigYaml, readPiDefaultModel, runWizard } from "./wizard.js";
 import { ReadlinePrompt } from "./prompt.js";
 import { GatewayServer } from "./gateway-http.js";
 import { TelegramBotApiHttpClient, TelegramTransport, runTelegramPolling } from "./telegram-transport.js";
@@ -497,6 +497,8 @@ async function runAgentCommand(args: RunAgentCommandArgs): Promise<void> {
   }
 
   const sub = args.subcommand;
+  const piDefaultModel = await readPiDefaultModel(join(homedir(), ".pi", "agent"));
+  const piDefaultAgentConfigContent = piDefaultModel ? buildAgentConfigYaml({ model: piDefaultModel }) : undefined;
 
   // Shared deps: real filesystem operations. scaffoldAgentDir reuses the
   // init.ts team-dir layout (inbox/outbox/devices/logs/sessions/skills + identity files).
@@ -513,7 +515,12 @@ async function runAgentCommand(args: RunAgentCommandArgs): Promise<void> {
       // Scaffold ONLY the new agent's team/ dir, not the whole vault. Using
       // initVault here would trip its "vault file already exists" guard when
       // adding a second agent to an existing vault.
-      const result = await scaffoldAgentDirectory({ vaultRoot: root, agentName, force: args.force });
+      const result = await scaffoldAgentDirectory({
+        vaultRoot: root,
+        agentName,
+        force: args.force,
+        ...(piDefaultAgentConfigContent !== undefined ? { agentConfigContent: piDefaultAgentConfigContent } : {}),
+      });
       return result.agentDir;
     },
     copyDir: async (src: string, dest: string) => {

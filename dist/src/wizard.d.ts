@@ -182,4 +182,5 @@ export interface PriorLocalConfig {
     allowedAgents: string[];
     excludedAgents: string[];
 }
+export declare function readPiDefaultModel(piHome: string): Promise<AgentModelConfigOutput | undefined>;
 export declare function runWizard(prompt: WizardPrompt, deps?: WizardDeps): Promise<WizardResult>;

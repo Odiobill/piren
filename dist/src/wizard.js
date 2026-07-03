@@ -329,7 +329,7 @@ async function readAuthJson(piHome) {
         return {};
     }
 }
-async function readPiDefaultModel(piHome) {
+export async function readPiDefaultModel(piHome) {
     const settingsPath = join(piHome, "settings.json");
     if (!(await pathExists(settingsPath)))
         return undefined;

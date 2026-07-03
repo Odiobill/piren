@@ -143,10 +143,13 @@ piren agent remove thor --yes     # non-interactive: also delete the vault dir
 ```
 
 `add` scaffolds the agent directory (SOUL.md, MEMORY.md, config.yml, and the
-inbox/outbox/devices/logs/sessions/skills subdirectories). `clone` copies a
-source agent's directory verbatim, including its identity and memory. `remove`
-always drops the agent from `allowed_agents`; it only deletes the vault
-directory after an explicit confirmation (or `--yes`).
+inbox/outbox/devices/logs/sessions/skills subdirectories). When Pi native
+defaults are present in `~/.pi/agent/settings.json`, the new agent config is
+seeded with that default provider/model/thinking choice, matching the first-run
+setup behavior. `clone` copies a source agent's directory verbatim, including
+its identity, memory, and model preference. `remove` always drops the agent
+from `allowed_agents`; it only deletes the vault directory after an explicit
+confirmation (or `--yes`).
 
 See [Vault Layout](vault-layout.md) for the directory structure.
 

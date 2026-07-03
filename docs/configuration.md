@@ -94,7 +94,7 @@ models:
 
 Piren translates this to Pi-native `--model` and `--models` flags. Provider credentials and custom providers remain in Pi's native config under `~/.pi/agent/`.
 
-Freshly scaffolded agent configs intentionally do not contain `model: {}`. They include comments explaining that no model is configured yet, plus the worker-only polling defaults. If no model block is present, Piren does not pass `--model` and Pi falls back to its native defaults.
+Freshly scaffolded agent configs created by `piren setup` or `piren agent add` use Pi's native defaults from `~/.pi/agent/settings.json` when `defaultProvider` and `defaultModel` are present, plus `defaultThinkingLevel` when available. If Pi defaults are unavailable, Piren writes only the worker polling defaults and does not include an empty `model: {}` block. If no model block is present, Piren does not pass `--model` and Pi falls back to its native defaults.
 
 Inspectable self-improvement is configured per agent and defaults to off:
 

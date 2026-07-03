@@ -5,6 +5,7 @@ export interface InitVaultOptions {
   vaultRoot: string;
   agentName?: string;
   force?: boolean;
+  agentConfigContent?: string;
 }
 
 export interface InitVaultResult {
@@ -112,12 +113,7 @@ export async function initVault(options: InitVaultOptions): Promise<InitVaultRes
       created,
     );
     await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
-    await writeNewFile(
-      join(agentDir, "config.yml"),
-      defaultAgentConfigContent(),
-      force,
-      created,
-    );
+    await writeNewFile(join(agentDir, "config.yml"), options.agentConfigContent ?? defaultAgentConfigContent(), force, created);
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
       throw new Error("Piren vault file already exists. Re-run with --force to overwrite generated files.");
@@ -159,7 +155,7 @@ export async function scaffoldAgentDirectory(options: InitVaultOptions): Promise
 
   await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
   await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
-  await writeNewFile(join(agentDir, "config.yml"), defaultAgentConfigContent(), force, created);
+  await writeNewFile(join(agentDir, "config.yml"), options.agentConfigContent ?? defaultAgentConfigContent(), force, created);
 
   return { vaultRoot, agentName, agentDir, created };
 }

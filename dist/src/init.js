@@ -79,7 +79,7 @@ export async function initVault(options) {
         ].join("\n"), force, created);
         await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
         await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
-        await writeNewFile(join(agentDir, "config.yml"), defaultAgentConfigContent(), force, created);
+        await writeNewFile(join(agentDir, "config.yml"), options.agentConfigContent ?? defaultAgentConfigContent(), force, created);
     }
     catch (error) {
         if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
@@ -116,7 +116,7 @@ export async function scaffoldAgentDirectory(options) {
     await mkdir(join(agentDir, "skills"), { recursive: true });
     await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
     await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
-    await writeNewFile(join(agentDir, "config.yml"), defaultAgentConfigContent(), force, created);
+    await writeNewFile(join(agentDir, "config.yml"), options.agentConfigContent ?? defaultAgentConfigContent(), force, created);
     return { vaultRoot, agentName, agentDir, created };
 }
 //# sourceMappingURL=init.js.map

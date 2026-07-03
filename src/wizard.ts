@@ -454,7 +454,7 @@ async function readAuthJson(piHome: string): Promise<Record<string, AuthJsonCred
   }
 }
 
-async function readPiDefaultModel(piHome: string): Promise<AgentModelConfigOutput | undefined> {
+export async function readPiDefaultModel(piHome: string): Promise<AgentModelConfigOutput | undefined> {
   const settingsPath = join(piHome, "settings.json");
   if (!(await pathExists(settingsPath))) return undefined;
   try {
