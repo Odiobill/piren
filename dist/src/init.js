@@ -264,6 +264,16 @@ export async function initVault(options) {
             "Use OKF frontmatter with a non-empty type field for durable Markdown knowledge.",
             "Use wiki_update_concept and wiki_update_entity when project material contains reusable concepts or named systems that should appear in the Knowledge Graph.",
             "",
+            "## Vault layout",
+            "",
+            "Top-level directories use lowercase/kebab-case when Piren owns them",
+            "(`team/`, `wiki/`, `cron/`, `skills/`, `templates/`, `steward-inbox/`).",
+            "The one deliberate exception is `Projects/`: it is title-case because it is the",
+            "steward-facing human workspace for project-local OKF bundles",
+            "(`Projects/<Project>/index.md`, decisions, runbooks, logs). It is an intentional",
+            "choice, not an inconsistency — everything under it is project knowledge you",
+            "curate, while the lowercase directories are Piren-owned operational state.",
+            "",
         ].join("\n"), force, created);
         await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
         await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
@@ -289,8 +299,10 @@ export async function initVault(options) {
  * a second agent does not trip initVault's "vault file already exists" guard.
  *
  * Creates the same subdirectories and identity files initVault writes for a
- * fresh agent: inbox/outbox/devices/logs/sessions/skills, plus SOUL.md,
- * MEMORY.md, and config.yml. Respects `force` to overwrite identity files.
+ * fresh agent: inbox/outbox/devices/logs/sessions/skills plus cron/jobs and
+ * cron/runs (agent-scoped vault-backed cron coordination directories, kept
+ * empty on a fresh scaffold), as well as SOUL.md, MEMORY.md, and config.yml.
+ * Respects `force` to overwrite identity files.
  */
 export async function scaffoldAgentDirectory(options) {
     const vaultRoot = resolve(options.vaultRoot);

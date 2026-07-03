@@ -38,6 +38,8 @@ describe("Piren vault initialization", () => {
     const directives = await readFile(join(root, "steward-directives.md"), "utf8");
     expect(directives).toContain("Use OKF frontmatter with a non-empty type field");
     expect(directives).toContain("wiki_update_concept");
+    expect(directives).toContain("Top-level directories use lowercase/kebab-case when Piren owns them");
+    expect(directives).toContain("Projects/");
     const soul = await readFile(join(root, "team", "thor", "SOUL.md"), "utf8");
     expect(soul).toContain("When importing existing project material");
     expect(soul).toContain("wiki/concepts");
