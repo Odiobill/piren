@@ -81,4 +81,24 @@ describe("Piren vault initialization", () => {
     await expect(initVault({ vaultRoot: root, agentName: "../thor" })).rejects.toThrow(/agent name/i);
     await expect(initVault({ vaultRoot: root, agentName: "Thor Prime" })).rejects.toThrow(/agent name/i);
   });
+
+  it("seeds the first two OKF starter graph documents", async () => {
+    await initVault({ vaultRoot: root, agentName: "piren" });
+
+    const entityPath = join(root, "wiki", "entities", "piren.md");
+    const conceptPath = join(root, "wiki", "concepts", "open-knowledge-format.md");
+
+    await expect(stat(entityPath)).resolves.toBeDefined();
+    await expect(stat(conceptPath)).resolves.toBeDefined();
+
+    const entity = await readFile(entityPath, "utf8");
+    expect(entity).toContain("type: Entity");
+    // links to the OKF concept so the starter graph is connected
+    expect(entity).toContain("[[Open Knowledge Format]]");
+
+    const concept = await readFile(conceptPath, "utf8");
+    expect(concept).toContain("type: Concept");
+    // links back to the Piren entity so the starter graph is connected
+    expect(concept).toContain("wiki/entities/piren.md");
+  });
 });
