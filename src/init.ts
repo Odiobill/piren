@@ -123,6 +123,67 @@ function defaultOkfConceptContent(): string {
   ].join("\n");
 }
 
+function defaultPirenVaultConceptContent(): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return [
+    "---",
+    "type: Concept",
+    "title: \"Piren Vault\"",
+    "created: " + today,
+    "updated: " + today,
+    "tags: [piren, vault, okf]",
+    "status: reference",
+    "---",
+    "",
+    "# Piren Vault",
+    "",
+    "The Piren vault is the inspectable memory of a stewarded agent team.",
+    "Every durable artifact is an explicit Markdown file written through",
+    "visible vault tools, never hidden mutation.",
+    "",
+    "Piren itself is an OKF [[Entity]] at wiki/entities/piren.md, and the",
+    "frontmatter convention is documented under [[Open Knowledge Format]].",
+    "",
+    "## Shape",
+    "",
+    "The vault holds a per-agent team directory, a steward inbox for",
+    "human-to-agent tasks, project working directories, and a shared wiki",
+    "of reusable concepts and named entities. Logs are append-only where",
+    "practical.",
+    "",
+  ].join("\n");
+}
+
+function defaultPirenAgentOperatingModelConceptContent(): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return [
+    "---",
+    "type: Concept",
+    "title: \"Piren Agent Operating Model\"",
+    "created: " + today,
+    "updated: " + today,
+    "tags: [piren, agent, operating-model]",
+    "status: reference",
+    "---",
+    "",
+    "# Piren Agent Operating Model",
+    "",
+    "A Piren agent operates from the [[Piren Vault]], reading and writing",
+    "durable Markdown through explicit tools while waiting for explicit",
+    "steering from its steward.",
+    "",
+    "Piren is the underlying [[Entity]] at wiki/entities/piren.md.",
+    "",
+    "## Habits",
+    "",
+    "- Keep actions explicit, inspectable, and boring.",
+    "- Leave the minimum useful durable artifact after non-trivial work.",
+    "- Do not auto-poll inboxes or mutate hidden state in interactive runs.",
+    "- Respect the authority boundary between the vault and local config.",
+    "",
+  ].join("\n");
+}
+
 export async function initVault(options: InitVaultOptions): Promise<InitVaultResult> {
   const vaultRoot = resolve(options.vaultRoot);
   const agentName = options.agentName ?? "piren";
@@ -187,6 +248,18 @@ export async function initVault(options: InitVaultOptions): Promise<InitVaultRes
     await writeNewFile(
       join(vaultRoot, "wiki", "concepts", "open-knowledge-format.md"),
       defaultOkfConceptContent(),
+      force,
+      created,
+    );
+    await writeNewFile(
+      join(vaultRoot, "wiki", "concepts", "piren-vault.md"),
+      defaultPirenVaultConceptContent(),
+      force,
+      created,
+    );
+    await writeNewFile(
+      join(vaultRoot, "wiki", "concepts", "piren-agent-operating-model.md"),
+      defaultPirenAgentOperatingModelConceptContent(),
       force,
       created,
     );

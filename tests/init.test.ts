@@ -112,4 +112,39 @@ describe("Piren vault initialization", () => {
       expect(frontmatter, `${label}: frontmatter must contain updated`).toContain("updated:");
     }
   });
+
+  it("seeds the piren-vault and piren-agent-operating-model concept docs", async () => {
+    await initVault({ vaultRoot: root, agentName: "piren" });
+
+    const vaultConceptPath = join(root, "wiki", "concepts", "piren-vault.md");
+    const operatingModelPath = join(root, "wiki", "concepts", "piren-agent-operating-model.md");
+
+    await expect(stat(vaultConceptPath)).resolves.toBeDefined();
+    await expect(stat(operatingModelPath)).resolves.toBeDefined();
+
+    const vaultConcept = await readFile(vaultConceptPath, "utf8");
+    const operatingModel = await readFile(operatingModelPath, "utf8");
+
+    const docs: Array<readonly [string, string]> = [
+      ["piren-vault concept", vaultConcept],
+      ["piren-agent-operating-model concept", operatingModel],
+    ];
+
+    for (const [label, doc] of docs) {
+      const lines = doc.split("\n");
+      expect(lines[0], `${label}: frontmatter must open with ---`).toBe("---");
+      const closeIndex = lines.indexOf("---", 1);
+      expect(closeIndex, `${label}: frontmatter must have a closing ---`).toBeGreaterThan(0);
+      const frontmatter = lines.slice(1, closeIndex).join("\n");
+      expect(frontmatter, `${label}: frontmatter must contain type: Concept`).toContain("type: Concept");
+      expect(frontmatter, `${label}: frontmatter must contain created`).toContain("created:");
+      expect(frontmatter, `${label}: frontmatter must contain updated`).toContain("updated:");
+    }
+
+    // Both docs must connect to the existing starter graph.
+    expect(vaultConcept, "piren-vault must link to the Piren entity").toContain("wiki/entities/piren.md");
+    expect(vaultConcept, "piren-vault must link to the OKF concept").toContain("[[Open Knowledge Format]]");
+    expect(operatingModel, "operating model must link to the Piren entity").toContain("wiki/entities/piren.md");
+    expect(operatingModel, "operating model must link to the piren-vault concept").toContain("[[Piren Vault]]");
+  });
 });
