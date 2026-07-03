@@ -243,12 +243,16 @@ export async function initVault(options) {
     await mkdir(join(vaultRoot, "skills"), { recursive: true });
     await mkdir(join(vaultRoot, "templates"), { recursive: true });
     await mkdir(join(vaultRoot, "agent-groups"), { recursive: true });
+    await mkdir(join(vaultRoot, "cron", "jobs"), { recursive: true });
+    await mkdir(join(vaultRoot, "cron", "runs"), { recursive: true });
     await mkdir(join(agentDir, "inbox"), { recursive: true });
     await mkdir(join(agentDir, "outbox"), { recursive: true });
     await mkdir(join(agentDir, "devices"), { recursive: true });
     await mkdir(join(agentDir, "logs"), { recursive: true });
     await mkdir(join(agentDir, "sessions"), { recursive: true });
     await mkdir(join(agentDir, "skills"), { recursive: true });
+    await mkdir(join(agentDir, "cron", "jobs"), { recursive: true });
+    await mkdir(join(agentDir, "cron", "runs"), { recursive: true });
     try {
         await writeNewFile(join(vaultRoot, ".piren-vault"), "", force, created);
         await writeNewFile(join(vaultRoot, "steward-directives.md"), [
@@ -304,6 +308,8 @@ export async function scaffoldAgentDirectory(options) {
     await mkdir(join(agentDir, "logs"), { recursive: true });
     await mkdir(join(agentDir, "sessions"), { recursive: true });
     await mkdir(join(agentDir, "skills"), { recursive: true });
+    await mkdir(join(agentDir, "cron", "jobs"), { recursive: true });
+    await mkdir(join(agentDir, "cron", "runs"), { recursive: true });
     await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
     await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
     await writeNewFile(join(agentDir, "config.yml"), options.agentConfigContent ?? defaultAgentConfigContent(), force, created);

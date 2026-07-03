@@ -183,6 +183,18 @@ describe("Piren vault initialization", () => {
     expect(okfBundle, "okf-knowledge-bundle must link to the piren-vault concept").toContain("[[Piren Vault]]");
   });
 
+  it("scaffolds the documented vault-protocol cron directories for shared and agent scopes", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+
+    // Shared cron coordination directories.
+    await expect(stat(join(root, "cron", "jobs"))).resolves.toBeDefined();
+    await expect(stat(join(root, "cron", "runs"))).resolves.toBeDefined();
+
+    // Agent-scoped cron coordination directories.
+    await expect(stat(join(root, "team", "thor", "cron", "jobs"))).resolves.toBeDefined();
+    await expect(stat(join(root, "team", "thor", "cron", "runs"))).resolves.toBeDefined();
+  });
+
   it("seeds exactly the intended six starter graph markdown documents, no more and no less", async () => {
     await initVault({ vaultRoot: root, agentName: "piren" });
 

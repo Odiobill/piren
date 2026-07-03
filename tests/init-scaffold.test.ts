@@ -24,6 +24,8 @@ describe("init: scaffoldAgentDirectory", () => {
       // Subdirectories present.
       await expect(access(join(vault, "team", "thor", "inbox"))).resolves.toBeUndefined();
       await expect(access(join(vault, "team", "thor", "sessions"))).resolves.toBeUndefined();
+      await expect(access(join(vault, "team", "thor", "cron", "jobs"))).resolves.toBeUndefined();
+      await expect(access(join(vault, "team", "thor", "cron", "runs"))).resolves.toBeUndefined();
 
       // The existing piren agent is untouched.
       await expect(access(join(vault, "team", "piren", "SOUL.md"))).resolves.toBeUndefined();
