@@ -138,6 +138,23 @@ describe("WebUI review affordances", () => {
     expect(app).toMatch(/nodes\.length\s*>\s*0/);
   });
 
+  it("adds a full-height draggable divider between chat and Vault Explorer", async () => {
+    const html = await readPublic("index.html");
+    const css = await readPublic("style.css");
+    const app = await readPublic("app.js");
+
+    // A dedicated divider element sits between #main and #vault-explorer.
+    expect(html).toContain('id="vault-divider"');
+    expect(html).toMatch(/<\/main>[\s\S]*?<div id="vault-divider"[\s\S]*?<div id="vault-explorer"/);
+    // CSS owns the divider look and exposes a --vault-width CSS variable.
+    expect(css).toContain("#vault-divider");
+    expect(css).toContain("--vault-width");
+    // The frontend wires a pointer drag handler that updates the vault width.
+    expect(app).toContain("vault-divider");
+    expect(app).toContain("pointerdown");
+    expect(app).toContain("mousemove");
+  });
+
   it("switches to the Files tab when a graph node is clicked", async () => {
     const app = await readPublic("app.js");
     // The graph-node click handler must switch to the Files tab before opening the file.

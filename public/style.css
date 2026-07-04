@@ -1,5 +1,6 @@
 :root {
   --bg: #0f0f17;
+  --vault-width: min(480px, 42vw);
   --bg-panel: #181828;
   --bg-input: #1e1e30;
   --bg-message-user: #1e1e30;
@@ -382,9 +383,27 @@ body {
 
 .btn-secondary:hover { border-color: var(--accent); color: var(--text-bright); }
 
+/* Full-height draggable divider between #main and #vault-explorer.
+ * The divider is hidden by default and revealed alongside the explorer
+ * via the #app.vault-open class. Dragging it updates --vault-width. */
+#vault-divider {
+  width: 6px;
+  min-width: 6px;
+  height: 100vh;
+  background: var(--border);
+  cursor: col-resize;
+  flex: 0 0 auto;
+  transition: background 0.12s;
+}
+#vault-divider:hover,
+#vault-divider.dragging {
+  background: var(--accent);
+}
+#app:not(.vault-open) #vault-divider { display: none; }
+
 /* Vault browser panel */
 .panel {
-  width: min(480px, 42vw);
+  width: var(--vault-width);
   min-width: 360px;
   max-width: calc(100vw - 580px);
   height: 100vh;

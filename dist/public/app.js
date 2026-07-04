@@ -611,6 +611,7 @@ async function openVaultExplorer(tab) {
   }
   panel.classList.remove("hidden");
   document.getElementById("app").classList.add("vault-open");
+  if (state.vaultWidth) applyVaultWidth(state.vaultWidth);
   selectVaultTab(tab);
   if (tab === "files") {
     state.vaultPath = ".";
@@ -1096,6 +1097,73 @@ function svgEl(name) {
 }
 
 // ---------------------------------------------------------------------------
+// Vault Explorer divider (drag to resize chat vs. explorer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Clamp the Vault Explorer width to a sensible range so the chat area never
+ * collapses and the explorer never escapes the viewport.
+ */
+function clampVaultWidth(px) {
+  const max = Math.max(420, window.innerWidth - 580);
+  return Math.min(max, Math.max(360, px));
+}
+
+/**
+ * Apply a pixel width to --vault-width and remember it so re-opening the
+ * explorer restores the steward's last choice.
+ */
+function applyVaultWidth(px) {
+  const clamped = clampVaultWidth(px);
+  state.vaultWidth = clamped;
+  document.documentElement.style.setProperty("--vault-width", clamped + "px");
+}
+function initVaultDivider() {
+  const divider = document.getElementById("vault-divider");
+  if (!divider) return;
+  let dragging = false;
+
+  divider.addEventListener("pointerdown", (event) => {
+    if (!document.getElementById("app").classList.contains("vault-open")) return;
+    dragging = true;
+    divider.classList.add("dragging");
+    divider.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  divider.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const explorer = document.getElementById("vault-explorer");
+    const rect = explorer.getBoundingClientRect();
+    // New width = distance from viewport right edge back to the divider.
+    const newWidth = window.innerWidth - event.clientX - (window.innerWidth - rect.right);
+    applyVaultWidth(newWidth);
+  });
+
+  const stopDrag = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    divider.classList.remove("dragging");
+    try { divider.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+  };
+  divider.addEventListener("pointerup", stopDrag);
+  divider.addEventListener("pointercancel", stopDrag);
+
+  // Legacy mousemove/mouseup support for browsers without Pointer Events.
+  document.addEventListener("mousemove", (event) => {
+    if (!dragging) return;
+    const explorer = document.getElementById("vault-explorer");
+    const rect = explorer.getBoundingClientRect();
+    applyVaultWidth(window.innerWidth - event.clientX - (window.innerWidth - rect.right));
+  });
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    divider.classList.remove("dragging");
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Event wiring
 // ---------------------------------------------------------------------------
 
@@ -1142,6 +1210,8 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("inbox-cancel").addEventListener("click", closeInboxModal);
   document.getElementById("notifications-btn").addEventListener("click", openNotificationsModal);
   document.getElementById("notifications-modal-close").addEventListener("click", closeNotificationsModal);
+
+  initVaultDivider();
 
   document.getElementById("approval-confirm").addEventListener("click", () => submitApproval(true));
   document.getElementById("approval-cancel").addEventListener("click", () => submitApproval(false));
