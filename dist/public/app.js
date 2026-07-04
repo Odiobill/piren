@@ -1016,16 +1016,22 @@ function renderKnowledgeGraph(graph) {
   const svg = document.getElementById("graph-canvas");
   const summary = document.getElementById("graph-summary");
   const empty = document.getElementById("graph-empty");
+  const partial = document.getElementById("graph-partial");
   svg.innerHTML = "";
 
   const nodes = graph.nodes || [];
   const edges = graph.edges || [];
+  empty.classList.add("hidden");
+  if (partial) partial.classList.add("hidden");
+
   summary.textContent = nodes.length + " nodes, " + edges.length + " links" + (graph.truncated ? " (truncated)" : "");
   if (nodes.length === 0) {
     empty.classList.remove("hidden");
     return;
   }
-  empty.classList.add("hidden");
+  if (nodes.length > 0 && nodes.length <= 4 && partial) {
+    partial.classList.remove("hidden");
+  }
 
   const width = 420;
   const height = 360;

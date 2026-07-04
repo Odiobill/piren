@@ -77,7 +77,7 @@ describe("WebUI review affordances", () => {
     expect(html).toContain('id="vault-tab-graph"');
     expect(html).toContain('id="vault-graph"');
     expect(html).toContain('id="graph-canvas"');
-    expect(html).toContain("No OKF typed documents found.");
+    expect(html).toContain("knowledge graph nodes");
     expect(app).toContain('apiJson("/api/vault/graph"');
     expect(app).toContain("renderKnowledgeGraph");
     expect(app).toContain("openVaultFile(node.path)");
@@ -112,6 +112,30 @@ describe("WebUI review affordances", () => {
     expect(app).toContain("openVaultExplorer");
     expect(app).not.toContain("function openVaultBrowser");
     expect(app).not.toContain("function openKnowledgeGraph");
+  });
+
+  it("provides steward-facing graph empty/partial-state copy without tool syntax", async () => {
+    const html = await readPublic("index.html");
+    const app = await readPublic("app.js");
+
+    // The default #graph-empty text must NOT lead with "wiki_update_concept"
+    expect(html).toContain('id="graph-empty"');
+    const emptyMatch = html.match(/id="graph-empty"[^>]*>([^<]*)</);
+    expect(emptyMatch).not.toBeNull();
+    const emptyText = emptyMatch![1] || "";
+    expect(emptyText).not.toContain("wiki_update_concept");
+    // Must contain steward-facing words
+    expect(emptyText).toContain("knowledge");
+    expect(emptyText).toContain("concept");
+
+    // app.js must not contain "wiki_update_concept" (tool syntax not leaked anywhere)
+    expect(app).not.toContain("wiki_update_concept");
+
+    // A separate partial-state branch exists: #graph-partial element in HTML
+    expect(html).toContain('id="graph-partial"');
+    // JS references it with a nodes.length check
+    expect(app).toContain('graph-partial');
+    expect(app).toMatch(/nodes\.length\s*>\s*0/);
   });
 
   it("switches to the Files tab when a graph node is clicked", async () => {
