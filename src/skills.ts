@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-/** Where a skill was discovered: shared (vault/skills/) or agent (team/<agent>/skills/). */
+/** Where a skill was discovered: shared (vault/skills/), group (agent-groups/<group>/skills/), or agent (team/<agent>/skills/). */
 export type SkillSource = "shared" | "group" | "agent";
 
 /**
