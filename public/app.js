@@ -1148,19 +1148,6 @@ function initVaultDivider() {
   };
   divider.addEventListener("pointerup", stopDrag);
   divider.addEventListener("pointercancel", stopDrag);
-
-  // Legacy mousemove/mouseup support for browsers without Pointer Events.
-  document.addEventListener("mousemove", (event) => {
-    if (!dragging) return;
-    const explorer = document.getElementById("vault-explorer");
-    const rect = explorer.getBoundingClientRect();
-    applyVaultWidth(window.innerWidth - event.clientX - (window.innerWidth - rect.right));
-  });
-  document.addEventListener("mouseup", () => {
-    if (!dragging) return;
-    dragging = false;
-    divider.classList.remove("dragging");
-  });
 }
 
 // ---------------------------------------------------------------------------

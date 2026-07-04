@@ -149,10 +149,12 @@ describe("WebUI review affordances", () => {
     // CSS owns the divider look and exposes a --vault-width CSS variable.
     expect(css).toContain("#vault-divider");
     expect(css).toContain("--vault-width");
-    // The frontend wires a pointer drag handler that updates the vault width.
+    // The frontend wires a Pointer Events drag handler that updates the vault width.
+    // Pointer Events are the sole drag mechanism; there is no legacy mousemove fallback.
     expect(app).toContain("vault-divider");
     expect(app).toContain("pointerdown");
-    expect(app).toContain("mousemove");
+    expect(app).not.toMatch(/document\.addEventListener\("mousemove"/);
+    expect(app).not.toMatch(/document\.addEventListener\("mouseup"/);
   });
 
   it("switches to the Files tab when a graph node is clicked", async () => {
