@@ -705,6 +705,29 @@ body {
 .session-entry { cursor: pointer; border-left: 2px solid transparent; }
 .session-entry.active { background: var(--bg-input); border-left-color: var(--accent); }
 
+/* Vault Explorer tab bar (Files / Graph) */
+.vault-tab-bar {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.4rem 1rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.vault-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 0.35rem 0.8rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.vault-tab:hover { color: var(--text-bright); }
+.vault-tab.active {
+  color: var(--text-bright);
+  border-bottom-color: var(--accent);
+}
+.vault-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+
 /* Read-only OKF knowledge graph. Lightweight SVG, no framework or graph lib. */
 .graph-panel { width: min(480px, 42vw); }
 .graph-summary {

@@ -74,8 +74,8 @@ describe("WebUI review affordances", () => {
     const app = await readPublic("app.js");
     const css = await readPublic("style.css");
 
-    expect(html).toContain('id="knowledge-graph-btn"');
-    expect(html).toContain('id="graph-panel"');
+    expect(html).toContain('id="vault-tab-graph"');
+    expect(html).toContain('id="vault-graph"');
     expect(html).toContain('id="graph-canvas"');
     expect(html).toContain("No OKF typed documents found.");
     expect(app).toContain('apiJson("/api/vault/graph"');
@@ -86,5 +86,31 @@ describe("WebUI review affordances", () => {
     expect(css).toContain(".graph-node");
     expect(css).toContain(".graph-edge");
     expect(css).toContain(".message-assistant.markdown-body");
+  });
+
+  it("consolidates the vault browser and knowledge graph into one Vault Explorer with Files/Graph tabs", async () => {
+    const html = await readPublic("index.html");
+    const app = await readPublic("app.js");
+
+    // One "Vault Explorer" button in the sidebar; the two old buttons are gone.
+    expect(html).toContain('id="vault-explorer-btn"');
+    expect(html).toContain(">Vault Explorer<");
+    expect(html).not.toContain('id="vault-browser-btn"');
+    expect(html).not.toContain('id="knowledge-graph-btn"');
+
+    // One panel with a tab bar and two panes; old separate panels are gone.
+    expect(html).toContain('id="vault-explorer"');
+    expect(html).toContain('id="vault-tab-files"');
+    expect(html).toContain('id="vault-tab-graph"');
+    expect(html).toContain('id="vault-files"');
+    expect(html).toContain('id="vault-graph"');
+    expect(html).not.toContain('id="vault-panel"');
+    expect(html).not.toContain('id="graph-panel"');
+
+    // app.js exposes a tab selector helper and the consolidated opener.
+    expect(app).toContain("selectVaultTab");
+    expect(app).toContain("openVaultExplorer");
+    expect(app).not.toContain("function openVaultBrowser");
+    expect(app).not.toContain("function openKnowledgeGraph");
   });
 });

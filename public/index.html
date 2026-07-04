@@ -39,8 +39,7 @@
 
       <div class="sidebar-section">
         <button id="new-conversation-btn" class="full-btn btn-secondary" title="Start a fresh conversation">+ New Conversation</button>
-        <button id="vault-browser-btn" class="full-btn">Vault Browser</button>
-        <button id="knowledge-graph-btn" class="full-btn btn-secondary" title="Open the read-only OKF knowledge graph">Knowledge Graph</button>
+        <button id="vault-explorer-btn" class="full-btn" title="Browse the vault and its read-only OKF knowledge graph">Vault Explorer</button>
         <button id="inbox-create-btn" class="full-btn btn-secondary" title="Create an inbox task for the selected agent">+ Inbox Task</button>
         <button id="notifications-btn" class="full-btn btn-secondary notification-btn" title="Open steward alerts">
           Steward Alerts
@@ -93,35 +92,39 @@
       </div>
     </main>
 
-    <!-- Vault browser panel -->
-    <div id="vault-panel" class="panel hidden">
+    <!-- Vault Explorer panel (Files + Graph tabs) -->
+    <div id="vault-explorer" class="panel hidden">
       <div class="panel-header">
-        <h3>Vault Browser</h3>
-        <button id="vault-close" class="icon-btn" title="Close">&#x2715;</button>
+        <h3>Vault Explorer</h3>
+        <button id="vault-explorer-close" class="icon-btn" title="Close">&#x2715;</button>
       </div>
-      <div id="vault-breadcrumb" class="vault-breadcrumb"></div>
-      <div id="vault-list" class="vault-list"></div>
-      <div id="vault-content" class="vault-content hidden">
-        <div class="vault-content-toolbar">
-          <div id="vault-view-toggle" class="vault-view-toggle hidden">
-            <button id="vault-view-rendered" class="vault-view-btn active">Rendered</button>
-            <button id="vault-view-raw" class="vault-view-btn">Source</button>
-          </div>
-        </div>
-        <div id="vault-content-rendered" class="markdown-body hidden"></div>
-        <pre id="vault-content-pre"></pre>
+      <div class="vault-tab-bar">
+        <button id="vault-tab-files" class="vault-tab active">Files</button>
+        <button id="vault-tab-graph" class="vault-tab">Graph</button>
       </div>
-    </div>
 
-    <!-- Knowledge graph panel -->
-    <div id="graph-panel" class="panel graph-panel hidden">
-      <div class="panel-header">
-        <h3>Knowledge Graph</h3>
-        <button id="graph-close" class="icon-btn" title="Close">&#x2715;</button>
+      <!-- Files pane -->
+      <div id="vault-files" class="vault-pane">
+        <div id="vault-breadcrumb" class="vault-breadcrumb"></div>
+        <div id="vault-list" class="vault-list"></div>
+        <div id="vault-content" class="vault-content hidden">
+          <div class="vault-content-toolbar">
+            <div id="vault-view-toggle" class="vault-view-toggle hidden">
+              <button id="vault-view-rendered" class="vault-view-btn active">Rendered</button>
+              <button id="vault-view-raw" class="vault-view-btn">Source</button>
+            </div>
+          </div>
+          <div id="vault-content-rendered" class="markdown-body hidden"></div>
+          <pre id="vault-content-pre"></pre>
+        </div>
       </div>
-      <div id="graph-summary" class="graph-summary">Loading graph...</div>
-      <svg id="graph-canvas" class="graph-canvas" role="img" aria-label="Read-only OKF knowledge graph"></svg>
-      <div id="graph-empty" class="session-empty hidden">No OKF typed documents found. Add frontmatter with a non-empty type field, or use wiki_update_concept / wiki_update_entity for curated knowledge.</div>
+
+      <!-- Graph pane -->
+      <div id="vault-graph" class="vault-pane hidden">
+        <div id="graph-summary" class="graph-summary">Loading graph...</div>
+        <svg id="graph-canvas" class="graph-canvas" role="img" aria-label="Read-only OKF knowledge graph"></svg>
+        <div id="graph-empty" class="session-empty hidden">No OKF typed documents found. Add frontmatter with a non-empty type field, or use wiki_update_concept / wiki_update_entity for curated knowledge.</div>
+      </div>
     </div>
   </div>
 

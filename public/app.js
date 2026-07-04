@@ -586,25 +586,44 @@ async function startNewConversation() {
 }
 
 // ---------------------------------------------------------------------------
-// Vault browser
+// Vault Explorer (Files + Graph tabs)
 // ---------------------------------------------------------------------------
 
-async function openVaultBrowser() {
-  const panel = document.getElementById("vault-panel");
-  // Toggle: if the panel is already open, close it instead of re-opening.
-  if (!panel.classList.contains("hidden")) {
-    closeVaultBrowser();
-    return;
-  }
-  closeKnowledgeGraph();
-  panel.classList.remove("hidden");
-  document.getElementById("app").classList.add("vault-open");
-  state.vaultPath = ".";
-  await browseVault(".");
+const VAULT_TABS = ["files", "graph"];
+
+function selectVaultTab(tab) {
+  if (!VAULT_TABS.includes(tab)) return;
+  const panel = document.getElementById("vault-explorer");
+  if (!panel) return;
+  document.getElementById("vault-tab-files").classList.toggle("active", tab === "files");
+  document.getElementById("vault-tab-graph").classList.toggle("active", tab === "graph");
+  document.getElementById("vault-files").classList.toggle("hidden", tab !== "files");
+  document.getElementById("vault-graph").classList.toggle("hidden", tab !== "graph");
 }
 
-function closeVaultBrowser() {
-  document.getElementById("vault-panel").classList.add("hidden");
+async function openVaultExplorer(tab) {
+  const panel = document.getElementById("vault-explorer");
+  // Toggle: if already open on the requested tab, close instead of re-opening.
+  if (!panel.classList.contains("hidden") &&
+      document.getElementById("vault-tab-" + tab)?.classList.contains("active")) {
+    closeVaultExplorer();
+    return;
+  }
+  panel.classList.remove("hidden");
+  document.getElementById("app").classList.add("vault-open");
+  selectVaultTab(tab);
+  if (tab === "files") {
+    state.vaultPath = ".";
+    await browseVault(".");
+  } else if (tab === "graph") {
+    await loadKnowledgeGraph();
+  }
+}
+
+function closeVaultExplorer() {
+  const panel = document.getElementById("vault-explorer");
+  if (!panel) return;
+  panel.classList.add("hidden");
   document.getElementById("app").classList.remove("vault-open");
   document.getElementById("vault-content").classList.add("hidden");
 }
@@ -660,9 +679,10 @@ async function browseVault(path) {
 }
 
 async function openVaultFile(path) {
-  const panel = document.getElementById("vault-panel");
+  const panel = document.getElementById("vault-explorer");
   panel.classList.remove("hidden");
   document.getElementById("app").classList.add("vault-open");
+  selectVaultTab("files");
   const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".";
   state.vaultPath = parent;
   await readVaultFile(path);
@@ -980,15 +1000,7 @@ function closeNotificationsModal() {
 // Knowledge graph
 // ---------------------------------------------------------------------------
 
-async function openKnowledgeGraph() {
-  const panel = document.getElementById("graph-panel");
-  if (!panel.classList.contains("hidden")) {
-    closeKnowledgeGraph();
-    return;
-  }
-  closeVaultBrowser();
-  panel.classList.remove("hidden");
-  document.getElementById("app").classList.add("vault-open");
+async function loadKnowledgeGraph() {
   document.getElementById("graph-summary").textContent = "Loading graph...";
   document.getElementById("graph-empty").classList.add("hidden");
   try {
@@ -997,15 +1009,6 @@ async function openKnowledgeGraph() {
   } catch (err) {
     document.getElementById("graph-summary").textContent = "Graph unavailable: " + err.message;
     document.getElementById("graph-canvas").innerHTML = "";
-  }
-}
-
-function closeKnowledgeGraph() {
-  const panel = document.getElementById("graph-panel");
-  if (!panel) return;
-  panel.classList.add("hidden");
-  if (document.getElementById("vault-panel")?.classList.contains("hidden")) {
-    document.getElementById("app").classList.remove("vault-open");
   }
 }
 
@@ -1118,10 +1121,13 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("agent-switch-btn").addEventListener("click", switchAgent);
   document.getElementById("new-conversation-btn").addEventListener("click", startNewConversation);
 
-  document.getElementById("vault-browser-btn").addEventListener("click", openVaultBrowser);
-  document.getElementById("vault-close").addEventListener("click", closeVaultBrowser);
-  document.getElementById("knowledge-graph-btn").addEventListener("click", openKnowledgeGraph);
-  document.getElementById("graph-close").addEventListener("click", closeKnowledgeGraph);
+  document.getElementById("vault-explorer-btn").addEventListener("click", () => openVaultExplorer("files"));
+  document.getElementById("vault-explorer-close").addEventListener("click", closeVaultExplorer);
+  document.getElementById("vault-tab-files").addEventListener("click", () => selectVaultTab("files"));
+  document.getElementById("vault-tab-graph").addEventListener("click", () => {
+    selectVaultTab("graph");
+    loadKnowledgeGraph();
+  });
   document.getElementById("vault-view-rendered").addEventListener("click", () => setVaultView("rendered"));
   document.getElementById("vault-view-raw").addEventListener("click", () => setVaultView("raw"));
   document.getElementById("inbox-create-btn").addEventListener("click", openInboxModal);
