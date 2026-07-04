@@ -162,6 +162,8 @@ export async function recommendFallback(vaultRoot, failedAgent, allowedAgents, e
         for (const candidate of ordered) {
             if (candidate === failedAgent)
                 continue;
+            if (!config.agents.includes(candidate))
+                continue;
             if (excluded.has(candidate))
                 continue;
             if (!allowed.has(candidate))
