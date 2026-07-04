@@ -12,6 +12,7 @@ import { registerDevice } from "./devices.js";
 import { createInboxTask, claimInboxTask, listInboxTasks, updateInboxTaskStatus } from "./inbox.js";
 import { createStewardAlert } from "./alerts.js";
 import { loadVaultSkills, formatSkillCatalogForContext, type VaultSkill } from "./skills.js";
+import { resolveAgentGroups } from "./agent-groups.js";
 import {
   projectStatus,
   projectAppendLog,
@@ -460,7 +461,8 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
   // vault/skills/; agent-specific skills come from team/<agent>/skills/ and
   // override shared skills with the same name. Skills are injected into the
   // agent context prompt as available procedures.
-  const { skills } = await loadVaultSkills(context.vaultRoot, context.agentName);
+  const groups = await resolveAgentGroups(context.vaultRoot, context.agentName);
+  const { skills } = await loadVaultSkills(context.vaultRoot, context.agentName, groups);
 
   // ADR-0024 auto-nudge wiring. Default OFF. Enable per agent via
   // team/<agent>/config.yml -> self_improvement.auto_nudge: true, or via

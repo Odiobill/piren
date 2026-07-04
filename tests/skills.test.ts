@@ -271,3 +271,240 @@ describe("loadVaultSkills", () => {
     expect(catalog).not.toContain("Secret deployment procedure body");
   });
 });
+
+async function makeVaultWithGroups(): Promise<{
+  vault: string;
+  cleanup: () => Promise<void>;
+}> {
+  const root = await mkdtemp(join(tmpdir(), "piren-skills-groups-"));
+  const vault = join(root, "vault");
+  await mkdir(join(vault, "skills"), { recursive: true });
+  await mkdir(join(vault, "team", "thor", "skills"), { recursive: true });
+  await mkdir(join(vault, "agent-groups", "developers", "skills"), { recursive: true });
+  await mkdir(join(vault, "agent-groups", "reviewers", "skills"), { recursive: true });
+  return {
+    vault,
+    cleanup: async () => {
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}
+
+describe("loadVaultSkills with groups", () => {
+  it("loads a group-scoped skill when agent is in the group", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      await writeFile(
+        join(vault, "agent-groups", "developers", "skills", "code-review.md"),
+        [
+          "---",
+          "name: code-review",
+          'description: "Review pull requests."',
+          "---",
+          "",
+          "# Code Review",
+        ].join("\n"),
+      );
+      const result = await loadVaultSkills(vault, "thor", ["developers"]);
+      expect(result.skills).toHaveLength(1);
+      const skill = result.skills[0];
+      expect(skill?.name).toBe("code-review");
+      expect(skill?.source).toBe("group");
+      expect(skill?.path).toBe("agent-groups/developers/skills/code-review.md");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("group skill overrides same-named shared skill", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      await writeFile(
+        join(vault, "skills", "linting.md"),
+        [
+          "---",
+          "name: linting",
+          'description: "Shared linting."',
+          "---",
+          "",
+          "# Shared Linting",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(vault, "agent-groups", "developers", "skills", "linting.md"),
+        [
+          "---",
+          "name: linting",
+          'description: "Developer-specific linting."',
+          "---",
+          "",
+          "# Dev Linting",
+        ].join("\n"),
+      );
+      const result = await loadVaultSkills(vault, "thor", ["developers"]);
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0]?.description).toBe("Developer-specific linting.");
+      expect(result.skills[0]?.source).toBe("group");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("agent-local skill overrides same-named group skill", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      await writeFile(
+        join(vault, "agent-groups", "developers", "skills", "deploy.md"),
+        [
+          "---",
+          "name: deploy",
+          'description: "Group deploy."',
+          "---",
+          "",
+          "# Group Deploy",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(vault, "team", "thor", "skills", "deploy.md"),
+        [
+          "---",
+          "name: deploy",
+          'description: "Thor\'s own deploy."',
+          "---",
+          "",
+          "# Thor Deploy",
+        ].join("\n"),
+      );
+      const result = await loadVaultSkills(vault, "thor", ["developers"]);
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0]?.description).toBe("Thor's own deploy.");
+      expect(result.skills[0]?.source).toBe("agent");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("backward compat: no groups param loads no group skills", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      await writeFile(
+        join(vault, "agent-groups", "developers", "skills", "code-review.md"),
+        [
+          "---",
+          "name: code-review",
+          'description: "Review pull requests."',
+          "---",
+          "",
+          "# Code Review",
+        ].join("\n"),
+      );
+      // Call without groups: should not load group skills.
+      const result = await loadVaultSkills(vault, "thor");
+      expect(result.skills).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("empty groups array loads no group skills", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      await writeFile(
+        join(vault, "agent-groups", "developers", "skills", "code-review.md"),
+        [
+          "---",
+          "name: code-review",
+          'description: "Review pull requests."',
+          "---",
+          "",
+          "# Code Review",
+        ].join("\n"),
+      );
+      const result = await loadVaultSkills(vault, "thor", []);
+      expect(result.skills).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("later groups override earlier groups for same-name skills", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      await writeFile(
+        join(vault, "agent-groups", "developers", "skills", "common.md"),
+        [
+          "---",
+          "name: common",
+          'description: "Developer common."',
+          "---",
+          "",
+          "# Dev Common",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(vault, "agent-groups", "reviewers", "skills", "common.md"),
+        [
+          "---",
+          "name: common",
+          'description: "Reviewer common."',
+          "---",
+          "",
+          "# Reviewer Common",
+        ].join("\n"),
+      );
+      // developer first, then reviewer: reviewer overrides developer for same-name.
+      const result = await loadVaultSkills(vault, "thor", ["developers", "reviewers"]);
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0]?.description).toBe("Reviewer common.");
+      expect(result.skills[0]?.source).toBe("group");
+      expect(result.skills[0]?.path).toContain("reviewers");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("combines shared, group, and agent skills without collisions", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      await writeFile(
+        join(vault, "skills", "shared-a.md"),
+        [
+          "---",
+          "name: shared-a",
+          'description: "Shared A."',
+          "---",
+          "",
+          "# A",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(vault, "agent-groups", "developers", "skills", "group-b.md"),
+        [
+          "---",
+          "name: group-b",
+          'description: "Group B."',
+          "---",
+          "",
+          "# B",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(vault, "team", "thor", "skills", "agent-c.md"),
+        [
+          "---",
+          "name: agent-c",
+          'description: "Agent C."',
+          "---",
+          "",
+          "# C",
+        ].join("\n"),
+      );
+      const result = await loadVaultSkills(vault, "thor", ["developers"]);
+      expect(result.skills).toHaveLength(3);
+      const sources = result.skills.map((s) => s.source).sort();
+      expect(sources).toEqual(["agent", "group", "shared"]);
+    } finally {
+      await cleanup();
+    }
+  });
+});

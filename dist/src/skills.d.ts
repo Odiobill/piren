@@ -1,5 +1,5 @@
 /** Where a skill was discovered: shared (vault/skills/) or agent (team/<agent>/skills/). */
-export type SkillSource = "shared" | "agent";
+export type SkillSource = "shared" | "group" | "agent";
 /**
  * A single loaded skill. Skills are procedures (Markdown context the agent can
  * follow), not executable tools. They are injected into the agent's context
@@ -24,9 +24,16 @@ export interface LoadVaultSkillsResult {
  * Load skills from the vault for a given agent.
  *
  * Shared skills come from `vault/skills/` (available to all agents).
+ * Optional group-scoped skills (ADR-0028) come from
+ * `agent-groups/<group>/skills/` for each group the agent belongs to, in the
+ * order the groups are passed. Later groups override earlier groups for
+ * same-name skills.
  * Agent-specific skills come from `team/<agent>/skills/` (available only to
- * that agent). Agent-specific skills override shared skills with the same
- * name.
+ * that agent). Agent-specific skills override shared and group skills with
+ * the same name.
+ *
+ * When `groups` is omitted or empty, behavior is unchanged: only shared and
+ * agent-local skills are loaded (backward compatible).
  *
  * Skills are Markdown files with optional YAML frontmatter (`name`,
  * `description`) and a body. A directory containing `SKILL.md` is also a
@@ -34,9 +41,9 @@ export interface LoadVaultSkillsResult {
  * list, and malformed frontmatter does not crash loading (the skill is
  * included with a derived name and empty description).
  *
- * See ADR-0014 for the full design.
+ * See ADR-0014 and ADR-0028 for the full design.
  */
-export declare function loadVaultSkills(vaultRoot: string, agentName: string): Promise<LoadVaultSkillsResult>;
+export declare function loadVaultSkills(vaultRoot: string, agentName: string, groups?: string[]): Promise<LoadVaultSkillsResult>;
 /**
  * Format the loaded skills as a compact context-prompt catalog. This is the
  * ADR-0017 lazy-loading startup shape: names and metadata only, never full

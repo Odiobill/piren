@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 /** Where a skill was discovered: shared (vault/skills/) or agent (team/<agent>/skills/). */
-export type SkillSource = "shared" | "agent";
+export type SkillSource = "shared" | "group" | "agent";
 
 /**
  * A single loaded skill. Skills are procedures (Markdown context the agent can
@@ -154,9 +154,16 @@ async function scanSkillsDir(dir: string, relBase: string): Promise<RawSkill[]> 
  * Load skills from the vault for a given agent.
  *
  * Shared skills come from `vault/skills/` (available to all agents).
+ * Optional group-scoped skills (ADR-0028) come from
+ * `agent-groups/<group>/skills/` for each group the agent belongs to, in the
+ * order the groups are passed. Later groups override earlier groups for
+ * same-name skills.
  * Agent-specific skills come from `team/<agent>/skills/` (available only to
- * that agent). Agent-specific skills override shared skills with the same
- * name.
+ * that agent). Agent-specific skills override shared and group skills with
+ * the same name.
+ *
+ * When `groups` is omitted or empty, behavior is unchanged: only shared and
+ * agent-local skills are loaded (backward compatible).
  *
  * Skills are Markdown files with optional YAML frontmatter (`name`,
  * `description`) and a body. A directory containing `SKILL.md` is also a
@@ -164,19 +171,39 @@ async function scanSkillsDir(dir: string, relBase: string): Promise<RawSkill[]> 
  * list, and malformed frontmatter does not crash loading (the skill is
  * included with a derived name and empty description).
  *
- * See ADR-0014 for the full design.
+ * See ADR-0014 and ADR-0028 for the full design.
  */
-export async function loadVaultSkills(vaultRoot: string, agentName: string): Promise<LoadVaultSkillsResult> {
+export async function loadVaultSkills(
+  vaultRoot: string,
+  agentName: string,
+  groups?: string[],
+): Promise<LoadVaultSkillsResult> {
   const sharedDir = join(vaultRoot, "skills");
   const agentDir = join(vaultRoot, "team", agentName, "skills");
 
-  const [shared, agent] = await Promise.all([
+  // Resolve group skill directories from the groups parameter.
+  const groupDirs =
+    groups && groups.length > 0
+      ? groups.map((g) => ({
+          dir: join(vaultRoot, "agent-groups", g, "skills"),
+          relBase: `agent-groups/${g}/skills`,
+        }))
+      : [];
+
+  const [shared, ...rest] = await Promise.all([
     scanSkillsDir(sharedDir, "skills"),
+    ...groupDirs.map(({ dir, relBase }) => scanSkillsDir(dir, relBase)),
     scanSkillsDir(agentDir, `team/${agentName}/skills`),
   ]);
 
-  // Build a name-keyed map. Shared skills first, then agent-specific skills
-  // override any with the same name.
+  // groupDirs results are at rest[0..groupDirs.length-1]; agent is the last.
+  // rest has groupDirs.length + 1 entries (groups + agent).
+  const agent = rest[rest.length - 1]!;
+  const groupResults = rest.slice(0, rest.length - 1);
+
+  // Build a name-keyed map. Shared skills first, then group skills (later
+  // groups override earlier), then agent-specific skills override any with the
+  // same name. This follows ADR-0028: shared < group < agent-local.
   const byName = new Map<string, VaultSkill>();
   for (const raw of shared) {
     byName.set(raw.name, {
@@ -186,6 +213,17 @@ export async function loadVaultSkills(vaultRoot: string, agentName: string): Pro
       source: "shared",
       path: raw.path,
     });
+  }
+  for (const raws of groupResults) {
+    for (const raw of raws) {
+      byName.set(raw.name, {
+        name: raw.name,
+        description: raw.description,
+        body: raw.body,
+        source: "group",
+        path: raw.path,
+      });
+    }
   }
   for (const raw of agent) {
     byName.set(raw.name, {

@@ -12,6 +12,7 @@ import { registerDevice } from "./devices.js";
 import { createInboxTask, claimInboxTask, listInboxTasks, updateInboxTaskStatus } from "./inbox.js";
 import { createStewardAlert } from "./alerts.js";
 import { loadVaultSkills, formatSkillCatalogForContext } from "./skills.js";
+import { resolveAgentGroups } from "./agent-groups.js";
 import { projectStatus, projectAppendLog, decisionRecord, projectUpdateHandoff, runbookWrite, skillCandidateWrite, wikiUpdateConcept, wikiUpdateEntity, } from "./knowledge.js";
 import { listCronJobs, listCronRuns, claimCronJob, recordCronRun, executeScriptCronJob, selectOwningDevice, listActiveDevices, isScheduleDue, } from "./cron.js";
 import { checkVaultConformance, createRealVaultDirReader, formatVaultConformanceReport } from "./okf.js";
@@ -397,7 +398,8 @@ export default async function pirenExtension(pi, testOptions = {}) {
     // vault/skills/; agent-specific skills come from team/<agent>/skills/ and
     // override shared skills with the same name. Skills are injected into the
     // agent context prompt as available procedures.
-    const { skills } = await loadVaultSkills(context.vaultRoot, context.agentName);
+    const groups = await resolveAgentGroups(context.vaultRoot, context.agentName);
+    const { skills } = await loadVaultSkills(context.vaultRoot, context.agentName, groups);
     // ADR-0024 auto-nudge wiring. Default OFF. Enable per agent via
     // team/<agent>/config.yml -> self_improvement.auto_nudge: true, or via
     // PIREN_AUTO_NUDGE=1/0 to override at runtime. When enabled, Piren listens
