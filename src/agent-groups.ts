@@ -8,7 +8,7 @@ import { parse as parseYaml } from "yaml";
  *
  * See ADR-0028 for the full design.
  */
-export interface GroupConfig {
+interface GroupConfig {
   /** Agent names declared as members of this group, in declaration order. */
   agents: string[];
   /**
@@ -20,7 +20,7 @@ export interface GroupConfig {
 }
 
 /** A parsed group keyed by group name. */
-export type GroupConfigs = Map<string, GroupConfig>;
+type GroupConfigs = Map<string, GroupConfig>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
