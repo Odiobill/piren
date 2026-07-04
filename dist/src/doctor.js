@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile, stat as fsStat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
@@ -7,6 +7,7 @@ import { defaultPiCommandResolver } from "./run.js";
 import { resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver } from "./packages.js";
 import { checkVaultConformance, createRealVaultDirReader } from "./okf.js";
+import { parseGroupConfigs, resolveAgentGroups } from "./agent-groups.js";
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
 async function pathExists(path) {
     try {
@@ -271,6 +272,219 @@ function execFileText(command, args) {
  * many concept documents were checked and lists up to a handful of problem
  * paths so the steward can fix the worst offenders without an overwhelming dump.
  */
+/**
+ * Read skill name -> body map from an agent-groups/<group>/skills/ directory.
+ * Handles both loose `.md` files and directory-based `SKILL.md` skills,
+ * matching the convention used by `src/skills.ts`.
+ */
+async function readGroupSkillBodies(vaultRoot, groupName) {
+    const skillsDir = join(vaultRoot, "agent-groups", groupName, "skills");
+    const result = new Map();
+    let entries;
+    try {
+        entries = await readdir(skillsDir, { withFileTypes: true });
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.startsWith("ENOENT") || msg.includes("ENOENT")) {
+            return result;
+        }
+        throw err;
+    }
+    for (const entry of entries) {
+        if (entry.name.startsWith("."))
+            continue;
+        if (entry.isFile() && entry.name.endsWith(".md")) {
+            const content = await readFile(join(skillsDir, entry.name), "utf8");
+            const name = entry.name.replace(/\.md$/i, "");
+            result.set(name, content);
+        }
+        else if (entry.isDirectory()) {
+            const skillMd = join(skillsDir, entry.name, "SKILL.md");
+            try {
+                await fsStat(skillMd);
+            }
+            catch {
+                continue;
+            }
+            const content = await readFile(skillMd, "utf8");
+            result.set(entry.name, content);
+        }
+    }
+    return result;
+}
+/**
+ * Doctor check: group membership (informational, status "ok").
+ *
+ * Reports which groups exist and which groups the selected agent (or allowed
+ * agents) belong to. Emits no check when `agent-groups/` is missing.
+ */
+export async function checkGroupMembership(vaultRoot, agentName, runnableAgents) {
+    let groups;
+    try {
+        groups = await parseGroupConfigs(vaultRoot);
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { id: "agent-groups-membership", status: "warn", message: `Could not parse agent group configs: ${message}` };
+    }
+    if (groups.size === 0)
+        return null;
+    const groupNames = [...groups.keys()].sort();
+    if (agentName !== undefined) {
+        const agentGroups = await resolveAgentGroups(vaultRoot, agentName);
+        if (agentGroups.length > 0) {
+            return {
+                id: "agent-groups-membership",
+                status: "ok",
+                message: `Agent '${agentName}' belongs to group(s): ${agentGroups.join(", ")}. Defined groups: ${groupNames.join(", ")}.`,
+            };
+        }
+        return {
+            id: "agent-groups-membership",
+            status: "ok",
+            message: `Agent '${agentName}' does not belong to any group. Defined groups: ${groupNames.join(", ")}.`,
+        };
+    }
+    // No specific agent selected: report membership for runnable agents.
+    if (runnableAgents && runnableAgents.length > 0) {
+        const memberships = [];
+        const ungrouped = [];
+        for (const agent of runnableAgents) {
+            const agentGroups = await resolveAgentGroups(vaultRoot, agent);
+            if (agentGroups.length > 0) {
+                memberships.push(`${agent}(${agentGroups.join(",")})`);
+            }
+            else {
+                ungrouped.push(agent);
+            }
+        }
+        const parts = [];
+        if (memberships.length > 0)
+            parts.push(`agent memberships: ${memberships.join(" ")}`);
+        if (ungrouped.length > 0)
+            parts.push(`ungrouped: ${ungrouped.join(", ")}`);
+        return {
+            id: "agent-groups-membership",
+            status: "ok",
+            message: `Defined groups: ${groupNames.join(", ")}. ${parts.join("; ")}.`,
+        };
+    }
+    return {
+        id: "agent-groups-membership",
+        status: "ok",
+        message: `Defined groups: ${groupNames.join(", ")}.`,
+    };
+}
+/**
+ * Doctor check: stale group agents (WARN).
+ *
+ * If any group config references an agent name that has no `team/<agent>/`
+ * directory in the vault, warn. Emits no check when `agent-groups/` is missing.
+ */
+export async function checkStaleGroupAgents(vaultRoot) {
+    let groups;
+    try {
+        groups = await parseGroupConfigs(vaultRoot);
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { id: "agent-groups-stale-agents", status: "warn", message: `Could not parse agent group configs: ${message}` };
+    }
+    if (groups.size === 0)
+        return null;
+    // Collect all referenced agent names across all groups.
+    const referenced = new Set();
+    for (const config of groups.values()) {
+        for (const agent of config.agents) {
+            referenced.add(agent);
+        }
+    }
+    // Check which referenced agents do not have team/<agent>/ in the vault.
+    const teamDir = join(vaultRoot, "team");
+    const stale = [];
+    for (const agent of referenced) {
+        try {
+            await fsStat(join(teamDir, agent));
+        }
+        catch {
+            stale.push(agent);
+        }
+    }
+    if (stale.length > 0) {
+        return {
+            id: "agent-groups-stale-agents",
+            status: "warn",
+            message: `Group config(s) reference agent(s) not found in vault team/: ${stale.join(", ")}.`,
+        };
+    }
+    return null;
+}
+/**
+ * Doctor check: skill conflicts between groups the agent belongs to (WARN).
+ *
+ * If an agent belongs to two groups that both declare a skill with the same
+ * name but different file bodies, warn. Only checks groups the agent actually
+ * belongs to. Emits no check when `agent-groups/` is missing or the agent
+ * belongs to ≤1 group.
+ */
+export async function checkGroupSkillConflicts(vaultRoot, agentName) {
+    let groups;
+    try {
+        groups = await parseGroupConfigs(vaultRoot);
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { id: "agent-groups-skill-conflicts", status: "warn", message: `Could not parse agent group configs: ${message}` };
+    }
+    if (groups.size === 0)
+        return null;
+    const agentGroups = await resolveAgentGroups(vaultRoot, agentName);
+    if (agentGroups.length <= 1)
+        return null;
+    // Read skill bodies for all groups the agent belongs to.
+    const groupSkills = new Map();
+    for (const group of agentGroups) {
+        groupSkills.set(group, await readGroupSkillBodies(vaultRoot, group));
+    }
+    // Compare skills across groups: for each skill name, check all pairs of groups.
+    const conflicts = [];
+    const skillNames = new Set();
+    for (const [, skills] of groupSkills) {
+        for (const name of skills.keys()) {
+            skillNames.add(name);
+        }
+    }
+    for (const name of skillNames) {
+        const bodies = new Map();
+        for (const [group, skills] of groupSkills) {
+            const body = skills.get(name);
+            if (body !== undefined) {
+                const existing = bodies.get(body);
+                if (existing) {
+                    existing.push(group);
+                }
+                else {
+                    bodies.set(body, [group]);
+                }
+            }
+        }
+        if (bodies.size > 1) {
+            const detail = [...bodies.entries()]
+                .map(([, groups]) => groups.join("/"))
+                .join(" vs ");
+            conflicts.push(`${name} (${detail})`);
+        }
+    }
+    if (conflicts.length > 0) {
+        return {
+            id: "agent-groups-skill-conflicts",
+            status: "warn",
+            message: `Skill conflict(s) across groups: ${conflicts.join("; ")}.`,
+        };
+    }
+    return null;
+}
 export async function checkVaultOkfConformance(vaultRoot, options = {}) {
     const reader = options.vaultDirReader ?? createRealVaultDirReader();
     const conformanceOptions = {
@@ -379,6 +593,13 @@ export async function doctorPiren(options = {}) {
             if (options.vaultDirReader !== undefined)
                 okfReaderOptions.vaultDirReader = options.vaultDirReader;
             checks.push(await checkVaultOkfConformance(vaultRoot, okfReaderOptions));
+            // Agent group checks (Slice 3c)
+            const membershipCheck = await checkGroupMembership(vaultRoot, undefined, runnableAgents);
+            if (membershipCheck)
+                checks.push(membershipCheck);
+            const staleGroupCheck = await checkStaleGroupAgents(vaultRoot);
+            if (staleGroupCheck)
+                checks.push(staleGroupCheck);
             const enabledAgents = runnableAgents.length > 0
                 ? runnableAgents
                 : (await listVaultAgentNames(vaultRoot)).filter((agent) => !excludedAgents.includes(agent));
@@ -420,6 +641,16 @@ export async function doctorPiren(options = {}) {
     try {
         vaultRoot = await detectVaultRoot(agentDir, config, options.cliVaultRoot);
         checks.push(await checkRequiredPaths("vault-layout", vaultRoot, [".piren-vault", "steward-directives.md", "team"]));
+        // Agent group checks (Slice 3c) — before agent-files check
+        const membershipCheck = await checkGroupMembership(vaultRoot, agentName, runnableAgents);
+        if (membershipCheck)
+            checks.push(membershipCheck);
+        const staleGroupCheck = await checkStaleGroupAgents(vaultRoot);
+        if (staleGroupCheck)
+            checks.push(staleGroupCheck);
+        const skillConflictCheck = await checkGroupSkillConflicts(vaultRoot, agentName);
+        if (skillConflictCheck)
+            checks.push(skillConflictCheck);
         checks.push(await checkRequiredPaths("agent-files", agentDir, ["SOUL.md", "MEMORY.md", "config.yml", "inbox", "outbox", "logs", "sessions"]));
         const staleCheck = await checkStaleAllowed(allowedAgents, vaultRoot);
         if (staleCheck)

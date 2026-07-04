@@ -1,4 +1,4 @@
-/** Where a skill was discovered: shared (vault/skills/) or agent (team/<agent>/skills/). */
+/** Where a skill was discovered: shared (vault/skills/), group (agent-groups/<group>/skills/), or agent (team/<agent>/skills/). */
 export type SkillSource = "shared" | "group" | "agent";
 /**
  * A single loaded skill. Skills are procedures (Markdown context the agent can

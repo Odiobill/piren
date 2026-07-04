@@ -8,6 +8,8 @@ export interface AgentsReport {
     missingAllowedAgents: string[];
     staleVaultAgents?: string[];
     unsafePolicy?: boolean;
+    /** Agent name -> group names they belong to (Slice 3c). */
+    groups?: Map<string, string[]>;
 }
 export declare function listPirenAgents(options?: BootstrapOptions): Promise<AgentsReport>;
 export declare function formatAgentsReport(report: AgentsReport): string;

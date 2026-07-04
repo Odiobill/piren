@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import type { BootstrapOptions, LocalPirenConfig } from "./bootstrap.js";
+import { resolveAgentGroups } from "./agent-groups.js";
 
 export interface AgentsReport {
   vaultRoot?: string;
@@ -13,6 +14,8 @@ export interface AgentsReport {
   missingAllowedAgents: string[];
   staleVaultAgents?: string[];
   unsafePolicy?: boolean;
+  /** Agent name -> group names they belong to (Slice 3c). */
+  groups?: Map<string, string[]>;
 }
 
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
@@ -84,12 +87,21 @@ export async function listPirenAgents(options: BootstrapOptions = {}): Promise<A
   const runnableAgents = sorted(uniquePreservingOrder(runnableSource.filter((agent) => !excludedAgents.includes(agent) && healthyVaultAgents.includes(agent))));
   const missingAllowedAgents = uniquePreservingOrder(allowedAgents.filter((agent) => !vaultAgents.includes(agent)));
 
+  // Resolve group memberships for all vault agents (Slice 3c).
+  const groups = new Map<string, string[]>();
+  if (resolvedVaultRoot !== undefined) {
+    for (const agent of vaultAgents) {
+      groups.set(agent, await resolveAgentGroups(resolvedVaultRoot, agent));
+    }
+  }
+
   const report: AgentsReport = {
     vaultAgents,
     allowedAgents,
     excludedAgents,
     runnableAgents,
     missingAllowedAgents,
+    groups,
   };
   if (allowedAgents.length === 0 && vaultRoot !== undefined) report.unsafePolicy = true;
   if (staleVaultAgents.length > 0) report.staleVaultAgents = staleVaultAgents;
@@ -114,7 +126,9 @@ export function formatAgentsReport(report: AgentsReport): string {
     for (const agent of report.vaultAgents) {
       const isStale = report.staleVaultAgents?.includes(agent);
       const label = report.runnableAgents.includes(agent) ? "runnable" : isStale ? "stale" : "vault-only";
-      lines.push(`  [${label}] ${agent}`);
+      const agentGroups = report.groups?.get(agent);
+      const groupInfo = agentGroups && agentGroups.length > 0 ? `groups: ${agentGroups.join(", ")}` : "<no groups>";
+      lines.push(`  [${label}] ${agent} ${groupInfo}`);
     }
   }
   if (report.missingAllowedAgents.length > 0) {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -206,5 +206,174 @@ describe("Piren doctor", () => {
     expect(report.checks).not.toContainEqual(
       expect.objectContaining({ id: "packages" }),
     );
+  });
+
+  it("reports group membership (informational ok) for a selected agent when agent-groups/ exists", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    await initVault({ vaultRoot: root, agentName: "odin", force: true });
+    const groupsDir = join(root, "agent-groups", "developers");
+    await mkdir(groupsDir, { recursive: true });
+    await writeFile(join(groupsDir, "config.yml"), "agents:\n  - thor\n  - odin\n");
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ id: "agent-groups-membership", status: "ok", message: expect.stringContaining("developers") }),
+    );
+  });
+
+  it("reports group membership for all runnable agents when no specific agent is selected", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    await initVault({ vaultRoot: root, agentName: "odin", force: true });
+    const groupsDir = join(root, "agent-groups", "developers");
+    await mkdir(groupsDir, { recursive: true });
+    await writeFile(join(groupsDir, "config.yml"), "agents:\n  - thor\n  - odin\n");
+    // reviewers: only odin
+    const revDir = join(root, "agent-groups", "reviewers");
+    await mkdir(revDir, { recursive: true });
+    await writeFile(join(revDir, "config.yml"), "agents:\n  - odin\n");
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n  - odin\n`);
+
+    const report = await doctorPiren({ env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ id: "agent-groups-membership", status: "ok", message: expect.stringContaining("developers") }),
+    );
+  });
+
+  it("does not emit agent-groups-membership when agent-groups/ is missing", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({ id: "agent-groups-membership" }),
+    );
+  });
+
+  it("warns on stale group agents (agents in config but not in team/)", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const groupsDir = join(root, "agent-groups", "developers");
+    await mkdir(groupsDir, { recursive: true });
+    await writeFile(join(groupsDir, "config.yml"), "agents:\n  - thor\n  - loki\n");
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ id: "agent-groups-stale-agents", status: "warn", message: expect.stringContaining("loki") }),
+    );
+  });
+
+  it("does not emit agent-groups-stale-agents when agent-groups/ is missing", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({ id: "agent-groups-stale-agents" }),
+    );
+  });
+
+  it("warns on skill conflicts between groups the agent belongs to", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    // developers group with skill "code-review" body A
+    const devSkillsDir = join(root, "agent-groups", "developers", "skills");
+    await mkdir(devSkillsDir, { recursive: true });
+    await writeFile(join(root, "agent-groups", "developers", "config.yml"), "agents:\n  - thor\n");
+    await writeFile(join(devSkillsDir, "code-review.md"), "Developer review process body.");
+    // reviewers group with skill "code-review" body B (different)
+    const revSkillsDir = join(root, "agent-groups", "reviewers", "skills");
+    await mkdir(revSkillsDir, { recursive: true });
+    await writeFile(join(root, "agent-groups", "reviewers", "config.yml"), "agents:\n  - thor\n");
+    await writeFile(join(revSkillsDir, "code-review.md"), "Reviewer review process body.");
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ id: "agent-groups-skill-conflicts", status: "warn", message: expect.stringContaining("code-review") }),
+    );
+  });
+
+  it("does not warn on skill conflicts when bodies are identical", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const identicalBody = "Identical review process.";
+    // developers group
+    await mkdir(join(root, "agent-groups", "developers", "skills"), { recursive: true });
+    await writeFile(join(root, "agent-groups", "developers", "config.yml"), "agents:\n  - thor\n");
+    await writeFile(join(root, "agent-groups", "developers", "skills", "code-review.md"), identicalBody);
+    // reviewers group with same body
+    await mkdir(join(root, "agent-groups", "reviewers", "skills"), { recursive: true });
+    await writeFile(join(root, "agent-groups", "reviewers", "config.yml"), "agents:\n  - thor\n");
+    await writeFile(join(root, "agent-groups", "reviewers", "skills", "code-review.md"), identicalBody);
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({ id: "agent-groups-skill-conflicts", status: "warn" }),
+    );
+  });
+
+  it("only checks skill conflicts for groups the agent belongs to", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    // developers: thor is a member, has skill "code-review"
+    await mkdir(join(root, "agent-groups", "developers", "skills"), { recursive: true });
+    await writeFile(join(root, "agent-groups", "developers", "config.yml"), "agents:\n  - thor\n");
+    await writeFile(join(root, "agent-groups", "developers", "skills", "code-review.md"), "Dev body.");
+    // reviewers: thor is NOT a member, has conflicting skill "code-review"
+    await mkdir(join(root, "agent-groups", "reviewers", "skills"), { recursive: true });
+    await writeFile(join(root, "agent-groups", "reviewers", "config.yml"), "agents:\n  - odin\n");
+    await writeFile(join(root, "agent-groups", "reviewers", "skills", "code-review.md"), "Reviewer body - different.");
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    // No conflict because thor is only in developers, not reviewers
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({ id: "agent-groups-skill-conflicts", status: "warn" }),
+    );
+  });
+
+  it("does not emit agent-groups-skill-conflicts when agent-groups/ is missing", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({ id: "agent-groups-skill-conflicts" }),
+    );
+  });
+
+  it("places group membership check before agent-files in output order", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const groupsDir = join(root, "agent-groups", "developers");
+    await mkdir(groupsDir, { recursive: true });
+    await writeFile(join(groupsDir, "config.yml"), "agents:\n  - thor\n");
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    const ids = report.checks.map((c) => c.id);
+    const membershipIdx = ids.indexOf("agent-groups-membership");
+    const agentFilesIdx = ids.indexOf("agent-files");
+    expect(membershipIdx).not.toBe(-1);
+    expect(agentFilesIdx).not.toBe(-1);
+    expect(membershipIdx).toBeLessThan(agentFilesIdx);
   });
 });

@@ -63,13 +63,28 @@ export type ServiceConfig = ServicesLocalConfig;
  */
 export declare function checkServiceConfig(config: ServiceConfig | undefined): DoctorCheck | null;
 /**
- * Run OKF v0.1 conformance over the vault and return a `DoctorCheck`.
+ * Doctor check: group membership (informational, status "ok").
  *
- * OKF conformance is a WARNING, never a hard fail: a vault with entropy is not
- * broken, it is drifting from the specified format. The check summarizes how
- * many concept documents were checked and lists up to a handful of problem
- * paths so the steward can fix the worst offenders without an overwhelming dump.
+ * Reports which groups exist and which groups the selected agent (or allowed
+ * agents) belong to. Emits no check when `agent-groups/` is missing.
  */
+export declare function checkGroupMembership(vaultRoot: string, agentName?: string, runnableAgents?: string[]): Promise<DoctorCheck | null>;
+/**
+ * Doctor check: stale group agents (WARN).
+ *
+ * If any group config references an agent name that has no `team/<agent>/`
+ * directory in the vault, warn. Emits no check when `agent-groups/` is missing.
+ */
+export declare function checkStaleGroupAgents(vaultRoot: string): Promise<DoctorCheck | null>;
+/**
+ * Doctor check: skill conflicts between groups the agent belongs to (WARN).
+ *
+ * If an agent belongs to two groups that both declare a skill with the same
+ * name but different file bodies, warn. Only checks groups the agent actually
+ * belongs to. Emits no check when `agent-groups/` is missing or the agent
+ * belongs to ≤1 group.
+ */
+export declare function checkGroupSkillConflicts(vaultRoot: string, agentName: string): Promise<DoctorCheck | null>;
 export declare function checkVaultOkfConformance(vaultRoot: string, options?: {
     vaultDirReader?: VaultDirReader;
     exclude?: string[];
