@@ -113,4 +113,20 @@ describe("WebUI review affordances", () => {
     expect(app).not.toContain("function openVaultBrowser");
     expect(app).not.toContain("function openKnowledgeGraph");
   });
+
+  it("switches to the Files tab when a graph node is clicked", async () => {
+    const app = await readPublic("app.js");
+    // The graph-node click handler must switch to the Files tab before opening the file.
+    expect(app).toContain('selectVaultTab("files")');
+    // Both calls must appear in the same line or adjacent lines within the handler.
+    const clickHandler = app.match(
+      /addEventListener\("click".*selectVaultTab\("files"\).*openVaultFile\(node\.path\)/s
+    );
+    expect(clickHandler).not.toBeNull();
+    // The keydown handler must also switch tabs.
+    const keydownHandler = app.match(
+      /addEventListener\("keydown".*selectVaultTab\("files"\).*openVaultFile\(node\.path\)/s
+    );
+    expect(keydownHandler).not.toBeNull();
+  });
 });

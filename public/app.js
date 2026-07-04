@@ -1064,9 +1064,9 @@ function renderKnowledgeGraph(graph) {
     group.setAttribute("tabindex", "0");
     group.setAttribute("role", "button");
     group.setAttribute("aria-label", "Open " + node.title);
-    group.addEventListener("click", () => openVaultFile(node.path));
+    group.addEventListener("click", () => { selectVaultTab("files"); openVaultFile(node.path); });
     group.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") openVaultFile(node.path);
+      if (event.key === "Enter" || event.key === " ") { selectVaultTab("files"); openVaultFile(node.path); }
     });
 
     const circle = svgEl("circle");
