@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { listPirenAgents, formatAgentsReport } from "../src/agents.js";
+import { listPirenAgents, formatAgentsReport, listFallbackCandidates, formatFallbackReport } from "../src/agents.js";
 import { initVault } from "../src/init.js";
 
 let root: string;
@@ -151,5 +151,90 @@ describe("Piren agents listing", () => {
     const output = formatAgentsReport(report);
 
     expect(output).toContain("[runnable] thor <no groups>");
+  });
+});
+
+describe("fallback recommendation", () => {
+  it("formats fallback candidates with group context", () => {
+    const output = formatFallbackReport("zai", [
+      { agent: "dipu", sourceGroups: ["developers"] },
+      { agent: "sam", sourceGroups: ["developers", "reviewers"] },
+    ]);
+    expect(output).toContain("Fallback candidates for zai:");
+    expect(output).toContain("  dipu (via developers)");
+    expect(output).toContain("  sam (via developers, reviewers)");
+  });
+
+  it("formats an empty fallback list clearly", () => {
+    const output = formatFallbackReport("zai", []);
+    expect(output).toContain("No fallback candidates found for zai.");
+  });
+
+  it("resolves real fallback candidates from a vault with group configs", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    await initVault({ vaultRoot: root, agentName: "odin", force: true });
+    await initVault({ vaultRoot: root, agentName: "loki", force: true });
+    const devDir = join(root, "agent-groups", "developers");
+    await mkdir(devDir, { recursive: true });
+    await writeFile(
+      join(devDir, "config.yml"),
+      "agents:\n  - thor\n  - odin\n  - loki\n" +
+      "fallback_order:\n" +
+      "  thor:\n" +
+      "    - odin\n" +
+      "    - loki\n",
+    );
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "  - odin\n");
+
+    const candidates = await listFallbackCandidates(root, "thor", {
+      configPath,
+    });
+    expect(candidates).toEqual([
+      { agent: "odin", sourceGroups: ["developers"] },
+    ]);
+    // loki is not in allowed_agents, so it should not appear.
+  });
+
+  it("returns an empty list when the agent has no fallback candidates", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    await initVault({ vaultRoot: root, agentName: "odin", force: true });
+    const devDir = join(root, "agent-groups", "developers");
+    await mkdir(devDir, { recursive: true });
+    await writeFile(
+      join(devDir, "config.yml"),
+      "agents:\n  - thor\n  - odin\n",
+    );
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "  - odin\n");
+
+    const candidates = await listFallbackCandidates(root, "thor", {
+      configPath,
+    });
+    expect(candidates).toEqual([]);
+  });
+
+  it("uses explicit allowed/excluded overrides when provided", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    await initVault({ vaultRoot: root, agentName: "odin", force: true });
+    const devDir = join(root, "agent-groups", "developers");
+    await mkdir(devDir, { recursive: true });
+    await writeFile(
+      join(devDir, "config.yml"),
+      "agents:\n  - thor\n  - odin\n" +
+      "fallback_order:\n" +
+      "  thor:\n" +
+      "    - odin\n",
+    );
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "  - odin\n");
+
+    // Override: exclude odin even though config allows it
+    const candidates = await listFallbackCandidates(root, "thor", {
+      configPath,
+      allowedAgents: ["thor", "odin"],
+      excludedAgents: ["odin"],
+    });
+    expect(candidates).toEqual([]);
   });
 });

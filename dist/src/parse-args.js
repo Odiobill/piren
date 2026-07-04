@@ -42,6 +42,7 @@ export function parseArgs(argv) {
     let model;
     let thinking;
     let apiKey;
+    let fallback;
     let command = "status";
     let positionals = [];
     const passthroughIndex = argv.indexOf("--");
@@ -78,6 +79,7 @@ export function parseArgs(argv) {
         const modelValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined ? readFlagValue("--model") : undefined;
         const thinkingValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined ? readFlagValue("--thinking") : undefined;
         const apiKeyValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined && thinkingValue === undefined ? readFlagValue("--api-key") : undefined;
+        const fallbackValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined && thinkingValue === undefined && apiKeyValue === undefined ? readFlagValue("--fallback") : undefined;
         if (agentDirValue !== undefined) {
             agentDir = agentDirValue;
         }
@@ -120,6 +122,9 @@ export function parseArgs(argv) {
         else if (apiKeyValue !== undefined) {
             apiKey = apiKeyValue;
         }
+        else if (fallbackValue !== undefined) {
+            fallback = fallbackValue;
+        }
         else if (arg && !arg.startsWith("-")) {
             // First non-flag token is the command. After the command, every further
             // non-flag token is a positional. Flag values are consumed by the flag
@@ -154,6 +159,7 @@ export function parseArgs(argv) {
         model,
         thinking,
         apiKey,
+        fallback,
         positionals,
     };
 }

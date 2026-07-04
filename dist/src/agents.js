@@ -2,7 +2,7 @@ import { access, readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
-import { resolveAgentGroups } from "./agent-groups.js";
+import { resolveAgentGroups, recommendFallback } from "./agent-groups.js";
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
 async function pathExists(path) {
     try {
@@ -120,6 +120,48 @@ export function formatAgentsReport(report) {
         lines.push("allowed-but-missing:");
         for (const agent of report.missingAllowedAgents)
             lines.push(`  [missing] ${agent}`);
+    }
+    return lines.join("\n");
+}
+/**
+ * Resolve read-only fallback candidates for a failed agent, reading local
+ * runnable-agent policy from the config file unless overridden in options.
+ * Returns an empty array when the agent has no eligible fallback candidates.
+ *
+ * This is a diagnostic helper, not an automatic rerouting action.
+ */
+export async function listFallbackCandidates(vaultRoot, agentName, options = {}) {
+    const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
+    const config = await readYamlConfig(configPath);
+    const resolvedVaultRoot = resolve(vaultRoot);
+    const allowedAgents = options.allowedAgents ??
+        uniquePreservingOrder(normalizeStringArray(config.allowed_agents));
+    const excludedAgents = options.excludedAgents ??
+        uniquePreservingOrder(normalizeStringArray(config.excluded_agents));
+    return recommendFallback(resolvedVaultRoot, agentName, allowedAgents, excludedAgents);
+}
+/**
+ * Format the fallback recommendation report for CLI output.
+ *
+ * Example output:
+ * ```
+ * Fallback candidates for zai:
+ *   dipu (via developers)
+ *   sam (via developers, reviewers)
+ * ```
+ *
+ * When no candidates are available:
+ * ```
+ * No fallback candidates found for zai.
+ * ```
+ */
+export function formatFallbackReport(failedAgent, recommendations) {
+    if (recommendations.length === 0) {
+        return `No fallback candidates found for ${failedAgent}.`;
+    }
+    const lines = [`Fallback candidates for ${failedAgent}:`];
+    for (const rec of recommendations) {
+        lines.push(`  ${rec.agent} (via ${rec.sourceGroups.join(", ")})`);
     }
     return lines.join("\n");
 }

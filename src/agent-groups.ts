@@ -22,6 +22,12 @@ interface GroupConfig {
 /** A parsed group keyed by group name. */
 type GroupConfigs = Map<string, GroupConfig>;
 
+/** A read-only fallback candidate with its recommending group names. */
+export interface FallbackRecommendation {
+  agent: string;
+  sourceGroups: string[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -161,6 +167,53 @@ export async function resolveFallbackCandidates(
       if (seen.has(candidate)) continue;
       seen.add(candidate);
       result.push(candidate);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Return read-only fallback recommendations for a failed agent, each enriched
+ * with its source groups. Candidates are drawn from each group's
+ * `fallback_order`, filtered by local runnable-agent policy (allowed/excluded),
+ * deduplicated by agent while merging sourceGroups across groups, and returned
+ * in first-encounter order.
+ *
+ * This is a diagnostic helper, not a rerouting action. Returns an empty array
+ * when the agent belongs to no groups, has no declared fallback order, or no
+ * candidate survives the local-policy filter.
+ */
+export async function recommendFallback(
+  vaultRoot: string,
+  failedAgent: string,
+  allowedAgents: string[],
+  excludedAgents: string[],
+): Promise<FallbackRecommendation[]> {
+  const groups = await parseGroupConfigs(vaultRoot);
+  const allowed = new Set(allowedAgents);
+  const excluded = new Set(excludedAgents);
+  const seen = new Set<string>();
+  const result: FallbackRecommendation[] = [];
+
+  for (const [groupName, config] of groups) {
+    if (!config.agents.includes(failedAgent)) continue;
+    const ordered = config.fallback_order[failedAgent];
+    if (!ordered) continue;
+    for (const candidate of ordered) {
+      if (candidate === failedAgent) continue;
+      if (excluded.has(candidate)) continue;
+      if (!allowed.has(candidate)) continue;
+      if (seen.has(candidate)) {
+        // Candidate already seen: add this group as an additional source.
+        const existing = result.find((r) => r.agent === candidate);
+        if (existing && !existing.sourceGroups.includes(groupName)) {
+          existing.sourceGroups.push(groupName);
+        }
+        continue;
+      }
+      seen.add(candidate);
+      result.push({ agent: candidate, sourceGroups: [groupName] });
     }
   }
 

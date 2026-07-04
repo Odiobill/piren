@@ -6,6 +6,8 @@ import {
   parseGroupConfigs,
   resolveAgentGroups,
   resolveFallbackCandidates,
+  recommendFallback,
+  type FallbackRecommendation,
 } from "../src/agent-groups.js";
 
 async function makeVault(): Promise<{ vault: string; cleanup: () => Promise<void> }> {
@@ -333,6 +335,244 @@ describe("resolveFallbackCandidates", () => {
         [],
       );
       expect(candidates).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe("recommendFallback", () => {
+  it("returns candidates with their source groups", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "developers",
+        [
+          "agents:",
+          "  - dipu",
+          "  - zai",
+          "  - sam",
+          "fallback_order:",
+          "  zai:",
+          "    - dipu",
+          "    - sam",
+        ].join("\n"),
+      );
+      const result = await recommendFallback(
+        vault,
+        "zai",
+        ["dipu", "sam"],
+        [],
+      );
+      expect(result).toEqual([
+        { agent: "dipu", sourceGroups: ["developers"] },
+        { agent: "sam", sourceGroups: ["developers"] },
+      ]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("filters candidates by allowed and excluded agents", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "developers",
+        [
+          "agents:",
+          "  - dipu",
+          "  - zai",
+          "  - sam",
+          "  - dario",
+          "fallback_order:",
+          "  zai:",
+          "    - dipu",
+          "    - sam",
+          "    - dario",
+        ].join("\n"),
+      );
+      // dario excluded, sam not in allowed
+      const result = await recommendFallback(
+        vault,
+        "zai",
+        ["dipu"],
+        ["dario"],
+      );
+      expect(result).toEqual([
+        { agent: "dipu", sourceGroups: ["developers"] },
+      ]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("merges sourceGroups when a candidate appears in multiple groups", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "developers",
+        [
+          "agents:",
+          "  - dipu",
+          "  - zai",
+          "fallback_order:",
+          "  zai:",
+          "    - dipu",
+        ].join("\n"),
+      );
+      await writeGroupConfig(
+        vault,
+        "reviewers",
+        [
+          "agents:",
+          "  - dipu",
+          "  - zai",
+          "fallback_order:",
+          "  zai:",
+          "    - dipu",
+        ].join("\n"),
+      );
+      const result = await recommendFallback(
+        vault,
+        "zai",
+        ["dipu"],
+        [],
+      );
+      expect(result).toEqual([
+        { agent: "dipu", sourceGroups: ["developers", "reviewers"] },
+      ]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("preserves first-encounter order and deduplicates by agent", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "developers",
+        [
+          "agents:",
+          "  - dipu",
+          "  - zai",
+          "  - sam",
+          "fallback_order:",
+          "  zai:",
+          "    - dipu",
+          "    - sam",
+        ].join("\n"),
+      );
+      await writeGroupConfig(
+        vault,
+        "reviewers",
+        [
+          "agents:",
+          "  - zai",
+          "  - sam",
+          "fallback_order:",
+          "  zai:",
+          "    - sam",
+        ].join("\n"),
+      );
+      const result = await recommendFallback(
+        vault,
+        "zai",
+        ["dipu", "sam"],
+        [],
+      );
+      expect(result).toEqual([
+        { agent: "dipu", sourceGroups: ["developers"] },
+        { agent: "sam", sourceGroups: ["developers", "reviewers"] },
+      ]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("returns an empty array when the agent has no fallback_order in any group", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "developers",
+        ["agents:", "  - dipu", "  - zai"].join("\n"),
+      );
+      const result = await recommendFallback(
+        vault,
+        "dipu",
+        ["zai"],
+        [],
+      );
+      expect(result).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("returns an empty array when agent-groups/ is missing", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      const result = await recommendFallback(
+        vault,
+        "zai",
+        ["dipu"],
+        [],
+      );
+      expect(result).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("returns an empty array when the agent belongs to no groups", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "developers",
+        ["agents:", "  - dipu", "  - sam"].join("\n"),
+      );
+      const result = await recommendFallback(
+        vault,
+        "zai",
+        ["dipu", "sam"],
+        [],
+      );
+      expect(result).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("skips self-references in fallback_order", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "developers",
+        [
+          "agents:",
+          "  - zai",
+          "  - dipu",
+          "fallback_order:",
+          "  zai:",
+          "    - zai",
+          "    - dipu",
+        ].join("\n"),
+      );
+      const result = await recommendFallback(
+        vault,
+        "zai",
+        ["zai", "dipu"],
+        [],
+      );
+      expect(result).toEqual([
+        { agent: "dipu", sourceGroups: ["developers"] },
+      ]);
     } finally {
       await cleanup();
     }

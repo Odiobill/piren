@@ -176,4 +176,27 @@ describe("parseArgs: preserved behavior", () => {
     expect(parseArgs(["agent", "remove", "thor", "-y"]).yes).toBe(true);
     expect(parseArgs(["agent", "remove", "thor"]).yes).toBe(false);
   });
+
+  it("parses --fallback as a value flag (piren agents --fallback zai)", () => {
+    const result = parseArgs(["agents", "--fallback", "zai"]);
+    expect(result.command).toBe("agents");
+    expect(result.fallback).toBe("zai");
+  });
+
+  it("parses --fallback before the command", () => {
+    const result = parseArgs(["--fallback", "zai", "agents"]);
+    expect(result.command).toBe("agents");
+    expect(result.fallback).toBe("zai");
+  });
+
+  it("parses equals-form --fallback=zai", () => {
+    const result = parseArgs(["agents", "--fallback=zai"]);
+    expect(result.command).toBe("agents");
+    expect(result.fallback).toBe("zai");
+  });
+
+  it("does not set fallback when the flag is not present", () => {
+    const result = parseArgs(["agents"]);
+    expect(result.fallback).toBeUndefined();
+  });
 });

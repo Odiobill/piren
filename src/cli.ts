@@ -33,7 +33,7 @@ import {
   KNOWN_COMMANDS,
 } from "./parse-args.js";
 import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
-import { formatAgentsReport, listPirenAgents } from "./agents.js";
+import { formatAgentsReport, listPirenAgents, listFallbackCandidates, formatFallbackReport } from "./agents.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import {
   detectServiceManager,
@@ -270,8 +270,22 @@ try {
     console.log(formatDoctorReport(report));
     if (!report.ok) process.exit(1);
   } else if (command === "agents") {
-    const report = await listPirenAgents(bootstrapOptions(parsed));
-    console.log(formatAgentsReport(report));
+    if (parsed.fallback !== undefined) {
+      const opts = bootstrapOptions(parsed);
+      const report = await listPirenAgents(opts);
+      const resolvedVaultRoot = report.vaultRoot ?? parsed.vaultRoot;
+      if (!resolvedVaultRoot) {
+        console.error("Could not resolve vault root. Pass --vault-root or set vault_root in ~/.config/piren/config.yml.");
+        process.exit(2);
+      }
+      const candidateOptions: { configPath?: string } = {};
+      if (opts.configPath !== undefined) candidateOptions.configPath = opts.configPath;
+      const candidates = await listFallbackCandidates(resolvedVaultRoot, parsed.fallback, candidateOptions);
+      console.log(formatFallbackReport(parsed.fallback, candidates));
+    } else {
+      const report = await listPirenAgents(bootstrapOptions(parsed));
+      console.log(formatAgentsReport(report));
+    }
   } else if (command === "setup") {
     // Interactive wizard when run bare (no --apply, no --vault-root, no --agent).
     // Batch mode is preserved when any of those flags is present.
