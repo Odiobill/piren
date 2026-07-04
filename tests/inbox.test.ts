@@ -226,3 +226,60 @@ describe("Phase 2 inbox tasks", () => {
     expect(reclaimedContent).toContain("# Reclaim me");
   });
 });
+
+describe("type override validation", () => {
+  it("accepts a valid custom type override", async () => {
+    const result = await createInboxTask({
+      vaultRoot: vault,
+      from: "piren",
+      to: "thor",
+      title: "Custom type note",
+      body: "This task has a custom type.",
+      type: "Note",
+      now: () => new Date("2026-07-04T10:00:00.000Z"),
+    });
+
+    const content = await readFile(join(vault, result.path), "utf8");
+    const firstFieldLine = content.split("\n")[1];
+    expect(firstFieldLine).toBe("type: Note");
+  });
+
+  it("rejects an empty type override", async () => {
+    await expect(createInboxTask({
+      vaultRoot: vault,
+      from: "piren",
+      to: "thor",
+      title: "Empty type",
+      body: "This should be rejected.",
+      type: "",
+      now: () => new Date("2026-07-04T10:00:00.000Z"),
+    })).rejects.toThrow(/type/i);
+  });
+
+  it("rejects a multiline type override", async () => {
+    await expect(createInboxTask({
+      vaultRoot: vault,
+      from: "piren",
+      to: "thor",
+      title: "Multiline type",
+      body: "This should be rejected.",
+      type: "Note\nwith\nbreak",
+      now: () => new Date("2026-07-04T10:00:00.000Z"),
+    })).rejects.toThrow(/type/i);
+  });
+
+  it("defaults to 'Task' type when omitted", async () => {
+    const result = await createInboxTask({
+      vaultRoot: vault,
+      from: "piren",
+      to: "thor",
+      title: "Default type task",
+      body: "This task should have type Task.",
+      now: () => new Date("2026-07-04T10:00:00.000Z"),
+    });
+
+    const content = await readFile(join(vault, result.path), "utf8");
+    const firstFieldLine = content.split("\n")[1];
+    expect(firstFieldLine).toBe("type: Task");
+  });
+});

@@ -101,6 +101,14 @@ function compactTimestamp(date: Date): string {
   return date.toISOString().replace(/[-:.]/g, "");
 }
 
+const TYPE_PATTERN = /^[A-Za-z][A-Za-z0-9 _-]*$/;
+
+function assertValidTaskType(type: string): void {
+  if (!TYPE_PATTERN.test(type)) {
+    throw new Error("Invalid task type. Must be a non-empty single line starting with a letter, using only letters, digits, spaces, underscores, and hyphens.");
+  }
+}
+
 function slug(text: string): string {
   return text
     .toLowerCase()
@@ -233,13 +241,16 @@ export async function createInboxTask(options: CreateInboxTaskOptions): Promise<
     throw new Error(`Target agent not found in vault: ${options.to}`);
   }
 
+  const resolvedType = options.type ?? "Task";
+  assertValidTaskType(resolvedType);
+
   const content = renderTask({
     id: taskId,
     from: options.from,
     to: options.to,
     title: options.title,
     body: options.body,
-    type: options.type ?? "Task",
+    type: resolvedType,
     priority: options.priority ?? "normal",
     requiresApproval: options.requiresApproval ?? false,
     timestamp: created,
