@@ -646,6 +646,7 @@ export default async function pirenExtension(pi, testOptions = {}) {
             to: Type.String({ description: "Target agent name, lowercase kebab-case" }),
             title: Type.String({ description: "Task title" }),
             body: Type.String({ description: "Task body/instructions" }),
+            type: Type.Optional(Type.String({ description: "OKF type for the frontmatter, defaults to Task" })),
             priority: Type.Optional(Type.String({ description: "Task priority: low, normal, high, or urgent" })),
             requires_approval: Type.Optional(Type.Boolean({ description: "Whether the task requires steward approval" })),
         }),
@@ -658,6 +659,8 @@ export default async function pirenExtension(pi, testOptions = {}) {
                     title: params.title,
                     body: params.body,
                 };
+                if (params.type !== undefined)
+                    taskOptions.type = params.type;
                 if (params.priority !== undefined)
                     taskOptions.priority = params.priority;
                 if (params.requires_approval !== undefined)

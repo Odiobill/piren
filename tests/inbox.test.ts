@@ -17,6 +17,21 @@ beforeEach(async () => {
 afterEach(async () => rm(root, { recursive: true, force: true }));
 
 describe("Phase 2 inbox tasks", () => {
+  it("renders type: Task as the first frontmatter field after --- per ADR-0031", async () => {
+    const result = await createInboxTask({
+      vaultRoot: vault,
+      from: "piren",
+      to: "thor",
+      title: "Check disk usage",
+      body: "Please check disk usage on the NAS and report anything above 80%.",
+      now: () => new Date("2026-06-22T15:30:00.000Z"),
+    });
+
+    const content = await readFile(join(vault, result.path), "utf8");
+    const firstFieldLine = content.split("\n")[1];
+    expect(firstFieldLine).toBe("type: Task");
+  });
+
   it("creates one Markdown task file in the target agent inbox", async () => {
     const result = await createInboxTask({
       vaultRoot: vault,
@@ -35,6 +50,7 @@ describe("Phase 2 inbox tasks", () => {
     expect(result.bytes).toBeGreaterThan(0);
 
     const content = await readFile(join(vault, result.path), "utf8");
+    expect(content).toContain("type: Task");
     expect(content).toContain("id: 20260622T153000000Z-check-disk-usage");
     expect(content).toContain("from: piren");
     expect(content).toContain("to: thor");

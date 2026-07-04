@@ -710,6 +710,7 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
       to: Type.String({ description: "Target agent name, lowercase kebab-case" }),
       title: Type.String({ description: "Task title" }),
       body: Type.String({ description: "Task body/instructions" }),
+      type: Type.Optional(Type.String({ description: "OKF type for the frontmatter, defaults to Task" })),
       priority: Type.Optional(Type.String({ description: "Task priority: low, normal, high, or urgent" })),
       requires_approval: Type.Optional(Type.Boolean({ description: "Whether the task requires steward approval" })),
     }),
@@ -727,9 +728,11 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
           to: string;
           title: string;
           body: string;
+          type?: string;
           priority?: "low" | "normal" | "high" | "urgent";
           requiresApproval?: boolean;
         };
+        if (params.type !== undefined) taskOptions.type = params.type;
         if (params.priority !== undefined) taskOptions.priority = params.priority as "low" | "normal" | "high" | "urgent";
         if (params.requires_approval !== undefined) taskOptions.requiresApproval = params.requires_approval;
         const result = await createInboxTask(taskOptions);

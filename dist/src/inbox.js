@@ -49,6 +49,7 @@ async function atomicWriteFile(target, content) {
 function renderTask(options) {
     return [
         "---",
+        `type: ${options.type}`,
         `id: ${options.id}`,
         `from: ${options.from}`,
         `to: ${options.to}`,
@@ -134,6 +135,7 @@ export async function createInboxTask(options) {
         to: options.to,
         title: options.title,
         body: options.body,
+        type: options.type ?? "Task",
         priority: options.priority ?? "normal",
         requiresApproval: options.requiresApproval ?? false,
         timestamp: created,

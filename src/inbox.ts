@@ -9,6 +9,7 @@ export interface CreateInboxTaskOptions {
   to: string;
   title: string;
   body: string;
+  type?: string;
   priority?: "low" | "normal" | "high" | "urgent";
   requiresApproval?: boolean;
   now?: () => Date;
@@ -138,12 +139,14 @@ function renderTask(options: {
   to: string;
   title: string;
   body: string;
+  type: string;
   priority: string;
   requiresApproval: boolean;
   timestamp: string;
 }): string {
   return [
     "---",
+    `type: ${options.type}`,
     `id: ${options.id}`,
     `from: ${options.from}`,
     `to: ${options.to}`,
@@ -236,6 +239,7 @@ export async function createInboxTask(options: CreateInboxTaskOptions): Promise<
     to: options.to,
     title: options.title,
     body: options.body,
+    type: options.type ?? "Task",
     priority: options.priority ?? "normal",
     requiresApproval: options.requiresApproval ?? false,
     timestamp: created,

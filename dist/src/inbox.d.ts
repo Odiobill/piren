@@ -5,6 +5,7 @@ export interface CreateInboxTaskOptions {
     to: string;
     title: string;
     body: string;
+    type?: string;
     priority?: "low" | "normal" | "high" | "urgent";
     requiresApproval?: boolean;
     now?: () => Date;
