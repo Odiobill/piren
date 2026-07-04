@@ -25,6 +25,15 @@
         <img class="logo" src="/piren-logo-dark.svg" alt="Piren animated logo">
       </div>
 
+      <!-- Steward controls: alerts and inbox task management -->
+      <div class="sidebar-section">
+        <button id="notifications-btn" class="full-btn btn-secondary notification-btn" title="Open steward alerts">
+          Steward Alerts
+          <span id="notifications-badge" class="notification-badge hidden">0</span>
+        </button>
+        <button id="inbox-create-btn" class="full-btn btn-secondary" title="Create an inbox task for the selected agent">+ Inbox Task</button>
+      </div>
+
       <div class="sidebar-section">
         <label for="agent-select">Agent</label>
         <div class="select-row">
@@ -37,15 +46,12 @@
         </div>
       </div>
 
+      <!-- Conversation-adjacent control: Vault Explorer -->
       <div class="sidebar-section">
-        <button id="new-conversation-btn" class="full-btn btn-secondary" title="Start a fresh conversation">+ New Conversation</button>
         <button id="vault-explorer-btn" class="full-btn" title="Browse the vault and its read-only OKF knowledge graph">Vault Explorer</button>
-        <button id="inbox-create-btn" class="full-btn btn-secondary" title="Create an inbox task for the selected agent">+ Inbox Task</button>
-        <button id="notifications-btn" class="full-btn btn-secondary notification-btn" title="Open steward alerts">
-          Steward Alerts
-          <span id="notifications-badge" class="notification-badge hidden">0</span>
-        </button>
       </div>
+
+      <button id="new-conversation-btn" class="full-btn btn-secondary" title="Start a fresh conversation">+ New Conversation</button>
 
       <div class="sidebar-section sidebar-sessions">
         <label>Past Sessions</label>

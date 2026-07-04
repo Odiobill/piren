@@ -114,6 +114,15 @@ describe("WebUI review affordances", () => {
     expect(app).not.toContain("function openKnowledgeGraph");
   });
 
+  it("orders sidebar sections by authority scope with New Conversation above Past Sessions", async () => {
+    const html = await readPublic("index.html");
+    // Assert the sidebar sections appear in scope order:
+    // logo -> steward controls -> agent -> vault explorer -> new conversation -> sessions
+    expect(html).toMatch(
+      /class="sidebar-header"[\s\S]*?id="notifications-btn"[\s\S]*?id="inbox-create-btn"[\s\S]*?id="agent-select"[\s\S]*?id="vault-explorer-btn"[\s\S]*?id="new-conversation-btn"[\s\S]*?sidebar-sessions/
+    );
+  });
+
   it("provides steward-facing graph empty/partial-state copy without tool syntax", async () => {
     const html = await readPublic("index.html");
     const app = await readPublic("app.js");
