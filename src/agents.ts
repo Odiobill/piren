@@ -167,10 +167,21 @@ export async function listFallbackCandidates(
   const config = await readYamlConfig(configPath);
   const resolvedVaultRoot = resolve(vaultRoot);
 
-  const allowedAgents = options.allowedAgents ??
+  const rawAllowed = options.allowedAgents ??
     uniquePreservingOrder(normalizeStringArray(config.allowed_agents));
   const excludedAgents = options.excludedAgents ??
     uniquePreservingOrder(normalizeStringArray(config.excluded_agents));
+
+  // Filter allowed agents to only those that actually exist in the vault
+  // (healthy: has SOUL.md + MEMORY.md). This matches the runnable set
+  // computed by listPirenAgents. An empty rawAllowed (no policy) means
+  // "allow all healthy vault agents".
+  const vaultAgents = await readVaultAgents(resolvedVaultRoot);
+  const staleAgents = await readStaleVaultAgents(resolvedVaultRoot, vaultAgents);
+  const healthyAgents = new Set(vaultAgents.filter((a) => !staleAgents.includes(a)));
+  const allowedAgents = rawAllowed.length > 0
+    ? rawAllowed.filter((a) => healthyAgents.has(a))
+    : [...healthyAgents];
 
   return recommendFallback(resolvedVaultRoot, agentName, allowedAgents, excludedAgents);
 }

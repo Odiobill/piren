@@ -202,6 +202,7 @@ export async function recommendFallback(
     if (!ordered) continue;
     for (const candidate of ordered) {
       if (candidate === failedAgent) continue;
+      if (!config.agents.includes(candidate)) continue;
       if (excluded.has(candidate)) continue;
       if (!allowed.has(candidate)) continue;
       if (seen.has(candidate)) {
