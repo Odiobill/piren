@@ -10,7 +10,7 @@
 
 Piren is a lightweight, local-first agent runtime on top of [Pi Coding Agent](https://pi.dev/). It keeps agent identity, operational state, logs, sessions, task exchange, skills, cron jobs, and cumulative project knowledge in an inspectable Markdown vault.
 
-💡 **Philosophy:** Piren does not try to replace the core agent engine. It builds on the right foundation, Pi Coding Agent, then adds the missing local-first runtime layer: inspectable state, vault-native knowledge, explicit tools, gateways, and edge-device operations.
+💡 **Philosophy:** Piren does not try to replace the core agent engine. It builds on the right foundation, Pi Coding Agent, then adds the missing local-first runtime layer: inspectable state, vault-native knowledge, explicit tools, gateways, and edge-device operations. For the seven discipline principles behind every feature, see [Piren discipline](docs/discipline.md).
 
 Piren exists for stewarded teams of local agents: small enough for edge and homelab devices, explicit enough to debug from a terminal, and transparent enough that Obsidian can be the source of truth. It borrows self-improvement ideas from larger agent systems, but keeps them reviewable: agents write visible vault artifacts instead of hidden memory mutations.
 
@@ -82,6 +82,7 @@ Gateway transports are separate processes that spawn Pi in RPC mode. The integra
 Online landing page: **https://piren.org/**
 
 - [Getting started](docs/getting-started.md)
+- [Piren discipline](docs/discipline.md)
 - [Configuration](docs/configuration.md)
 - [Vault layout](docs/vault-layout.md)
 - [Gateway and web UI](docs/gateway.md)
