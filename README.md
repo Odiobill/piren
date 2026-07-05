@@ -112,7 +112,7 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren 0.1.0-rc.2 is the current release candidate. It keeps the rc.1 core and adds post-RC closeout polish: whole-vault OKF graph nodes, better Web UI Markdown/chat formatting, equal resizable side panels, context usage percentage, robust tool-name display, and stronger default vault import guidance.
 
-Current verification baseline: 73 test files, 584 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing. `npm run clean-install:check` should be run after pushing because it fetches the GitHub source.
+Current verification baseline: 76 test files, 674 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing. `npm run clean-install:check` should be run after pushing because it fetches the GitHub source.
 
 Update an existing global install with:
 
