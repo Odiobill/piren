@@ -55,6 +55,13 @@ export function crontabAvailableFromInvocation(result) {
         return false;
     return result.exitCode === 0 || result.exitCode === 1;
 }
+export function systemdUserAvailableFromInvocation(result) {
+    if (result.signal !== null)
+        return false;
+    if (result.exitCode === null)
+        return false;
+    return result.exitCode === 0 || result.exitCode === 1;
+}
 export function generateSystemdUnit(opts) {
     const execStart = `${opts.pirenCommand} ${opts.transport} --vault-root ${opts.vaultRoot} --agent ${opts.agentName}`;
     return [
@@ -268,9 +275,16 @@ export function controlCommands(action, transport, manager) {
     return [];
 }
 export function resolvePirenCommand(opts = {}) {
-    if (opts.explicit && opts.explicit.trim() !== "")
-        return opts.explicit;
-    return "piren";
+    const explicit = opts.explicit?.trim();
+    if (!explicit)
+        return "piren";
+    // When the explicit path is a JavaScript entry point (running from source or
+    // dist via `node dist/src/cli.js`), systemd's ExecStart cannot execute it
+    // directly and fails with 203/EXEC. Prepend `node` so the unit is runnable.
+    if (explicit.endsWith(".js") || explicit.endsWith(".mjs")) {
+        return `node ${explicit}`;
+    }
+    return explicit;
 }
 export async function executeServiceAction(opts) {
     const errors = [];

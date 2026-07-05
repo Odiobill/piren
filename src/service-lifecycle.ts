@@ -93,6 +93,33 @@ export function crontabAvailableFromInvocation(result: CrontabInvocationResult):
   return result.exitCode === 0 || result.exitCode === 1;
 }
 
+/**
+ * Interpret the result of invoking `systemctl --user is-system-running` to
+ * decide whether the systemd user session can run Piren services.
+ *
+ * `is-system-running` prints a state word and exits:
+ *   - exit 0: "running".
+ *   - exit 1: "degraded", "starting", or "maintenance". A degraded session has
+ *     a failed unit but still runs services fine; "starting"/"maintenance" are
+ *     also a usable user manager for our purposes.
+ *   - exit >= 2 or a signal: hard failure (command not found, no user session,
+ *     bus error) -> unavailable.
+ *
+ * Reading exit 1 as "unavailable" caused systems with a merely degraded user
+ * session (a common homelab state) to be detected as "none" instead of
+ * "systemd", breaking `piren service install` on otherwise healthy machines.
+ */
+export interface SystemdInvocationResult {
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+export function systemdUserAvailableFromInvocation(result: SystemdInvocationResult): boolean {
+  if (result.signal !== null) return false;
+  if (result.exitCode === null) return false;
+  return result.exitCode === 0 || result.exitCode === 1;
+}
+
 // ---------------------------------------------------------------------------
 // Generators (pure, return string content)
 // ---------------------------------------------------------------------------
@@ -397,8 +424,15 @@ export interface ResolvePirenCommandOptions {
 }
 
 export function resolvePirenCommand(opts: ResolvePirenCommandOptions = {}): string {
-  if (opts.explicit && opts.explicit.trim() !== "") return opts.explicit;
-  return "piren";
+  const explicit = opts.explicit?.trim();
+  if (!explicit) return "piren";
+  // When the explicit path is a JavaScript entry point (running from source or
+  // dist via `node dist/src/cli.js`), systemd's ExecStart cannot execute it
+  // directly and fails with 203/EXEC. Prepend `node` so the unit is runnable.
+  if (explicit.endsWith(".js") || explicit.endsWith(".mjs")) {
+    return `node ${explicit}`;
+  }
+  return explicit;
 }
 
 export interface ExecuteServiceActionOptions {

@@ -4,6 +4,8 @@ import {
   SERVICE_ACTIONS,
   detectServiceManager,
   crontabAvailableFromInvocation,
+  systemdUserAvailableFromInvocation,
+  resolvePirenCommand,
   generateSystemdUnit,
   generateTmuxLaunchScript,
   generateCronEntry,
@@ -106,6 +108,62 @@ describe("service-lifecycle: crontab detection (DietPi / vixie cron)", () => {
 
   it("treats a killed process (signal) as unavailable", () => {
     expect(crontabAvailableFromInvocation({ exitCode: null, signal: "SIGTERM" })).toBe(false);
+  });
+});
+
+describe("service-lifecycle: systemd user detection (degraded session)", () => {
+  // `systemctl --user is-system-running` exits 1 with "degraded" when the user
+  // session is degraded (a unit failed but the session itself runs services).
+  // A bare exit-0 check reads that as "systemd not available" and breaks
+  // service install on systems whose user session is merely degraded.
+  it("treats 'degraded' (exit 1) as available", () => {
+    expect(systemdUserAvailableFromInvocation({ exitCode: 1, signal: null })).toBe(true);
+  });
+
+  it("treats 'running' (exit 0) as available", () => {
+    expect(systemdUserAvailableFromInvocation({ exitCode: 0, signal: null })).toBe(true);
+  });
+
+  it("treats 'starting' (exit 1) as available", () => {
+    expect(systemdUserAvailableFromInvocation({ exitCode: 1, signal: null })).toBe(true);
+  });
+
+  it("treats hard failures (exit >= 2) as unavailable", () => {
+    expect(systemdUserAvailableFromInvocation({ exitCode: 2, signal: null })).toBe(false);
+    expect(systemdUserAvailableFromInvocation({ exitCode: 127, signal: null })).toBe(false);
+  });
+
+  it("treats a killed process (signal) as unavailable", () => {
+    expect(systemdUserAvailableFromInvocation({ exitCode: null, signal: "SIGTERM" })).toBe(false);
+  });
+});
+
+describe("service-lifecycle: resolvePirenCommand", () => {
+  // When Piren is run from source or dist via `node dist/src/cli.js`,
+  // process.argv[1] is a .js file path. systemd's ExecStart cannot execute a
+  // .js file directly (it fails with 203/EXEC), so the resolved command must
+  // prepend `node` when the explicit path is a JS entry point.
+  it("prepends node when the explicit path is a .js file", () => {
+    expect(resolvePirenCommand({ explicit: "/home/davide/src/piren/dist/src/cli.js" })).toBe(
+      "node /home/davide/src/piren/dist/src/cli.js",
+    );
+  });
+
+  it("prepends node when the explicit path is an .mjs file", () => {
+    expect(resolvePirenCommand({ explicit: "/opt/piren/cli.mjs" })).toBe("node /opt/piren/cli.mjs");
+  });
+
+  it("returns the binary name verbatim when it is not a JS file", () => {
+    expect(resolvePirenCommand({ explicit: "/usr/local/bin/piren" })).toBe("/usr/local/bin/piren");
+  });
+
+  it("defaults to 'piren' when no explicit path is given", () => {
+    expect(resolvePirenCommand({})).toBe("piren");
+  });
+
+  it("defaults to 'piren' when the explicit path is empty", () => {
+    expect(resolvePirenCommand({ explicit: "" })).toBe("piren");
+    expect(resolvePirenCommand({ explicit: "   " })).toBe("piren");
   });
 });
 

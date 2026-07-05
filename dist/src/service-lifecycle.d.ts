@@ -57,6 +57,27 @@ export interface CrontabInvocationResult {
     signal: NodeJS.Signals | null;
 }
 export declare function crontabAvailableFromInvocation(result: CrontabInvocationResult): boolean;
+/**
+ * Interpret the result of invoking `systemctl --user is-system-running` to
+ * decide whether the systemd user session can run Piren services.
+ *
+ * `is-system-running` prints a state word and exits:
+ *   - exit 0: "running".
+ *   - exit 1: "degraded", "starting", or "maintenance". A degraded session has
+ *     a failed unit but still runs services fine; "starting"/"maintenance" are
+ *     also a usable user manager for our purposes.
+ *   - exit >= 2 or a signal: hard failure (command not found, no user session,
+ *     bus error) -> unavailable.
+ *
+ * Reading exit 1 as "unavailable" caused systems with a merely degraded user
+ * session (a common homelab state) to be detected as "none" instead of
+ * "systemd", breaking `piren service install` on otherwise healthy machines.
+ */
+export interface SystemdInvocationResult {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+}
+export declare function systemdUserAvailableFromInvocation(result: SystemdInvocationResult): boolean;
 export interface GenerateServiceOptions {
     transport: ServiceTransport;
     pirenCommand: string;

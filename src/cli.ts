@@ -45,6 +45,7 @@ import {
   validateTransport,
   validateAction,
   crontabAvailableFromInvocation,
+  systemdUserAvailableFromInvocation,
   type ServiceManagerDetection,
   type ServiceExecDeps,
   type CommandResult,
@@ -357,7 +358,7 @@ try {
     const servicesDir = join(homedir(), ".config", "piren", "services");
     const pirenCommand = resolvePirenCommand({ explicit: process.argv[1] });
     const probe: ServiceManagerDetection = {
-      hasSystemdUser: async () => commandAvailable("systemctl", ["--user", "is-system-running"]),
+      hasSystemdUser: async () => systemdUserInstalled(),
       hasTmux: async () => commandAvailable("tmux", ["-V"]),
       hasCrontab: async () => crontabInstalled(),
     };
@@ -753,6 +754,29 @@ function crontabInstalled(): Promise<boolean> {
       const code = typeof error.code === "number" ? error.code : null;
       const signal = error.signal ?? null;
       resolvePromise(crontabAvailableFromInvocation({ exitCode: code, signal }));
+    });
+  });
+}
+
+/**
+ * Detect whether the systemd user session can run Piren services by invoking
+ * `systemctl --user is-system-running`. Unlike `commandAvailable`, this routes
+ * the raw exit code + signal through `systemdUserAvailableFromInvocation`,
+ * because `is-system-running` exits 1 when the session is "degraded",
+ * "starting", or "maintenance" - all of which still run user services fine.
+ * A bare `exit 0` check read "degraded" as "systemd not available" and broke
+ * `piren service install` on otherwise healthy homelab machines.
+ */
+function systemdUserInstalled(): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    execFile("systemctl", ["--user", "is-system-running"], { timeout: 5000 }, (error) => {
+      if (!error) {
+        resolvePromise(systemdUserAvailableFromInvocation({ exitCode: 0, signal: null }));
+        return;
+      }
+      const code = typeof error.code === "number" ? error.code : null;
+      const signal = error.signal ?? null;
+      resolvePromise(systemdUserAvailableFromInvocation({ exitCode: code, signal }));
     });
   });
 }
