@@ -73,6 +73,15 @@ async function existingStartedAt(path: string): Promise<string | undefined> {
   }
 }
 
+async function existingPriority(path: string): Promise<number | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8"));
+    return typeof parsed.priority === "number" && Number.isFinite(parsed.priority) ? parsed.priority : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function registerDevice(options: RegisterDeviceOptions): Promise<RegisterDeviceResult> {
   assertValidSafeName(options.agentName, "agent name");
   assertValidSafeName(options.deviceId, "device id");
@@ -88,7 +97,7 @@ export async function registerDevice(options: RegisterDeviceOptions): Promise<Re
   const absolutePath = resolve(root, path);
   assertInside(root, absolutePath);
   const startedAt = await existingStartedAt(absolutePath) ?? timestamp;
-  const priority = options.priority ?? 10;
+  const priority = options.priority ?? await existingPriority(absolutePath) ?? 10;
   const status = options.status ?? "active";
   const record = {
     device_id: options.deviceId,
