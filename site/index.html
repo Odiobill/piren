@@ -147,7 +147,7 @@
       <div class="portability-text">
         <p class="lead">Think of the vault as the office building and each Piren installation as an office in the same building on the same network. The agent is an employee whose identity, memory, and tools live in the building, not in any single office.</p>
         <p>So when an engineer has the laptop and skills they need, they can do their job from any office. Install Piren on a Raspberry Pi in the closet, a desktop, and a laptop, point all three at one synced vault, and <code>heimdall</code> is the same agent on every machine: same <code>SOUL.md</code>, same pending inbox, same skills, same cron jobs.</p>
-        <p>This is what makes Piren fault-tolerant out of the box. Tasks and cron jobs are claimed by <strong>atomic file operations</strong> with active-device priority. If one device goes dark, the next eligible device picks up the pending inbox and the due cron jobs automatically, because the work lives in the shared substrate, not in a process on the dead machine.</p>
+        <p>This is what makes Piren fault-tolerant out of the box. Tasks and cron jobs are claimed by <strong>atomic file operations</strong> with active-device priority. If one device goes dark, the next eligible device picks up the pending inbox and the due cron jobs automatically, because the work lives in the shared substrate, not in a process on the dead machine. The scheduler dry-run (<code>piren scheduler --dry-run</code>) shows exactly which claims a device would pick up next.</p>
         <p>Which machines may host which agents is an installation policy (<code>allowed_agents</code>), kept outside the vault. The vault carries the team; the installation decides which office it runs in today.</p>
       </div>
     </div>
@@ -157,11 +157,11 @@
 <section id="features">
   <div class="container">
     <h2 class="section-title">What's in the box</h2>
-    <p class="section-sub">Four ways to reach your agents, one inspectable substrate underneath.</p>
+    <p class="section-sub">Four ways to reach your agents, one inspectable substrate underneath, plus the coordination primitives a fleet needs.</p>
     <div class="features">
       <div class="feature">
         <h3>Minimal web UI</h3>
-        <p>Agent selection, chat streaming, steering, approval gates, a read-only vault browser, and a context indicator. An emergency interface, not a config surface.</p>
+        <p>Agent selection, chat streaming, steering, approval gates, a read-only Vault Explorer with Files and Knowledge Graph tabs, and a context indicator. An emergency interface, not a config surface.</p>
       </div>
       <div class="feature">
         <h3>Messaging transports</h3>
@@ -189,7 +189,15 @@
       </div>
       <div class="feature">
         <h3>Lazy vault skills</h3>
-        <p>Reusable procedures in <code>vault/skills/</code>, cataloged at startup and loaded on demand. Progressive disclosure, not prompt bloat.</p>
+        <p>Reusable procedures in <code>vault/skills/</code>, cataloged at startup and loaded on demand. Group-scoped skills sit between shared and agent-specific, so a team shares a skill pack without duplicating it.</p>
+      </div>
+      <div class="feature">
+        <h3>Agent groups and fallback</h3>
+        <p>Group agents by role to share skills and a fallback policy. When an agent can't pick up a task, <code>piren agents --fallback</code> recommends an eligible teammate, filtered by local policy. Read-only: nothing changes hands silently.</p>
+      </div>
+      <div class="feature">
+        <h3>Scheduler dry-run</h3>
+        <p><code>piren scheduler --dry-run</code> shows what the device-local scheduler would claim next, using heartbeat priorities and atomic claims, with zero LLM calls. The full loop is deferred; the planning is inspectable today.</p>
       </div>
       <div class="feature">
         <h3>Pi package extensibility</h3>
@@ -202,7 +210,7 @@
 <section id="screenshot">
   <div class="container">
     <h2 class="section-title">The integrated web UI</h2>
-    <p class="section-sub">A minimal emergency interface: agent selection, streaming chat with tool calls, steering, approval gates, and a read-only vault browser. No model or config controls, by design.</p>
+    <p class="section-sub">A minimal emergency interface: agent selection, streaming chat with tool calls, steering, approval gates, and a read-only Vault Explorer with Files and Knowledge Graph tabs. No model or config controls, by design.</p>
     <div class="screenshot-wrap">
       <img src="assets/webui-screenshot.png" alt="Piren web UI showing an agent reading a teammate's session and leaving durable artifacts">
     </div>
@@ -277,6 +285,7 @@ vault/
 ├── <span class="t-dir">steward-inbox/</span>
 │   └── <span class="t-dir">alerts/</span>
 ├── <span class="t-dir">skills/</span>          <span class="t-comment"># shared skills</span>
+├── <span class="t-dir">agent-groups/</span>    <span class="t-comment"># group skills + fallback</span>
 ├── <span class="t-dir">cron/</span>
 │   ├── <span class="t-dir">jobs/</span>
 │   └── <span class="t-dir">runs/</span>
@@ -368,7 +377,7 @@ vault/
         Pi Coding Agent
       </a>
     </div>
-    <p>Piren 0.1.0-rc.1 &middot; MIT License &middot; local-first, vault-native</p>
+    <p>Piren 0.1.0-rc.3 &middot; MIT License &middot; local-first, vault-native</p>
   </div>
 </footer>
 
