@@ -34,6 +34,7 @@ import {
 } from "./parse-args.js";
 import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents, listFallbackCandidates, formatFallbackReport } from "./agents.js";
+import { schedulerDryRun } from "./scheduler-cli.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import {
   detectServiceManager,
@@ -445,6 +446,9 @@ try {
     const report = await executePirenUpdate({ runCommand: runCommandWithArgs });
     console.log(formatUpdateReport(report));
     if (!report.ok) process.exit(1);
+  } else if (command === "scheduler") {
+    const output = await schedulerDryRun({});
+    console.log(output);
   } else if (command === "agent") {
     await runAgentCommand({
       subcommand: positionals[0],

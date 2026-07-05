@@ -18,6 +18,7 @@ export const KNOWN_COMMANDS = [
     "clean",
     "version",
     "update",
+    "scheduler",
 ];
 /**
  * Parse Piren CLI arguments (typically `process.argv.slice(2)`).
@@ -35,6 +36,7 @@ export function parseArgs(argv) {
     let apply = false;
     let yes = false;
     let help = false;
+    let dryRun = false;
     let port;
     let host;
     let token;
@@ -101,6 +103,9 @@ export function parseArgs(argv) {
         else if (arg === "-h" || arg === "--help") {
             help = true;
         }
+        else if (arg === "--dry-run") {
+            dryRun = true;
+        }
         else if (portValue !== undefined) {
             port = Number(portValue);
         }
@@ -160,6 +165,7 @@ export function parseArgs(argv) {
         thinking,
         apiKey,
         fallback,
+        dryRun,
         positionals,
     };
 }

@@ -22,6 +22,7 @@ import { formatHelp, formatCommandHelp, isHelpRequest } from "./help.js";
 import { parseArgs, bootstrapOptions, KNOWN_COMMANDS, } from "./parse-args.js";
 import { loadPirenContext } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents, listFallbackCandidates, formatFallbackReport } from "./agents.js";
+import { schedulerDryRun } from "./scheduler-cli.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, crontabAvailableFromInvocation, } from "./service-lifecycle.js";
 const thisDir = dirname(fileURLToPath(import.meta.url));
@@ -427,6 +428,10 @@ try {
         console.log(formatUpdateReport(report));
         if (!report.ok)
             process.exit(1);
+    }
+    else if (command === "scheduler") {
+        const output = await schedulerDryRun({});
+        console.log(output);
     }
     else if (command === "agent") {
         await runAgentCommand({

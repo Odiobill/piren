@@ -27,6 +27,7 @@ export interface ParsedArgs {
   apply: boolean;
   yes: boolean;
   help: boolean;
+  dryRun: boolean;
   port: number | undefined;
   host: string | undefined;
   token: string | undefined;
@@ -60,6 +61,7 @@ export const KNOWN_COMMANDS = [
   "clean",
   "version",
   "update",
+  "scheduler",
 ] as const;
 
 /**
@@ -78,6 +80,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let apply = false;
   let yes = false;
   let help = false;
+  let dryRun = false;
   let port: number | undefined;
   let host: string | undefined;
   let token: string | undefined;
@@ -140,6 +143,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       yes = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
+    } else if (arg === "--dry-run") {
+      dryRun = true;
     } else if (portValue !== undefined) {
       port = Number(portValue);
     } else if (hostValue !== undefined) {
@@ -191,6 +196,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     thinking,
     apiKey,
     fallback,
+    dryRun,
     positionals,
   };
 }
