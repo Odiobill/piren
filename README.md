@@ -92,6 +92,7 @@ Online landing page: **https://piren.org/**
 - [Knowledge lifecycle](docs/knowledge-lifecycle.md)
 - [Open Knowledge Format (OKF)](docs/okf.md)
 - [Cron jobs](docs/cron.md)
+- [Scheduler](docs/scheduler.md)
 - [Operations](docs/operations.md)
 - [Service management](docs/service-management.md)
 - [Troubleshooting](docs/troubleshooting.md)

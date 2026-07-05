@@ -160,3 +160,9 @@ be present in `~/.config/piren/config.yml` before the service can run. See
   `~/.pi/agent/auth.json` respectively, never in the vault or the repository.
 - The `running` status recorded in config is advisory (set at install time).
   `piren service status` checks the live state for an accurate report.
+
+## Scheduler
+
+The device-local scheduler (ADR-0029) is a background supervisor that demand-starts bounded agent executions when vault work is due. The first shipped slice covers the dry-run planner only; the full loop and service lifecycle integration are deferred.
+
+For the dry-run command, device ownership model, and what is not yet implemented, see [Scheduler](scheduler.md). When the scheduler loop ships, `piren service install scheduler` will land here alongside the gateway and transport services.
