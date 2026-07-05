@@ -117,9 +117,9 @@ describe("WebUI review affordances", () => {
   it("orders sidebar sections by authority scope with New Conversation above Past Sessions", async () => {
     const html = await readPublic("index.html");
     // Assert the sidebar sections appear in scope order:
-    // logo -> steward controls -> agent -> vault explorer -> new conversation -> sessions
+    // logo -> steward controls (alerts + vault explorer) -> agent -> inbox task -> new conversation -> sessions
     expect(html).toMatch(
-      /class="sidebar-header"[\s\S]*?id="notifications-btn"[\s\S]*?id="inbox-create-btn"[\s\S]*?id="agent-select"[\s\S]*?id="vault-explorer-btn"[\s\S]*?id="new-conversation-btn"[\s\S]*?sidebar-sessions/
+      /class="sidebar-header"[\s\S]*?id="notifications-btn"[\s\S]*?id="vault-explorer-btn"[\s\S]*?id="agent-select"[\s\S]*?id="inbox-create-btn"[\s\S]*?id="new-conversation-btn"[\s\S]*?sidebar-sessions/
     );
   });
 
@@ -180,5 +180,38 @@ describe("WebUI review affordances", () => {
       /addEventListener\("keydown".*selectVaultTab\("files"\).*openVaultFile\(node\.path\)/s
     );
     expect(keydownHandler).not.toBeNull();
+  });
+
+  it("adds a horizontal draggable divider between file list and document viewer", async () => {
+    const html = await readPublic("index.html");
+    const css = await readPublic("style.css");
+    const app = await readPublic("app.js");
+
+    // A dedicated divider element sits between #vault-list and #vault-content.
+    expect(html).toContain('id="files-divider"');
+    expect(html).toMatch(/id="vault-list"[\s\S]*?id="files-divider"[\s\S]*?id="vault-content"/);
+    // CSS owns the divider look and a --files-list-height CSS variable.
+    expect(css).toContain(".files-divider");
+    expect(css).toContain("--files-list-height");
+    // The frontend wires a Pointer Events drag handler for the files divider.
+    expect(app).toContain("files-divider");
+    expect(app).toContain("initFilesDivider");
+    expect(app).toContain("setFilesSplit");
+  });
+
+  it("uses smaller graph node labels that grow on hover", async () => {
+    const css = await readPublic("style.css");
+    // Default label font-size is smaller than the previous 0.68rem baseline.
+    expect(css).toMatch(/\.graph-node text \{[\s\S]*?font-size: 0\.5\drem/);
+    // A hover/focus rule restores a larger size and brighter fill.
+    expect(css).toMatch(/\.graph-node:hover text,[\s\S]*?\.graph-node:focus text \{/);
+    expect(css).toMatch(/\.graph-node:hover text[\s\S]*?font-size: 0\.6\drem/);
+  });
+
+  it("imports the favicon from the landing page", async () => {
+    const html = await readPublic("index.html");
+    expect(html).toContain('rel="icon"');
+    expect(html).toContain('href="/favicon.svg"');
+    expect(html).toContain('rel="apple-touch-icon"');
   });
 });

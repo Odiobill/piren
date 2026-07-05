@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/favicon.svg">
   <title>Piren Gateway</title>
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -25,13 +27,13 @@
         <img class="logo" src="/piren-logo-dark.svg" alt="Piren animated logo">
       </div>
 
-      <!-- Steward controls: alerts and inbox task management -->
+      <!-- Steward controls: alerts and vault explorer -->
       <div class="sidebar-section">
         <button id="notifications-btn" class="full-btn btn-secondary notification-btn" title="Open steward alerts">
           Steward Alerts
           <span id="notifications-badge" class="notification-badge hidden">0</span>
         </button>
-        <button id="inbox-create-btn" class="full-btn btn-secondary" title="Create an inbox task for the selected agent">+ Inbox Task</button>
+        <button id="vault-explorer-btn" class="full-btn" title="Browse the vault and its read-only OKF knowledge graph">Vault Explorer</button>
       </div>
 
       <div class="sidebar-section">
@@ -46,9 +48,9 @@
         </div>
       </div>
 
-      <!-- Conversation-adjacent control: Vault Explorer -->
+      <!-- Conversation-adjacent control: inbox task creation -->
       <div class="sidebar-section">
-        <button id="vault-explorer-btn" class="full-btn" title="Browse the vault and its read-only OKF knowledge graph">Vault Explorer</button>
+        <button id="inbox-create-btn" class="full-btn btn-secondary" title="Create an inbox task for the selected agent">+ Inbox Task</button>
       </div>
 
       <button id="new-conversation-btn" class="full-btn btn-secondary" title="Start a fresh conversation">+ New Conversation</button>
@@ -116,6 +118,7 @@
       <div id="vault-files" class="vault-pane">
         <div id="vault-breadcrumb" class="vault-breadcrumb"></div>
         <div id="vault-list" class="vault-list"></div>
+        <div id="files-divider" class="files-divider hidden" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
         <div id="vault-content" class="vault-content hidden">
           <div class="vault-content-toolbar">
             <div id="vault-view-toggle" class="vault-view-toggle hidden">

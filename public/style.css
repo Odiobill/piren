@@ -1,6 +1,7 @@
 :root {
   --bg: #0f0f17;
   --vault-width: min(480px, 42vw);
+  --files-list-height: 45%;
   --bg-panel: #181828;
   --bg-input: #1e1e30;
   --bg-message-user: #1e1e30;
@@ -444,6 +445,14 @@ body {
   overflow-y: auto;
   padding: 0.5rem;
 }
+/* When the files divider is visible (a file is open), the list takes the
+ * steward-chosen height and the content pane fills the rest. */
+#vault-files.files-split .vault-list {
+  flex: 0 0 var(--files-list-height);
+}
+#vault-files.files-split .vault-content {
+  flex: 1 1 auto;
+}
 
 .vault-entry {
   display: flex;
@@ -460,6 +469,22 @@ body {
 .vault-entry .entry-icon { font-size: 0.95rem; }
 .vault-entry .entry-dir { color: var(--accent); }
 .vault-entry .entry-file { color: var(--text); }
+
+/* Horizontal draggable divider between the file list and the document viewer.
+ * Hidden unless #vault-files has .files-split (a file is open). Dragging it
+ * updates --files-list-height. */
+.files-divider {
+  height: 6px;
+  min-height: 6px;
+  background: var(--border);
+  cursor: row-resize;
+  flex: 0 0 auto;
+  transition: background 0.12s;
+}
+.files-divider:hover,
+.files-divider.dragging {
+  background: var(--accent);
+}
 
 .vault-content {
   flex: 1;
@@ -781,9 +806,15 @@ body {
 .graph-node-document { fill: rgba(251, 191, 36, 0.2); }
 .graph-node text {
   fill: var(--text);
-  font-size: 0.68rem;
+  font-size: 0.58rem;
   text-anchor: middle;
   pointer-events: none;
+  transition: font-size 0.12s, fill 0.12s;
+}
+.graph-node:hover text,
+.graph-node:focus text {
+  font-size: 0.68rem;
+  fill: var(--text-bright);
 }
 
 @media (max-width: 900px) {

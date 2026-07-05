@@ -627,11 +627,32 @@ function closeVaultExplorer() {
   panel.classList.add("hidden");
   document.getElementById("app").classList.remove("vault-open");
   document.getElementById("vault-content").classList.add("hidden");
+  setFilesSplit(false);
+}
+
+/**
+ * Toggle the split layout in the Files pane: when active (a file is open),
+ * the file list takes --files-list-height and the draggable divider shows
+ * between list and content. When inactive, the list takes all available
+ * height and the divider hides.
+ */
+function setFilesSplit(active) {
+  const filesPane = document.getElementById("vault-files");
+  const divider = document.getElementById("files-divider");
+  if (!filesPane || !divider) return;
+  if (active) {
+    filesPane.classList.add("files-split");
+    divider.classList.remove("hidden");
+  } else {
+    filesPane.classList.remove("files-split");
+    divider.classList.add("hidden");
+  }
 }
 
 async function browseVault(path) {
   state.vaultPath = path;
   document.getElementById("vault-content").classList.add("hidden");
+  setFilesSplit(false);
   const breadcrumb = document.getElementById("vault-breadcrumb");
   breadcrumb.innerHTML = "";
   const backBtn = document.createElement("span");
@@ -714,6 +735,7 @@ async function readVaultFile(path) {
     }
 
     document.getElementById("vault-content").classList.remove("hidden");
+    setFilesSplit(true);
 
     const breadcrumb = document.getElementById("vault-breadcrumb");
     breadcrumb.innerHTML = "";
@@ -727,6 +749,7 @@ async function readVaultFile(path) {
     document.getElementById("vault-content-rendered").innerHTML = "";
     document.getElementById("vault-view-toggle").classList.add("hidden");
     document.getElementById("vault-content").classList.remove("hidden");
+    setFilesSplit(true);
   }
 }
 
@@ -1150,6 +1173,60 @@ function initVaultDivider() {
   divider.addEventListener("pointercancel", stopDrag);
 }
 
+/**
+ * Clamp the Files pane list height to a sensible range so neither the file
+ * list nor the document viewer collapses below a usable size.
+ */
+function clampFilesListHeight(px, paneHeight) {
+  const min = 80;
+  const max = Math.max(min, paneHeight - 120);
+  return Math.min(max, Math.max(min, px));
+}
+
+/**
+ * Apply a pixel height to --files-list-height and remember it so reopening
+ * a file restores the steward's last choice.
+ */
+function applyFilesListHeight(px, paneHeight) {
+  const clamped = clampFilesListHeight(px, paneHeight);
+  state.filesListHeight = clamped;
+  document.documentElement.style.setProperty("--files-list-height", clamped + "px");
+}
+
+function initFilesDivider() {
+  const divider = document.getElementById("files-divider");
+  if (!divider) return;
+  let dragging = false;
+
+  divider.addEventListener("pointerdown", (event) => {
+    const filesPane = document.getElementById("vault-files");
+    if (!filesPane || !filesPane.classList.contains("files-split")) return;
+    dragging = true;
+    divider.classList.add("dragging");
+    divider.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  divider.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const list = document.getElementById("vault-list");
+    const rect = list.getBoundingClientRect();
+    // New height = distance from the top of the list to the pointer.
+    const newHeight = event.clientY - rect.top;
+    const filesPane = document.getElementById("vault-files");
+    applyFilesListHeight(newHeight, filesPane.getBoundingClientRect().height);
+  });
+
+  const stopDrag = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    divider.classList.remove("dragging");
+    try { divider.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+  };
+  divider.addEventListener("pointerup", stopDrag);
+  divider.addEventListener("pointercancel", stopDrag);
+}
+
 // ---------------------------------------------------------------------------
 // Event wiring
 // ---------------------------------------------------------------------------
@@ -1199,6 +1276,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("notifications-modal-close").addEventListener("click", closeNotificationsModal);
 
   initVaultDivider();
+  initFilesDivider();
 
   document.getElementById("approval-confirm").addEventListener("click", () => submitApproval(true));
   document.getElementById("approval-cancel").addEventListener("click", () => submitApproval(false));

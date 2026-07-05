@@ -258,7 +258,12 @@ function edgeKey(edge: OkfGraphEdge): string {
 }
 
 export async function buildOkfGraph(options: BuildOkfGraphOptions): Promise<OkfGraph> {
-  const { documents, problems, truncated } = await collectDocuments(options);
+  const { documents: allDocuments, problems, truncated } = await collectDocuments(options);
+  // Skills are procedural memory, not knowledge-graph concepts. Exclude them
+  // from the graph so the visualization stays focused on concepts, entities,
+  // ADRs, and other durable knowledge. This drops skill nodes and any edges
+  // to or from skill documents.
+  const documents = allDocuments.filter((doc) => doc.type !== "Skill");
   const lookup = buildLookup(documents);
   const nodes: OkfGraphNode[] = [];
   const edges: OkfGraphEdge[] = [];
