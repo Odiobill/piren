@@ -72,3 +72,13 @@ This keeps startup prompts small while preserving reusable procedure access.
 ## Boundaries
 
 Skills are durable procedures. They should not contain secrets, one-off task progress, or raw session logs. Promote procedures to skills only when they are reusable.
+
+## Group-scoped skills
+
+Agents can belong to groups that share a skill set. Skills load in this precedence order:
+
+1. **Shared** (`skills/`) - loaded by every agent.
+2. **Group** (`agent-groups/<group>/skills/`) - loaded for agents in the group, later groups override earlier.
+3. **Agent-specific** (`team/<agent>/skills/`) - overrides everything by name.
+
+This lets a `developers` group share a TDD workflow skill pack without duplicating it under every developer agent. See [agent groups and fallback](agent-groups.md) for group configuration and fallback policy.

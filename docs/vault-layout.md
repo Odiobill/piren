@@ -61,13 +61,14 @@ Do not put `.env` or `AGENTS.md` under `team/<agent>/`. Secrets live outside the
 
 ## Agent groups
 
-`agent-groups/` is scaffolded as the compatibility parent for ADR-0028 agent groups. A concrete group can later use:
+`agent-groups/` holds group configurations for ADR-0028 agent groups. A concrete group uses:
 
 ```text
-agent-groups/<group>/skills/
+agent-groups/<group>/config.yml    # agents list + fallback_order
+agent-groups/<group>/skills/       # group-scoped skills
 ```
 
-Group-scoped skills sit between shared skills and agent-specific skills. Fresh vaults create only the parent directory; concrete groups are steward-defined and should not imply automatic fallback or task routing by themselves.
+Group-scoped skills sit between shared skills and agent-specific skills in the load order: `skills/` < `agent-groups/<group>/skills/` < `team/<agent>/skills/`. The `config.yml` declares group membership and fallback order. Fresh vaults create only the parent directory; concrete groups are steward-defined. See [agent groups and fallback](agent-groups.md) for the full configuration and the read-only fallback recommendation command.
 
 ## Shared directories
 

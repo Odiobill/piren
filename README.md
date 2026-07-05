@@ -89,6 +89,7 @@ Online landing page: **https://piren.org/**
 - [Telegram and Discord transports](docs/transports.md)
 - [OpenAI-compatible API](docs/openai-api.md)
 - [Skills](docs/skills.md)
+- [Agent groups and fallback](docs/agent-groups.md)
 - [Knowledge lifecycle](docs/knowledge-lifecycle.md)
 - [Open Knowledge Format (OKF)](docs/okf.md)
 - [Cron jobs](docs/cron.md)
