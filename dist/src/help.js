@@ -99,6 +99,12 @@ export const HELP_TOPICS = [
         short: "Update the global Piren install from GitHub.",
         example: "piren update  # runs npm install -g --install-links github:Odiobill/piren",
     },
+    {
+        command: "scheduler",
+        short: "Dry-run: print what the device-local scheduler would claim next, with zero LLM calls.",
+        flags: ["--dry-run"],
+        example: "piren scheduler --dry-run",
+    },
 ];
 const GLOBAL_FLAGS = ["--vault-root <path>", "--agent <name>", "--agent-dir <path>", "-h, --help"];
 /**
