@@ -5,6 +5,36 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-rc.3] - 2026-07-05
+
+The official-release scope prerelease. Adds agent groups with read-only
+fallback, the device-local scheduler dry-run, a full documentation pass,
+two service lifecycle bug fixes, WebUI refinements, and a lean npm package.
+
+### Added
+
+- **Agent groups and fallback (ADR-0028):** group config parser, group-scoped skill loading (`shared < group < agent` precedence), doctor and agents visibility for group membership, and a read-only `piren agents --fallback <agent>` recommendation filtered by local runnable policy and same-group membership. No automatic rerouting.
+- **Scheduler dry-run (ADR-0029):** `piren scheduler --dry-run` plans inbox task and cron job claims with zero LLM calls, using device heartbeat priorities and active-device-priority ownership. Device heartbeat refresh now preserves a manually-edited priority. The full loop and bounded execution are deferred.
+- **Nine new operator docs:** discipline, scheduler, agent-groups, fresh-vault, project-bundles, migrating-from-hermes, extension-recipes, token-discipline, recovery. All linked from the README.
+- **WebUI:** favicon imported from the landing page.
+
+### Changed
+
+- **WebUI sidebar:** Vault Explorer moved up to the steward controls section alongside Steward Alerts; "+ Inbox Task" moved to the conversation-adjacent section above New Conversation.
+- **WebUI Files tab:** horizontal draggable divider between the file list and the document viewer, mirroring the vertical chat/vault divider. Driven by a `--files-list-height` CSS variable, shown only when a file is open.
+- **Knowledge Graph:** skills (`type: Skill`) are now excluded from the graph. Skills are procedural memory, not graph concepts. Verified live: the development vault graph dropped to 69 nodes with zero skills.
+- **Knowledge Graph labels:** node labels are smaller by default (0.58rem) and grow to full size with a brighter fill on hover/focus.
+- **npm package:** added an explicit `files` allowlist (`dist/`, `docs/`). Package shrank from 327 files / 618 kB to 181 files / 295 kB (52% reduction). The npm `.npmignore` fallback warning is gone.
+
+### Fixed
+
+- **systemd service detection on degraded sessions:** `systemctl --user is-system-running` exits 1 when the user session is "degraded" but still functional. The probe now treats exit 0 and 1 as available (mirroring the existing crontab fix). Previously, degraded homelab machines reported "No service manager detected" and could not install services.
+- **systemd ExecStart from source runs:** `resolvePirenCommand` now prepends `node` when the resolved command is a `.js` or `.mjs` file. Previously, running `piren service install` from a source checkout produced an unrunnable `ExecStart` that failed with systemd error 203/EXEC.
+
+### Verification
+
+76 test files, 687 tests. `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` pass. `piren update` verified end-to-end.
+
 ## [0.1.0-rc.2] - 2026-07-02
 
 Post-RC closeout polish before the next public release candidate.

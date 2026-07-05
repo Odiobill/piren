@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- Definitions for gradients and shadows -->
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f0f17" />
+      <stop offset="100%" stop-color="#181824" />
+    </linearGradient>
+    <!-- Raspberry/Terracotta Cap Gradient -->
+    <linearGradient id="capGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E74C3C" />
+      <stop offset="100%" stop-color="#B03A2E" />
+    </linearGradient>
+    <!-- Face Gradient (Warm Italian Terracotta/Peach) -->
+    <linearGradient id="faceGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFD3B6" />
+      <stop offset="100%" stop-color="#FFAAA6" />
+    </linearGradient>
+    <!-- Pi Bowtie Gradient -->
+    <linearGradient id="piGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c6ff0" />
+      <stop offset="100%" stop-color="#5a4ee0" />
+    </linearGradient>
+    <!-- Leaf/Stem Gradient -->
+    <linearGradient id="leafGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2ECC71" />
+      <stop offset="100%" stop-color="#27AE60" />
+    </linearGradient>
+    <!-- Soft Drop Shadow -->
+    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- Outer Rounded Shield -->
+  <rect width="512" height="512" rx="96" fill="url(#bgGrad)" />
+  
+  <!-- Subtle circular grid lines representing "Runtime Environment" loops -->
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#ffffff" stroke-opacity="0.03" stroke-width="2"/>
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-dasharray="10 15" stroke-width="1.5"/>
+  <circle cx="256" cy="256" r="140" fill="none" stroke="#ffffff" stroke-opacity="0.02" stroke-width="1"/>
+
+  <!-- Character Group -->
+  <g filter="url(#dropShadow)" transform="translate(0, 10)">
+    
+    <!-- Collar and Shoulders (Simple dark coat) -->
+    <path d="M 176 390 C 176 390, 206 430, 256 430 C 306 430, 336 390, 336 390 L 320 450 L 192 450 Z" fill="#2C3E50" />
+    <!-- White shirt collar peaks -->
+    <polygon points="210,390 256,410 230,390" fill="#ECF0F1" />
+    <polygon points="302,390 256,410 282,390" fill="#ECF0F1" />
+
+    <!-- Pi Bowtie (\u03c0 symbol) -->
+    <!-- Stylized Pi Bowtie: horizontal bar and two legs -->
+    <g transform="translate(226, 400)">
+      <!-- Left leg -->
+      <path d="M 12 10 Q 8 25, 4 35 Q 2 40, 7 40 Q 15 40, 16 28 Q 18 10, 18 10 Z" fill="url(#piGrad)" />
+      <!-- Right leg with curl -->
+      <path d="M 38 10 Q 38 25, 42 35 Q 45 40, 50 40 Q 55 40, 52 35 Q 46 25, 44 10 Z" fill="url(#piGrad)" />
+      <!-- Top bar (curved horizontal) -->
+      <path d="M 5 5 C 15 8, 45 8, 55 5 C 58 4, 58 12, 55 12 C 45 10, 15 10, 5 12 C 2 12, 2 4, 5 5 Z" fill="url(#piGrad)" />
+      <!-- Center knot (small circle/square) -->
+      <rect x="25" y="4" width="10" height="10" rx="3" fill="#ffffff" opacity="0.9" />
+    </g>
+
+    <!-- Face / Head -->
+    <path d="M 186 240 Q 166 260, 186 280 Q 186 350, 256 370 Q 326 350, 326 280 Q 346 260, 326 240 Z" fill="url(#faceGrad)" />
+    <!-- Hair (Mischievous tuft sticking out of cap) -->
+    <path d="M 196 230 C 180 200, 220 200, 210 225 C 225 190, 260 205, 240 230" fill="#2C3E50" stroke="#2C3E50" stroke-width="4" stroke-linecap="round" />
+
+    <!-- Cute Smiling Eyes -->
+    <!-- Left Eye (Winking/happy curve) -->
+    <path d="M 205 270 Q 220 260, 235 270" fill="none" stroke="#2C3E50" stroke-width="4.5" stroke-linecap="round" />
+    <!-- Right Eye (Open and happy/smiling arch) -->
+    <path d="M 277 270 Q 292 260, 307 270" fill="none" stroke="#2C3E50" stroke-width="4.5" stroke-linecap="round" />
+    
+    <!-- Cheeks (Blushing pink) -->
+    <circle cx="215" cy="295" r="10" fill="#E74C3C" opacity="0.35" />
+    <circle cx="297" cy="295" r="10" fill="#E74C3C" opacity="0.35" />
+
+    <!-- Mischievous Smile -->
+    <path d="M 236 315 Q 256 335, 276 315" fill="none" stroke="#C0392B" stroke-width="4" stroke-linecap="round" />
+    <!-- Smile corner tick -->
+    <path d="M 274 313 Q 278 315, 279 311" fill="none" stroke="#C0392B" stroke-width="3" stroke-linecap="round" />
+
+    <!-- Classic Round Nerd Glasses (Pi/Agent flavor) -->
+    <g stroke="#F1C40F" stroke-width="5" fill="none" stroke-linecap="round">
+      <!-- Left Lens Frame -->
+      <circle cx="220" cy="275" r="28" />
+      <!-- Right Lens Frame -->
+      <circle cx="292" cy="275" r="28" />
+      <!-- Glasses Bridge -->
+      <path d="M 248 275 Q 256 270, 264 275" />
+      <!-- Glasses temples (sides) -->
+      <path d="M 192 275 H 178" />
+      <path d="M 320 275 H 334" />
+    </g>
+
+    <!-- The Raspberry Beret / Cap -->
+    <!-- Main Cap Shape (representing a stylized raspberry tilted left) -->
+    <g>
+      <!-- Cap Base -->
+      <path d="M 170 236 Q 256 160, 342 236 Q 320 180, 256 180 Q 192 180, 170 236 Z" fill="#900C3F" />
+      
+      <!-- Raspberry Drupelets (The textured cap segments) -->
+      <!-- Back layer of cap bumps -->
+      <path d="M 166 230 C 150 200, 180 160, 210 170 C 230 140, 280 140, 300 170 C 330 160, 362 200, 346 230 Z" fill="url(#capGrad)" />
+      
+      <!-- Textured Circles (Raspberry spots) for visual depth -->
+      <circle cx="196" cy="210" r="16" fill="#E74C3C" opacity="0.85" />
+      <circle cx="226" cy="190" r="18" fill="#EC7063" opacity="0.9" />
+      <circle cx="256" cy="178" r="18" fill="#E74C3C" opacity="0.85" />
+      <circle cx="286" cy="190" r="18" fill="#EC7063" opacity="0.9" />
+      <circle cx="316" cy="210" r="16" fill="#E74C3C" opacity="0.85" />
+      
+      <!-- Front layer of cap folds -->
+      <path d="M 164 235 C 200 215, 312 215, 348 235 C 320 250, 192 250, 164 235 Z" fill="#900C3F" />
+      
+      <!-- Green Stalk and Leaf at the top of the cap (connecting the raspberry theme) -->
+      <path d="M 256 165 C 256 150, 240 145, 235 140 C 245 142, 253 150, 256 158 Z" fill="url(#leafGrad)" />
+      <path d="M 256 165 C 256 150, 272 145, 277 140 C 267 142, 259 150, 256 158 Z" fill="url(#leafGrad)" />
+      <rect x="253" y="156" width="6" height="12" rx="3" fill="url(#leafGrad)" />
+    </g>
+
+  </g>
+
+  <!-- Typography below the shield / icon -->
+  <!-- Sleek font for 'piren' -->
+  <text x="256" y="475" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="700" fill="#ffffff" letter-spacing="4" text-anchor="middle">
+    PIREN
+  </text>
+  <text x="256" y="495" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500" fill="#7c6ff0" letter-spacing="2" text-anchor="middle" opacity="0.8">
+    PI RUNTIME ENVIRONMENT
+  </text>
+
+</svg>

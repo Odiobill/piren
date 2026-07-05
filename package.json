@@ -1,9 +1,13 @@
 {
   "name": "piren",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0-rc.3",
   "private": true,
   "type": "module",
   "description": "Piren: lightweight, local-first agent layer on top of Pi Coding Agent",
+  "files": [
+    "dist/",
+    "docs/"
+  ],
   "bin": {
     "piren": "dist/src/cli.js"
   },
