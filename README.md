@@ -54,10 +54,12 @@ piren status
 - Explicit vault tools: read, write, list, patch, append-log, cached read, session summaries, alerts, task exchange, and knowledge artifacts.
 - File-backed task inbox: one Markdown file per task, explicit claim/update operations, stale-claim recovery, and opt-in worker mode.
 - Lazy vault skills: compact skill catalog at startup, full skill bodies loaded on demand with `skill_read(name)`.
+- Agent groups and fallback: group-scoped skills (`shared < group < agent`), read-only fallback recommendation via `piren agents --fallback <agent>`, filtered by local runnable policy and same-group membership. No automatic rerouting.
 - Pi package extensibility: install extra Pi extensions through npm packages declared in local Piren config.
 - Gateway process isolation: web, Telegram, Discord, and OpenAI-compatible API surfaces drive Pi through RPC, not in-process embedding.
 - Minimal web UI: agent selection, chat streaming with Markdown rendering, steering, approval gates, read-only vault browser, read-only knowledge graph, and read-only context usage indicator. No model or configuration controls.
 - Vault-backed cron: Markdown cron job files with active-device ownership, atomic claiming, and inspectable run records.
+- Scheduler dry-run: `piren scheduler --dry-run` plans inbox task and cron job claims with zero LLM calls, using device heartbeat priorities and active-device-priority ownership. The full loop and bounded execution are deferred.
 - Service lifecycle: systemd user units with tmux plus `@reboot` cron fallback for gateway, Telegram, and Discord transports. Inspectable, reversible files under `~/.config/piren/services/`.
 - First-run setup: `piren setup` (no flags) checks Pi, creates or reuses a vault, writes local config, and suggests optional service commands; `--help` on every command.
 - Inspectable self-improvement: agents can update handoffs, runbooks, ADRs, project logs, skill candidates, use `self_improvement_trigger_check` to classify correction moments, and opt in to visible-artifact auto-nudges/review loops without hidden memory mutation.
