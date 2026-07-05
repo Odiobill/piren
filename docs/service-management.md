@@ -26,6 +26,15 @@ not need to install anything ahead of time. The detected manager is reported by
 every `piren service` command in its output, for example `(systemd)` or
 `(tmux-cron)` or `(none)`.
 
+The probe is tolerant of real-world homelab states:
+
+- **systemd user session:** `systemctl --user is-system-running` exits 1 with
+  `degraded`, `starting`, or `maintenance` on many machines. These states still
+  run user services fine, so Piren treats exit 0 and 1 as available. A fully
+  broken session (exit >= 2, bus error, command not found) is unavailable.
+- **crontab:** `crontab -l` exits 1 when the user has no crontab yet (common on
+  DietPi and stripped-down systems). Piren treats exit 0 and 1 as available.
+
 ## Installing a transport as a service
 
 ```bash
@@ -33,9 +42,38 @@ piren service install gateway
 ```
 
 This resolves the configured vault and agent, generates the supervisor files,
-and starts the transport. For systemd it writes a user unit, enables it, and
-starts it. For tmux-cron it writes a launch script, makes it executable, starts
-a detached tmux session, and merges an `@reboot` crontab line.
+and starts the transport. Pass `--vault-root` and `--agent` explicitly when not
+running through a fully bootstrapped config:
+
+```bash
+piren --vault-root /path/to/vault --agent piren service install gateway
+```
+
+For systemd it writes a user unit, copies it into `~/.config/systemd/user/`,
+runs `daemon-reload`, enables it, and starts it. Real example output:
+
+```text
+Wrote /home/you/.config/piren/services/piren-gateway.service
+$ mkdir -p ~/.config/systemd/user
+$ cp /home/you/.config/piren/services/piren-gateway.service ~/.config/systemd/user/piren-gateway.service
+$ systemctl --user daemon-reload
+$ systemctl --user enable piren-gateway.service
+$ systemctl --user start piren-gateway.service
+Piren service install gateway (systemd)
+```
+
+When Piren is run from source or dist (`node dist/src/cli.js`), the generated
+unit's `ExecStart` automatically prepends `node` so systemd can execute it:
+
+```text
+ExecStart=node /home/you/src/piren/dist/src/cli.js gateway --vault-root /path/to/vault --agent piren
+```
+
+When run through the globally installed `piren` binary, `ExecStart` is the
+binary path directly.
+
+For tmux-cron it writes a launch script, makes it executable, starts a detached
+tmux session, and merges an `@reboot` crontab line.
 
 Generated files:
 
