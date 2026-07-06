@@ -99,7 +99,7 @@ device_policy:
 Run the hourly briefing.`,
     );
 
-    const output = await schedulerDryRun({ configPath, deviceId: "test-device", staleAfterMs: 86_400_000 });
+    const output = await schedulerDryRun({ configPath, deviceId: "test-device", staleAfterMs: 86_400_000, now: new Date("2026-07-05T10:00:00Z") });
 
     expect(output).toContain("cron_job");
     expect(output).toContain("hourly-brief.md");

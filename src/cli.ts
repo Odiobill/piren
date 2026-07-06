@@ -448,8 +448,14 @@ try {
     console.log(formatUpdateReport(report));
     if (!report.ok) process.exit(1);
   } else if (command === "scheduler") {
-    const output = await schedulerDryRun({});
-    console.log(output);
+    if (parsed.dryRun) {
+      const output = await schedulerDryRun({});
+      console.log(output);
+    } else {
+      console.log("The scheduler live loop is not yet implemented (ADR-0029 post-rc.3).");
+      console.log("Run 'piren scheduler --dry-run' to see what the scheduler would claim next.");
+      process.exit(1);
+    }
   } else if (command === "agent") {
     await runAgentCommand({
       subcommand: positionals[0],

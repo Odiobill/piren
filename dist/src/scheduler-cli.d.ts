@@ -2,6 +2,7 @@ export interface SchedulerDryRunOptions {
     configPath?: string;
     deviceId?: string;
     staleAfterMs?: number;
+    now?: Date;
 }
 /**
  * Execute a dry-run scheduler tick: load vault state, plan proposed claims,

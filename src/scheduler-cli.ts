@@ -12,6 +12,7 @@ export interface SchedulerDryRunOptions {
   configPath?: string;
   deviceId?: string;
   staleAfterMs?: number;
+  now?: Date;
 }
 
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
@@ -40,6 +41,7 @@ async function readYamlConfig(path: string): Promise<LocalPirenConfig> {
 export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<string> {
   const deviceId = options.deviceId ?? hostname();
   const staleAfterMs = options.staleAfterMs ?? 300_000;
+  const now = options.now ?? new Date();
 
   // Resolve local config
   const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
@@ -96,7 +98,7 @@ export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<
   const activeDevices = new Map<string, { deviceId: string; priority: number }[]>();
   for (const agentName of enabledAgents) {
     try {
-      const devicesResult = await listActiveDevices({ vaultRoot, agentName, staleAfterMs });
+      const devicesResult = await listActiveDevices({ vaultRoot, agentName, staleAfterMs, now: () => now });
       activeDevices.set(
         agentName,
         devicesResult.devices.map((d) => ({ deviceId: d.deviceId, priority: d.priority })),
@@ -114,7 +116,7 @@ export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<
     activeDevices,
     deviceId,
     staleAfterMs,
-    now: new Date(),
+    now,
   });
 
   // Format output

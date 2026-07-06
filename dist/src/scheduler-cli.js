@@ -32,6 +32,7 @@ async function readYamlConfig(path) {
 export async function schedulerDryRun(options) {
     const deviceId = options.deviceId ?? hostname();
     const staleAfterMs = options.staleAfterMs ?? 300_000;
+    const now = options.now ?? new Date();
     // Resolve local config
     const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
     const config = await readYamlConfig(configPath);
@@ -83,7 +84,7 @@ export async function schedulerDryRun(options) {
     const activeDevices = new Map();
     for (const agentName of enabledAgents) {
         try {
-            const devicesResult = await listActiveDevices({ vaultRoot, agentName, staleAfterMs });
+            const devicesResult = await listActiveDevices({ vaultRoot, agentName, staleAfterMs, now: () => now });
             activeDevices.set(agentName, devicesResult.devices.map((d) => ({ deviceId: d.deviceId, priority: d.priority })));
         }
         catch {
@@ -98,7 +99,7 @@ export async function schedulerDryRun(options) {
         activeDevices,
         deviceId,
         staleAfterMs,
-        now: new Date(),
+        now,
     });
     // Format output
     return formatSchedulerDryRun(deviceId, enabledAgents, claims);
