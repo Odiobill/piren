@@ -2,10 +2,11 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildClaimedInboxTaskPrompt,
+  createAskRunner,
   executeClaimedInboxTask,
   parseClaimedInboxTaskPath,
-  type ClaimedInboxTaskRunner,
   type ClaimedInboxTaskRunInput,
+  type ClaimedInboxTaskRunner,
   type ClaimedInboxTaskRunnerResult,
 } from "../src/scheduler-executor.js";
 
@@ -106,7 +107,17 @@ describe("parseClaimedInboxTaskPath validation", () => {
         agentName: "codex",
         claimedTaskPath: resolve("/etc/team/codex/inbox/task-1.claimed.heimdall.md"),
       }),
-    ).toThrow(/outside the vault/i);
+    ).toThrow(/vault-relative, not absolute/i);
+  });
+
+  it("rejects an absolute path inside the vault", () => {
+    expect(() =>
+      parseClaimedInboxTaskPath({
+        vaultRoot,
+        agentName: "codex",
+        claimedTaskPath: resolve(vaultRoot, "team/codex/inbox/task-1.claimed.heimdall.md"),
+      }),
+    ).toThrow(/vault-relative, not absolute/i);
   });
 
   it("rejects a claimed-looking path outside the inbox (different segment)", () => {
@@ -265,5 +276,26 @@ describe("executeClaimedInboxTask", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toBe("pi crashed");
+  });
+});
+
+describe("createAskRunner", () => {
+  it("forwards the full run input (including vaultRoot) to the target builder", async () => {
+    let captured: ClaimedInboxTaskRunInput | undefined;
+    const runner = createAskRunner({
+      targetBuilder: async (input) => {
+        captured = input;
+        throw new Error("stop-after-capture");
+      },
+    });
+
+    await expect(
+      runner.run({ agentName: "codex", vaultRoot: resolve("/tmp/piren-vault"), prompt: "hi" }),
+    ).rejects.toThrow("stop-after-capture");
+
+    expect(captured).toBeDefined();
+    expect(captured?.vaultRoot).toBe(resolve("/tmp/piren-vault"));
+    expect(captured?.agentName).toBe("codex");
+    expect(captured?.prompt).toBe("hi");
   });
 });

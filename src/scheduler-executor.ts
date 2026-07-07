@@ -95,6 +95,9 @@ export interface ParseClaimedInboxTaskPathOptions {
  */
 export function parseClaimedInboxTaskPath(options: ParseClaimedInboxTaskPathOptions): ClaimedInboxTaskPathInfo {
   assertValidAgentName(options.agentName);
+  if (isAbsolute(options.claimedTaskPath)) {
+    throw new Error(`Claimed task path must be vault-relative, not absolute: ${options.claimedTaskPath}`);
+  }
   const root = resolve(options.vaultRoot);
   const absolutePath = resolve(root, options.claimedTaskPath);
   const rel = relative(root, absolutePath);
@@ -228,11 +231,11 @@ export async function executeClaimedInboxTask(
 // ---------------------------------------------------------------------------
 
 /**
- * Build a Pi RPC spawn target for an agent. Overridable so the scheduler can
- * inject a different target builder if needed. Mirrors the gateway's
- * `RpcTargetBuilder` pattern.
+ * Build a Pi RPC spawn target for an agent run. Receives the full runner
+ * input so the vault boundary the executor validated against cannot be lost
+ * by a custom builder or the default production builder.
  */
-export type ClaimedInboxTaskTargetBuilder = (agentName: string) => Promise<RpcSpawnTarget>;
+export type ClaimedInboxTaskTargetBuilder = (input: ClaimedInboxTaskRunInput) => Promise<RpcSpawnTarget>;
 
 export interface CreateAskRunnerOptions {
   targetBuilder?: ClaimedInboxTaskTargetBuilder;
@@ -240,15 +243,20 @@ export interface CreateAskRunnerOptions {
 
 /**
  * Create a production {@link ClaimedInboxTaskRunner} that builds a Pi RPC
- * target per agent (via `buildPiRunCommand({ rpcMode: true })`) and runs the
- * bounded prompt through `askAgent`. Live Pi auth is required; this is the
- * seam S4 wires into the scheduler tick. Unit tests inject a fake runner.
+ * target per agent run (via `buildPiRunCommand({ rpcMode: true })`, threaded
+ * with the validated `vaultRoot` and `agentName`) and runs the bounded prompt
+ * through `askAgent`. Live Pi auth is required; this is the seam S4 wires
+ * into the scheduler tick. Unit tests inject a fake runner or target builder.
  */
 export function createAskRunner(options: CreateAskRunnerOptions = {}): ClaimedInboxTaskRunner {
   const targetBuilder: ClaimedInboxTaskTargetBuilder =
     options.targetBuilder ??
-    (async (agentName: string): Promise<RpcSpawnTarget> => {
-      const command: PiRunCommand = await buildPiRunCommand({ cliAgent: agentName, rpcMode: true });
+    (async (input: ClaimedInboxTaskRunInput): Promise<RpcSpawnTarget> => {
+      const command: PiRunCommand = await buildPiRunCommand({
+        cliVaultRoot: input.vaultRoot,
+        cliAgent: input.agentName,
+        rpcMode: true,
+      });
       return {
         command: command.command,
         args: command.args,
@@ -258,7 +266,7 @@ export function createAskRunner(options: CreateAskRunnerOptions = {}): ClaimedIn
     });
   return {
     async run(input) {
-      const target = await targetBuilder(input.agentName);
+      const target = await targetBuilder(input);
       const assistantText = await askAgent(target, input.prompt);
       return { assistantText, exitCode: 0 };
     },
