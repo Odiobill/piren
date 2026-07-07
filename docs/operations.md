@@ -11,7 +11,7 @@ npm run build
 npm run smoke
 ```
 
-Current expected baseline: 77 test files, 706 tests, typecheck/build/smoke passing.
+Current expected baseline: 77 test files, 710 tests, typecheck/build/smoke passing.
 
 ## Clean install checklist
 
