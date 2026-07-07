@@ -57,6 +57,46 @@ interface ExtractedLink {
 const DEFAULT_MAX_FILES = 10000;
 const ALWAYS_EXCLUDED_DIRS = new Set([".git", "node_modules"]);
 
+/**
+ * Operational coordination paths excluded from the Knowledge Graph so the
+ * visualization stays focused on durable knowledge (concepts, entities, ADRs,
+ * runbooks, project docs) rather than task inboxes, cron jobs/runs, device
+ * heartbeats, raw session evidence, scaffolding templates, or skills.
+ *
+ * The Files tab is unaffected: these paths are only filtered out of graph
+ * node collection and edge resolution, not out of vault browsing.
+ */
+function isGraphOperationalPath(path: string): boolean {
+  const segments = path.split("/");
+  const first = segments[0];
+
+  // Top-level operational trees: skills/**, steward-inbox/**, templates/**.
+  if (first === "skills" || first === "steward-inbox" || first === "templates") {
+    return true;
+  }
+
+  // Shared cron coordination: cron/jobs/**, cron/runs/**.
+  const second = segments[1];
+  if (first === "cron" && (second === "jobs" || second === "runs")) {
+    return true;
+  }
+
+  // Agent-scoped operational trees: team/<agent>/<skills|inbox|sessions|devices>/**
+  // and team/<agent>/cron/<jobs|runs>/**. team/ itself and team/<agent>/ are kept.
+  const third = segments[2];
+  if (first === "team" && third !== undefined) {
+    if (third === "skills" || third === "inbox" || third === "sessions" || third === "devices") {
+      return true;
+    }
+    const fourth = segments[3];
+    if (third === "cron" && (fourth === "jobs" || fourth === "runs")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function isGraphMarkdownFilename(name: string): boolean {
   return name.endsWith(".md") && !isOkfSystemFilename(name) && !isClaimedFilename(name);
 }
@@ -108,6 +148,7 @@ async function collectDocuments(options: BuildOkfGraphOptions): Promise<{
     for (const entry of entries) {
       if (entry.name.startsWith(".")) continue;
       const childPath = dir === "" ? entry.name : `${dir}/${entry.name}`;
+      if (isGraphOperationalPath(childPath)) continue;
       if (entry.isDirectory) {
         if (exclude.has(entry.name)) continue;
         await walk(childPath);
@@ -287,6 +328,9 @@ export async function buildOkfGraph(options: BuildOkfGraphOptions): Promise<OkfG
     for (const link of extractLinks(doc.body)) {
       const target = resolveTarget(link, doc.path, lookup);
       if (target === null) continue;
+      // Omit edges that point at operational coordination paths so the graph
+      // never dangles into excluded inboxes, cron jobs/runs, sessions, etc.
+      if (link.kind !== "external" && isGraphOperationalPath(target)) continue;
       const edge: OkfGraphEdge = {
         source: doc.path,
         target,

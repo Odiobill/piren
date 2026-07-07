@@ -113,6 +113,8 @@ GET /api/vault/graph
 
 It returns JSON with `nodes`, `edges`, `problems`, and `truncated`. Nodes are all OKF-typed Markdown documents found from the vault root, including `Concept`, `Entity`, `Project Index`, `ADR`, `Runbook`, and other typed documents. Edges are directed links extracted from wikilinks, bundle-relative links, relative Markdown links, and external URLs. The Web UI renders this as a minimal SVG Knowledge Graph; selecting a node opens the corresponding vault document in the existing read-only browser.
 
+To keep the graph focused on durable knowledge rather than operational coordination files, the graph route excludes these paths from both nodes and link edges: `skills/**` and `team/*/skills/**`, `team/*/inbox/**`, `steward-inbox/**`, `cron/jobs/**` and `team/*/cron/jobs/**`, `cron/runs/**` and `team/*/cron/runs/**`, `team/*/sessions/**`, `team/*/devices/**`, `templates/**`, and claimed coordination files (`*.claimed.*.md`). The read-only Files tab is unaffected and can still browse these paths where the vault browser allows.
+
 If the graph is empty, the vault has no readable Markdown files with a non-empty `type` frontmatter field. For imports, keep working project material under `Projects/<Project>/`, but promote reusable knowledge and named systems into `wiki/concepts/` and `wiki/entities/` with the explicit wiki tools so they become durable, linked graph nodes.
 
 ## Exchange
