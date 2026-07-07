@@ -18,6 +18,10 @@ const state = {
   notifications: [],
 };
 
+// Pure Markdown renderer lives in markdown.js (loaded before app.js) so it can
+// be unit-tested in a DOM-free sandbox and shared by chat + vault viewer.
+const renderMarkdown = window.PirenMarkdown.renderMarkdown;
+
 // ---------------------------------------------------------------------------
 // API helpers
 // ---------------------------------------------------------------------------
@@ -783,164 +787,6 @@ function stripFrontmatter(content) {
   return match ? content.slice(match[0].length) : content;
 }
 
-/**
- * Minimal, dependency-free Markdown renderer. Handles headings, bold, italic,
- * inline code, fenced code blocks, unordered/ordered lists, blockquotes,
- * horizontal rules, links, and paragraphs.
- *
- * XSS safety: structural detection runs on the RAW text (so markers like `>`
- * for blockquotes are not pre-escaped), but every fragment that becomes HTML
- * text is escaped via escapeHtml() either inside inline() or explicitly for
- * code blocks. Inline formatting (bold/italic/links) is applied AFTER
- * escaping, so markers in file content can never inject HTML.
- */
-function renderMarkdown(md) {
-  const lines = md.replace(/\r\n/g, "\n").split("\n");
-  const out = [];
-  let i = 0;
-  let inUl = false;
-  let inOl = false;
-
-  function closeLists() {
-    if (inUl) { out.push("</ul>"); inUl = false; }
-    if (inOl) { out.push("</ol>"); inOl = false; }
-  }
-
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Fenced code block
-    const fence = line.match(/^```(.*)$/);
-    if (fence) {
-      closeLists();
-      const lang = (fence[1] || "").replace(/[^a-z0-9-]/gi, "");
-      const code = [];
-      i++;
-      while (i < lines.length && !/^```/.test(lines[i])) {
-        code.push(lines[i]);
-        i++;
-      }
-      i++; // skip closing fence
-      out.push('<pre><code class="lang-' + lang + '">' + escapeHtml(code.join("\n")) + "</code></pre>");
-      continue;
-    }
-
-    // Blank line
-    if (/^\s*$/.test(line)) {
-      closeLists();
-      i++;
-      continue;
-    }
-
-    // Heading
-    const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      closeLists();
-      const level = heading[1].length;
-      out.push("<h" + level + ">" + inline(heading[2]) + "</h" + level + ">");
-      i++;
-      continue;
-    }
-
-    // Horizontal rule
-    if (/^\s*([-*_])\1\1[-*_\s]*$/.test(line)) {
-      closeLists();
-      out.push("<hr>");
-      i++;
-      continue;
-    }
-
-    // Blockquote
-    const quote = line.match(/^>\s?(.*)$/);
-    if (quote) {
-      closeLists();
-      const block = [quote[1]];
-      i++;
-      while (i < lines.length && /^>\s?/.test(lines[i])) {
-        block.push(lines[i].replace(/^>\s?/, ""));
-        i++;
-      }
-      out.push("<blockquote>" + inline(block.join(" ")) + "</blockquote>");
-      continue;
-    }
-
-    // Ordered list item
-    const ol = line.match(/^\s*\d+\.\s+(.*)$/);
-    if (ol) {
-      if (inUl) { out.push("</ul>"); inUl = false; }
-      if (!inOl) { out.push("<ol>"); inOl = true; }
-      out.push("<li>" + inline(ol[1]) + "</li>");
-      i++;
-      continue;
-    }
-
-    // Unordered list item
-    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
-    if (ul) {
-      if (inOl) { out.push("</ol>"); inOl = false; }
-      if (!inUl) { out.push("<ul>"); inUl = true; }
-      out.push("<li>" + inline(ul[1]) + "</li>");
-      i++;
-      continue;
-    }
-
-    // Paragraph (collect consecutive non-blank, non-special lines)
-    closeLists();
-    const para = [line];
-    i++;
-    while (
-      i < lines.length &&
-      !/^\s*$/.test(lines[i]) &&
-      !/^(#{1,6})\s/.test(lines[i]) &&
-      !/^```/.test(lines[i]) &&
-      !/^>\s?/.test(lines[i]) &&
-      !/^\s*\d+\.\s/.test(lines[i]) &&
-      !/^\s*[-*+]\s/.test(lines[i])
-    ) {
-      para.push(lines[i]);
-      i++;
-    }
-    out.push("<p>" + inline(para.join(" ")) + "</p>");
-  }
-  closeLists();
-  return out.join("\n");
-
-  // Inline formatting: escape first, then apply code stash, links, bold,
-  // italic. Applied AFTER escaping so the markers in file content cannot
-  // inject HTML.
-  function inline(text) {
-    let s = escapeHtml(text);
-    // Inline code first to protect its content from other substitutions.
-    const codeStash = [];
-    s = s.replace(/`([^`]+)`/g, (_m, code) => {
-      codeStash.push(code);
-      return "\u0000CODE" + (codeStash.length - 1) + "\u0000";
-    });
-    // Links [text](url) — url restricted to safe schemes to avoid javascript: URIs.
-    s = s.replace(
-      /\[([^\]]+)\]\(([^)\s]+)\)/g,
-      (_m, label, url) => {
-        if (!/^(https?:|mailto:|#|\.\/|\.\.\/|\/)/i.test(url)) return label;
-        return '<a href="' + url + '" target="_blank" rel="noopener">' + label + "</a>";
-      },
-    );
-    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
-    // Restore inline code.
-    s = s.replace(/\u0000CODE(\d+)\u0000/g, (_m, idx) => "<code>" + codeStash[Number(idx)] + "</code>");
-    return s;
-  }
-}
-
-function escapeHtml(s) {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 function openInboxModal() {
   if (!state.currentAgent) {
     addMessage("error", "No agent selected.");
@@ -1274,6 +1120,21 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("inbox-cancel").addEventListener("click", closeInboxModal);
   document.getElementById("notifications-btn").addEventListener("click", openNotificationsModal);
   document.getElementById("notifications-modal-close").addEventListener("click", closeNotificationsModal);
+
+  // Read-only wiki links ([[target]]) inside rendered Markdown open the target
+  // vault document in the Files tab. Targets without a .md suffix are treated
+  // as Markdown paths (the common [[path/to/doc]] form); unresolved targets
+  // fail gracefully inside openVaultFile.
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest(".md-vault-link");
+    if (!link) return;
+    event.preventDefault();
+    const target = link.getAttribute("data-vault-target");
+    if (!target) return;
+    const path = target.endsWith(".md") ? target : target + ".md";
+    selectVaultTab("files");
+    openVaultFile(path);
+  });
 
   initVaultDivider();
   initFilesDivider();
