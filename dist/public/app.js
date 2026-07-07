@@ -1126,7 +1126,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // as Markdown paths (the common [[path/to/doc]] form); unresolved targets
   // fail gracefully inside openVaultFile.
   document.addEventListener("click", (event) => {
-    const link = event.target.closest(".md-vault-link");
+    // Guard: event.target may be a non-Element (e.g. Text/Document) or lack
+    // .closest; only resolve the link when the target is an Element.
+    const el = event.target;
+    const link = el && typeof el.closest === "function" ? el.closest(".md-vault-link") : null;
     if (!link) return;
     event.preventDefault();
     const target = link.getAttribute("data-vault-target");

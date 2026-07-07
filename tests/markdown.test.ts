@@ -138,6 +138,13 @@ describe("WebUI markdown renderer wiring (O7 W3)", () => {
     expect(app).toMatch(/data-vault-target[\s\S]*openVaultFile/);
   });
 
+  it("guards the wiki-link click handler so .closest is only called on Element targets", async () => {
+    const app = await readFile(join(publicDir, "app.js"), "utf8");
+    // The delegated handler must check the target is an Element with .closest
+    // before invoking it, so a non-Element/non-closest event.target cannot throw.
+    expect(app).toMatch(/typeof \w+\.closest\s*===\s*"function"\s*\?\s*\w+\.closest\("\.md-vault-link"\)/);
+  });
+
   it("adds no new third-party dependency (stdlib vm only, no markdown package)", async () => {
     const pkg = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as {
       dependencies?: Record<string, string>;
