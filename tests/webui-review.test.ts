@@ -208,6 +208,27 @@ describe("WebUI review affordances", () => {
     expect(css).toMatch(/\.graph-node:hover text[\s\S]*?font-size: 0\.6\drem/);
   });
 
+  it("dims non-focused graph node labels and keeps hovered/focused labels prominent (W2)", async () => {
+    const css = await readPublic("style.css");
+
+    // Default (non-hovered/non-selected) label fill must be subtler/darker than
+    // the base text color: it uses the muted token, not --text.
+    const defaultRule = css.match(/\.graph-node text \{[\s\S]*?\}/)?.[0] || "";
+    expect(defaultRule).toContain("fill: var(--text-muted)");
+    expect(defaultRule).not.toContain("fill: var(--text);");
+
+    // Default font-size is strictly smaller than the hovered/focused label size.
+    const defaultSize = Number(defaultRule.match(/font-size: ([\d.]+)rem/)?.[1]);
+    const focusRule =
+      css.match(/\.graph-node:hover text,[\s\S]*?\.graph-node:focus text \{[\s\S]*?\}/)?.[0] || "";
+    const focusSize = Number(focusRule.match(/font-size: ([\d.]+)rem/)?.[1]);
+    expect(defaultSize).toBeGreaterThan(0);
+    expect(focusSize).toBeGreaterThan(defaultSize);
+
+    // Hovered/focused label stays bright and visually prominent.
+    expect(focusRule).toContain("fill: var(--text-bright)");
+  });
+
   it("imports the favicon from the landing page", async () => {
     const html = await readPublic("index.html");
     expect(html).toContain('rel="icon"');

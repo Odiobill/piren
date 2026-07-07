@@ -805,8 +805,8 @@ body {
 .graph-node-entity { fill: rgba(74, 222, 128, 0.28); }
 .graph-node-document { fill: rgba(251, 191, 36, 0.2); }
 .graph-node text {
-  fill: var(--text);
-  font-size: 0.58rem;
+  fill: var(--text-muted);
+  font-size: 0.52rem;
   text-anchor: middle;
   pointer-events: none;
   transition: font-size 0.12s, fill 0.12s;
