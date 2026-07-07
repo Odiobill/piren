@@ -81,6 +81,37 @@ describe("WebUI markdown renderer (O7 W3)", () => {
     expect(code).not.toContain("<a");
   });
 
+  it("renders bundle-relative .md markdown links as read-only vault links", () => {
+    const out = api.renderMarkdown("See [bar](/Projects/Foo/bar.md) here.");
+    expect(out).toContain('class="md-vault-link"');
+    // The leading "/" is stripped for the vault target.
+    expect(out).toContain('data-vault-target="Projects/Foo/bar.md"');
+    expect(out).toContain(">bar</a>");
+    // It is a vault link, not an external link.
+    expect(out).not.toContain('target="_blank"');
+    expect(out).not.toContain('href="/Projects');
+  });
+
+  it("keeps external http links as ordinary external links (not vault links)", () => {
+    const out = api.renderMarkdown("See [Pi](https://example.com).");
+    expect(out).toContain('<a href="https://example.com" target="_blank" rel="noopener">Pi</a>');
+    expect(out).not.toContain("md-vault-link");
+  });
+
+  it("leaves relative and anchor markdown links as ordinary safe links", () => {
+    const rel = api.renderMarkdown("[r](./foo.md)");
+    expect(rel).toContain('<a href="./foo.md"');
+    expect(rel).not.toContain("md-vault-link");
+
+    const up = api.renderMarkdown("[u](../bar.md)");
+    expect(up).toContain('<a href="../bar.md"');
+    expect(up).not.toContain("md-vault-link");
+
+    const anchor = api.renderMarkdown("[s](#section)");
+    expect(anchor).toContain('<a href="#section"');
+    expect(anchor).not.toContain("md-vault-link");
+  });
+
   it("renders wiki links as safe vault-relative links with optional labels", () => {
     const plain = api.renderMarkdown("See [[wiki/concepts/vault]].");
     expect(plain).toContain('class="md-vault-link"');

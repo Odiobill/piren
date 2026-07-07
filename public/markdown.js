@@ -218,8 +218,14 @@
       });
 
       // Markdown links [label](url); url restricted to safe schemes.
+      // Bundle-relative vault Markdown paths (/Projects/Foo/bar.md) become
+      // read-only vault links opened in the Files tab (leading "/" stripped).
+      // External http(s)/mailto, anchors, and ./ ../ links stay ordinary links.
       s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (_m, label, url) {
         if (!isSafeUrl(url)) return label;
+        if (/^\/.*\.md$/i.test(url)) {
+          return place('<a class="md-vault-link" data-vault-target="' + url.slice(1) + '">' + label + "</a>");
+        }
         return place('<a href="' + url + '" target="_blank" rel="noopener">' + label + "</a>");
       });
 
