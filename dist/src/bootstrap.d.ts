@@ -22,6 +22,22 @@ export interface DiscordLocalConfig {
     feedback?: TransportFeedbackConfig;
     default_agent?: string;
 }
+/**
+ * Local scheduler runtime configuration (ADR-0029 / O7 S5). Lives in
+ * ~/.config/piren/config.yml under `scheduler:`. Controls the opt-in
+ * `piren scheduler` loop only; never placed in the vault, agent SOUL.md,
+ * Web UI, gateway state, or .env files.
+ */
+export interface SchedulerLocalConfig {
+    /** Seconds between scheduler ticks. Default 30. */
+    poll_interval_seconds?: number;
+    /** Device heartbeat staleness threshold in seconds. Default 300. */
+    stale_after_seconds?: number;
+    /** Parsed max concurrency. Effective concurrency is 1 in S5 (one-at-a-time). */
+    max_concurrent_agents?: number;
+    /** Explicit device id override. Absent -> S4 sanitized-hostname fallback. */
+    device_id?: string;
+}
 export interface LocalPirenConfig {
     agent_dir?: string;
     vault_root?: string;
@@ -32,6 +48,7 @@ export interface LocalPirenConfig {
     telegram?: TelegramLocalConfig;
     discord?: DiscordLocalConfig;
     services?: ServicesLocalConfig;
+    scheduler?: SchedulerLocalConfig;
     provider?: string;
     model?: string;
 }

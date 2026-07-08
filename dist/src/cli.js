@@ -22,8 +22,9 @@ import { formatHelp, formatCommandHelp, isHelpRequest } from "./help.js";
 import { parseArgs, bootstrapOptions, KNOWN_COMMANDS, } from "./parse-args.js";
 import { loadPirenContext } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents, listFallbackCandidates, formatFallbackReport } from "./agents.js";
-import { schedulerDryRun } from "./scheduler-cli.js";
+import { schedulerDryRun, readYamlConfig, resolveEnabledAgents, DEFAULT_CONFIG_PATH } from "./scheduler-cli.js";
 import { schedulerOnce, createSchedulerExecutors } from "./scheduler-once.js";
+import { resolveSchedulerConfig, runSchedulerLoop, createSchedulerLoopController, createRealSchedulerLoopSleep, } from "./scheduler-loop.js";
 import { createAskRunner } from "./scheduler-executor.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, crontabAvailableFromInvocation, systemdUserAvailableFromInvocation, } from "./service-lifecycle.js";
@@ -449,9 +450,36 @@ try {
             }
         }
         else {
-            console.log("The scheduler live loop is not implemented yet (ADR-0029 / O7 S5).");
-            console.log("Use 'piren scheduler --once' for a single bounded tick, or 'piren scheduler --dry-run' to preview planned claims.");
-            process.exit(1);
+            // Bare `piren scheduler`: explicit opt-in loop around the S4 one-shot
+            // primitive (ADR-0029 / O7 S5). Reads local scheduler config once at
+            // startup, then calls schedulerOnce once per tick, sleeping between
+            // ticks. Stops cleanly on SIGINT/SIGTERM without starting a new tick.
+            // No scheduler polling is added to run/chat/worker/gateway/transports.
+            const config = await readYamlConfig(DEFAULT_CONFIG_PATH);
+            const schedulerConfig = resolveSchedulerConfig(config);
+            const enabledAgents = resolveEnabledAgents(config);
+            const executors = createSchedulerExecutors({ runner: createAskRunner() });
+            const controller = createSchedulerLoopController();
+            const sleep = createRealSchedulerLoopSleep();
+            process.on("SIGINT", () => controller.requestShutdown("SIGINT"));
+            process.on("SIGTERM", () => controller.requestShutdown("SIGTERM"));
+            try {
+                await runSchedulerLoop({
+                    configPath: DEFAULT_CONFIG_PATH,
+                    schedulerConfig,
+                    enabledAgents,
+                    schedulerOnce,
+                    executors,
+                    sleep,
+                    controller,
+                    log: (message) => console.log(message),
+                });
+            }
+            finally {
+                // Defense-in-depth: clear any pending sleep timer before exit.
+                sleep.cancel();
+            }
+            process.exit(0);
         }
     }
     else if (command === "agent") {

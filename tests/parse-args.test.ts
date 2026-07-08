@@ -221,3 +221,24 @@ describe("parseArgs: scheduler --once", () => {
     expect(parseArgs(["scheduler", "--dry-run"]).dryRun).toBe(true);
   });
 });
+
+describe("parseArgs: scheduler loop is opt-in only (interactive commands unchanged)", () => {
+  // S5 regression: the scheduler loop must only be reachable via the explicit
+  // `scheduler` command. `--once`/`--dry-run` are scheduler-only flags that the
+  // run/chat/worker/gateway branches ignore. This proves the parser does not
+  // reroute interactive commands into the scheduler and that bare `scheduler`
+  // (loop) stays distinct from `--once`/`--dry-run`.
+  it("bare scheduler resolves to the scheduler command with once=false and dryRun=false (loop)", () => {
+    const result = parseArgs(["scheduler"]);
+    expect(result.command).toBe("scheduler");
+    expect(result.once).toBe(false);
+    expect(result.dryRun).toBe(false);
+  });
+
+  it("run/chat/worker commands are not rerouted to scheduler even with scheduler flags present", () => {
+    expect(parseArgs(["run", "--once"]).command).toBe("run");
+    expect(parseArgs(["chat", "--dry-run"]).command).toBe("chat");
+    expect(parseArgs(["worker"]).command).toBe("worker");
+    expect(parseArgs(["worker"]).once).toBe(false);
+  });
+});

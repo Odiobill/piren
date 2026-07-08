@@ -109,9 +109,9 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
   },
   {
     command: "scheduler",
-    short: "Device-local scheduler. --dry-run previews planned claims (LLM-free); --once runs one bounded tick (at most one execution).",
-    flags: ["--dry-run", "--once"],
-    example: "piren scheduler --once",
+    short: "Device-local scheduler. Bare runs the opt-in loop; --once runs one bounded tick; --dry-run previews planned claims (LLM-free).",
+    flags: ["--once", "--dry-run"],
+    example: "piren scheduler  # opt-in loop until SIGINT/SIGTERM (configure under scheduler: in config.yml)",
   },
 ];
 
