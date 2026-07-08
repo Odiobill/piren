@@ -9,7 +9,7 @@ Nothing in Piren invokes an LLM unless you explicitly ask it to:
 - `piren run` starts an interactive session that calls the LLM only when you send a message.
 - `piren worker` polls for inbox and cron work, but only for agents you explicitly allow, and only when work is due.
 - `piren scheduler --dry-run` plans claims with zero LLM calls. It is a pure planner over vault state.
-- The full scheduler loop (when it ships) will be LLM-free on every tick. Only the bounded execution of a claimed task or agent-mode cron job invokes an LLM.
+- `piren scheduler` runs the opt-in loop; every tick is LLM-free. Only the bounded execution of a claimed task or agent-mode cron job invokes an LLM.
 
 There is no default always-on polling in interactive `piren run`. Automation is opt-in.
 
@@ -46,7 +46,7 @@ A smaller tool surface means fewer tokens spent describing tools the agent will 
 
 ## Claim-scoped bounded execution
 
-When bounded execution ships (post-rc.3, ADR-0029), agent-mode work will be claim-scoped: the agent receives one claimed task or one claimed cron job, executes it, records the result, and stops. It does not poll for other work. This prevents a single background run from spiraling into an open-ended LLM session.
+Bounded execution (ADR-0029, O7 S2-S3) is claim-scoped: the agent receives one claimed task or one claimed cron job, executes it, records the result, and stops. It does not poll for other work. This prevents a single background run from spiraling into an open-ended LLM session.
 
 ## Self-improvement review loops default off
 
@@ -62,7 +62,7 @@ Token discipline in Piren is not a magic optimization. It is the cumulative effe
 - compact synthesized context instead of raw transcripts,
 - a small explicit tool surface,
 - cached reads,
-- claim-scoped bounded execution (when shipped),
+- claim-scoped bounded execution,
 - opt-in self-improvement.
 
 Each of these is inspectable. You can read the vault, read the config, and read the code to verify exactly what will and will not invoke an LLM.

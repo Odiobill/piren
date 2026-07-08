@@ -5,6 +5,19 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-07-08
+
+The first non-prerelease official release. Adds the device-local scheduler service MVP (`--dry-run`/`--once`/loop/service lifecycle) on top of the rc.3 core.
+
+### Added
+
+- **Scheduler service MVP (ADR-0029, O7):** `piren scheduler --once` runs one bounded claim-first tick; `piren scheduler` runs the opt-in loop until SIGINT/SIGTERM. Claim-scoped bounded execution for inbox tasks (S2) and agent-mode cron jobs (S3), one-shot tick execution (S4), explicit loop with local config (S5), and service lifecycle integration (`piren service install scheduler`, S6). All layers preserve the same boundaries: off by default, local allowed-agent policy, claim-first execution, at most one executed item per tick, conservative one-at-a-time concurrency, no hidden state, and no automatic cross-agent fallback. 78 new tests (832 total).
+- **Seventh scheduler-service plan:** `Projects/Piren/scheduler-service-o7-plan.md` decomposes the MVP into seven reviewable slices (S1–S7).
+
+### Changed
+
+- **Changelog rc.3 section:** removed the stale "full loop and bounded execution are deferred" line that predates the O7 scheduler MVP.
+
 ## [0.1.0-rc.3] - 2026-07-05
 
 The official-release scope prerelease. Adds agent groups with read-only
@@ -14,7 +27,7 @@ two service lifecycle bug fixes, WebUI refinements, and a lean npm package.
 ### Added
 
 - **Agent groups and fallback (ADR-0028):** group config parser, group-scoped skill loading (`shared < group < agent` precedence), doctor and agents visibility for group membership, and a read-only `piren agents --fallback <agent>` recommendation filtered by local runnable policy and same-group membership. No automatic rerouting.
-- **Scheduler dry-run (ADR-0029):** `piren scheduler --dry-run` plans inbox task and cron job claims with zero LLM calls, using device heartbeat priorities and active-device-priority ownership. Device heartbeat refresh now preserves a manually-edited priority. The full loop and bounded execution are deferred.
+- **Scheduler dry-run (ADR-0029):** `piren scheduler --dry-run` plans inbox task and cron job claims with zero LLM calls, using device heartbeat priorities and active-device-priority ownership. Device heartbeat refresh now preserves a manually-edited priority.
 - **Nine new operator docs:** discipline, scheduler, agent-groups, fresh-vault, project-bundles, migrating-from-hermes, extension-recipes, token-discipline, recovery. All linked from the README.
 - **WebUI:** favicon imported from the landing page.
 
@@ -34,6 +47,8 @@ two service lifecycle bug fixes, WebUI refinements, and a lean npm package.
 ### Verification
 
 76 test files, 687 tests. `npm run typecheck`, `npm run build`, `npm run smoke`, and `npm run clean-install:check` pass. `piren update` verified end-to-end.
+
+[0.1.0]: https://github.com/Odiobill/piren/releases/tag/v0.1.0
 
 ## [0.1.0-rc.2] - 2026-07-02
 
