@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  sanitizeDeviceId,
   schedulerOnce,
   type CronAgentExecuteInput,
   type CronScriptExecuteInput,
@@ -391,5 +392,74 @@ describe("schedulerOnce execution routing", () => {
     expect(result.claimAttempts[0]?.outcome).toBe("claim_failed");
     expect(inboxCalls).toHaveLength(0);
     expect(result.summary).toContain("[SKIP]");
+  });
+});
+
+describe("sanitizeDeviceId (default device id normalization)", () => {
+  it("lowercases and kebab-cases an uppercase dotted hostname", () => {
+    expect(sanitizeDeviceId("Ironman.local")).toBe("ironman-local");
+  });
+  it("lowercases a simple uppercase hostname", () => {
+    expect(sanitizeDeviceId("Ironman")).toBe("ironman");
+  });
+  it("passes through already-valid lowercase kebab ids", () => {
+    expect(sanitizeDeviceId("heimdall")).toBe("heimdall");
+    expect(sanitizeDeviceId("thor-pi4")).toBe("thor-pi4");
+  });
+  it("prefixes ids that start with a digit so they begin with a letter", () => {
+    expect(sanitizeDeviceId("123box")).toBe("device-123box");
+  });
+  it("replaces runs of non-alphanumeric characters with a single hyphen", () => {
+    expect(sanitizeDeviceId("My_Device 01")).toBe("my-device-01");
+  });
+  it("trims leading/trailing hyphens", () => {
+    expect(sanitizeDeviceId("...weird...")).toBe("weird");
+  });
+  it("falls back to local-device for empty or all-symbol input", () => {
+    expect(sanitizeDeviceId("")).toBe("local-device");
+    expect(sanitizeDeviceId("...!!!...")).toBe("local-device");
+  });
+  it("always produces a value matching the device-id validator /^[a-z][a-z0-9-]*$/", () => {
+    const pattern = /^[a-z][a-z0-9-]*$/;
+    const samples = ["Ironman", "Ironman.local", "thor", "123box", "", "...!!!...", "My_Device 01", "1", "host.name.with.dots"];
+    for (const raw of samples) {
+      expect(pattern.test(sanitizeDeviceId(raw))).toBe(true);
+    }
+  });
+});
+
+describe("schedulerOnce default device id", () => {
+  it("derives a safe device id from an uppercase/dotted hostname and claims/executes", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      hostname: "Ironman.local",
+      now: tick,
+      executors,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.deviceId).toBe("ironman-local");
+    expect(inboxCalls[0]?.claimedTaskPath).toMatch(/\.claimed\.ironman-local\.md$/);
+  });
+
+  it("uses an explicit deviceId as-is without sanitizing", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      hostname: "Ironman.local",
+      now: tick,
+      executors,
+    });
+
+    expect(result.deviceId).toBe("heimdall");
+    expect(inboxCalls[0]?.claimedTaskPath).toMatch(/\.claimed\.heimdall\.md$/);
   });
 });

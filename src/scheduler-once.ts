@@ -125,6 +125,25 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Normalize a raw hostname (e.g. os.hostname()) into a safe Piren device id.
+ *
+ * Lowercase, replace runs of non-alphanumeric characters with a single
+ * hyphen, trim leading/trailing hyphens, prefix `device-` if the result
+ * starts with a digit, and fall back to `local-device` if empty. The result
+ * always matches the device-id validator `/^[a-z][a-z0-9-]*$/` used by
+ * registerDevice / claimInboxTask / claimCronJob.
+ *
+ * Deterministic and pure so the default scheduler device id is stable across
+ * runs on the same host. Applied only when no explicit deviceId is provided.
+ */
+export function sanitizeDeviceId(raw: string): string {
+  const replaced = raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (replaced === "") return "local-device";
+  if (!/^[a-z]/.test(replaced)) return `device-${replaced}`;
+  return replaced;
+}
+
 function noWorkResult(deviceId: string, enabledAgents: string[], summary: string): SchedulerOnceResult {
   return {
     deviceId,
@@ -164,12 +183,13 @@ function formatSummary(result: SchedulerOnceResult): string {
  * item. See module docstring for the full flow.
  */
 export async function schedulerOnce(options: SchedulerOnceOptions): Promise<SchedulerOnceResult> {
-  const deviceId = options.deviceId ?? hostname();
+  const rawHost = options.hostname ?? hostname();
+  const deviceId = options.deviceId ?? sanitizeDeviceId(rawHost);
   const staleAfterMs = options.staleAfterMs ?? 300_000;
   const now = options.now ?? (() => new Date());
   const claims = options.claims ?? defaultClaims;
   const executors = options.executors;
-  const host = options.hostname ?? deviceId;
+  const host = rawHost;
 
   const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
   const config = await readYamlConfig(configPath);
