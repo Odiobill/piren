@@ -37,6 +37,7 @@ export function parseArgs(argv) {
     let yes = false;
     let help = false;
     let dryRun = false;
+    let once = false;
     let port;
     let host;
     let token;
@@ -106,6 +107,9 @@ export function parseArgs(argv) {
         else if (arg === "--dry-run") {
             dryRun = true;
         }
+        else if (arg === "--once") {
+            once = true;
+        }
         else if (portValue !== undefined) {
             port = Number(portValue);
         }
@@ -166,6 +170,7 @@ export function parseArgs(argv) {
         apiKey,
         fallback,
         dryRun,
+        once,
         positionals,
     };
 }

@@ -27,6 +27,7 @@ export interface ParsedArgs {
     yes: boolean;
     help: boolean;
     dryRun: boolean;
+    once: boolean;
     port: number | undefined;
     host: string | undefined;
     token: string | undefined;

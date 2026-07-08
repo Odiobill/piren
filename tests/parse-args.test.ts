@@ -200,3 +200,24 @@ describe("parseArgs: preserved behavior", () => {
     expect(result.fallback).toBeUndefined();
   });
 });
+
+describe("parseArgs: scheduler --once", () => {
+  it("parses --once after the scheduler command", () => {
+    const result = parseArgs(["scheduler", "--once"]);
+    expect(result.command).toBe("scheduler");
+    expect(result.once).toBe(true);
+    expect(result.dryRun).toBe(false);
+  });
+
+  it("parses --once before the scheduler command", () => {
+    const result = parseArgs(["--once", "scheduler"]);
+    expect(result.command).toBe("scheduler");
+    expect(result.once).toBe(true);
+  });
+
+  it("does not set once for bare scheduler or --dry-run", () => {
+    expect(parseArgs(["scheduler"]).once).toBe(false);
+    expect(parseArgs(["scheduler", "--dry-run"]).once).toBe(false);
+    expect(parseArgs(["scheduler", "--dry-run"]).dryRun).toBe(true);
+  });
+});

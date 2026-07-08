@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -63,6 +63,27 @@ describe("scheduler dry-run CLI", () => {
     // thor is not in allowed_agents, so no claim for its task
     expect(output).not.toContain("thor");
     expect(output).not.toContain("[CLAIM]");
+  });
+
+  it("excludes excluded_agents and remains claim-free (LLM-free)", async () => {
+    // codex allowed but excluded; thor allowed and has a task.
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - codex\n  - thor\nexcluded_agents:\n  - codex\n`);
+
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "task-1.md"),
+      "---\nid: task-1\nstatus: pending\nfrom: nora\nto: thor\ncreated: 2026-07-05T09:00:00Z\nupdated: 2026-07-05T09:00:00Z\n---\n\n# Thor task\n\nDo something.",
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    // codex excluded: only thor is enabled.
+    expect(output).not.toContain("agent: codex");
+    expect(output).toContain("thor");
+    expect(output).toContain("[CLAIM]");
+    // Dry-run never claims or executes: the task file is still pending/unclaimed.
+    const stillUnclaimed = await readFile(join(vault, "team", "thor", "inbox", "task-1.md"), "utf8");
+    expect(stillUnclaimed).toContain("status: pending");
   });
 
   it("shows cron jobs owned by this device", async () => {

@@ -17,7 +17,18 @@ export interface SchedulerDryRunOptions {
 
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
 
-async function pathExists(path: string): Promise<boolean> {
+/**
+ * Resolve the locally enabled agent set: allowed_agents minus excluded_agents.
+ * Shared by dry-run and --once so both apply the same local policy before
+ * planning (ADR-0029: local policy first).
+ */
+export function resolveEnabledAgents(config: LocalPirenConfig): string[] {
+  const allowed = config.allowed_agents ?? [];
+  const excluded = new Set(config.excluded_agents ?? []);
+  return allowed.filter((agent) => !excluded.has(agent));
+}
+
+export async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path);
     return true;
@@ -26,13 +37,15 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function readYamlConfig(path: string): Promise<LocalPirenConfig> {
+export async function readYamlConfig(path: string): Promise<LocalPirenConfig> {
   if (!(await pathExists(path))) return {};
   const content = await readFile(path, "utf8");
   const parsed = parseYaml(content) as unknown;
   if (!parsed || typeof parsed !== "object") return {};
   return parsed as LocalPirenConfig;
 }
+
+export { DEFAULT_CONFIG_PATH };
 
 /**
  * Execute a dry-run scheduler tick: load vault state, plan proposed claims,
@@ -51,8 +64,8 @@ export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<
     return "SCHEDULER DRY-RUN\n\nNo vault root configured. Set vault_root in ~/.config/piren/config.yml.\n";
   }
 
-  const allowedAgents = config.allowed_agents ?? [];
-  const enabledAgents = allowedAgents.length > 0 ? allowedAgents : [];
+  const allowedAgents = resolveEnabledAgents(config);
+  const enabledAgents = allowedAgents;
 
   if (enabledAgents.length === 0) {
     return `SCHEDULER DRY-RUN (device: ${deviceId})\n\nNo enabled agents. Configure allowed_agents in local config.\n`;

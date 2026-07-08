@@ -101,9 +101,9 @@ export const HELP_TOPICS = [
     },
     {
         command: "scheduler",
-        short: "Dry-run: print what the device-local scheduler would claim next, with zero LLM calls.",
-        flags: ["--dry-run"],
-        example: "piren scheduler --dry-run",
+        short: "Device-local scheduler. --dry-run previews planned claims (LLM-free); --once runs one bounded tick (at most one execution).",
+        flags: ["--dry-run", "--once"],
+        example: "piren scheduler --once",
     },
 ];
 const GLOBAL_FLAGS = ["--vault-root <path>", "--agent <name>", "--agent-dir <path>", "-h, --help"];

@@ -23,6 +23,8 @@ import { parseArgs, bootstrapOptions, KNOWN_COMMANDS, } from "./parse-args.js";
 import { loadPirenContext } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents, listFallbackCandidates, formatFallbackReport } from "./agents.js";
 import { schedulerDryRun } from "./scheduler-cli.js";
+import { schedulerOnce, createSchedulerExecutors } from "./scheduler-once.js";
+import { createAskRunner } from "./scheduler-executor.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, crontabAvailableFromInvocation, systemdUserAvailableFromInvocation, } from "./service-lifecycle.js";
 const thisDir = dirname(fileURLToPath(import.meta.url));
@@ -434,9 +436,21 @@ try {
             const output = await schedulerDryRun({});
             console.log(output);
         }
+        else if (parsed.once) {
+            const result = await schedulerOnce({
+                executors: createSchedulerExecutors({
+                    runner: createAskRunner(),
+                }),
+            });
+            console.log(result.summary);
+            if (!result.executed && result.noWork) {
+                // No work is not an error; exit 0 so --once is safe to run in a
+                // loop/cron without non-zero noise.
+            }
+        }
         else {
-            console.log("The scheduler live loop is not yet implemented (ADR-0029 post-rc.3).");
-            console.log("Run 'piren scheduler --dry-run' to see what the scheduler would claim next.");
+            console.log("The scheduler live loop is not implemented yet (ADR-0029 / O7 S5).");
+            console.log("Use 'piren scheduler --once' for a single bounded tick, or 'piren scheduler --dry-run' to preview planned claims.");
             process.exit(1);
         }
     }

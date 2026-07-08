@@ -28,6 +28,7 @@ export interface ParsedArgs {
   yes: boolean;
   help: boolean;
   dryRun: boolean;
+  once: boolean;
   port: number | undefined;
   host: string | undefined;
   token: string | undefined;
@@ -81,6 +82,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let yes = false;
   let help = false;
   let dryRun = false;
+  let once = false;
   let port: number | undefined;
   let host: string | undefined;
   let token: string | undefined;
@@ -145,6 +147,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       help = true;
     } else if (arg === "--dry-run") {
       dryRun = true;
+    } else if (arg === "--once") {
+      once = true;
     } else if (portValue !== undefined) {
       port = Number(portValue);
     } else if (hostValue !== undefined) {
@@ -197,6 +201,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     apiKey,
     fallback,
     dryRun,
+    once,
     positionals,
   };
 }
