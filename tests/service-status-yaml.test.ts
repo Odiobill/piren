@@ -64,4 +64,25 @@ describe("updateServiceStatusYaml", () => {
     expect(result).toContain("vault_root: /srv/vault");
     expect(result).toContain("services:");
   });
+
+  it("can represent the scheduler service target alongside existing transports", () => {
+    const input = [
+      "vault_root: /srv/vault",
+      "services:",
+      "  transports:",
+      "    gateway:",
+      "      installed: true",
+      "      running: true",
+      "",
+    ].join("\n");
+    const result = updateServiceStatusYaml(input, "scheduler", { installed: true, running: true });
+    // Existing gateway entry is preserved.
+    expect(result).toContain("gateway:");
+    expect(result).toContain("installed: true");
+    // Scheduler entry is added under the same services.transports map.
+    expect(result).toContain("scheduler:");
+    // Exactly one services block.
+    const servicesMatches = result.match(/^services:$/gm);
+    expect(servicesMatches?.length ?? 0).toBe(1);
+  });
 });

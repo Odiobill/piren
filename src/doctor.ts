@@ -254,8 +254,10 @@ export type ServiceConfig = ServicesLocalConfig;
  *
  * Returns null when no `services.transports` block is declared at all, so a
  * normal doctor run never depends on service management being configured. When
- * a transport entry is present, it warns if the transport is declared but not
- * installed, or installed but not running.
+ * a service target entry is present (gateway, telegram, discord, or scheduler),
+ * it warns if the target is declared but not installed, or installed but not
+ * running. The persisted config key is `services.transports.*` for backward
+ * compatibility; user-facing wording calls these "service targets".
  */
 export function checkServiceConfig(config: ServiceConfig | undefined): DoctorCheck | null {
   if (config === undefined) return null;
@@ -288,20 +290,20 @@ export function checkServiceConfig(config: ServiceConfig | undefined): DoctorChe
     return {
       id: "services",
       status: "warn",
-      message: `Declared transport(s) not installed as a service: ${notInstalled.join(", ")}. Run \`piren service install <transport>\`.`,
+      message: `Declared service target(s) not installed as a service: ${notInstalled.join(", ")}. Run \`piren service install <target>\`.`,
     };
   }
   if (notRunning.length > 0) {
     return {
       id: "services",
       status: "warn",
-      message: `Installed transport(s) reported as not running: ${notRunning.join(", ")}. Run \`piren service start <transport>\`.`,
+      message: `Installed service target(s) reported as not running: ${notRunning.join(", ")}. Run \`piren service start <target>\`.`,
     };
   }
   return {
     id: "services",
     status: "ok",
-    message: `All declared transport services installed and running: ${okInstalled.join(", ")}.`,
+    message: `All declared service targets installed and running: ${okInstalled.join(", ")}.`,
   };
 }
 

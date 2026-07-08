@@ -302,7 +302,7 @@ try {
     else if (command === "service") {
         const [actionRaw, transportRaw] = positionals;
         if (!actionRaw || !transportRaw) {
-            console.error("Usage: piren service <install|remove|start|stop|restart|status> <gateway|telegram|discord>");
+            console.error("Usage: piren service <install|remove|start|stop|restart|status> <gateway|telegram|discord|scheduler>");
             process.exit(2);
         }
         const actionCheck = validateAction(actionRaw);
@@ -317,13 +317,16 @@ try {
         }
         const action = actionRaw;
         const transport = transportRaw;
-        // Resolve the context: vault + agent are needed for install to generate
-        // the right ExecStart command. For remove/start/stop/restart/status we only
-        // need the services dir, but loading context keeps the command consistent.
+        // Resolve the context: vault + agent are needed for transport installs to
+        // generate the right ExecStart command. The scheduler is NOT bound to one
+        // agent (its loop reads local config on each tick), so it skips context
+        // resolution and the vault/agent requirement. For remove/start/stop/
+        // restart/status we only need the services dir, but loading context keeps
+        // the command consistent for transports.
         const opts = bootstrapOptions(parsed);
         let resolvedVaultRoot = vaultRoot;
         let resolvedAgent = agentName;
-        if (action === "install") {
+        if (action === "install" && transport !== "scheduler") {
             try {
                 const context = await loadPirenContext(opts);
                 resolvedVaultRoot = resolvedVaultRoot ?? context.vaultRoot;
@@ -333,7 +336,7 @@ try {
                 // Bootstrap may fail on a fresh install; fall back to explicit flags.
             }
         }
-        if (action === "install" && (!resolvedVaultRoot || !resolvedAgent)) {
+        if (action === "install" && transport !== "scheduler" && (!resolvedVaultRoot || !resolvedAgent)) {
             console.error("service install requires a resolved vault and agent. Pass --vault-root and --agent, or run piren setup first.");
             process.exit(2);
         }

@@ -99,12 +99,13 @@ Pi-native auth first, then:
 3. Writes the local installation config after showing the content and asking
    for confirmation.
 4. Prints next commands plus optional service install commands for gateway,
-   Telegram, and Discord.
+   Telegram, Discord, and the scheduler.
 
 Bare `piren setup` does not configure provider keys, model selection, Telegram,
 Discord, or services interactively. Use Pi's own setup flow for provider/model
 auth, `piren setup --apply` for scripted model provisioning, and
-`piren service install <gateway|telegram|discord>` for always-on transports.
+`piren service install <gateway|telegram|discord|scheduler>` for always-on
+service targets.
 
 For the full live model list after setup, run `pi --list-models`.
 

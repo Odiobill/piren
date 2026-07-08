@@ -1,14 +1,14 @@
 # Service management
 
-Piren transports (gateway, Telegram, Discord) are long-running processes. This
-page describes how to keep them running on homelab and edge devices using
-Piren's built-in service lifecycle management.
+Piren service targets (gateway, Telegram, Discord, and the scheduler) are
+long-running processes. This page describes how to keep them running on
+homelab and edge devices using Piren's built-in service lifecycle management.
 
 See [ADR-0021](https://github.com/Odiobill/piren) for the design decisions.
 
 ## Overview
 
-`piren service` generates and manages supervisor files for each transport:
+`piren service` generates and manages supervisor files for each service target:
 
 - **systemd user units** (preferred) on machines with a systemd user session.
 - **tmux + `@reboot` cron** fallback for DietPi and stripped-down systems
@@ -35,14 +35,14 @@ The probe is tolerant of real-world homelab states:
 - **crontab:** `crontab -l` exits 1 when the user has no crontab yet (common on
   DietPi and stripped-down systems). Piren treats exit 0 and 1 as available.
 
-## Installing a transport as a service
+## Installing a service target
 
 ```bash
 piren service install gateway
 ```
 
 This resolves the configured vault and agent, generates the supervisor files,
-and starts the transport. Pass `--vault-root` and `--agent` explicitly when not
+and starts the target. Pass `--vault-root` and `--agent` explicitly when not
 running through a fully bootstrapped config:
 
 ```bash
@@ -112,7 +112,7 @@ journalctl --user -u piren-gateway.service -f
 
 ### tmux + cron fallback
 
-The tmux session is named `piren-<transport>`. Attach to it to watch output
+The tmux session is named `piren-<target>`. Attach to it to watch output
 directly:
 
 ```bash
@@ -127,7 +127,7 @@ Detach with `Ctrl+b` then `d`. The session keeps running after you detach.
 piren service remove gateway
 ```
 
-This stops the transport, disables and deletes the generated files, and removes
+This stops the target, disables and deletes the generated files, and removes
 the `@reboot` crontab line. The full reverse of install.
 
 ## Controlling a service
@@ -178,17 +178,24 @@ Batch mode is unchanged for automation:
 piren setup --apply --vault-root /tmp/piren-vault --agent piren
 ```
 
-## Transports
+## Service targets
 
-The `<transport>` argument is one of:
+The `<target>` argument is one of:
 
 - `gateway` - the web UI and OpenAI-compatible API.
 - `telegram` - the Telegram bot transport.
 - `discord` - the Discord bot transport.
+- `scheduler` - the device-local scheduler loop (ADR-0029).
 
 Telegram and Discord require their config blocks (`telegram:` / `discord:`) to
 be present in `~/.config/piren/config.yml` before the service can run. See
 [Transports](transports.md).
+
+The scheduler is different from the transports: its generated command is just
+`piren scheduler` with **no `--vault-root`/`--agent`** binding. The scheduler
+loop reads local config (`allowed_agents` minus `excluded_agents`, plus the
+`scheduler:` block) on each tick, so it is not bound to a single initial agent.
+See [Scheduler](scheduler.md).
 
 ## Security notes
 
@@ -201,6 +208,26 @@ be present in `~/.config/piren/config.yml` before the service can run. See
 
 ## Scheduler
 
-The device-local scheduler (ADR-0029) is a background supervisor that demand-starts bounded agent executions when vault work is due. The first shipped slice covers the dry-run planner only; the full loop and service lifecycle integration are deferred.
+The device-local scheduler (ADR-0029) is a background supervisor that
+demand-starts bounded agent executions when vault work is due. The dry-run
+planner, the one-shot `--once` tick, the always-on `piren scheduler` loop, and
+service lifecycle integration are all shipped.
 
-For the dry-run command, device ownership model, and what is not yet implemented, see [Scheduler](scheduler.md). When the scheduler loop ships, `piren service install scheduler` will land here alongside the gateway and transport services.
+Install the scheduler as a user service just like the transports:
+
+```bash
+piren service install scheduler
+piren service start scheduler
+piren service status scheduler
+piren service stop scheduler
+piren service restart scheduler
+piren service remove scheduler
+```
+
+The generated systemd unit is `piren-scheduler.service`; the tmux fallback
+session is `piren-scheduler` with launch script `piren-scheduler.tmux.sh` and
+cron fragment `piren-scheduler.cron`. The `ExecStart`/tmux command is
+`<resolved piren command> scheduler` with no agent binding.
+
+For the scheduler loop, local `scheduler:` config, device ownership model, and
+bounded execution semantics, see [Scheduler](scheduler.md).

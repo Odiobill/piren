@@ -53,4 +53,30 @@ describe("checkServiceConfig", () => {
     // still surfaced as a warn, but an empty entry should be skipped.
     expect(checkServiceConfig({ transports: { gateway: {} } })).toBeNull();
   });
+
+  it("handles the scheduler service target and uses wording that fits both transports and scheduler", () => {
+    const warnResult = checkServiceConfig({ transports: { scheduler: { installed: false } } });
+    expect(warnResult).not.toBeNull();
+    expect(warnResult!.status).toBe("warn");
+    expect(warnResult!.message).toContain("scheduler");
+    // Wording must not call the scheduler a "transport".
+    expect(warnResult!.message).not.toMatch(/transport/i);
+    expect(warnResult!.message).toMatch(/service target|service/i);
+
+    const okResult = checkServiceConfig({ transports: { scheduler: { installed: true, running: true } } });
+    expect(okResult!.status).toBe("ok");
+    expect(okResult!.message).toContain("scheduler");
+  });
+
+  it("reports both a transport and the scheduler together without misleading wording", () => {
+    const result = checkServiceConfig({
+      transports: {
+        gateway: { installed: true, running: true },
+        scheduler: { installed: false },
+      },
+    });
+    expect(result!.status).toBe("warn");
+    expect(result!.message).toContain("scheduler");
+    expect(result!.message).not.toMatch(/\btransport\b/i);
+  });
 });

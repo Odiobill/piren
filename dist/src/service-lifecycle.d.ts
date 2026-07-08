@@ -15,7 +15,7 @@
  * generated files under ~/.config/piren/services/, everything inspectable and
  * reversible.
  */
-export declare const SERVICE_TRANSPORTS: readonly ["gateway", "telegram", "discord"];
+export declare const SERVICE_TRANSPORTS: readonly ["gateway", "telegram", "discord", "scheduler"];
 export type ServiceTransport = (typeof SERVICE_TRANSPORTS)[number];
 export declare const SERVICE_ACTIONS: readonly ["install", "remove", "start", "stop", "restart", "status"];
 export type ServiceAction = (typeof SERVICE_ACTIONS)[number];
@@ -84,6 +84,17 @@ export interface GenerateServiceOptions {
     vaultRoot: string;
     agentName: string;
 }
+/**
+ * Build the `piren <target> ...` start command for a service target.
+ *
+ * Transports (gateway/telegram/discord) boot with an initial agent context, so
+ * they get `--vault-root <root> --agent <agent>`. The scheduler is different:
+ * it launches the S5 loop (`piren scheduler`) and is NOT bound to one agent —
+ * the loop reads local config (`allowed_agents` minus `excluded_agents`) on
+ * each tick. Generating `--vault-root/--agent` for the scheduler would be
+ * misleading (the loop currently ignores them), so it gets a bare command.
+ */
+export declare function targetStartCommand(transport: ServiceTransport, pirenCommand: string, vaultRoot: string, agentName: string): string;
 export interface SystemdUnitOptions extends GenerateServiceOptions {
     description: string;
 }

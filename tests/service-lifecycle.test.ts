@@ -11,6 +11,7 @@ import {
   generateCronEntry,
   installPlan,
   removePlan,
+  controlCommands,
   unitName,
   validateTransport,
   validateAction,
@@ -328,5 +329,149 @@ describe("service-lifecycle: remove plan", () => {
     expect(plan.filesToRemove).toContain("/home/davide/.config/piren/services/piren-gateway.tmux.sh");
     expect(plan.filesToRemove).toContain("/home/davide/.config/piren/services/piren-gateway.cron");
     expect(plan.instructions.join("\n")).toMatch(/crontab|@reboot/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scheduler service target (O7 S6)
+// ---------------------------------------------------------------------------
+//
+// The scheduler is a service target like gateway/telegram/discord, but its
+// generated command launches the S5 loop (`piren scheduler`) WITHOUT binding
+// to a single agent: the loop reads local config (allowed_agents minus
+// excluded_agents) on each tick. Internal type names still say `ServiceTransport`
+// for backward compatibility with the persisted `services.transports.*` config
+// key; user-facing wording calls these "service targets".
+
+describe("service-lifecycle: scheduler target validation", () => {
+  it("includes scheduler in the supported service targets", () => {
+    expect(SERVICE_TRANSPORTS).toContain("scheduler");
+  });
+
+  it("validates scheduler as an accepted service target", () => {
+    expect(validateTransport("scheduler").ok).toBe(true);
+  });
+
+  it("lists scheduler alongside the other valid targets in the rejection message", () => {
+    const result = validateTransport("bogus");
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("scheduler");
+    expect(result.message).toContain("gateway");
+  });
+
+  it("names the scheduler systemd unit piren-scheduler.service", () => {
+    expect(unitName("scheduler")).toBe("piren-scheduler.service");
+  });
+});
+
+describe("service-lifecycle: scheduler command generation (no agent binding)", () => {
+  const opts = {
+    transport: "scheduler" as const,
+    pirenCommand: "node /home/davide/src/piren/dist/src/cli.js",
+    vaultRoot: "/home/davide/vault",
+    agentName: "piren",
+    description: "Piren scheduler service",
+  };
+
+  it("generates a systemd unit whose ExecStart is just `<resolved piren command> scheduler` with no --vault-root/--agent", () => {
+    const unit = generateSystemdUnit(opts);
+    expect(unit).toContain("ExecStart=node /home/davide/src/piren/dist/src/cli.js scheduler");
+    expect(unit).not.toContain("--vault-root");
+    expect(unit).not.toContain("--agent");
+    expect(unit).toContain("WantedBy=default.target");
+    expect(unit).toContain("Restart=on-failure");
+  });
+
+  it("generates a tmux launch script that starts `<resolved piren command> scheduler` with no agent binding", () => {
+    const script = generateTmuxLaunchScript(opts);
+    expect(script).toContain("piren-scheduler");
+    expect(script).toContain("node /home/davide/src/piren/dist/src/cli.js scheduler");
+    expect(script).not.toContain("--vault-root");
+    expect(script).not.toContain("--agent");
+    expect(script).toContain("new-session");
+    expect(script).toContain("-d");
+  });
+});
+
+describe("service-lifecycle: scheduler install plan", () => {
+  const base = {
+    transport: "scheduler" as const,
+    pirenCommand: "piren",
+    vaultRoot: "/vault",
+    agentName: "piren",
+    servicesDir: "/home/davide/.config/piren/services",
+  };
+
+  it("plans a systemd install that writes piren-scheduler.service and enables/starts it", () => {
+    const plan = installPlan({ ...base, manager: "systemd" });
+    expect(plan.manager).toBe("systemd");
+    const paths = plan.files.map((f) => f.path);
+    expect(paths).toContain("/home/davide/.config/piren/services/piren-scheduler.service");
+    expect(plan.commands).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("systemctl --user enable piren-scheduler.service"),
+        expect.stringContaining("systemctl --user start piren-scheduler.service"),
+      ]),
+    );
+    // The generated unit must launch the bare scheduler loop, not bind an agent.
+    expect(plan.files[0]!.content).toContain("ExecStart=piren scheduler");
+    expect(plan.files[0]!.content).not.toContain("--agent");
+  });
+
+  it("plans a tmux-cron install that writes the scheduler tmux script and cron fragment", () => {
+    const plan = installPlan({ ...base, manager: "tmux-cron" });
+    expect(plan.manager).toBe("tmux-cron");
+    const paths = plan.files.map((f) => f.path);
+    expect(paths).toContain("/home/davide/.config/piren/services/piren-scheduler.tmux.sh");
+    expect(paths).toContain("/home/davide/.config/piren/services/piren-scheduler.cron");
+    expect(plan.files.find((f) => f.path.endsWith(".tmux.sh"))!.executable).toBe(true);
+    expect(plan.files.find((f) => f.path.endsWith(".tmux.sh"))!.content).toContain("piren scheduler");
+    expect(plan.files.find((f) => f.path.endsWith(".tmux.sh"))!.content).not.toContain("--agent");
+  });
+
+  it("plans none as guidance that runs `piren scheduler` manually with no agent binding", () => {
+    const plan = installPlan({ ...base, manager: "none" });
+    expect(plan.files).toEqual([]);
+    expect(plan.commands).toEqual([]);
+    const text = plan.instructions.join("\n");
+    expect(text).toContain("piren scheduler");
+    expect(text).not.toContain("--agent");
+  });
+});
+
+describe("service-lifecycle: scheduler remove/control", () => {
+  const base = {
+    transport: "scheduler" as const,
+    servicesDir: "/home/davide/.config/piren/services",
+  };
+
+  it("plans a systemd remove that targets piren-scheduler.service", () => {
+    const plan = removePlan({ ...base, manager: "systemd" });
+    expect(plan.commands).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("systemctl --user stop piren-scheduler.service"),
+        expect.stringContaining("systemctl --user disable piren-scheduler.service"),
+      ]),
+    );
+    expect(plan.filesToRemove).toContain("/home/davide/.config/piren/services/piren-scheduler.service");
+  });
+
+  it("plans a tmux-cron remove that kills the piren-scheduler session and removes its files", () => {
+    const plan = removePlan({ ...base, manager: "tmux-cron" });
+    expect(plan.commands.some((c) => c.includes("tmux kill-session -t piren-scheduler"))).toBe(true);
+    expect(plan.filesToRemove).toContain("/home/davide/.config/piren/services/piren-scheduler.tmux.sh");
+    expect(plan.filesToRemove).toContain("/home/davide/.config/piren/services/piren-scheduler.cron");
+  });
+
+  it("control commands target the piren-scheduler unit (systemd) and session (tmux)", () => {
+    expect(controlCommands("start", "scheduler", "systemd")).toContain("systemctl --user start piren-scheduler.service");
+    expect(controlCommands("stop", "scheduler", "tmux-cron")).toContain("tmux kill-session -t piren-scheduler 2>/dev/null || true");
+    expect(controlCommands("restart", "scheduler", "tmux-cron")).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("tmux kill-session -t piren-scheduler"),
+        expect.stringContaining("piren-scheduler.tmux.sh"),
+      ]),
+    );
+    expect(controlCommands("status", "scheduler", "systemd")).toContain("systemctl --user status piren-scheduler.service");
   });
 });

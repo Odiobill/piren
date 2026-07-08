@@ -70,6 +70,8 @@ describe("help: per-command help", () => {
     expect(text).toContain("remove");
     expect(text).toContain("start");
     expect(text).toContain("stop");
+    // Scheduler is a valid service target alongside the transports.
+    expect(text).toContain("scheduler");
   });
 
   it("prints usage and an example for clean", () => {

@@ -58,8 +58,10 @@ export type ServiceConfig = ServicesLocalConfig;
  *
  * Returns null when no `services.transports` block is declared at all, so a
  * normal doctor run never depends on service management being configured. When
- * a transport entry is present, it warns if the transport is declared but not
- * installed, or installed but not running.
+ * a service target entry is present (gateway, telegram, discord, or scheduler),
+ * it warns if the target is declared but not installed, or installed but not
+ * running. The persisted config key is `services.transports.*` for backward
+ * compatibility; user-facing wording calls these "service targets".
  */
 export declare function checkServiceConfig(config: ServiceConfig | undefined): DoctorCheck | null;
 /**
