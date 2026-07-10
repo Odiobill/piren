@@ -164,6 +164,13 @@ describe("parseArgs: preserved behavior", () => {
     expect(KNOWN_COMMANDS).toContain("service");
   });
 
+  it("parses --method for service manager override (piren service install telegram --method tmux-cron)", () => {
+    const result = parseArgs(["service", "install", "telegram", "--method", "tmux-cron"]);
+    expect(result.command).toBe("service");
+    expect(result.positionals).toEqual(["install", "telegram"]);
+    expect(result.serviceMethod).toBe("tmux-cron");
+  });
+
   it("recognizes the agent command with subcommands and positionals", () => {
     expect(parseArgs(["agent", "add", "thor"]).command).toBe("agent");
     expect(parseArgs(["agent", "add", "thor"]).positionals).toEqual(["add", "thor"]);

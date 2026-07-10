@@ -46,6 +46,7 @@ export function parseArgs(argv) {
     let thinking;
     let apiKey;
     let fallback;
+    let serviceMethod;
     let command = "status";
     let positionals = [];
     const passthroughIndex = argv.indexOf("--");
@@ -83,6 +84,7 @@ export function parseArgs(argv) {
         const thinkingValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined ? readFlagValue("--thinking") : undefined;
         const apiKeyValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined && thinkingValue === undefined ? readFlagValue("--api-key") : undefined;
         const fallbackValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined && thinkingValue === undefined && apiKeyValue === undefined ? readFlagValue("--fallback") : undefined;
+        const serviceMethodValue = agentDirValue === undefined && vaultRootValue === undefined && agentValue === undefined && portValue === undefined && hostValue === undefined && tokenValue === undefined && providerValue === undefined && modelValue === undefined && thinkingValue === undefined && apiKeyValue === undefined && fallbackValue === undefined ? readFlagValue("--method") : undefined;
         if (agentDirValue !== undefined) {
             agentDir = agentDirValue;
         }
@@ -134,6 +136,9 @@ export function parseArgs(argv) {
         else if (fallbackValue !== undefined) {
             fallback = fallbackValue;
         }
+        else if (serviceMethodValue !== undefined) {
+            serviceMethod = serviceMethodValue;
+        }
         else if (arg && !arg.startsWith("-")) {
             // First non-flag token is the command. After the command, every further
             // non-flag token is a positional. Flag values are consumed by the flag
@@ -169,6 +174,7 @@ export function parseArgs(argv) {
         thinking,
         apiKey,
         fallback,
+        serviceMethod,
         dryRun,
         once,
         positionals,

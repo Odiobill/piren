@@ -27,7 +27,7 @@ import { schedulerOnce, createSchedulerExecutors } from "./scheduler-once.js";
 import { resolveSchedulerConfig, runSchedulerLoop, createSchedulerLoopController, createRealSchedulerLoopSleep, } from "./scheduler-loop.js";
 import { createAskRunner } from "./scheduler-executor.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
-import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, crontabAvailableFromInvocation, systemdUserAvailableFromInvocation, } from "./service-lifecycle.js";
+import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, validateServiceMethod, crontabAvailableFromInvocation, systemdUserAvailableFromInvocation, } from "./service-lifecycle.js";
 const thisDir = dirname(fileURLToPath(import.meta.url));
 // Resolve the public directory (frontend static files) relative to this
 // module's location. From source: src/ -> ../public. From compiled dist:
@@ -315,6 +315,13 @@ try {
             console.error(transportCheck.message);
             process.exit(2);
         }
+        if (parsed.serviceMethod !== undefined) {
+            const methodCheck = validateServiceMethod(parsed.serviceMethod);
+            if (!methodCheck.ok) {
+                console.error(methodCheck.message);
+                process.exit(2);
+            }
+        }
         const action = actionRaw;
         const transport = transportRaw;
         // Resolve the context: vault + agent are needed for transport installs to
@@ -347,7 +354,7 @@ try {
             hasTmux: async () => commandAvailable("tmux", ["-V"]),
             hasCrontab: async () => crontabInstalled(),
         };
-        const manager = await detectServiceManager(probe);
+        const manager = parsed.serviceMethod && parsed.serviceMethod !== "auto" ? parsed.serviceMethod : await detectServiceManager(probe);
         const deps = {
             writeFile: async (path, content, fileOpts) => {
                 const { mkdir, writeFile, chmod } = await import("node:fs/promises");
@@ -786,14 +793,14 @@ function crontabInstalled() {
  */
 function systemdUserInstalled() {
     return new Promise((resolvePromise) => {
-        execFile("systemctl", ["--user", "is-system-running"], { timeout: 5000 }, (error) => {
+        execFile("systemctl", ["--user", "is-system-running"], { timeout: 5000 }, (error, stdout, stderr) => {
             if (!error) {
-                resolvePromise(systemdUserAvailableFromInvocation({ exitCode: 0, signal: null }));
+                resolvePromise(systemdUserAvailableFromInvocation({ exitCode: 0, signal: null, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
                 return;
             }
             const code = typeof error.code === "number" ? error.code : null;
             const signal = error.signal ?? null;
-            resolvePromise(systemdUserAvailableFromInvocation({ exitCode: code, signal }));
+            resolvePromise(systemdUserAvailableFromInvocation({ exitCode: code, signal, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
         });
     });
 }

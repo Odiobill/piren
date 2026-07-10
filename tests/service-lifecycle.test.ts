@@ -129,6 +129,17 @@ describe("service-lifecycle: systemd user detection (degraded session)", () => {
     expect(systemdUserAvailableFromInvocation({ exitCode: 1, signal: null })).toBe(true);
   });
 
+  it("treats a missing user bus (DietPi / no XDG_RUNTIME_DIR) as unavailable even when systemctl exits 1", () => {
+    expect(
+      systemdUserAvailableFromInvocation({
+        exitCode: 1,
+        signal: null,
+        stderr:
+          "Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined",
+      }),
+    ).toBe(false);
+  });
+
   it("treats hard failures (exit >= 2) as unavailable", () => {
     expect(systemdUserAvailableFromInvocation({ exitCode: 2, signal: null })).toBe(false);
     expect(systemdUserAvailableFromInvocation({ exitCode: 127, signal: null })).toBe(false);

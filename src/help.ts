@@ -83,8 +83,8 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
   {
     command: "service",
     short: "Install/remove/start/stop/restart/status a service target (gateway, telegram, discord, scheduler).",
-    flags: ["install", "remove", "start", "stop", "restart", "status", "<gateway|telegram|discord|scheduler>"],
-    example: "piren service install scheduler",
+    flags: ["install", "remove", "start", "stop", "restart", "status", "<gateway|telegram|discord|scheduler>", "--method <auto|systemd|tmux-cron>"],
+    example: "piren service install telegram --method tmux-cron",
   },
   {
     command: "agent",

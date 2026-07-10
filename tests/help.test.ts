@@ -72,6 +72,8 @@ describe("help: per-command help", () => {
     expect(text).toContain("stop");
     // Scheduler is a valid service target alongside the transports.
     expect(text).toContain("scheduler");
+    // DietPi can force the tmux+cron fallback even when systemd probing is ambiguous.
+    expect(text).toContain("--method");
   });
 
   it("prints usage and an example for clean", () => {

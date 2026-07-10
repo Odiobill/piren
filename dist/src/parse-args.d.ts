@@ -36,6 +36,7 @@ export interface ParsedArgs {
     thinking: string | undefined;
     apiKey: string | undefined;
     fallback: string | undefined;
+    serviceMethod: string | undefined;
     command: string;
     positionals: string[];
     piArgs: string[];

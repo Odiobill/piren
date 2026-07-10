@@ -30,10 +30,20 @@ The probe is tolerant of real-world homelab states:
 
 - **systemd user session:** `systemctl --user is-system-running` exits 1 with
   `degraded`, `starting`, or `maintenance` on many machines. These states still
-  run user services fine, so Piren treats exit 0 and 1 as available. A fully
-  broken session (exit >= 2, bus error, command not found) is unavailable.
+  run user services fine, so Piren treats them as available. A missing user bus
+  (for example DietPi output mentioning `DBUS_SESSION_BUS_ADDRESS` or
+  `XDG_RUNTIME_DIR`), exit >= 2, bus error, or command-not-found is unavailable.
 - **crontab:** `crontab -l` exits 1 when the user has no crontab yet (common on
   DietPi and stripped-down systems). Piren treats exit 0 and 1 as available.
+
+You can override detection explicitly when you know which supervisor you want:
+
+```bash
+piren service install telegram --method tmux-cron
+piren service status telegram --method tmux-cron
+```
+
+`--method` accepts `auto` (default), `systemd`, or `tmux-cron`.
 
 ## Installing a service target
 

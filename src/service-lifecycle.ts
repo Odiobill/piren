@@ -45,6 +45,11 @@ export interface ValidationResult {
   message?: string;
 }
 
+export function validateServiceMethod(method: string): ValidationResult {
+  if (["auto", "systemd", "tmux-cron"].includes(method)) return { ok: true };
+  return { ok: false, message: `Unknown service method '${method}'. Use one of: auto, systemd, tmux-cron.` };
+}
+
 export function validateTransport(transport: string): ValidationResult {
   if ((SERVICE_TRANSPORTS as readonly string[]).includes(transport)) return { ok: true };
   return { ok: false, message: `Unknown service target '${transport}'. Use one of: ${SERVICE_TRANSPORTS.join(", ")}.` };
@@ -119,12 +124,27 @@ export function crontabAvailableFromInvocation(result: CrontabInvocationResult):
 export interface SystemdInvocationResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
+  stdout?: string;
+  stderr?: string;
 }
 
 export function systemdUserAvailableFromInvocation(result: SystemdInvocationResult): boolean {
   if (result.signal !== null) return false;
   if (result.exitCode === null) return false;
-  return result.exitCode === 0 || result.exitCode === 1;
+  if (result.exitCode === 0) return true;
+  if (result.exitCode !== 1) return false;
+
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.toLowerCase();
+  if (
+    output.includes("failed to connect") ||
+    output.includes("no medium found") ||
+    output.includes("no such file or directory") ||
+    output.includes("dbus_session_bus_address") ||
+    output.includes("xdg_runtime_dir")
+  ) {
+    return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------

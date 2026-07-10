@@ -52,6 +52,7 @@ import {
   updateServiceStatusYaml,
   validateTransport,
   validateAction,
+  validateServiceMethod,
   crontabAvailableFromInvocation,
   systemdUserAvailableFromInvocation,
   type ServiceManagerDetection,
@@ -59,6 +60,7 @@ import {
   type CommandResult,
   type ServiceTransport,
   type ServiceAction,
+  type ServiceManager,
 } from "./service-lifecycle.js";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
@@ -340,6 +342,13 @@ try {
       console.error(transportCheck.message);
       process.exit(2);
     }
+    if (parsed.serviceMethod !== undefined) {
+      const methodCheck = validateServiceMethod(parsed.serviceMethod);
+      if (!methodCheck.ok) {
+        console.error(methodCheck.message);
+        process.exit(2);
+      }
+    }
     const action = actionRaw as ServiceAction;
     const transport = transportRaw as ServiceTransport;
 
@@ -373,7 +382,8 @@ try {
       hasTmux: async () => commandAvailable("tmux", ["-V"]),
       hasCrontab: async () => crontabInstalled(),
     };
-    const manager = await detectServiceManager(probe);
+    const manager: ServiceManager =
+      parsed.serviceMethod && parsed.serviceMethod !== "auto" ? (parsed.serviceMethod as ServiceManager) : await detectServiceManager(probe);
 
     const deps: ServiceExecDeps = {
       writeFile: async (path, content, fileOpts) => {
@@ -823,14 +833,18 @@ function crontabInstalled(): Promise<boolean> {
  */
 function systemdUserInstalled(): Promise<boolean> {
   return new Promise((resolvePromise) => {
-    execFile("systemctl", ["--user", "is-system-running"], { timeout: 5000 }, (error) => {
+    execFile("systemctl", ["--user", "is-system-running"], { timeout: 5000 }, (error, stdout, stderr) => {
       if (!error) {
-        resolvePromise(systemdUserAvailableFromInvocation({ exitCode: 0, signal: null }));
+        resolvePromise(
+          systemdUserAvailableFromInvocation({ exitCode: 0, signal: null, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }),
+        );
         return;
       }
       const code = typeof error.code === "number" ? error.code : null;
       const signal = error.signal ?? null;
-      resolvePromise(systemdUserAvailableFromInvocation({ exitCode: code, signal }));
+      resolvePromise(
+        systemdUserAvailableFromInvocation({ exitCode: code, signal, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }),
+      );
     });
   });
 }

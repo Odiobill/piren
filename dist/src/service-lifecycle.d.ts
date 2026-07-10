@@ -30,6 +30,7 @@ export interface ValidationResult {
     ok: boolean;
     message?: string;
 }
+export declare function validateServiceMethod(method: string): ValidationResult;
 export declare function validateTransport(transport: string): ValidationResult;
 export declare function validateAction(action: string): ValidationResult;
 export declare function unitName(transport: ServiceTransport): string;
@@ -76,6 +77,8 @@ export declare function crontabAvailableFromInvocation(result: CrontabInvocation
 export interface SystemdInvocationResult {
     exitCode: number | null;
     signal: NodeJS.Signals | null;
+    stdout?: string;
+    stderr?: string;
 }
 export declare function systemdUserAvailableFromInvocation(result: SystemdInvocationResult): boolean;
 export interface GenerateServiceOptions {
