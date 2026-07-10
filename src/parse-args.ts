@@ -64,6 +64,7 @@ export const KNOWN_COMMANDS = [
   "version",
   "update",
   "scheduler",
+  "package",
 ] as const;
 
 /**

@@ -114,7 +114,7 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 Piren 0.1.0 is the first non-prerelease official release. It contains the full official-release scope (O1–O7): agent groups with read-only fallback, a device-local scheduler service MVP (`--dry-run`/`--once`/loop/service lifecycle), a complete documentation pass, OKF vault conformance, inspectable self-improvement, and the rc.1–rc.3 core (gateway surfaces, vault skills, Pi packages, knowledge lifecycle, vault-backed cron, clean-install validation).
 
-Current verification baseline: 83 test files, 832 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing. `npm run clean-install:check` should be run after pushing because it fetches the GitHub source.
+Current verification baseline: 84 test files, 857 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing. `npm run clean-install:check` should be run after pushing because it fetches the GitHub source.
 
 Update an existing global install with:
 

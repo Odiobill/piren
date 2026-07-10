@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  83 passed (83)
-Tests       832 passed (832)
+Test Files  84 passed (84)
+Tests       857 passed (857)
 SMOKE PASSED
 ```
 
@@ -222,6 +222,7 @@ Implemented CLI:
 - `piren scheduler --dry-run` (LLM-free, claim-free: preview proposed claims for one tick)
 - `piren service <install|remove|start|stop|restart|status> <gateway|telegram|discord|scheduler>`
 - `piren agent <add|remove|clone|list> [name]` (manages team/<agent>/ identity AND local allowed_agents; remove prompts before deleting the vault dir, `--yes` skips; clone copies a source agent verbatim)
+- `piren package <list|explain|doctor> [--agent <agent>]` (read-only vault-scoped package manifest CLI; list effective packages, explain provenance, doctor compares vault intent against local config and Node resolvability; no package installation or mutation, per ADR-0032)
 - `piren clean`
 - `piren version`
 - `piren update` (runs `npm install -g --install-links github:Odiobill/piren`)
@@ -316,6 +317,12 @@ Device-local scheduler service MVP (ADR-0029, O7 S2-S6, implemented):
 - Service lifecycle target: `piren service <action> scheduler` generates `piren-scheduler.service` (systemd) / `piren-scheduler.tmux.sh` + `.cron` (tmux-cron), launching `<resolved piren command> scheduler` with no `--vault-root`/`--agent` (the loop reads local config on each tick). Wired through the existing `SERVICE_TRANSPORTS`, `targetStartCommand`, and `executeServiceAction` machinery.
 - Scheduler is off by default, respects local `allowed_agents`/`excluded_agents`, uses claim-first semantics, executes at most one item per tick, has no automatic cross-agent fallback, no hidden state, no gateway/Web UI controls, and no interactive polling.
 - Tests: `tests/scheduler.test.ts` (12 tests), `tests/scheduler-executor.test.ts` (22 tests), `tests/scheduler-cron-executor.test.ts` (23 tests), `tests/scheduler-once.test.ts` (20 tests), `tests/scheduler-loop.test.ts` (28 tests), `tests/scheduler-cli.test.ts` (5 tests), `tests/cli-scheduler.test.ts` (5 tests), `tests/cli-service.test.ts` (3 tests). Service lifecycle tests extended for scheduler in `tests/service-lifecycle.test.ts` (+12 → 50), `tests/service-status-yaml.test.ts` (+1 → 6), `tests/doctor-service.test.ts` (+2 → 9). Smoke covers all four scheduler layers.
+
+Vault-scoped package manifest CLI (ADR-0032, Slice F, implemented):
+- `src/package-manifest.ts` is the pure core, callable directly from tests without Pi auth or a real vault. It exports `parsePackageManifest` (parse YAML package manifest strings), `mergeEffectivePackages` (merge shared + groups + agent manifests deterministically), `diagnosePackages` (compare effective packages against local config `packages` and an injected `packageInstalled` resolver), and formatting helpers `formatPackageList`, `formatPackageExplain`, and `formatPackageDoctor`. Exported types: `PackageManifest`, `PackageSource`, `EffectivePackage`, `PackageState`, `DiagnosedPackage`.
+- CLI command `piren package <list|explain|doctor> [--agent <agent>]`. `list` prints effective required and recommended packages with source manifests. `explain` shows detailed provenance for each package (kind, source, scope). `doctor` compares vault intent against `~/.config/piren/config.yml` `packages`, `package_policy.blocked`, and Node `require.resolve`, reporting five distinct states: `missing-from-local-config`, `blocked-by-policy` (triggered by `package_policy.blocked` in local config), `declared-but-not-installed`, `recommended-missing`, and the OK states `ok-required` / `ok-recommended`. Doctor without `--agent` runs for all vault agents. All commands are read-only: no package installation, no loading from vault manifests, no mutation of local config.
+- Manifest locations: `packages.yml` at vault root (shared), `agent-groups/<group>/packages.yml` (group), `team/<agent>/packages.yml` (agent). Resolution order: shared -> groups -> agent, last-writer wins on name collision.
+- Tests: `tests/package-manifest.test.ts` (23 tests).
 
 Open Knowledge Format conformance and graph surface (ADR-0022/0026):
 - `piren init` creates the top-level `Projects/` directory as part of the default OKF vault shape, alongside `wiki/`, `team/`, `agent-groups/`, shared `skills/`, and `templates/`.

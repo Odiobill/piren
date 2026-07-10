@@ -45,6 +45,17 @@ import {
 import { createAskRunner } from "./scheduler-executor.js";
 import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import {
+  parsePackageManifest,
+  mergeEffectivePackages,
+  diagnosePackages,
+  formatPackageList,
+  formatPackageExplain,
+  formatPackageDoctor,
+  type EffectivePackage,
+  type PackageManifest,
+} from "./package-manifest.js";
+import { resolveAgentGroups } from "./agent-groups.js";
+import {
   detectServiceManager,
   executeServiceAction,
   formatServiceReport,
@@ -524,6 +535,14 @@ try {
       force,
       yes,
     });
+  } else if (command === "package") {
+    await runPackageCommand({
+      subcommand: positionals[0],
+      agentName: positionals[1],
+      opts: bootstrapOptions(parsed),
+      explicitVaultRoot: vaultRoot,
+      forceCliAgent: agentName,
+    });
   } else {
     const context = await loadPirenContext(bootstrapOptions(parsed));
     console.log(`Piren ${command}`);
@@ -782,6 +801,267 @@ async function printAgentList(vaultRoot: string, existingConfig: string): Promis
   }
   console.log("");
   console.log(`allowed_agents: ${allowed.length ? allowed.join(", ") : "<not set>"}`);
+}
+
+// ---------------------------------------------------------------------------
+// Package manifest CLI (Slice F, ADR-0032)
+// ---------------------------------------------------------------------------
+
+interface RunPackageCommandArgs {
+  subcommand: string | undefined;
+  agentName: string | undefined;
+  opts: BootstrapOptions;
+  explicitVaultRoot: string | undefined;
+  forceCliAgent: string | undefined;
+}
+
+/**
+ * Injected manifest file reader: resolves a vault-relative path and returns
+ * its content as a string, or null when the file does not exist.
+ */
+type ManifestFileReader = (vaultRoot: string, relativePath: string) => Promise<string | null>;
+
+async function realManifestReader(vaultRoot: string, relativePath: string): Promise<string | null> {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  try {
+    return await readFile(join(vaultRoot, relativePath), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read and parse a single manifest file from the vault. Returns null when
+ * the file does not exist or cannot be parsed as a manifest.
+ */
+async function readManifest(
+  vaultRoot: string,
+  relativePath: string,
+  reader: ManifestFileReader,
+): Promise<{ source: { kind: "shared" } | { kind: "group"; group: string } | { kind: "agent"; agent: string }; manifest: PackageManifest } | null> {
+  const content = await reader(vaultRoot, relativePath);
+  if (content === null) return null;
+
+  let source: { kind: "shared" } | { kind: "group"; group: string } | { kind: "agent"; agent: string };
+  if (relativePath === "packages.yml") {
+    source = { kind: "shared" };
+  } else if (relativePath.startsWith("agent-groups/") && relativePath.endsWith("/packages.yml")) {
+    const group = relativePath.slice("agent-groups/".length, -("/packages.yml".length));
+    source = { kind: "group", group };
+  } else if (relativePath.startsWith("team/") && relativePath.endsWith("/packages.yml")) {
+    const agent = relativePath.slice("team/".length, -("/packages.yml".length));
+    source = { kind: "agent", agent };
+  } else {
+    return null;
+  }
+
+  const manifest = parsePackageManifest(content);
+  return { source, manifest };
+}
+
+/**
+ * Resolve effective packages for an agent by reading vault manifests.
+ */
+async function resolveEffectiveForAgent(
+  vaultRoot: string,
+  agentName: string,
+  reader: ManifestFileReader,
+): Promise<EffectivePackage[]> {
+  const manifestEntries: { source: { kind: "shared" } | { kind: "group"; group: string } | { kind: "agent"; agent: string }; manifest: PackageManifest }[] = [];
+
+  // 1. Shared manifest
+  const shared = await readManifest(vaultRoot, "packages.yml", reader);
+  if (shared) manifestEntries.push(shared);
+
+  // 2. Group manifests (the agent might belong to multiple groups)
+  let groups: string[] = [];
+  try {
+    groups = await resolveAgentGroups(vaultRoot, agentName);
+  } catch {
+    // No groups or unparseable config — skip group manifests.
+  }
+  for (const group of groups) {
+    const groupManifest = await readManifest(vaultRoot, `agent-groups/${group}/packages.yml`, reader);
+    if (groupManifest) manifestEntries.push(groupManifest);
+  }
+
+  // 3. Agent manifest
+  const agentManifest = await readManifest(vaultRoot, `team/${agentName}/packages.yml`, reader);
+  if (agentManifest) manifestEntries.push(agentManifest);
+
+  return mergeEffectivePackages(manifestEntries);
+}
+
+async function runPackageCommand(args: RunPackageCommandArgs): Promise<void> {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { parse: parseYaml } = await import("yaml");
+
+  const sub = args.subcommand;
+
+  if (!sub || !["list", "explain", "doctor"].includes(sub)) {
+    console.error("Usage: piren package <list|explain|doctor> [--agent <agent>]");
+    process.exit(2);
+  }
+
+  // Resolve vault root from explicit flag or local config.
+  const configPath = join(homedir(), ".config", "piren", "config.yml");
+  let existingConfig = "";
+  try {
+    existingConfig = await readFile(configPath, "utf8");
+  } catch {
+    existingConfig = "";
+  }
+
+  let vaultRoot = args.explicitVaultRoot;
+  if (!vaultRoot) {
+    try {
+      const parsedCfg = parseYaml(existingConfig) as Record<string, unknown> | null;
+      const root = parsedCfg?.vault_root;
+      if (typeof root === "string" && root.trim() !== "") vaultRoot = root;
+    } catch {
+      // Ignore malformed config.
+    }
+  }
+  if (!vaultRoot) {
+    console.error("Could not resolve vault root. Pass --vault-root or set vault_root in " + configPath + ".");
+    process.exit(2);
+  }
+
+  // Resolve agent: explicit positionals[1] (after subcommand) beats --agent flag.
+  let targetAgent = args.agentName ?? args.forceCliAgent;
+
+  // For list and explain, agent is required.
+  if ((sub === "list" || sub === "explain") && !targetAgent) {
+    console.error(`piren package ${sub} requires an agent. Usage: piren package ${sub} --agent <agent>`);
+    process.exit(2);
+  }
+
+  // For doctor without an explicit agent, list all agents in the vault.
+  if (sub === "doctor" && !targetAgent) {
+    const { readdir: readdirFs, access: accessFs } = await import("node:fs/promises");
+    const teamDir = join(vaultRoot, "team");
+    let agentNames: string[] = [];
+    try {
+      await accessFs(teamDir);
+      const entries = await readdirFs(teamDir, { withFileTypes: true });
+      agentNames = entries
+        .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+        .map((e) => e.name)
+        .sort();
+    } catch {
+      // No team dir.
+    }
+    if (agentNames.length === 0) {
+      console.log("No agents found in vault. Doctor requires at least one agent.");
+      process.exit(2);
+    }
+    // Run doctor for all agents
+    const reader = realManifestReader;
+    const localPackages = parseLocalPackagesFromConfig(existingConfig, parseYaml);
+    const blockedPackages = parseBlockedPackagesFromConfig(existingConfig, parseYaml);
+    let anyIssues = false;
+    for (const agentName of agentNames) {
+      const output = await formatAgentPackageDoctor(vaultRoot, agentName, localPackages, reader, blockedPackages);
+      console.log(output);
+      console.log("");
+      if (output.includes("MISSING-FROM-LOCAL-CONFIG") || output.includes("DECLARED-BUT-NOT-INSTALLED") || output.includes("RECOMMENDED-MISSING") || output.includes("BLOCKED-BY-POLICY")) {
+        anyIssues = true;
+      }
+    }
+    if (anyIssues) process.exit(1);
+    return;
+  }
+
+  if (!targetAgent) {
+    console.error("No agent specified. Pass --agent or use `piren package doctor` to run for all agents.");
+    process.exit(2);
+  }
+
+  const reader = realManifestReader;
+
+  if (sub === "list") {
+    const effective = await resolveEffectiveForAgent(vaultRoot, targetAgent, reader);
+    console.log(formatPackageList(effective, targetAgent));
+  } else if (sub === "explain") {
+    const effective = await resolveEffectiveForAgent(vaultRoot, targetAgent, reader);
+    console.log(formatPackageExplain(effective, targetAgent));
+  } else if (sub === "doctor") {
+    const localPackages = parseLocalPackagesFromConfig(existingConfig, parseYaml);
+    const blockedPackages = parseBlockedPackagesFromConfig(existingConfig, parseYaml);
+    const output = await formatAgentPackageDoctor(vaultRoot, targetAgent, localPackages, reader, blockedPackages);
+    console.log(output);
+    // Exit non-zero if there are issues
+    if (output.includes("MISSING-FROM-LOCAL-CONFIG") || output.includes("DECLARED-BUT-NOT-INSTALLED") || output.includes("RECOMMENDED-MISSING") || output.includes("BLOCKED-BY-POLICY")) {
+      process.exit(1);
+    }
+  }
+}
+
+function parseLocalPackagesFromConfig(
+  existingConfig: string,
+  parseYaml: (s: string) => unknown,
+): string[] {
+  try {
+    const parsed = parseYaml(existingConfig) as Record<string, unknown> | null;
+    if (parsed && Array.isArray(parsed.packages)) {
+      return parsed.packages.filter((x): x is string => typeof x === "string");
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+/**
+ * Read the `package_policy.blocked` list from local config.
+ * This is a read-only policy field; the CLI never mutates it or applies it.
+ */
+function parseBlockedPackagesFromConfig(
+  existingConfig: string,
+  parseYaml: (s: string) => unknown,
+): string[] {
+  try {
+    const parsed = parseYaml(existingConfig) as Record<string, unknown> | null;
+    if (!parsed) return [];
+    const policy = parsed.package_policy;
+    if (policy && typeof policy === "object" && !Array.isArray(policy)) {
+      const blocked = (policy as Record<string, unknown>).blocked;
+      if (Array.isArray(blocked)) {
+        return blocked.filter((x): x is string => typeof x === "string");
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+async function formatAgentPackageDoctor(
+  vaultRoot: string,
+  targetAgent: string,
+  localPackages: string[],
+  reader: ManifestFileReader,
+  blockedPackages?: string[],
+): Promise<string> {
+  const effective = await resolveEffectiveForAgent(vaultRoot, targetAgent, reader);
+  const { createRequire } = await import("node:module");
+  const nodeRequire = createRequire(import.meta.url);
+  const diagnosed = diagnosePackages(
+    effective,
+    localPackages,
+    (name: string) => {
+      try {
+        nodeRequire.resolve(name);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    blockedPackages,
+  );
+  return formatPackageDoctor(diagnosed, targetAgent);
 }
 
 // ---------------------------------------------------------------------------

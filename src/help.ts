@@ -108,6 +108,12 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
     example: "piren update  # runs npm install -g --install-links github:Odiobill/piren",
   },
   {
+    command: "package",
+    short: "Vault-scoped package manifests: list, explain, or doctor (read-only).",
+    flags: ["<list|explain|doctor>", "--agent <agent>"],
+    example: "piren package list --agent piren",
+  },
+  {
     command: "scheduler",
     short: "Device-local scheduler. Bare runs the opt-in loop; --once runs one bounded tick; --dry-run previews planned claims (LLM-free).",
     flags: ["--once", "--dry-run"],
