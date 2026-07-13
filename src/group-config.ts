@@ -143,6 +143,12 @@ export async function readGroupConfig(
   vaultRoot: string,
   group: string,
 ): Promise<GroupConfigData | null> {
+  // Validate before building the path: node:path.join normalizes `..`, so an
+  // unchecked group name (e.g. `../../../etc/passwd`) could make the read
+  // target escape agent-groups/ and potentially the vault. This single guard
+  // covers every consumer (show, add-agent, remove-agent, fallback set,
+  // validate) since they all route reads through this function.
+  assertGroupName(group);
   const configPath = groupConfigPath(vaultRoot, group);
   let content: string;
   try {

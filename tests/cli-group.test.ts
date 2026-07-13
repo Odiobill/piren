@@ -196,4 +196,32 @@ describe("piren group (CLI dispatch)", () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toMatch(/unknown subcommand|usage/i);
   });
+
+  // Path traversal guard (Slice A review fix): invalid group names must be
+  // rejected on every read/consumer path before any filesystem access, not
+  // surfaced as a confusing 'does not exist'. The pure-core guard lives in
+  // readGroupConfig(); these tests exercise it through the real CLI dispatch.
+  it("rejects a traversal group name on `show`", () => {
+    const result = runPirenGroup(["show", "../../../etc/passwd"], { HOME: home });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/invalid group name/i);
+  });
+
+  it("rejects an invalid group name on `add-agent`", () => {
+    const result = runPirenGroup(["add-agent", "../foo", "dipu"], { HOME: home });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/invalid group name/i);
+  });
+
+  it("rejects an invalid group name on `remove-agent`", () => {
+    const result = runPirenGroup(["remove-agent", "foo/bar", "dipu"], { HOME: home });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/invalid group name/i);
+  });
+
+  it("rejects an invalid group name on `fallback set`", () => {
+    const result = runPirenGroup(["fallback", "set", ".", "dipu", "sam"], { HOME: home });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/invalid group name/i);
+  });
 });

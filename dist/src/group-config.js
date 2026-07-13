@@ -82,6 +82,12 @@ async function pathExists(deps, path) {
  * Malformed YAML is surfaced as a thrown error naming the group.
  */
 export async function readGroupConfig(deps, vaultRoot, group) {
+    // Validate before building the path: node:path.join normalizes `..`, so an
+    // unchecked group name (e.g. `../../../etc/passwd`) could make the read
+    // target escape agent-groups/ and potentially the vault. This single guard
+    // covers every consumer (show, add-agent, remove-agent, fallback set,
+    // validate) since they all route reads through this function.
+    assertGroupName(group);
     const configPath = groupConfigPath(vaultRoot, group);
     let content;
     try {

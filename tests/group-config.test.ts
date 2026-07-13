@@ -235,6 +235,57 @@ describe("readGroupConfig", () => {
 });
 
 // ---------------------------------------------------------------------------
+// readGroupConfig (path traversal guard)
+// ---------------------------------------------------------------------------
+//
+// readGroupConfig builds `<vaultRoot>/agent-groups/<group>/config.yml`. Because
+// node:path.join normalizes `..`, an unchecked group name can escape the
+// agent-groups/ directory and even the vault on the read path. assertGroupName
+// must run before any filesystem access so traversal vectors are rejected.
+
+describe("readGroupConfig (path traversal guard)", () => {
+  it("rejects a traversal group name before touching the filesystem", async () => {
+    const fs = new FakeFs();
+    seedVault(fs, "/vault");
+    // Sentinel: readFile must never be reached. If validation fails to run
+    // first, this throws a distinctive error and the assertion below fails.
+    const guardedDeps: GroupWriteDeps = {
+      ...deps(fs),
+      readFile: (_path: string): Promise<string> => {
+        throw new Error("readFile MUST NOT be called for an invalid group name");
+      },
+    };
+    await expect(readGroupConfig(guardedDeps, "/vault", "../../../etc/passwd")).rejects.toThrow(
+      /invalid group name/i,
+    );
+  });
+
+  it("rejects '.', '..', separator, absolute, and leading-dot names", async () => {
+    const fs = new FakeFs();
+    seedVault(fs, "/vault");
+    for (const bad of ["..", ".", "foo/bar", "foo\\bar", "/abs", ".hidden", "trailing/"]) {
+      await expect(readGroupConfig(deps(fs), "/vault", bad)).rejects.toThrow(/invalid group name/i);
+    }
+  });
+
+  it("propagates the guard to addAgentToGroup, removeAgentFromGroup, and setFallbackOrder", async () => {
+    const fs = new FakeFs();
+    seedVault(fs, "/vault");
+    // These consumers all read the config first; an invalid group name must be
+    // rejected before any filesystem access, not surfaced as 'does not exist'.
+    await expect(addAgentToGroup(deps(fs), "/vault", "../escape", "dipu")).rejects.toThrow(
+      /invalid group name/i,
+    );
+    await expect(removeAgentFromGroup(deps(fs), "/vault", "foo/bar", "dipu")).rejects.toThrow(
+      /invalid group name/i,
+    );
+    await expect(setFallbackOrder(deps(fs), "/vault", ".", "dipu", [])).rejects.toThrow(
+      /invalid group name/i,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // writeGroupConfig
 // ---------------------------------------------------------------------------
 
