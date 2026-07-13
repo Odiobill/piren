@@ -119,6 +119,12 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
     flags: ["--once", "--dry-run"],
     example: "piren scheduler  # opt-in loop until SIGINT/SIGTERM (configure under scheduler: in config.yml)",
   },
+  {
+    command: "group",
+    short: "Manage agent group configs (vault-owned): list, show, create, add-agent, remove-agent, fallback set, validate.",
+    flags: ["<list|show|create|add-agent|remove-agent|fallback set|validate>", "<group>", "<agent>", "<candidate...>", "--force"],
+    example: "piren group create developers && piren group add-agent developers dipu",
+  },
 ];
 
 const GLOBAL_FLAGS = ["--vault-root <path>", "--agent <name>", "--agent-dir <path>", "-h, --help"];

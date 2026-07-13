@@ -54,7 +54,19 @@ import {
   type EffectivePackage,
   type PackageManifest,
 } from "./package-manifest.js";
-import { resolveAgentGroups } from "./agent-groups.js";
+import {
+  createRealGroupWriteDeps,
+  readGroupConfig,
+  createGroup,
+  addAgentToGroup,
+  removeAgentFromGroup,
+  setFallbackOrder,
+  validateGroups,
+  formatGroupList,
+  formatGroupConfig,
+  formatValidationReport,
+} from "./group-config.js";
+import { resolveAgentGroups, parseGroupConfigs } from "./agent-groups.js";
 import {
   detectServiceManager,
   executeServiceAction,
@@ -542,6 +554,13 @@ try {
       opts: bootstrapOptions(parsed),
       explicitVaultRoot: vaultRoot,
       forceCliAgent: agentName,
+    });
+  } else if (command === "group") {
+    await runGroupCommand({
+      positionals,
+      opts: bootstrapOptions(parsed),
+      explicitVaultRoot: vaultRoot,
+      force,
     });
   } else {
     const context = await loadPirenContext(bootstrapOptions(parsed));
@@ -1062,6 +1081,162 @@ async function formatAgentPackageDoctor(
     blockedPackages,
   );
   return formatPackageDoctor(diagnosed, targetAgent);
+}
+
+// ---------------------------------------------------------------------------
+// Group config CLI (Slice A, ADR-0028)
+// ---------------------------------------------------------------------------
+
+interface RunGroupCommandArgs {
+  positionals: string[];
+  opts: BootstrapOptions;
+  explicitVaultRoot: string | undefined;
+  force: boolean;
+}
+
+/**
+ * Dispatch `piren group <list|show|create|add-agent|remove-agent|fallback set|validate>`.
+ *
+ * Group configs are vault-owned (`agent-groups/<group>/config.yml`); this
+ * command never mutates local `~/.config/piren/config.yml`. All mutations go
+ * through the pure core in `src/group-config.ts`, which writes files identical
+ * in structure to hand-written ones so `parseGroupConfigs`, `piren agents`,
+ * and `piren doctor` observe them unchanged.
+ */
+async function runGroupCommand(args: RunGroupCommandArgs): Promise<void> {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { parse: parseYaml } = await import("yaml");
+
+  const sub = args.positionals[0];
+
+  // Resolve vault root from explicit flag or local config.
+  const configPath = join(homedir(), ".config", "piren", "config.yml");
+  let existingConfig = "";
+  try {
+    existingConfig = await readFile(configPath, "utf8");
+  } catch {
+    existingConfig = "";
+  }
+
+  let vaultRoot = args.explicitVaultRoot;
+  if (!vaultRoot) {
+    try {
+      const parsedCfg = parseYaml(existingConfig) as Record<string, unknown> | null;
+      const root = parsedCfg?.vault_root;
+      if (typeof root === "string" && root.trim() !== "") vaultRoot = root;
+    } catch {
+      // Ignore malformed config.
+    }
+  }
+  if (!vaultRoot) {
+    console.error("Could not resolve vault root. Pass --vault-root or set vault_root in " + configPath + ".");
+    process.exit(2);
+  }
+
+  const deps = createRealGroupWriteDeps();
+
+  // `fallback set` is a two-word subcommand: handle it before the switch so
+  // the positional offsets line up (group = positionals[2], agent = [3],
+  // candidates = positionals.slice(4)).
+  if (sub === "fallback") {
+    const action = args.positionals[1];
+    if (action !== "set") {
+      console.error("Usage: piren group fallback set <group> <agent> <candidate...>");
+      process.exit(2);
+    }
+    const group = args.positionals[2];
+    const agent = args.positionals[3];
+    const candidates = args.positionals.slice(4);
+    if (!group || !agent) {
+      console.error("Usage: piren group fallback set <group> <agent> <candidate...>");
+      process.exit(2);
+    }
+    await setFallbackOrder(deps, vaultRoot, group, agent, candidates);
+    console.log(
+      `Set fallback order for '${agent}' in group '${group}': ${
+        candidates.length > 0 ? candidates.join(", ") : "<empty>"
+      }.`,
+    );
+    return;
+  }
+
+  switch (sub) {
+    case "list": {
+      // Reuse the existing read-only parser so `list` observes exactly what
+      // `piren agents` and `piren doctor` observe (acceptance criterion #8).
+      const groups = await parseGroupConfigs(vaultRoot);
+      const entries = [...groups.entries()].map(([name, config]) => ({ name, config }));
+      console.log(formatGroupList(entries));
+      return;
+    }
+    case "show": {
+      const group = args.positionals[1];
+      if (!group) {
+        console.error("Usage: piren group show <group>");
+        process.exit(2);
+      }
+      const config = await readGroupConfig(deps, vaultRoot, group);
+      if (config === null) {
+        console.error(`Agent group '${group}' does not exist.`);
+        process.exit(1);
+      }
+      console.log(formatGroupConfig(group, config));
+      return;
+    }
+    case "create": {
+      const group = args.positionals[1];
+      if (!group) {
+        console.error("Usage: piren group create <group> [--force]");
+        process.exit(2);
+      }
+      await createGroup(deps, vaultRoot, group, { force: args.force });
+      console.log(`Created group '${group}' at ${join(vaultRoot, "agent-groups", group)}.`);
+      return;
+    }
+    case "add-agent": {
+      const group = args.positionals[1];
+      const agent = args.positionals[2];
+      if (!group || !agent) {
+        console.error("Usage: piren group add-agent <group> <agent>");
+        process.exit(2);
+      }
+      const result = await addAgentToGroup(deps, vaultRoot, group, agent);
+      if (result.added) {
+        console.log(`Added '${agent}' to group '${group}'.`);
+      } else {
+        console.log(`Agent '${agent}' is already a member of group '${group}' (no change).`);
+      }
+      return;
+    }
+    case "remove-agent": {
+      const group = args.positionals[1];
+      const agent = args.positionals[2];
+      if (!group || !agent) {
+        console.error("Usage: piren group remove-agent <group> <agent>");
+        process.exit(2);
+      }
+      const result = await removeAgentFromGroup(deps, vaultRoot, group, agent);
+      if (result.removed) {
+        console.log(`Removed '${agent}' from group '${group}'.`);
+      } else {
+        console.log(`Agent '${agent}' was not a member of group '${group}' (no change).`);
+      }
+      return;
+    }
+    case "validate": {
+      const issues = await validateGroups(deps, vaultRoot);
+      console.log(formatValidationReport(issues));
+      if (issues.some((i) => i.severity === "error")) process.exit(1);
+      return;
+    }
+    default: {
+      console.error(
+        `Unknown group subcommand '${sub ?? ""}'. Usage: piren group <list|show|create|add-agent|remove-agent|fallback set|validate>`,
+      );
+      process.exit(2);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

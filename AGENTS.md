@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  84 passed (84)
-Tests       857 passed (857)
+Test Files  86 passed (86)
+Tests       909 passed (909)
 SMOKE PASSED
 ```
 
@@ -223,6 +223,7 @@ Implemented CLI:
 - `piren service <install|remove|start|stop|restart|status> <gateway|telegram|discord|scheduler>`
 - `piren agent <add|remove|clone|list> [name]` (manages team/<agent>/ identity AND local allowed_agents; remove prompts before deleting the vault dir, `--yes` skips; clone copies a source agent verbatim)
 - `piren package <list|explain|doctor> [--agent <agent>]` (read-only vault-scoped package manifest CLI; list effective packages, explain provenance, doctor compares vault intent against local config and Node resolvability; no package installation or mutation, per ADR-0032)
+- `piren group <list|show|create|add-agent|remove-agent|fallback set|validate> [args] [--force]` (vault-owned agent group config management for `agent-groups/<group>/config.yml`; create writes an empty config plus the `skills/` subdir; validate reports missing config.yml, dangling fallback references, missing `team/<agent>/` dirs, and duplicate-across-groups notes; never mutates `~/.config/piren/config.yml`; no fallback assignment or rerouting)
 - `piren clean`
 - `piren version`
 - `piren update` (runs `npm install -g --install-links github:Odiobill/piren`)
@@ -323,6 +324,11 @@ Vault-scoped package manifest CLI (ADR-0032, Slice F, implemented):
 - CLI command `piren package <list|explain|doctor> [--agent <agent>]`. `list` prints effective required and recommended packages with source manifests. `explain` shows detailed provenance for each package (kind, source, scope). `doctor` compares vault intent against `~/.config/piren/config.yml` `packages`, `package_policy.blocked`, and Node `require.resolve`, reporting five distinct states: `missing-from-local-config`, `blocked-by-policy` (triggered by `package_policy.blocked` in local config), `declared-but-not-installed`, `recommended-missing`, and the OK states `ok-required` / `ok-recommended`. Doctor without `--agent` runs for all vault agents. All commands are read-only: no package installation, no loading from vault manifests, no mutation of local config.
 - Manifest locations: `packages.yml` at vault root (shared), `agent-groups/<group>/packages.yml` (group), `team/<agent>/packages.yml` (agent). Resolution order: shared -> groups -> agent, last-writer wins on name collision.
 - Tests: `tests/package-manifest.test.ts` (23 tests).
+
+Agent group config CLI (Slice A, ADR-0028, implemented):
+- `src/group-config.ts` is the pure writer/validator core, callable directly from tests without Pi auth or a real filesystem. It exports the config model `GroupConfigData` (`agents: string[]`, `fallback_order: Record<string, string[]>`), the injected-filesystem interface `GroupWriteDeps` (`readFile`/`writeFile`/`mkdir`/`stat`/`readdir`, structurally compatible with `node:fs/promises`), and the real adapter `createRealGroupWriteDeps()`. Operations: `readGroupConfig` (null when no config.yml; tolerant parse; throws naming the group on malformed YAML), `writeGroupConfig` (deterministic block-style YAML via the `yaml` library, round-trips through `readGroupConfig` and the existing `parseGroupConfigs`), `createGroup` (mkdir + `skills/` subdir + empty config.yml; refuses existing group without `--force`), `addAgentToGroup` (`{added}`; no-op when already a member, order preserved), `removeAgentFromGroup` (`{removed, existed}`; also prunes the agent's own fallback entry and any candidate references), `setFallbackOrder` (creates/replaces one entry; refuses when the agent is not a member), and `validateGroups` (reports `missing-config`, `dangling-fallback`, `missing-agent-dir` errors plus `duplicate-across-groups` info notes). `isValidGroupName` rejects empty, `.`, `..`, path separators, and leading-dot names (which `parseGroupConfigs` skips as dotfiles). Formatters `formatGroupList`/`formatGroupConfig`/`formatValidationReport` keep the CLI thin. Every operation throws on misuse (missing group, invalid name, non-member fallback) so the CLI surfaces one message and exits non-zero.
+- CLI command `piren group <list|show|create|add-agent|remove-agent|fallback set|validate>`. `list` reuses the existing read-only `parseGroupConfigs` so it observes exactly what `piren agents` and `piren doctor` observe. `fallback set` is a two-word subcommand (`group = positionals[2]`, `agent = positionals[3]`, `candidates = positionals.slice(4)`). `validate` exits non-zero only on `error`-severity issues (info notes are non-fatal). Group commands are vault-owned only: they never mutate `~/.config/piren/config.yml`, never assign fallbacks or reroute tasks, and add no Web UI / scheduler / polling behavior. No changes to `src/agent-groups.ts`, `src/agents.ts`, `src/doctor.ts`, `src/skills.ts`, or `src/pi-extension.ts` group parsing/resolution.
+- Tests: `tests/group-config.test.ts` (34 tests, fake FS through injected deps), `tests/cli-group.test.ts` (18 tests, real CLI binary dispatch against a temp vault).
 
 Open Knowledge Format conformance and graph surface (ADR-0022/0026):
 - `piren init` creates the top-level `Projects/` directory as part of the default OKF vault shape, alongside `wiki/`, `team/`, `agent-groups/`, shared `skills/`, and `templates/`.

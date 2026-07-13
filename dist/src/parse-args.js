@@ -20,6 +20,7 @@ export const KNOWN_COMMANDS = [
     "update",
     "scheduler",
     "package",
+    "group",
 ];
 /**
  * Parse Piren CLI arguments (typically `process.argv.slice(2)`).
