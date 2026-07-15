@@ -239,6 +239,20 @@ describe("isValidSkillName", () => {
     expect(isValidSkillName("foo/bar")).toBe(false);
     expect(isValidSkillName("foo\\bar")).toBe(false);
   });
+
+  it("rejects YAML-unsafe characters (colons, tabs, newlines)", () => {
+    expect(isValidSkillName("bad: name")).toBe(false);
+    expect(isValidSkillName("tab\tname")).toBe(false);
+    expect(isValidSkillName("new\nline")).toBe(false);
+  });
+
+  it("accepts normal names with spaces, dashes, underscores", () => {
+    expect(isValidSkillName("my-skill")).toBe(true);
+    expect(isValidSkillName("my_skill")).toBe(true);
+    expect(isValidSkillName("My Skill 1")).toBe(true);
+    expect(isValidSkillName("PirenTDD")).toBe(true);
+    expect(isValidSkillName("a")).toBe(true);
+  });
 });
 
 describe("parseScope", () => {
@@ -1035,6 +1049,32 @@ describe("createRealSkillCliDeps", () => {
 // ---------------------------------------------------------------------------
 // Blocker 1 — Vault containment (path traversal rejection)
 // ---------------------------------------------------------------------------
+
+describe("YAML-dangerous skill name rejection (re-review Blocker 2)", () => {
+  it("createSkill rejects colon in name", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await expect(
+      createSkill(fs.toDeps(), VAULT, "bad: name", { kind: "shared" }),
+    ).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("createSkill rejects tab in name", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await expect(
+      createSkill(fs.toDeps(), VAULT, "tab\tname", { kind: "shared" }),
+    ).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("createSkill rejects newline in name", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await expect(
+      createSkill(fs.toDeps(), VAULT, "new\nline", { kind: "shared" }),
+    ).rejects.toThrow(/Invalid skill name/);
+  });
+});
 
 describe("vault containment (Blocker 1)", () => {
   it("createSkill rejects traversal names (../../escaped)", async () => {

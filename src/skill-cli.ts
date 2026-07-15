@@ -147,10 +147,21 @@ function deriveName(fileName: string): string {
   return basename(fileName).replace(/\.md$/i, "");
 }
 
-/** Validate a skill name: non-empty, no path separators, no . or .. */
+/**
+ * Validate a skill name for use in file paths and YAML frontmatter.
+ * Rejects: empty, ".", "..", path separators, and YAML-unsafe characters
+ * (colons, tabs, newlines, and other control characters).
+ *
+ * The name must match: start with alphanumeric, then alphanumeric,
+ * space, underscore, or dash only. This is strict enough to prevent
+ * path traversal and YAML breakage while allowing readable names.
+ */
 export function isValidSkillName(name: string): boolean {
   if (name === "" || name === "." || name === "..") return false;
   if (name.includes("/") || name.includes("\\")) return false;
+  // Reject characters that break YAML inline values or are unsafe in paths:
+  // colons, tabs, newlines, and other control characters.
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(name)) return false;
   return true;
 }
 
@@ -617,7 +628,7 @@ export async function createSkill(
 ): Promise<{ path: string }> {
   // Validate name safety and vault containment before any I/O.
   if (!isValidSkillName(name)) {
-    throw new Error(`Invalid skill name: '${name}'. Names must not contain path separators, dots, or be empty.`);
+    throw new Error(`Invalid skill name: '${name}'. Names must start with a letter or number and contain only letters, numbers, spaces, underscores, and dashes.`);
   }
 
   // Ensure the target scope exists.
@@ -668,7 +679,7 @@ export async function moveSkill(
 ): Promise<{ fromPath: string; toPath: string }> {
   // Validate name safety and vault containment before any I/O.
   if (!isValidSkillName(name)) {
-    throw new Error(`Invalid skill name: '${name}'. Names must not contain path separators, dots, or be empty.`);
+    throw new Error(`Invalid skill name: '${name}'. Names must start with a letter or number and contain only letters, numbers, spaces, underscores, and dashes.`);
   }
 
   // Ensure the target scope exists.

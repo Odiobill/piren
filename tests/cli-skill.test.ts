@@ -217,4 +217,13 @@ describe("piren skill (CLI dispatch)", () => {
     const lines = result.stdout.split("\n").filter((l) => l.includes("shared:shared") || l.includes("NAME"));
     expect(lines.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("rejects YAML-dangerous skill names (re-review Blocker 2)", () => {
+    const result = runPirenSkill(
+      ["create", "bad: name", "--scope", "shared"],
+      { HOME: home },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/Invalid skill name/i);
+  });
 });
