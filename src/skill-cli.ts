@@ -7,7 +7,7 @@
  * parsing), but never changes the loader's precedence or behavior.
  */
 
-import { join, dirname, basename } from "node:path";
+import { join, dirname, basename, resolve, relative, isAbsolute } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 // ---------------------------------------------------------------------------
@@ -203,6 +203,56 @@ export function resolveSkillPath(
     absolutePath: join(dir, `${name}.md`),
     vaultRelativePath: `${vaultRelDir}/${name}.md`,
   };
+}
+
+/**
+ * Assert that an absolute path stays within the vault root. Normalizes both
+ * paths and checks that the target is a descendant of (or equal to) the root.
+ * Throws on any escape attempt (traversal, absolute path outside root).
+ */
+export function assertPathWithinVault(vaultRoot: string, absolutePath: string): void {
+  const normalizedVault = resolve(vaultRoot);
+  const normalizedPath = resolve(absolutePath);
+  const rel = relative(normalizedVault, normalizedPath);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(
+      `Path escapes vault root. Resolved: ${normalizedPath}, vault: ${normalizedVault}`,
+    );
+  }
+}
+
+/**
+ * Verify that a parsed scope target exists in the vault:
+ * - shared: always valid.
+ * - group: requires agent-groups/<group>/config.yml.
+ * - agent: requires team/<agent>/SOUL.md.
+ */
+export async function assertScopeExists(
+  deps: SkillCliDeps,
+  vaultRoot: string,
+  scope: ParsedScope,
+): Promise<void> {
+  if (scope.kind === "shared") return;
+  if (scope.kind === "group") {
+    const configPath = join(vaultRoot, "agent-groups", scope.group ?? "", "config.yml");
+    try {
+      await deps.access(configPath);
+    } catch {
+      throw new Error(
+        `Group '${scope.group ?? ""}' not found. Create it first with: piren group create ${scope.group ?? ""}`,
+      );
+    }
+    return;
+  }
+  // agent scope
+  const soulPath = join(vaultRoot, "team", scope.agent ?? "", "SOUL.md");
+  try {
+    await deps.access(soulPath);
+  } catch {
+    throw new Error(
+      `Agent '${scope.agent ?? ""}' not found. Create it first with: piren agent add ${scope.agent ?? ""}`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -512,7 +562,9 @@ export async function explainSkill(
   const matches = all.filter((s) => s.name === name);
   if (matches.length === 0) return null;
 
-  // Determine effective: agent > group (if in group) > shared
+  // Determine effective: agent > groups (later group wins) > shared.
+  // Must match the same precedence as resolveEffectiveSkills(): iterate
+  // groups in resolution order, later groups override earlier ones.
   const agentMatch = matches.find((s) => s.source === "agent" && s.scope === agent);
   const groupMatches = matches.filter(
     (s) => s.source === "group" && groups.includes(s.scope),
@@ -522,13 +574,20 @@ export async function explainSkill(
   let effective: ScannedSkill | undefined;
   if (agentMatch) {
     effective = agentMatch;
-  } else if (groupMatches.length > 0) {
-    // Highest-precedence group wins. The order of groups doesn't matter
-    // here — pick the first one for display, or the one that would win
-    // in precedence order.
-    effective = groupMatches[0];
-  } else if (sharedMatch) {
-    effective = sharedMatch;
+  } else {
+    // Iterate groups in the order they were resolved (dir read order).
+    // Later groups override earlier groups for same-name skills — same as
+    // resolveEffectiveSkills(). Find the last group that has a match.
+    let effectiveGroup: ScannedSkill | undefined;
+    for (const groupName of groups) {
+      const match = groupMatches.find((s) => s.scope === groupName);
+      if (match) effectiveGroup = match;
+    }
+    if (effectiveGroup) {
+      effective = effectiveGroup;
+    } else if (sharedMatch) {
+      effective = sharedMatch;
+    }
   }
 
   if (!effective) {
@@ -556,7 +615,16 @@ export async function createSkill(
   scope: ParsedScope,
   opts?: CreateSkillOptions,
 ): Promise<{ path: string }> {
+  // Validate name safety and vault containment before any I/O.
+  if (!isValidSkillName(name)) {
+    throw new Error(`Invalid skill name: '${name}'. Names must not contain path separators, dots, or be empty.`);
+  }
+
+  // Ensure the target scope exists.
+  await assertScopeExists(deps, vaultRoot, scope);
+
   const { absolutePath, vaultRelativePath } = resolveSkillPath(vaultRoot, name, scope);
+  assertPathWithinVault(vaultRoot, absolutePath);
 
   const alreadyExists = await exists(deps, absolutePath);
   if (alreadyExists && !opts?.force) {
@@ -598,8 +666,19 @@ export async function moveSkill(
   to: ParsedScope,
   opts?: MoveSkillOptions,
 ): Promise<{ fromPath: string; toPath: string }> {
+  // Validate name safety and vault containment before any I/O.
+  if (!isValidSkillName(name)) {
+    throw new Error(`Invalid skill name: '${name}'. Names must not contain path separators, dots, or be empty.`);
+  }
+
+  // Ensure the target scope exists.
+  await assertScopeExists(deps, vaultRoot, to);
+
   const fromResolved = resolveSkillPath(vaultRoot, name, from);
   const toResolved = resolveSkillPath(vaultRoot, name, to);
+
+  assertPathWithinVault(vaultRoot, fromResolved.absolutePath);
+  assertPathWithinVault(vaultRoot, toResolved.absolutePath);
 
   // Check source exists (could be loose .md or directory SKILL.md)
   let sourcePath: string | null = null;

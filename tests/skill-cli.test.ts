@@ -213,6 +213,9 @@ function setupBasicVault(fs: FakeFs): void {
     join(VAULT, "agent-groups", "ops", "config.yml"),
     "agents:\n  - dipu\n",
   );
+  // Agent identities (required for scope existence checks)
+  fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
+  fs.file(join(VAULT, "team", "zai", "SOUL.md"), "# Zai\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -545,6 +548,7 @@ describe("createSkill", () => {
   it("creates a group-scoped skill", async () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "agent-groups", "devs", "skills"));
+    fs.file(join(VAULT, "agent-groups", "devs", "config.yml"), "agents: []\n");
 
     const result = await createSkill(fs.toDeps(), VAULT, "group-skill", { kind: "group", group: "devs" });
     expect(result.path).toBe("agent-groups/devs/skills/group-skill.md");
@@ -553,6 +557,7 @@ describe("createSkill", () => {
   it("creates an agent-scoped skill", async () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
 
     const result = await createSkill(fs.toDeps(), VAULT, "agent-skill", { kind: "agent", agent: "dipu" });
     expect(result.path).toBe("team/dipu/skills/agent-skill.md");
@@ -595,6 +600,7 @@ describe("moveSkill", () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "skills"));
     fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
     fs.file(join(VAULT, "skills", "movable.md"), skillContent("movable", "Will move"));
 
     const result = await moveSkill(
@@ -619,6 +625,7 @@ describe("moveSkill", () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "skills"));
     fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
     fs.file(join(VAULT, "skills", "dup.md"), skillContent("dup", "Source"));
     fs.file(join(VAULT, "team", "dipu", "skills", "dup.md"), skillContent("dup", "Target"));
 
@@ -631,6 +638,7 @@ describe("moveSkill", () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "skills"));
     fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
     fs.file(join(VAULT, "skills", "dup.md"), skillContent("dup", "Source"));
     fs.file(join(VAULT, "team", "dipu", "skills", "dup.md"), skillContent("dup", "Target"));
 
@@ -667,6 +675,7 @@ describe("promoteSkill", () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "skills"));
     fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
     fs.file(join(VAULT, "team", "dipu", "skills", "up.md"), skillContent("up", "Promote me"));
 
     const result = await promoteSkill(fs.toDeps(), VAULT, "up", "dipu", "shared");
@@ -680,6 +689,8 @@ describe("promoteSkill", () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "team", "dipu", "skills"));
     fs.dir(join(VAULT, "agent-groups", "devs", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
+    fs.file(join(VAULT, "agent-groups", "devs", "config.yml"), "agents: []\n");
     fs.file(join(VAULT, "team", "dipu", "skills", "up.md"), skillContent("up", "Promote me"));
 
     const result = await promoteSkill(fs.toDeps(), VAULT, "up", "dipu", { kind: "group", group: "devs" });
@@ -692,6 +703,7 @@ describe("demoteSkill", () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "skills"));
     fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
     fs.file(join(VAULT, "skills", "down.md"), skillContent("down", "Demote me"));
 
     const result = await demoteSkill(fs.toDeps(), VAULT, "down", "shared", "dipu");
@@ -705,6 +717,8 @@ describe("demoteSkill", () => {
     const fs = new FakeFs();
     fs.dir(join(VAULT, "agent-groups", "devs", "skills"));
     fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
+    fs.file(join(VAULT, "agent-groups", "devs", "config.yml"), "agents: []\n");
     fs.file(join(VAULT, "agent-groups", "devs", "skills", "down.md"), skillContent("down", "Demote me"));
 
     const result = await demoteSkill(fs.toDeps(), VAULT, "down", { kind: "group", group: "devs" }, "dipu");
@@ -1015,5 +1029,190 @@ describe("createRealSkillCliDeps", () => {
     expect(typeof deps.unlink).toBe("function");
     expect(typeof deps.rmdir).toBe("function");
     expect(typeof deps.access).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blocker 1 — Vault containment (path traversal rejection)
+// ---------------------------------------------------------------------------
+
+describe("vault containment (Blocker 1)", () => {
+  it("createSkill rejects traversal names (../../escaped)", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await expect(
+      createSkill(fs.toDeps(), VAULT, "../../escaped", { kind: "shared" }),
+    ).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("createSkill rejects traversal names (../outside)", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await expect(
+      createSkill(fs.toDeps(), VAULT, "../outside", { kind: "shared" }),
+    ).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("createSkill rejects absolute-path-like names", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await expect(
+      createSkill(fs.toDeps(), VAULT, "/etc/passwd", { kind: "shared" }),
+    ).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("createSkill accepts normal names (non-regression)", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    const result = await createSkill(fs.toDeps(), VAULT, "normal-skill", { kind: "shared" });
+    expect(result.path).toBe("skills/normal-skill.md");
+  });
+
+  it("moveSkill rejects traversal in from scope", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
+    await expect(
+      moveSkill(fs.toDeps(), VAULT, "../../etc", { kind: "shared" }, { kind: "agent", agent: "dipu" }),
+    ).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("moveSkill rejects traversal in to scope", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "skills", "s.md"), skillContent("s"));
+    await expect(
+      moveSkill(fs.toDeps(), VAULT, "s", { kind: "shared" }, { kind: "agent", agent: "../../dipu" }),
+    ).rejects.toThrow(/not found/);
+  });
+
+  it("promoteSkill rejects traversal in agent name", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "skills", "s.md"), skillContent("s"));
+    await expect(
+      promoteSkill(fs.toDeps(), VAULT, "../outside", "../dipu", "shared"),
+    ).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("demoteSkill rejects traversal in agent name", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "skills", "s.md"), skillContent("s"));
+    await expect(
+      demoteSkill(fs.toDeps(), VAULT, "s", "shared", "../../dipu"),
+    ).rejects.toThrow(/not found/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blocker 2 — explainSkill precedence with multi-group collision
+// ---------------------------------------------------------------------------
+
+describe("explainSkill multi-group precedence (Blocker 2)", () => {
+  it("reports later group as effective when multiple groups collide", async () => {
+    const fs = new FakeFs();
+    // dipu is in both devs and ops. In the group resolution order (devs first, ops second),
+    // ops should override devs for same-name skills.
+    fs.dir(join(VAULT, "agent-groups", "devs", "skills"));
+    fs.dir(join(VAULT, "agent-groups", "ops", "skills"));
+    fs.file(join(VAULT, "agent-groups", "devs", "config.yml"), "agents:\n  - dipu\n");
+    fs.file(join(VAULT, "agent-groups", "ops", "config.yml"), "agents:\n  - dipu\n");
+    fs.file(join(VAULT, "agent-groups", "devs", "skills", "same.md"), skillContent("same", "devs version"));
+    fs.file(join(VAULT, "agent-groups", "ops", "skills", "same.md"), skillContent("same", "ops version"));
+
+    const result = await explainSkill(fs.toDeps(), VAULT, "same", "dipu");
+    expect(result).not.toBeNull();
+    // later group (ops) wins
+    expect(result!.effective.source).toBe("group");
+    expect(result!.effective.scope).toBe("ops");
+    expect(result!.effective.description).toBe("ops version");
+    // earlier group (devs) is shadowed
+    expect(result!.shadowed.length).toBe(1);
+    expect(result!.shadowed[0]!.scope).toBe("devs");
+  });
+
+  it("resolveEffectiveSkills also picks later group for collision", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "agent-groups", "devs", "skills"));
+    fs.dir(join(VAULT, "agent-groups", "ops", "skills"));
+    fs.file(join(VAULT, "agent-groups", "devs", "config.yml"), "agents:\n  - dipu\n");
+    fs.file(join(VAULT, "agent-groups", "ops", "config.yml"), "agents:\n  - dipu\n");
+    fs.file(join(VAULT, "agent-groups", "devs", "skills", "same.md"), skillContent("same", "devs version"));
+    fs.file(join(VAULT, "agent-groups", "ops", "skills", "same.md"), skillContent("same", "ops version"));
+
+    const effective = await resolveEffectiveSkills(fs.toDeps(), VAULT, "dipu");
+    const same = effective.find((s) => s.name === "same");
+    expect(same).toBeDefined();
+    expect(same!.scope).toBe("ops");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blocker 3 — Nonexistent group/agent scope rejection
+// ---------------------------------------------------------------------------
+
+describe("nonexistent scope rejection (Blocker 3)", () => {
+  it("createSkill rejects nonexistent group scope", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "agent-groups"));
+    // No config.yml for "missing" group
+    await expect(
+      createSkill(fs.toDeps(), VAULT, "test", { kind: "group", group: "missing" }),
+    ).rejects.toThrow(/group.*not found/i);
+  });
+
+  it("createSkill rejects nonexistent agent scope", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "team"));
+    // No SOUL.md for "nonexistent" agent
+    await expect(
+      createSkill(fs.toDeps(), VAULT, "test", { kind: "agent", agent: "nonexistent" }),
+    ).rejects.toThrow(/agent.*not found/i);
+  });
+
+  it("createSkill accepts existing group scope", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "agent-groups", "devs", "skills"));
+    fs.file(join(VAULT, "agent-groups", "devs", "config.yml"), "agents: []\n");
+    const result = await createSkill(fs.toDeps(), VAULT, "test", { kind: "group", group: "devs" });
+    expect(result.path).toBe("agent-groups/devs/skills/test.md");
+  });
+
+  it("createSkill accepts existing agent scope", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
+    const result = await createSkill(fs.toDeps(), VAULT, "test", { kind: "agent", agent: "dipu" });
+    expect(result.path).toBe("team/dipu/skills/test.md");
+  });
+
+  it("createSkill accepts shared scope without existence checks", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    const result = await createSkill(fs.toDeps(), VAULT, "test", { kind: "shared" });
+    expect(result.path).toBe("skills/test.md");
+  });
+
+  it("moveSkill rejects nonexistent target group", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.file(join(VAULT, "skills", "s.md"), skillContent("s"));
+    await expect(
+      moveSkill(fs.toDeps(), VAULT, "s", { kind: "shared" }, { kind: "group", group: "missing" }),
+    ).rejects.toThrow(/group.*not found/i);
+  });
+
+  it("moveSkill rejects nonexistent target agent", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.file(join(VAULT, "skills", "s.md"), skillContent("s"));
+    await expect(
+      moveSkill(fs.toDeps(), VAULT, "s", { kind: "shared" }, { kind: "agent", agent: "nonexistent" }),
+    ).rejects.toThrow(/agent.*not found/i);
   });
 });
