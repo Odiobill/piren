@@ -67,6 +67,7 @@ export const KNOWN_COMMANDS = [
   "package",
   "group",
   "cron",
+  "skill",
 ] as const;
 
 /**

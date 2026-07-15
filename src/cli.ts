@@ -99,6 +99,27 @@ import {
   type ServiceAction,
   type ServiceManager,
 } from "./service-lifecycle.js";
+import {
+  createRealSkillCliDeps,
+  scanAllSkills,
+  filterSkills,
+  showSkill,
+  explainSkill,
+  createSkill,
+  moveSkill,
+  promoteSkill,
+  demoteSkill,
+  listConflicts,
+  validateSkills,
+  formatSkillList,
+  formatSkillShow,
+  formatSkillExplain,
+  formatSkillConflicts,
+  formatSkillValidation,
+  parseScope,
+  formatScope,
+  type SkillCliDeps,
+} from "./skill-cli.js";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 
@@ -578,6 +599,14 @@ try {
     });
   } else if (command === "cron") {
     await runCronCommand({
+      positionals,
+      opts: bootstrapOptions(parsed),
+      explicitVaultRoot: vaultRoot,
+      forceCliAgent: agentName,
+      force,
+    });
+  } else if (command === "skill") {
+    await runSkillCommand({
       positionals,
       opts: bootstrapOptions(parsed),
       explicitVaultRoot: vaultRoot,
@@ -1508,4 +1537,214 @@ function runCommandWithArgs(command: string, args: string[]): Promise<CommandRes
       resolvePromise({ exitCode, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Skill CLI (Slice D)
+// ---------------------------------------------------------------------------
+
+interface RunSkillCommandArgs {
+  positionals: string[];
+  opts: BootstrapOptions;
+  explicitVaultRoot: string | undefined;
+  forceCliAgent: string | undefined;
+  force: boolean;
+}
+
+async function runSkillCommand(args: RunSkillCommandArgs): Promise<void> {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { parse: parseYaml } = await import("yaml");
+
+  const sub = args.positionals[0];
+
+  // Resolve vault root from explicit flag or local config.
+  const configPath = join(homedir(), ".config", "piren", "config.yml");
+  let existingConfig = "";
+  try {
+    existingConfig = await readFile(configPath, "utf8");
+  } catch {
+    existingConfig = "";
+  }
+
+  let vaultRoot = args.explicitVaultRoot;
+  if (!vaultRoot) {
+    try {
+      const parsedCfg = parseYaml(existingConfig) as Record<string, unknown> | null;
+      const root = parsedCfg?.vault_root;
+      if (typeof root === "string" && root.trim() !== "") vaultRoot = root;
+    } catch {
+      // Ignore malformed config.
+    }
+  }
+  if (!vaultRoot) {
+    console.error("Could not resolve vault root. Pass --vault-root or set vault_root in " + configPath + ".");
+    process.exit(2);
+  }
+
+  const deps = createRealSkillCliDeps();
+  let agent = args.forceCliAgent ?? args.opts.cliAgent;
+
+  // Read additional flags from raw argv for --scope, --from, --to, --group.
+  const rawArgv = process.argv.slice(2);
+  function findRawFlag(flag: string): string | undefined {
+    const idx = rawArgv.indexOf(flag);
+    if (idx === -1) return undefined;
+    return rawArgv[idx + 1];
+  }
+
+  if (sub === "list") {
+    const scopeRaw = findRawFlag("--scope");
+    const groupFilter = findRawFlag("--group");
+    const agentFilter = agent ?? findRawFlag("--agent");
+
+    const all = await scanAllSkills(deps, vaultRoot);
+    const opts: { agent?: string; group?: string; scope?: "shared" | "group" | "agent" } = {};
+    if (agentFilter !== undefined) opts.agent = agentFilter;
+    if (groupFilter !== undefined) opts.group = groupFilter;
+    if (scopeRaw !== undefined) {
+      if (scopeRaw === "shared") opts.scope = "shared";
+      else if (scopeRaw === "group") opts.scope = "group";
+      else if (scopeRaw === "agent") opts.scope = "agent";
+    }
+    const filtered = await filterSkills(deps, vaultRoot, all, opts);
+    console.log(formatSkillList(filtered));
+    return;
+  }
+
+  if (sub === "show") {
+    const name = args.positionals[1];
+    if (!name) {
+      console.error("Usage: piren skill show <name> [--agent <agent>]");
+      process.exit(2);
+    }
+    const result = await showSkill(deps, vaultRoot, name, agent);
+    if (result === null) {
+      console.error(`Skill '${name}' not found.`);
+      process.exit(1);
+    }
+    console.log(formatSkillShow(result));
+    return;
+  }
+
+  if (sub === "explain") {
+    const name = args.positionals[1];
+    if (!name || !agent) {
+      console.error("Usage: piren skill explain <name> --agent <agent>");
+      process.exit(2);
+    }
+    const result = await explainSkill(deps, vaultRoot, name, agent);
+    if (result === null) {
+      console.error(`Skill '${name}' not found.`);
+      process.exit(1);
+    }
+    console.log(formatSkillExplain(result));
+    return;
+  }
+
+  if (sub === "create") {
+    const name = args.positionals[1];
+    const scopeRaw = findRawFlag("--scope");
+    if (!name || !scopeRaw) {
+      console.error("Usage: piren skill create <name> --scope shared|group:<group>|agent:<agent> [--force]");
+      process.exit(2);
+    }
+    const scope = parseScope(scopeRaw);
+    if (scope === null) {
+      console.error(`Invalid scope: ${scopeRaw}. Use shared, group:<name>, or agent:<name>.`);
+      process.exit(2);
+    }
+    await createSkill(deps, vaultRoot, name, scope, { force: args.force });
+    console.log(`Created skill '${name}' at ${formatScope(scope)}.`);
+    return;
+  }
+
+  if (sub === "move") {
+    const name = args.positionals[1];
+    const fromRaw = findRawFlag("--from");
+    const toRaw = findRawFlag("--to");
+    if (!name || !fromRaw || !toRaw) {
+      console.error("Usage: piren skill move <name> --from <scope> --to <scope> [--force]");
+      process.exit(2);
+    }
+    const from = parseScope(fromRaw);
+    const to = parseScope(toRaw);
+    if (from === null) {
+      console.error(`Invalid --from scope: ${fromRaw}.`);
+      process.exit(2);
+    }
+    if (to === null) {
+      console.error(`Invalid --to scope: ${toRaw}.`);
+      process.exit(2);
+    }
+    const result = await moveSkill(deps, vaultRoot, name, from, to, { force: args.force });
+    console.log(`Moved skill '${name}' from ${result.fromPath} to ${result.toPath}.`);
+    return;
+  }
+
+  if (sub === "promote") {
+    const name = args.positionals[1];
+    const fromRaw = findRawFlag("--from");
+    const toRaw = findRawFlag("--to");
+    if (!name || !fromRaw || !toRaw) {
+      console.error("Usage: piren skill promote <name> --from agent:<agent> --to shared|group:<group> [--force]");
+      process.exit(2);
+    }
+    const from = parseScope(fromRaw);
+    const to = parseScope(toRaw);
+    if (from === null || from.kind !== "agent" || from.agent === undefined) {
+      console.error(`Invalid --from scope: ${fromRaw}. Must be agent:<agent>.`);
+      process.exit(2);
+    }
+    if (to === null || (to.kind !== "shared" && to.kind !== "group")) {
+      console.error(`Invalid --to scope: ${toRaw}. Must be shared or group:<group>.`);
+      process.exit(2);
+    }
+    const toTarget = to.kind === "shared" ? "shared" : { kind: "group" as const, group: to.group! };
+    const result = await promoteSkill(deps, vaultRoot, name, from.agent, toTarget, { force: args.force });
+    console.log(`Promoted skill '${name}' from ${result.fromPath} to ${result.toPath}.`);
+    return;
+  }
+
+  if (sub === "demote") {
+    const name = args.positionals[1];
+    const fromRaw = findRawFlag("--from");
+    const toRaw = findRawFlag("--to");
+    if (!name || !fromRaw || !toRaw) {
+      console.error("Usage: piren skill demote <name> --from shared|group:<group> --to agent:<agent> [--force]");
+      process.exit(2);
+    }
+    const from = parseScope(fromRaw);
+    const to = parseScope(toRaw);
+    if (from === null || (from.kind !== "shared" && from.kind !== "group")) {
+      console.error(`Invalid --from scope: ${fromRaw}. Must be shared or group:<group>.`);
+      process.exit(2);
+    }
+    if (to === null || to.kind !== "agent" || to.agent === undefined) {
+      console.error(`Invalid --to scope: ${toRaw}. Must be agent:<agent>.`);
+      process.exit(2);
+    }
+    const fromTarget = from.kind === "shared" ? "shared" : { kind: "group" as const, group: from.group! };
+    const result = await demoteSkill(deps, vaultRoot, name, fromTarget, to.agent, { force: args.force });
+    console.log(`Demoted skill '${name}' from ${result.fromPath} to ${result.toPath}.`);
+    return;
+  }
+
+  if (sub === "conflicts") {
+    const conflicts = await listConflicts(deps, vaultRoot, agent);
+    console.log(formatSkillConflicts(conflicts));
+    if (conflicts.length > 0) process.exit(1);
+    return;
+  }
+
+  if (sub === "validate") {
+    const issues = await validateSkills(deps, vaultRoot);
+    console.log(formatSkillValidation(issues));
+    if (issues.length > 0) process.exit(1);
+    return;
+  }
+
+  // Unknown subcommand
+  console.error("Usage: piren skill <list|show|explain|create|move|promote|demote|conflicts|validate> [args]");
+  process.exit(2);
 }

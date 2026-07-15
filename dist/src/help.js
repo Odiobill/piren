@@ -123,6 +123,12 @@ export const HELP_TOPICS = [
         flags: ["<list|show|create|create-script|enable|disable|runs|validate>", "<id>", "--agent <agent>", "--schedule <expr>", "--body <file>", "--script <vault-path>", "--force"],
         example: "piren cron list && piren cron create nightly-digest --agent piren --schedule '0 7 * * *'",
     },
+    {
+        command: "skill",
+        short: "Manage vault skills: list, show, explain, create, move, promote, demote, conflicts, validate.",
+        flags: ["<list|show|explain|create|move|promote|demote|conflicts|validate>", "<name>", "--agent <agent>", "--group <group>", "--scope shared|group:<name>|agent:<name>", "--from <scope>", "--to <scope>", "--force"],
+        example: "piren skill list --agent dipu && piren skill create my-skill --scope shared",
+    },
 ];
 const GLOBAL_FLAGS = ["--vault-root <path>", "--agent <name>", "--agent-dir <path>", "-h, --help"];
 /**
