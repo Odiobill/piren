@@ -125,6 +125,12 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
     flags: ["<list|show|create|add-agent|remove-agent|fallback set|validate>", "<group>", "<agent>", "<candidate...>", "--force"],
     example: "piren group create developers && piren group add-agent developers dipu",
   },
+  {
+    command: "cron",
+    short: "Manage vault-backed cron jobs: list, show, create, create-script, enable, disable, runs, validate.",
+    flags: ["<list|show|create|create-script|enable|disable|runs|validate>", "<id>", "--agent <agent>", "--schedule <expr>", "--body <file>", "--script <vault-path>", "--force"],
+    example: "piren cron list && piren cron create nightly-digest --agent piren --schedule '0 7 * * *'",
+  },
 ];
 
 const GLOBAL_FLAGS = ["--vault-root <path>", "--agent <name>", "--agent-dir <path>", "-h, --help"];

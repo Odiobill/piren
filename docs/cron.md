@@ -74,6 +74,23 @@ Worker mode lists active device records under `team/<agent>/devices/`, filters s
 
 A job can restrict eligible devices with `device_policy.allowed_devices`.
 
+## CLI
+
+Use `piren cron` to inspect and author agent-scoped job files. It does not start a worker or scheduler.
+
+```bash
+piren cron list --agent piren
+piren cron create daily-briefing --agent piren --schedule '0 9 * * *'
+piren cron create-script disk-check --agent piren --schedule 30m --script scripts/disk-check.sh
+piren cron show daily-briefing
+piren cron disable daily-briefing
+piren cron enable daily-briefing
+piren cron runs --agent piren
+piren cron validate
+```
+
+`create` accepts `--body <vault-relative-file>` to supply an agent-mode prompt. Use `--force` only to overwrite an existing job. `validate` reports malformed schedules, missing required fields, out-of-vault script paths, disabled jobs, and duplicate IDs without changing job files.
+
 ## Tools
 
 List jobs:

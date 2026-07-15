@@ -30,6 +30,7 @@ import { doctorPiren, formatDoctorReport } from "./doctor.js";
 import { parsePackageManifest, mergeEffectivePackages, diagnosePackages, formatPackageList, formatPackageExplain, formatPackageDoctor, } from "./package-manifest.js";
 import { createRealGroupWriteDeps, readGroupConfig, createGroup, addAgentToGroup, removeAgentFromGroup, setFallbackOrder, validateGroups, formatGroupList, formatGroupConfig, formatValidationReport, } from "./group-config.js";
 import { resolveAgentGroups, parseGroupConfigs } from "./agent-groups.js";
+import { createRealCronWriteDeps, createCronJob, createScriptCronJob, enableCronJob, disableCronJob, validateCronJobs, formatCronList, formatCronShow, formatCronRuns, formatCronValidationReport, readCronJobFile, } from "./cron-cli.js";
 import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, validateServiceMethod, crontabAvailableFromInvocation, systemdUserAvailableFromInvocation, } from "./service-lifecycle.js";
 const thisDir = dirname(fileURLToPath(import.meta.url));
 // Resolve the public directory (frontend static files) relative to this
@@ -520,6 +521,15 @@ try {
             positionals,
             opts: bootstrapOptions(parsed),
             explicitVaultRoot: vaultRoot,
+            force,
+        });
+    }
+    else if (command === "cron") {
+        await runCronCommand({
+            positionals,
+            opts: bootstrapOptions(parsed),
+            explicitVaultRoot: vaultRoot,
+            forceCliAgent: agentName,
             force,
         });
     }
@@ -1119,6 +1129,147 @@ async function runGroupCommand(args) {
             process.exit(2);
         }
     }
+}
+async function runCronCommand(args) {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { parse: parseYaml } = await import("yaml");
+    const sub = args.positionals[0];
+    const configPath = join(homedir(), ".config", "piren", "config.yml");
+    let existingConfig = "";
+    try {
+        existingConfig = await readFile(configPath, "utf8");
+    }
+    catch {
+        existingConfig = "";
+    }
+    let vaultRoot = args.explicitVaultRoot;
+    if (!vaultRoot) {
+        try {
+            const parsedCfg = parseYaml(existingConfig);
+            const root = parsedCfg?.vault_root;
+            if (typeof root === "string" && root.trim() !== "")
+                vaultRoot = root;
+        }
+        catch {
+            // Ignore malformed config.
+        }
+    }
+    if (!vaultRoot) {
+        console.error("Could not resolve vault root. Pass --vault-root or set vault_root in " + configPath + ".");
+        process.exit(2);
+    }
+    const deps = createRealCronWriteDeps();
+    const opts = args.opts;
+    let agent = args.forceCliAgent ?? opts.cliAgent;
+    if (sub === "list") {
+        if (!agent) {
+            // Resolve agent from config or environment.
+            agent = opts.env?.PIREN_AGENT ?? "";
+            if (!agent) {
+                console.error("No agent specified. Pass --agent or set PIREN_AGENT.");
+                process.exit(2);
+            }
+        }
+        const { listCronJobs } = await import("./cron.js");
+        const result = await listCronJobs({ vaultRoot, agentName: agent });
+        console.log(formatCronList(result.jobs));
+        return;
+    }
+    if (sub === "show") {
+        const idOrPath = args.positionals[1];
+        if (!idOrPath) {
+            console.error("Usage: piren cron show <id-or-path>");
+            process.exit(2);
+        }
+        const job = await readCronJobFile(deps, vaultRoot, idOrPath);
+        console.log(formatCronShow(job));
+        return;
+    }
+    if (sub === "create" || sub === "create-script") {
+        const id = args.positionals[1];
+        if (!id) {
+            console.error("Usage: piren cron " + sub + " <id> --agent <agent> --schedule <expr>");
+            process.exit(2);
+        }
+        if (!agent) {
+            console.error("piren cron " + sub + " requires --agent <agent>.");
+            process.exit(2);
+        }
+        // Read --schedule from positionals or from flags. The parser doesn't have
+        // --schedule / --body / --script flags, so we parse them from the raw argv.
+        const rawArgv = process.argv.slice(2);
+        function findFlagValue(flag) {
+            const idx = rawArgv.indexOf(flag);
+            if (idx === -1)
+                return undefined;
+            return rawArgv[idx + 1];
+        }
+        const schedule = findFlagValue("--schedule");
+        if (!schedule) {
+            console.error("piren cron " + sub + " requires --schedule <expr>.");
+            process.exit(2);
+        }
+        if (sub === "create-script") {
+            const script = findFlagValue("--script");
+            if (!script) {
+                console.error("piren cron create-script requires --script <vault-path>.");
+                process.exit(2);
+            }
+            await createScriptCronJob(deps, vaultRoot, id, agent, schedule, script, { force: args.force });
+            console.log("Created script-mode cron job '" + id + "' for agent '" + agent + "'.");
+        }
+        else {
+            const bodyFile = findFlagValue("--body");
+            let bodyPath;
+            if (bodyFile !== undefined) {
+                bodyPath = join(vaultRoot, bodyFile);
+            }
+            await createCronJob(deps, vaultRoot, id, agent, schedule, bodyPath, { force: args.force });
+            console.log("Created cron job '" + id + "' for agent '" + agent + "'.");
+        }
+        return;
+    }
+    if (sub === "enable" || sub === "disable") {
+        const idOrPath = args.positionals[1];
+        if (!idOrPath) {
+            console.error("Usage: piren cron " + sub + " <id-or-path>");
+            process.exit(2);
+        }
+        if (sub === "enable") {
+            await enableCronJob(deps, vaultRoot, idOrPath);
+            console.log("Enabled cron job '" + idOrPath + "'.");
+        }
+        else {
+            await disableCronJob(deps, vaultRoot, idOrPath);
+            console.log("Disabled cron job '" + idOrPath + "'.");
+        }
+        return;
+    }
+    if (sub === "runs") {
+        if (!agent) {
+            agent = opts.env?.PIREN_AGENT ?? "";
+            if (!agent) {
+                console.error("No agent specified. Pass --agent or set PIREN_AGENT.");
+                process.exit(2);
+            }
+        }
+        const jobId = args.positionals[1];
+        const { listCronRuns } = await import("./cron.js");
+        const result = await listCronRuns({ vaultRoot, agentName: agent, ...(jobId !== undefined ? { jobId } : {}) });
+        console.log(formatCronRuns(result.runs));
+        return;
+    }
+    if (sub === "validate") {
+        const issues = await validateCronJobs(deps, vaultRoot);
+        console.log(formatCronValidationReport(issues));
+        if (issues.some((i) => i.severity === "error"))
+            process.exit(1);
+        return;
+    }
+    // Unknown subcommand
+    console.error("Usage: piren cron <list|show|create|create-script|enable|disable|runs|validate> [args]");
+    process.exit(2);
 }
 // ---------------------------------------------------------------------------
 // Service lifecycle helpers (shell probes + command runner)
