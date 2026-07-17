@@ -414,6 +414,59 @@ section { padding: 4rem 0; }
   margin-top: 0.85rem;
 }
 
+/* ---- Explainer video (no-JS safe: a plain link + thumbnail) ---- */
+.video-card {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: center;
+}
+.video-link {
+  position: relative;
+  display: block;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  line-height: 0;
+}
+.video-link:hover { border-color: var(--accent); }
+.video-thumb {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: brightness(0.78);
+  transition: filter 0.15s;
+}
+.video-link:hover .video-thumb { filter: brightness(0.92); }
+.video-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(124, 111, 240, 0.92);
+  color: #fff;
+  font-size: 1.7rem;
+  padding-left: 0.3rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+.video-card figcaption {
+  margin-top: 0.85rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.video-card figcaption .video-note {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
 /* ---- Knowledge ladder ---- */
 .okf-card {
   max-width: 760px;

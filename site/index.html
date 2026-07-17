@@ -64,6 +64,23 @@
   </div>
 </header>
 
+<section id="video">
+  <div class="container">
+    <h2 class="section-title">See it in action</h2>
+    <p class="section-sub">A short walkthrough of Piren 0.1.0: the vault, the inspectable tools, and a fleet sharing one substrate.</p>
+    <figure class="video-card">
+      <a class="video-link" href="https://youtu.be/M6anngSckxs" target="_blank" rel="noopener" title="Watch the Piren explainer on YouTube (opens in a new tab)">
+        <img class="video-thumb" src="https://img.youtube.com/vi/M6anngSckxs/hqdefault.jpg" alt="Piren 0.1.0 explainer video — watch on YouTube" width="480" height="360" loading="lazy">
+        <span class="video-play" aria-hidden="true">&#9654;</span>
+      </a>
+      <figcaption>
+        <a href="https://youtu.be/M6anngSckxs" target="_blank" rel="noopener">Watch the explainer on YouTube &rarr;</a>
+        <span class="video-note">No JavaScript needed &mdash; this is a plain link to the video.</span>
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
 <section id="origin">
   <div class="container">
     <h2 class="section-title">Why Piren exists</h2>
@@ -147,7 +164,7 @@
       <div class="portability-text">
         <p class="lead">Think of the vault as the office building and each Piren installation as an office in the same building on the same network. The agent is an employee whose identity, memory, and tools live in the building, not in any single office.</p>
         <p>So when an engineer has the laptop and skills they need, they can do their job from any office. Install Piren on a Raspberry Pi in the closet, a desktop, and a laptop, point all three at one synced vault, and <code>heimdall</code> is the same agent on every machine: same <code>SOUL.md</code>, same pending inbox, same skills, same cron jobs.</p>
-        <p>This is what makes Piren fault-tolerant out of the box. Tasks and cron jobs are claimed by <strong>atomic file operations</strong> with active-device priority. If one device goes dark, the next eligible device picks up the pending inbox and the due cron jobs automatically, because the work lives in the shared substrate, not in a process on the dead machine. The scheduler dry-run (<code>piren scheduler --dry-run</code>) shows exactly which claims a device would pick up next.</p>
+        <p>This is what makes Piren fault-tolerant out of the box. Tasks and cron jobs are claimed by <strong>atomic file operations</strong> with active-device priority. If one device goes dark, the next eligible device picks up the pending inbox and the due cron jobs automatically, because the work lives in the shared substrate, not in a process on the dead machine. The opt-in scheduler (<code>piren scheduler</code>, or <code>--dry-run</code> for a zero-LLM preview) shows exactly which claims a device would pick up next.</p>
         <p>Which machines may host which agents is an installation policy (<code>allowed_agents</code>), kept outside the vault. The vault carries the team; the installation decides which office it runs in today.</p>
       </div>
     </div>
@@ -181,7 +198,7 @@
       </div>
       <div class="feature">
         <h3>Service lifecycle</h3>
-        <p>Keep transports always-on with one command. Piren generates systemd user units, with a tmux plus <code>@reboot</code> cron fallback for DietPi and stripped-down SBCs. Inspectable, reversible, no root.</p>
+        <p>Keep gateway, Telegram, Discord, and the scheduler always-on with one command. Piren generates systemd user units, with a tmux plus <code>@reboot</code> cron fallback for DietPi and stripped-down SBCs. Inspectable, reversible, no root.</p>
       </div>
       <div class="feature">
         <h3>Interactive setup wizard</h3>
@@ -196,8 +213,8 @@
         <p>Group agents by role to share skills and a fallback policy. When an agent can't pick up a task, <code>piren agents --fallback</code> recommends an eligible teammate, filtered by local policy. Read-only: nothing changes hands silently.</p>
       </div>
       <div class="feature">
-        <h3>Scheduler dry-run</h3>
-        <p><code>piren scheduler --dry-run</code> shows what the device-local scheduler would claim next, using heartbeat priorities and atomic claims, with zero LLM calls. The full loop is deferred; the planning is inspectable today.</p>
+        <h3>Opt-in scheduler</h3>
+        <p>A device-local scheduler for inbox tasks and cron jobs, driven by heartbeat priorities and atomic claims. <code>piren scheduler --dry-run</code> previews the next claims with zero LLM calls, <code>--once</code> runs a single bounded tick, and <code>piren scheduler</code> runs the opt-in loop until you stop it. Claim-first, one item per tick, every run recorded in the vault. No hidden autonomy.</p>
       </div>
       <div class="feature">
         <h3>Pi package extensibility</h3>
@@ -377,7 +394,7 @@ vault/
         Pi Coding Agent
       </a>
     </div>
-    <p>Piren 0.1.0-rc.3 &middot; MIT License &middot; local-first, vault-native</p>
+    <p>Piren 0.1.0 &middot; first official release &middot; MIT License &middot; local-first, vault-native</p>
   </div>
 </footer>
 
