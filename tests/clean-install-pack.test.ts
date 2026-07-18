@@ -7,10 +7,14 @@ import {
   parseNpmPackJson,
   buildLocalTarball,
   needsInstallLinks,
+  runPackedCleanInstallCheck,
   REQUIRED_PACKED_ARTIFACTS,
   formatCleanInstallReport,
   type PackRunDeps,
+  type InstallRunner,
   type CleanInstallReportResult,
+  type CleanInstallResult,
+  type CleanInstallProbe,
   type CleanInstallSourceInfo,
 } from "../src/clean-install.js";
 
@@ -57,10 +61,14 @@ describe("checkPackedArtifacts", () => {
     expect(result.missing).toEqual([]);
   });
 
-  it("fails and lists missing artifacts", () => {
+  it("fails and lists missing artifacts (runtime and docs)", () => {
     const result = checkPackedArtifacts(["dist/src/cli.js", "README.md"]);
     expect(result.ok).toBe(false);
-    expect(result.missing).toEqual(["dist/public/index.html", "dist/src/pi-extension.js"]);
+    expect(result.missing).toEqual([
+      "dist/public/index.html",
+      "dist/src/pi-extension.js",
+      "docs/getting-started.md",
+    ]);
   });
 
   it("normalizes a leading package/ prefix from tarball listings", () => {
@@ -68,15 +76,17 @@ describe("checkPackedArtifacts", () => {
       "package/dist/src/cli.js",
       "package/dist/public/index.html",
       "package/dist/src/pi-extension.js",
+      "package/docs/getting-started.md",
     ]);
     expect(result.ok).toBe(true);
   });
 
-  it("declares exactly the three runtime artifacts required by the installed CLI", () => {
+  it("declares the packed-surface contract: runtime artifacts plus a stable docs file", () => {
     expect([...REQUIRED_PACKED_ARTIFACTS]).toEqual([
       "dist/src/cli.js",
       "dist/public/index.html",
       "dist/src/pi-extension.js",
+      "docs/getting-started.md",
     ]);
   });
 });
@@ -95,6 +105,7 @@ const SAMPLE_OBJECT_KEYED = JSON.stringify({
       { path: "dist/src/cli.js", size: 10, mode: 420 },
       { path: "dist/public/index.html", size: 10, mode: 420 },
       { path: "dist/src/pi-extension.js", size: 10, mode: 420 },
+      { path: "docs/getting-started.md", size: 10, mode: 420 },
     ],
   },
 });
@@ -159,7 +170,7 @@ describe("buildLocalTarball", () => {
     expect(outcome.packageName).toBe("piren");
     expect(outcome.packageVersion).toBe("0.1.0");
     expect(outcome.missing).toEqual([]);
-    expect(outcome.packedFiles.length).toBe(3);
+    expect(outcome.packedFiles.length).toBe(4);
   });
 
   it("fails when npm pack exits non-zero, without producing a tarball path", async () => {
@@ -184,7 +195,11 @@ describe("buildLocalTarball", () => {
     const outcome = await buildLocalTarball(deps, "/repo");
     expect(outcome.ok).toBe(false);
     expect(outcome.tarballPath).toBe(join("/repo", "piren-0.1.0.tgz"));
-    expect(outcome.missing).toEqual(["dist/public/index.html", "dist/src/pi-extension.js"]);
+    expect(outcome.missing).toEqual([
+      "dist/public/index.html",
+      "dist/src/pi-extension.js",
+      "docs/getting-started.md",
+    ]);
   });
 
   it("fails when npm pack output is unparseable", async () => {
@@ -192,6 +207,94 @@ describe("buildLocalTarball", () => {
     const outcome = await buildLocalTarball(deps, "/repo");
     expect(outcome.ok).toBe(false);
     expect(outcome.error).toMatch(/parse|npm pack/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runPackedCleanInstallCheck: tarball cleanup on every path (regression).
+// A tarball produced by `npm pack` must be removed unless --keep, including
+// the surface-missing failure path and thrown install errors.
+// ---------------------------------------------------------------------------
+
+const SURFACE_MISSING_PACK = JSON.stringify({
+  piren: {
+    id: "piren@0.1.0",
+    name: "piren",
+    version: "0.1.0",
+    filename: "piren-0.1.0.tgz",
+    files: [{ path: "dist/src/cli.js", size: 10, mode: 420 }],
+  },
+});
+
+function observablePack(packResult: { code: number; stdout: string; stderr: string }): { deps: PackRunDeps; removed: string[] } {
+  const removed: string[] = [];
+  const deps: PackRunDeps = {
+    pack: async () => packResult,
+    remove: async (path: string) => {
+      removed.push(path);
+    },
+  };
+  return { deps, removed };
+}
+
+const okProbe: CleanInstallProbe = {
+  installDir: "/prefix/node_modules/piren",
+  cliJsExists: true,
+  publicIndexExists: true,
+  extensionJsExists: true,
+  binaryRuns: true,
+  piRuntimeSource: "path",
+};
+
+const fakeInstallOk: InstallRunner = async (): Promise<CleanInstallResult> => ({
+  ok: true,
+  installDir: "/prefix/node_modules/piren",
+  checks: [{ id: "dist-cli", status: "ok", message: "present." }],
+  probe: okProbe,
+});
+
+describe("runPackedCleanInstallCheck tarball cleanup", () => {
+  it("removes the tarball on the default surface-missing failure path", async () => {
+    const { deps, removed } = observablePack({ code: 0, stdout: SURFACE_MISSING_PACK, stderr: "" });
+    const result = await runPackedCleanInstallCheck({ repoRoot: "/repo", packDeps: deps, runInstall: fakeInstallOk });
+    expect(result.ok).toBe(false);
+    expect(removed).toEqual([join("/repo", "piren-0.1.0.tgz")]);
+  });
+
+  it("preserves the tarball on the failure path when --keep is set", async () => {
+    const { deps, removed } = observablePack({ code: 0, stdout: SURFACE_MISSING_PACK, stderr: "" });
+    await runPackedCleanInstallCheck({ repoRoot: "/repo", keep: true, packDeps: deps, runInstall: fakeInstallOk });
+    expect(removed).toEqual([]);
+  });
+
+  it("does not attempt removal when npm pack failed and produced no tarball", async () => {
+    const { deps, removed } = observablePack({ code: 1, stdout: "", stderr: "boom" });
+    await runPackedCleanInstallCheck({ repoRoot: "/repo", packDeps: deps, runInstall: fakeInstallOk });
+    expect(removed).toEqual([]);
+  });
+
+  it("removes the tarball on the success path by default", async () => {
+    const { deps, removed } = observablePack({ code: 0, stdout: SAMPLE_OBJECT_KEYED, stderr: "" });
+    const result = await runPackedCleanInstallCheck({ repoRoot: "/repo", packDeps: deps, runInstall: fakeInstallOk });
+    expect(result.ok).toBe(true);
+    expect(removed).toEqual([join("/repo", "piren-0.1.0.tgz")]);
+  });
+
+  it("preserves the tarball on the success path when --keep is set", async () => {
+    const { deps, removed } = observablePack({ code: 0, stdout: SAMPLE_OBJECT_KEYED, stderr: "" });
+    await runPackedCleanInstallCheck({ repoRoot: "/repo", keep: true, packDeps: deps, runInstall: fakeInstallOk });
+    expect(removed).toEqual([]);
+  });
+
+  it("removes the tarball even when the install step throws", async () => {
+    const { deps, removed } = observablePack({ code: 0, stdout: SAMPLE_OBJECT_KEYED, stderr: "" });
+    const throwingInstall: InstallRunner = async () => {
+      throw new Error("install exploded");
+    };
+    await expect(
+      runPackedCleanInstallCheck({ repoRoot: "/repo", packDeps: deps, runInstall: throwingInstall }),
+    ).rejects.toThrow(/install exploded/);
+    expect(removed).toEqual([join("/repo", "piren-0.1.0.tgz")]);
   });
 });
 

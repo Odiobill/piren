@@ -97,11 +97,18 @@ export function formatCleanInstallReport(report) {
 // blocked by EALLOWGIT policies. GitHub/explicit-spec installs remain an
 // opt-in escape hatch.
 // ---------------------------------------------------------------------------
-/** Required runtime artifacts the packed tarball must ship for the CLI to run. */
+/**
+ * Required packed-surface contract: the runtime artifacts the installed CLI
+ * needs PLUS a stable docs file, so a regression that drops `docs/` from
+ * `package.json` `files` is caught here. The installed-runtime probe
+ * (`assessCleanInstall`) stays scoped to the three dist runtime files; this
+ * constant governs the pack surface only.
+ */
 export const REQUIRED_PACKED_ARTIFACTS = [
     "dist/src/cli.js",
     "dist/public/index.html",
     "dist/src/pi-extension.js",
+    "docs/getting-started.md",
 ];
 /** Resolve the install spec from CLI args. Default = packed-tarball/local. */
 export function resolveInstallSpec(args) {
@@ -339,10 +346,16 @@ export function createRealPackDeps() {
  * via `npm pack`, validate the packed surface, then install that tarball into
  * an isolated HOME/prefix and run the existing dist/binary/Pi checks. No
  * `github:` fetch and no `--install-links` in the normal path.
+ *
+ * Cleanup invariant: any tarball that was produced is removed unless `keep`,
+ * including the surface-missing failure path and thrown install errors
+ * (enforced by a single try/finally around the whole post-pack body).
  */
 export async function runPackedCleanInstallCheck(options) {
     const log = options.log ?? (() => { });
     const packDeps = options.packDeps ?? createRealPackDeps();
+    const runInstall = options.runInstall ?? runCleanInstallCheck;
+    const keep = options.keep ?? false;
     log("clean-install-check: packing local tarball via `npm pack --json`");
     const pack = await buildLocalTarball(packDeps, options.repoRoot);
     const source = {
@@ -355,42 +368,47 @@ export async function runPackedCleanInstallCheck(options) {
         ...(pack.packedFiles.length > 0 ? { packedFileCount: pack.packedFiles.length } : {}),
         ...(pack.missing.length > 0 ? { missing: pack.missing } : {}),
     };
-    if (!pack.ok || pack.tarballPath === undefined) {
-        const message = pack.error !== undefined
-            ? `Local \`npm pack\` failed: ${pack.error}`
-            : `Packed tarball is missing required runtime artifacts: ${pack.missing.join(", ")}. Run \`npm run build\` before packing.`;
+    // Guarantee every path that produced a tarball removes it unless --keep.
+    // Covers surface-missing early returns AND thrown install errors.
+    try {
+        if (!pack.ok || pack.tarballPath === undefined) {
+            const message = pack.error !== undefined
+                ? `Local \`npm pack\` failed: ${pack.error}`
+                : `Packed tarball is missing required artifacts: ${pack.missing.join(", ")}. Run \`npm run build\` before packing.`;
+            return {
+                ok: false,
+                installDir: "",
+                checks: [{ id: "packed-surface", status: "fail", message }],
+                source,
+            };
+        }
+        const base = await mkdtemp(join(tmpdir(), "piren-clean-"));
+        const prefix = join(base, "prefix");
+        const cleanHome = join(base, "home");
+        const pathEnv = options.pathEnv ?? process.env.PATH ?? "";
+        const installOpts = {
+            spec: pack.tarballPath,
+            prefix,
+            cleanHome,
+            pathEnv,
+            log,
+            cleanup: !keep,
+        };
+        if (options.allowInstallScripts)
+            installOpts.allowInstallScripts = true;
+        const install = await runInstall(installOpts);
         return {
-            ok: false,
-            installDir: "",
-            checks: [{ id: "packed-surface", status: "fail", message }],
+            ok: install.ok,
+            installDir: install.installDir,
+            checks: install.checks,
             source,
         };
     }
-    const base = await mkdtemp(join(tmpdir(), "piren-clean-"));
-    const prefix = join(base, "prefix");
-    const cleanHome = join(base, "home");
-    const pathEnv = options.pathEnv ?? process.env.PATH ?? "";
-    const installOpts = {
-        spec: pack.tarballPath,
-        prefix,
-        cleanHome,
-        pathEnv,
-        log,
-        cleanup: !options.keep,
-    };
-    if (options.allowInstallScripts)
-        installOpts.allowInstallScripts = true;
-    const install = await runCleanInstallCheck(installOpts);
-    // Remove the packed tarball from the repo root unless --keep.
-    if (!options.keep) {
-        await packDeps.remove(pack.tarballPath);
+    finally {
+        if (pack.tarballPath !== undefined && !keep) {
+            await packDeps.remove(pack.tarballPath);
+        }
     }
-    return {
-        ok: install.ok,
-        installDir: install.installDir,
-        checks: install.checks,
-        source,
-    };
 }
 /**
  * Convenience entry for a full default run against the real github spec.

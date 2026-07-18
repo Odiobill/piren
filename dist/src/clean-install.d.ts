@@ -41,8 +41,14 @@ export interface CleanInstallAssessment {
 }
 export declare function assessCleanInstall(probe: CleanInstallProbe): CleanInstallAssessment;
 export declare function formatCleanInstallReport(report: CleanInstallReportResult): string;
-/** Required runtime artifacts the packed tarball must ship for the CLI to run. */
-export declare const REQUIRED_PACKED_ARTIFACTS: readonly ["dist/src/cli.js", "dist/public/index.html", "dist/src/pi-extension.js"];
+/**
+ * Required packed-surface contract: the runtime artifacts the installed CLI
+ * needs PLUS a stable docs file, so a regression that drops `docs/` from
+ * `package.json` `files` is caught here. The installed-runtime probe
+ * (`assessCleanInstall`) stays scoped to the three dist runtime files; this
+ * constant governs the pack surface only.
+ */
+export declare const REQUIRED_PACKED_ARTIFACTS: readonly ["dist/src/cli.js", "dist/public/index.html", "dist/src/pi-extension.js", "docs/getting-started.md"];
 /** Discriminated install-spec resolved from CLI args. */
 export type InstallSpec = {
     kind: "packed-tarball";
@@ -163,12 +169,20 @@ export interface PackedCheckOptions {
     log?: (message: string) => void;
     /** Injected pack deps for tests; defaults to the real npm adapter. */
     packDeps?: PackRunDeps;
+    /** Injected install runner for tests; defaults to runCleanInstallCheck. */
+    runInstall?: InstallRunner;
 }
+/** Install runner signature, matching runCleanInstallCheck. Injected for tests. */
+export type InstallRunner = (options: CleanInstallOptions) => Promise<CleanInstallResult>;
 /**
  * Default clean-install path (ADR-0033 Slice R1): pack the exact local source
  * via `npm pack`, validate the packed surface, then install that tarball into
  * an isolated HOME/prefix and run the existing dist/binary/Pi checks. No
  * `github:` fetch and no `--install-links` in the normal path.
+ *
+ * Cleanup invariant: any tarball that was produced is removed unless `keep`,
+ * including the surface-missing failure path and thrown install errors
+ * (enforced by a single try/finally around the whole post-pack body).
  */
 export declare function runPackedCleanInstallCheck(options: PackedCheckOptions): Promise<CleanInstallReportResult>;
 /**
