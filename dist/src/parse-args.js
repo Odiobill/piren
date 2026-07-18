@@ -23,6 +23,7 @@ export const KNOWN_COMMANDS = [
     "group",
     "cron",
     "skill",
+    "task",
 ];
 /**
  * Parse Piren CLI arguments (typically `process.argv.slice(2)`).

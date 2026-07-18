@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  90 passed (90)
-Tests       1081 passed (1081)
+Test Files  92 passed (92)
+Tests       1127 passed (1127)
 SMOKE PASSED
 ```
 
@@ -224,6 +224,7 @@ Implemented CLI:
 - `piren agent <add|remove|clone|list> [name]` (manages team/<agent>/ identity AND local allowed_agents; remove prompts before deleting the vault dir, `--yes` skips; clone copies a source agent verbatim)
 - `piren package <list|explain|doctor> [--agent <agent>]` (read-only vault-scoped package manifest CLI; list effective packages, explain provenance, doctor compares vault intent against local config and Node resolvability; no package installation or mutation, per ADR-0032)
 - `piren group <list|show|create|add-agent|remove-agent|fallback set|validate> [args] [--force]` (vault-owned agent group config management for `agent-groups/<group>/config.yml`; create writes an empty config plus the `skills/` subdir; validate reports missing config.yml, dangling fallback references, missing `team/<agent>/` dirs, and duplicate-across-groups notes; never mutates `~/.config/piren/config.yml`; no fallback assignment or rerouting)
+- `piren task <list|send|show|claim|complete|cancel> [args] [--agent <agent>] [--body <vault-file>] [--result <vault-file>] [--priority normal|high|urgent] [--device <id>]` (human-facing inbox task CLI over the existing one-file-per-task inbox primitives; reuses `createInboxTask`/`listInboxTasks`/`claimInboxTask`/`updateInboxTaskStatus`; default sender `from: steward`; no polling, no scheduler changes, no Web UI, no new task-file schema)
 - `piren clean`
 - `piren version`
 - `piren update` (runs `npm install -g --install-links github:Odiobill/piren`)

@@ -120,6 +120,24 @@ import {
   formatScope,
   type SkillCliDeps,
 } from "./skill-cli.js";
+import {
+  createRealTaskCliDeps,
+  resolveTaskIdOrPath,
+  readVaultFile,
+  readTaskDetail,
+  formatTaskList,
+  formatTaskDetail,
+  isValidCliPriority,
+  CLI_PRIORITIES,
+  type TaskListRow,
+} from "./task-cli.js";
+import { sanitizeDeviceId } from "./scheduler-once.js";
+import {
+  createInboxTask,
+  listInboxTasks,
+  claimInboxTask,
+  updateInboxTaskStatus,
+} from "./inbox.js";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 
@@ -612,6 +630,13 @@ try {
       explicitVaultRoot: vaultRoot,
       forceCliAgent: agentName,
       force,
+    });
+  } else if (command === "task") {
+    await runTaskCommand({
+      positionals,
+      opts: bootstrapOptions(parsed),
+      explicitVaultRoot: vaultRoot,
+      forceCliAgent: agentName,
     });
   } else {
     const context = await loadPirenContext(bootstrapOptions(parsed));
@@ -1746,5 +1771,184 @@ async function runSkillCommand(args: RunSkillCommandArgs): Promise<void> {
 
   // Unknown subcommand
   console.error("Usage: piren skill <list|show|explain|create|move|promote|demote|conflicts|validate> [args]");
+  process.exit(2);
+}
+
+// ---------------------------------------------------------------------------
+// Task CLI (Slice C, ADR-0031 inbox-backed coordination)
+// ---------------------------------------------------------------------------
+
+interface RunTaskCommandArgs {
+  positionals: string[];
+  opts: BootstrapOptions;
+  explicitVaultRoot: string | undefined;
+  forceCliAgent: string | undefined;
+}
+
+async function runTaskCommand(args: RunTaskCommandArgs): Promise<void> {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { hostname } = await import("node:os");
+  const { parse: parseYaml } = await import("yaml");
+
+  const sub = args.positionals[0];
+
+  // Resolve vault root from explicit flag or local config (same as cron/skill).
+  const configPath = join(homedir(), ".config", "piren", "config.yml");
+  let existingConfig = "";
+  try {
+    existingConfig = await readFile(configPath, "utf8");
+  } catch {
+    existingConfig = "";
+  }
+
+  let vaultRoot = args.explicitVaultRoot;
+  if (!vaultRoot) {
+    try {
+      const parsedCfg = parseYaml(existingConfig) as Record<string, unknown> | null;
+      const root = parsedCfg?.vault_root;
+      if (typeof root === "string" && root.trim() !== "") vaultRoot = root;
+    } catch {
+      // Ignore malformed config.
+    }
+  }
+  if (!vaultRoot) {
+    console.error("Could not resolve vault root. Pass --vault-root or set vault_root in " + configPath + ".");
+    process.exit(2);
+  }
+
+  const deps = createRealTaskCliDeps();
+  const opts = args.opts;
+  const cliAgent = args.forceCliAgent ?? opts.cliAgent;
+
+  // Read additional flags from raw argv for --body/--result/--device/--priority.
+  // The parser does not know these flags, so their values would otherwise leak
+  // into positionals; we read them authoritatively here instead.
+  const rawArgv = process.argv.slice(2);
+  function findFlagValue(flag: string): string | undefined {
+    const idx = rawArgv.indexOf(flag);
+    if (idx === -1) return undefined;
+    return rawArgv[idx + 1];
+  }
+
+  if (sub === "list") {
+    const agent = cliAgent ?? opts.env?.PIREN_AGENT;
+    if (!agent) {
+      console.error("No agent specified. Pass --agent or set PIREN_AGENT.");
+      process.exit(2);
+    }
+    const result = await listInboxTasks({ vaultRoot, agentName: agent });
+    const rows: TaskListRow[] = result.tasks.map((task) => ({
+      id: task.id,
+      path: task.path,
+      title: task.title,
+      from: task.from,
+      to: task.to,
+      status: task.status,
+      priority: "normal",
+      created: task.created,
+      updated: task.updated,
+    }));
+    console.log(formatTaskList(rows));
+    return;
+  }
+
+  if (sub === "send") {
+    const to = args.positionals[1];
+    const title = args.positionals[2];
+    if (!to || !title) {
+      console.error("Usage: piren task send <agent> <title> [--body <vault-file>] [--priority normal|high|urgent]");
+      process.exit(2);
+    }
+    const priorityRaw = findFlagValue("--priority");
+    let priority: "normal" | "high" | "urgent" = "normal";
+    if (priorityRaw !== undefined) {
+      if (!isValidCliPriority(priorityRaw)) {
+        console.error(`Invalid --priority '${priorityRaw}'. Use one of: ${(CLI_PRIORITIES as readonly string[]).join(", ")}.`);
+        process.exit(2);
+      }
+      priority = priorityRaw;
+    }
+    const bodyFile = findFlagValue("--body");
+    let body = "";
+    if (bodyFile !== undefined) {
+      body = await readVaultFile(deps, vaultRoot, bodyFile);
+    }
+    // Default sender attribution for human-issued CLI tasks. The steward is
+    // the human operator; createInboxTask only requires the recipient agent
+    // directory to exist, so this does not require a team/steward/ directory.
+    const result = await createInboxTask({
+      vaultRoot,
+      from: "steward",
+      to,
+      title,
+      body,
+      priority,
+    });
+    console.log(`Created task ${result.path} (id: ${result.taskId}).`);
+    return;
+  }
+
+  if (sub === "show") {
+    const input = args.positionals[1];
+    if (!input) {
+      console.error("Usage: piren task show <path-or-id> [--agent <agent>]");
+      process.exit(2);
+    }
+    const resolved = await resolveTaskIdOrPath(deps, vaultRoot, input, cliAgent);
+    const detail = await readTaskDetail(deps, vaultRoot, resolved.path);
+    console.log(formatTaskDetail(detail));
+    return;
+  }
+
+  if (sub === "claim") {
+    const input = args.positionals[1];
+    if (!input) {
+      console.error("Usage: piren task claim <path> [--device <id>] [--agent <agent>]");
+      process.exit(2);
+    }
+    const resolved = await resolveTaskIdOrPath(deps, vaultRoot, input, cliAgent);
+    if (cliAgent !== undefined && cliAgent !== resolved.agentName) {
+      console.error(`Task belongs to agent '${resolved.agentName}', not '${cliAgent}'.`);
+      process.exit(2);
+    }
+    const deviceRaw = findFlagValue("--device");
+    const deviceId = deviceRaw ?? sanitizeDeviceId(hostname());
+    const result = await claimInboxTask({
+      vaultRoot,
+      agentName: resolved.agentName,
+      taskPath: resolved.path,
+      deviceId,
+    });
+    console.log(`Claimed task ${result.originalPath} -> ${result.path} for device '${result.deviceId}'.`);
+    return;
+  }
+
+  if (sub === "complete" || sub === "cancel") {
+    const input = args.positionals[1];
+    if (!input) {
+      console.error(`Usage: piren task ${sub} <path-or-id> [--result <vault-file>] [--agent <agent>]`);
+      process.exit(2);
+    }
+    const resolved = await resolveTaskIdOrPath(deps, vaultRoot, input, cliAgent);
+    if (cliAgent !== undefined && cliAgent !== resolved.agentName) {
+      console.error(`Task belongs to agent '${resolved.agentName}', not '${cliAgent}'.`);
+      process.exit(2);
+    }
+    const status = sub === "complete" ? "completed" : "cancelled";
+    const resultFile = findFlagValue("--result");
+    const resultContent = resultFile !== undefined ? await readVaultFile(deps, vaultRoot, resultFile) : undefined;
+    const result = await updateInboxTaskStatus({
+      vaultRoot,
+      taskPath: resolved.path,
+      status,
+      ...(resultContent !== undefined ? { result: resultContent } : {}),
+    });
+    console.log(`Marked task ${result.path} as ${result.status}.`);
+    return;
+  }
+
+  // Unknown subcommand
+  console.error("Usage: piren task <list|send|show|claim|complete|cancel> [args]");
   process.exit(2);
 }

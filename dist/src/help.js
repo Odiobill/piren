@@ -129,6 +129,12 @@ export const HELP_TOPICS = [
         flags: ["<list|show|explain|create|move|promote|demote|conflicts|validate>", "<name>", "--agent <agent>", "--group <group>", "--scope shared|group:<name>|agent:<name>", "--from <scope>", "--to <scope>", "--force"],
         example: "piren skill list --agent dipu && piren skill create my-skill --scope shared",
     },
+    {
+        command: "task",
+        short: "Human-facing inbox task CLI: list, send, show, claim, complete, cancel. No polling, no scheduler changes.",
+        flags: ["<list|send|show|claim|complete|cancel>", "<agent>", "<title>", "<path-or-id>", "--agent <agent>", "--body <vault-file>", "--result <vault-file>", "--priority normal|high|urgent", "--device <id>"],
+        example: "piren task send dipu \"Ship rc.4\" --priority high && piren task list --agent dipu",
+    },
 ];
 const GLOBAL_FLAGS = ["--vault-root <path>", "--agent <name>", "--agent-dir <path>", "-h, --help"];
 /**
