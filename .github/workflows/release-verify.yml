@@ -1,0 +1,88 @@
+# Release-artifact verification (ADR-0033 R2).
+#
+# This workflow is a VERIFICATION SCAFFOLD, not a publication pipeline. It runs
+# only on release tags (and via manual dispatch) and proves the checked-out tag
+# source produces a releasable npm artifact: the four normal quality gates plus
+# the ADR-0033 R1 packed-tarball clean-install check.
+#
+# Hard boundaries (intentional):
+#   - No registry publication step, no provenance/OIDC build attestation,
+#     no npm token secret, no OIDC write permission.
+#   - No GitHub Environment. The approved-tag publication gate is a separate,
+#     steward-controlled follow-up after this verification workflow is reviewed.
+#   - The `pi` runtime required by the clean-install check is provided as a
+#     narrowly scoped CI-only fake shim placed on PATH for the last step only.
+#     It is NOT added to Piren's package, does not alter production runtime
+#     resolution, and does not call a network installer.
+#
+# Preserve the R1 contract: the packed check requires runtime artifacts plus
+# docs/getting-started.md, and the installed-runtime probe stays runtime-only.
+name: Release artifact verification
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Read-only. Explicitly no OIDC write permission and no contents: write.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag source
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22 with npm lockfile cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies from the repository lockfile
+        run: npm ci
+
+      - name: Quality gate - unit tests
+        run: npm test
+
+      - name: Quality gate - typecheck
+        run: npm run typecheck
+
+      - name: Quality gate - build
+        run: npm run build
+
+      - name: Quality gate - smoke
+        run: npm run smoke
+
+      # Narrowly scoped CI-only fake pi. Piren's policy requires a `pi` command
+      # on PATH; the clean-install check verifies that policy through `piren
+      # doctor`. This shim satisfies that probe WITHOUT bundling Pi into the
+      # package, altering production runtime resolution, or calling a network
+      # installer. It is the terminal setup before the packed-tarball check.
+      - name: Provide CI-only fake pi on PATH (release verification only)
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/fake-pi"
+          mkdir -p "$dir"
+          cat > "$dir/pi" <<'SHIM'
+          #!/usr/bin/env bash
+          # CI-only fake pi shim for release-artifact verification. NOT shipped with Piren.
+          case "${1:-}" in
+            --version)
+              echo "0.0.0-piren-ci-shim"
+              ;;
+            *)
+              echo "fake pi shim for piren release verification"
+              ;;
+          esac
+          exit 0
+          SHIM
+          chmod +x "$dir/pi"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: Packed-tarball clean-install check (ADR-0033 R1)
+        run: npm run clean-install:check
