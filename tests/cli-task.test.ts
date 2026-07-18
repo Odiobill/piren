@@ -219,6 +219,16 @@ describe("piren task (CLI dispatch)", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/usage|unknown/i);
   });
+
+  it("rejects a nested-below-inbox path before filesystem effects (regression)", () => {
+    // Sam review blocker: team/<agent>/inbox/foo.md/other.md must not be a
+    // valid task target. Every path-accepting subcommand should reject it.
+    for (const sub of ["show", "claim", "complete", "cancel"] as const) {
+      const result = runPirenTask([sub, "team/dipu/inbox/foo.md/other.md"], { HOME: home });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/inbox|markdown|task path/i);
+    }
+  });
 });
 
 // Isolated vault to verify `list` without --agent resolves from PIREN_AGENT and

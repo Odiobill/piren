@@ -209,6 +209,16 @@ describe("task-cli inbox rel-path structure", () => {
   it("rejects a non-markdown file", () => {
     expect(() => assertInboxTaskRelPath(VAULT, "team/thor/inbox/foo.txt")).toThrow(/markdown|\.md|inbox/i);
   });
+
+  it("rejects a nested path below an inbox file (regression: direct file only)", () => {
+    // Sam review blocker: parts[3].endsWith('.md') alone accepted
+    // team/thor/inbox/foo.md/other.md as fileName 'foo.md/other.md'.
+    expect(() => assertInboxTaskRelPath(VAULT, "team/thor/inbox/foo.md/other.md")).toThrow(/inbox|markdown/i);
+  });
+
+  it("rejects a path with extra segments after the inbox file", () => {
+    expect(() => assertInboxTaskRelPath(VAULT, "team/thor/inbox/foo.md/deep/inside.md")).toThrow(/inbox|markdown/i);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -266,6 +276,15 @@ describe("resolveTaskIdOrPath", () => {
   it("rejects a path input that escapes the vault", async () => {
     const fs = new FakeFs();
     await expect(resolveTaskIdOrPath(fs.deps(), VAULT, "../../../etc/passwd")).rejects.toThrow(/vault|outside/i);
+  });
+
+  it("rejects a nested-below-inbox path before any filesystem read (regression)", async () => {
+    // No files seeded; the path branch must reject synchronously without
+    // touching the filesystem, so an empty FakeFs is sufficient proof.
+    const fs = new FakeFs();
+    await expect(
+      resolveTaskIdOrPath(fs.deps(), VAULT, "team/thor/inbox/foo.md/other.md"),
+    ).rejects.toThrow(/inbox|markdown/i);
   });
 
   it("rejects an invalid explicit --agent name before scanning", async () => {

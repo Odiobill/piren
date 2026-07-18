@@ -122,14 +122,19 @@ export function assertInboxTaskRelPath(
   assertVaultContained(vaultRoot, absolute);
   const rel = relative(resolve(vaultRoot), absolute);
   const parts = rel.split(/[\\/]+/);
+  // Require the canonical direct-file shape exactly:
+  //   team/<agent>/inbox/<file>.md
+  // exactly four segments, no nesting below the inbox file. Earlier code only
+  // checked parts.length >= 4 and parts[3].endsWith('.md'), which accepted
+  // paths like team/<agent>/inbox/foo.md/other.md.
   if (
-    parts.length < 4 ||
+    parts.length !== 4 ||
     parts[0] !== "team" ||
     parts[2] !== "inbox" ||
     !(parts[3] ?? "").endsWith(".md")
   ) {
     throw new Error(
-      "Task path must point to a Markdown task file under team/<agent>/inbox/.",
+      "Task path must point to a Markdown task file directly under team/<agent>/inbox/.",
     );
   }
   const agentName = parts[1] ?? "";
@@ -138,8 +143,9 @@ export function assertInboxTaskRelPath(
       "Invalid agent name. Use lowercase kebab-case, for example 'piren' or 'research-agent'.",
     );
   }
-  return { agentName, fileName: parts.slice(3).join("/") };
+  return { agentName, fileName: parts[3] ?? "" };
 }
+
 
 // ---------------------------------------------------------------------------
 // Frontmatter parsing (self-contained, mirrors inbox parsing)
