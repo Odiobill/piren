@@ -65,13 +65,147 @@ export function assessCleanInstall(probe) {
 }
 export function formatCleanInstallReport(report) {
     const lines = ["Piren clean-install check"];
-    lines.push(`install_dir: ${report.installDir}`);
+    if (report.source) {
+        const s = report.source;
+        lines.push(`source: ${s.kind}`);
+        lines.push(`spec: ${s.spec}`);
+        if (s.tarballPath)
+            lines.push(`tarball: ${s.tarballPath}`);
+        if (s.packageName && s.packageVersion)
+            lines.push(`package: ${s.packageName}@${s.packageVersion}`);
+        if (s.packedFileCount !== undefined)
+            lines.push(`packed files: ${s.packedFileCount}`);
+        if (s.artifactsOk !== undefined) {
+            lines.push(`packed artifacts: ${s.artifactsOk ? "OK" : `MISSING${s.missing ? " " + s.missing.join(", ") : ""}`}`);
+        }
+    }
+    lines.push(`install_dir: ${report.installDir || "<not installed>"}`);
     lines.push(`result: ${report.ok ? "PASS" : "FAIL"}`);
     lines.push("");
     for (const check of report.checks) {
         lines.push(`[${check.status.toUpperCase()}] ${check.id}: ${check.message}`);
     }
     return lines.join("\n");
+}
+// ---------------------------------------------------------------------------
+// Packed-tarball install verification (ADR-0033 Slice R1).
+//
+// The default clean-install path packs the exact local source via `npm pack`,
+// validates the packed file surface, then installs that tarball into an
+// isolated HOME/prefix. This removes the `github:` Git-dependency (and the
+// npm-11 `--install-links` workaround) from the normal path, so it is not
+// blocked by EALLOWGIT policies. GitHub/explicit-spec installs remain an
+// opt-in escape hatch.
+// ---------------------------------------------------------------------------
+/** Required runtime artifacts the packed tarball must ship for the CLI to run. */
+export const REQUIRED_PACKED_ARTIFACTS = [
+    "dist/src/cli.js",
+    "dist/public/index.html",
+    "dist/src/pi-extension.js",
+];
+/** Resolve the install spec from CLI args. Default = packed-tarball/local. */
+export function resolveInstallSpec(args) {
+    const explicit = args.find((a) => !a.startsWith("-"));
+    if (explicit !== undefined)
+        return { kind: "explicit", spec: explicit };
+    return { kind: "packed-tarball", source: "local" };
+}
+/** Pure: check a packed file surface contains every required runtime artifact. */
+export function checkPackedArtifacts(packedFiles) {
+    const normalized = packedFiles.map((f) => f.replace(/^package\//, "").replace(/\\/g, "/"));
+    const present = REQUIRED_PACKED_ARTIFACTS.filter((req) => normalized.includes(req));
+    const missing = REQUIRED_PACKED_ARTIFACTS.filter((req) => !normalized.includes(req));
+    return { ok: missing.length === 0, missing, presentCount: present.length };
+}
+/**
+ * Parse `npm pack --json` stdout. Handles both the current object-keyed
+ * shape (`{ "piren": {...} }`) and the older array shape (`[ {...} ]`).
+ * Returns null when the output is not parseable or has no filename.
+ */
+export function parseNpmPackJson(stdout) {
+    let parsed;
+    try {
+        parsed = JSON.parse(stdout);
+    }
+    catch {
+        return null;
+    }
+    if (parsed === null || typeof parsed !== "object")
+        return null;
+    let entry;
+    if (Array.isArray(parsed)) {
+        entry = parsed[0];
+    }
+    else {
+        const values = Object.values(parsed);
+        entry = values[0];
+    }
+    if (entry === null || typeof entry !== "object")
+        return null;
+    const e = entry;
+    if (typeof e.filename !== "string" || e.filename === "")
+        return null;
+    const packedFiles = [];
+    if (Array.isArray(e.files)) {
+        for (const f of e.files) {
+            if (f !== null && typeof f === "object" && typeof f.path === "string") {
+                packedFiles.push(f.path);
+            }
+        }
+    }
+    return {
+        filename: e.filename,
+        packageName: typeof e.name === "string" ? e.name : "",
+        packageVersion: typeof e.version === "string" ? e.version : "",
+        packedFiles,
+    };
+}
+/** Whether an install spec needs npm's `--install-links` (git/github only). */
+export function needsInstallLinks(spec) {
+    return spec.startsWith("github:") || spec.startsWith("git+") || spec.endsWith(".git");
+}
+/**
+ * Build the local tarball via `npm pack --json` using injected deps, then
+ * validate its packed surface. The tarball is created in `cwd` (the repo
+ * root); the returned `tarballPath` is the absolute path the caller installs
+ * and later removes.
+ */
+export async function buildLocalTarball(deps, cwd) {
+    const required = [...REQUIRED_PACKED_ARTIFACTS];
+    const res = await deps.pack(cwd);
+    if (res.code !== 0) {
+        return {
+            ok: false,
+            tarballPath: undefined,
+            packageName: undefined,
+            packageVersion: undefined,
+            packedFiles: [],
+            missing: required,
+            error: `npm pack exited ${res.code}${res.stderr ? `: ${res.stderr.trim()}` : ""}`,
+        };
+    }
+    const parsed = parseNpmPackJson(res.stdout);
+    if (parsed === null) {
+        return {
+            ok: false,
+            tarballPath: undefined,
+            packageName: undefined,
+            packageVersion: undefined,
+            packedFiles: [],
+            missing: required,
+            error: "Could not parse `npm pack` JSON output.",
+        };
+    }
+    const surface = checkPackedArtifacts(parsed.packedFiles);
+    return {
+        ok: surface.ok,
+        tarballPath: join(cwd, parsed.filename),
+        packageName: parsed.packageName,
+        packageVersion: parsed.packageVersion,
+        packedFiles: parsed.packedFiles,
+        missing: surface.missing,
+        error: undefined,
+    };
 }
 function run(cmd, args, opts) {
     return new Promise((resolve) => {
@@ -106,7 +240,12 @@ export async function runCleanInstallCheck(options) {
         npm_config_prefix: options.prefix,
     };
     delete env.XDG_CONFIG_HOME;
-    const installArgs = ["install", "--prefix", options.prefix, "--install-links"];
+    const installArgs = ["install", "--prefix", options.prefix];
+    // `--install-links` is only needed for git/github specs (the npm-11 symlink
+    // workaround). Tarball installs always extract into node_modules, so the
+    // normal packed-tarball path does not depend on it (ADR-0033 Slice R1).
+    if (needsInstallLinks(options.spec))
+        installArgs.push("--install-links");
     if (options.allowInstallScripts)
         installArgs.push("--allow-scripts");
     installArgs.push(options.spec);
@@ -187,6 +326,71 @@ export async function runCleanInstallCheck(options) {
     }
     const assessment = assessCleanInstall(probe);
     return { ...assessment, probe };
+}
+/** Real `npm pack` adapter for `buildLocalTarball`. */
+export function createRealPackDeps() {
+    return {
+        pack: (cwd) => run("npm", ["pack", "--json"], { cwd, env: process.env, timeout: 180_000 }),
+        remove: (path) => rm(path, { force: true }),
+    };
+}
+/**
+ * Default clean-install path (ADR-0033 Slice R1): pack the exact local source
+ * via `npm pack`, validate the packed surface, then install that tarball into
+ * an isolated HOME/prefix and run the existing dist/binary/Pi checks. No
+ * `github:` fetch and no `--install-links` in the normal path.
+ */
+export async function runPackedCleanInstallCheck(options) {
+    const log = options.log ?? (() => { });
+    const packDeps = options.packDeps ?? createRealPackDeps();
+    log("clean-install-check: packing local tarball via `npm pack --json`");
+    const pack = await buildLocalTarball(packDeps, options.repoRoot);
+    const source = {
+        kind: "packed-tarball",
+        spec: pack.tarballPath ?? "<no tarball produced>",
+        artifactsOk: pack.ok && pack.missing.length === 0,
+        ...(pack.tarballPath !== undefined ? { tarballPath: pack.tarballPath } : {}),
+        ...(pack.packageName !== undefined ? { packageName: pack.packageName } : {}),
+        ...(pack.packageVersion !== undefined ? { packageVersion: pack.packageVersion } : {}),
+        ...(pack.packedFiles.length > 0 ? { packedFileCount: pack.packedFiles.length } : {}),
+        ...(pack.missing.length > 0 ? { missing: pack.missing } : {}),
+    };
+    if (!pack.ok || pack.tarballPath === undefined) {
+        const message = pack.error !== undefined
+            ? `Local \`npm pack\` failed: ${pack.error}`
+            : `Packed tarball is missing required runtime artifacts: ${pack.missing.join(", ")}. Run \`npm run build\` before packing.`;
+        return {
+            ok: false,
+            installDir: "",
+            checks: [{ id: "packed-surface", status: "fail", message }],
+            source,
+        };
+    }
+    const base = await mkdtemp(join(tmpdir(), "piren-clean-"));
+    const prefix = join(base, "prefix");
+    const cleanHome = join(base, "home");
+    const pathEnv = options.pathEnv ?? process.env.PATH ?? "";
+    const installOpts = {
+        spec: pack.tarballPath,
+        prefix,
+        cleanHome,
+        pathEnv,
+        log,
+        cleanup: !options.keep,
+    };
+    if (options.allowInstallScripts)
+        installOpts.allowInstallScripts = true;
+    const install = await runCleanInstallCheck(installOpts);
+    // Remove the packed tarball from the repo root unless --keep.
+    if (!options.keep) {
+        await packDeps.remove(pack.tarballPath);
+    }
+    return {
+        ok: install.ok,
+        installDir: install.installDir,
+        checks: install.checks,
+        source,
+    };
 }
 /**
  * Convenience entry for a full default run against the real github spec.

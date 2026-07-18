@@ -11,7 +11,7 @@ npm run build
 npm run smoke
 ```
 
-Current expected baseline: 92 test files, 1132 tests, typecheck/build/smoke passing.
+Current expected baseline: 93 test files, 1154 tests, typecheck/build/smoke passing.
 
 ## Clean install checklist
 
@@ -49,28 +49,36 @@ piren update
 
 ## Automated clean-install validation
 
-Piren ships a clean-install validation script that installs the package from
-the real GitHub source into an isolated HOME and verifies the installed binary:
+Piren ships a clean-install validation script (ADR-0033 Slice R1) that packs
+the exact local source into an npm tarball, installs that tarball into an
+isolated HOME and prefix, and verifies the installed binary — with no
+`github:` fetch and no `--install-links` in the normal path:
 
 ```bash
 npm run clean-install:check
 ```
 
-It performs a real `npm install --install-links github:Odiobill/piren` in a fresh prefix with
-an isolated clean HOME, then checks:
+It runs `npm pack` (which triggers the `prepack` build), validates that the
+packed surface contains the required runtime artifacts, then installs the
+tarball in a fresh prefix with an isolated clean HOME and checks:
 
 - `dist/src/cli.js`, `dist/public/index.html`, and `dist/src/pi-extension.js`
-  are present (catches a missing build).
+  are present (catches a missing build or incomplete package surface).
 - The installed `piren` binary actually runs.
 - The Pi runtime policy resolves: a local `pi` on PATH is required.
 
-The script exits non-zero on any failure, so it is safe in CI. Options:
+The temporary tarball is removed by default. The script exits non-zero on any
+failure, so it is safe in CI. Options:
 
 ```bash
-npm run clean-install:check -- github:Odiobill/piren   # explicit spec
+npm run clean-install:check -- --keep                # keep the tarball + install for inspection
+npm run clean-install:check -- github:Odiobill/piren # explicit escape hatch (needs git deps)
 npm run clean-install:check -- /path/to/piren-0.1.0.tgz
-npm run clean-install:check -- --keep                  # keep the install for inspection
 ```
+
+Because the default path packs the local source, it does not depend on remote
+state and is not blocked by npm `EALLOWGIT` policies. GitHub/explicit-spec
+installs remain available as an explicit escape hatch.
 
 ### GitHub installs and build artifacts
 

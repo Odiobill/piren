@@ -3,6 +3,7 @@ dist/
 coverage/
 .piren-smoke/
 *.log
+*.tgz
 
 # Secrets and machine-local config (Piren keeps these outside the repo)
 .env

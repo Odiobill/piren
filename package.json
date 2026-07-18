@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Piren: lightweight, local-first agent layer on top of Pi Coding Agent",
+  "engines": {
+    "node": ">=22"
+  },
   "files": [
     "dist/",
     "docs/"
