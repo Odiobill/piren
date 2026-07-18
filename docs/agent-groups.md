@@ -93,11 +93,11 @@ The Piren team uses one group, `developers`, with this fallback order:
 | Dipu  | Zai           |
 | Dario | (none, consultant-only) |
 
-When Zai's provider quota is exhausted, the system recommends Dipu. Nora (the release coordinator) or the steward approves the reassignment, the task file gets a visible routing note, and the trail is never hidden. See the [operating model](https://github.com/Odiobill/piren/tree/main/Projects/Piren/piren-agent-operating-model.md) for the full crew description.
+When Zai's provider quota is exhausted, the system recommends Dipu. Nora (the release coordinator) or the steward approves the reassignment, the task file gets a visible routing note, and the trail is never hidden.
 
 ## Related
 
-- [ADR-0028: Agent groups and fallback agents](../decisions/ADR-0028-agent-groups-and-fallback-agents.md)
+- ADR-0028 — agent groups and fallback agents
 - [Skills](skills.md)
 - [Vault layout](vault-layout.md)
 - [Scheduler](scheduler.md) (device failover for the same agent, the complementary feature)

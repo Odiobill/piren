@@ -62,7 +62,7 @@ wiki_update_concept(title, content, description?, tags?, links?)
 wiki_update_entity(title, content, description?, tags?, links?)
 ```
 
-These write `type: Concept` documents under `wiki/concepts/` and `type: Entity` documents under `wiki/entities/`. Use bundle-relative links such as `/Projects/Piren/knowledge-lifecycle.md` for agent-authored relationships.
+These write `type: Concept` documents under `wiki/concepts/` and `type: Entity` documents under `wiki/entities/`. Use bundle-relative links such as `/Projects/<project>/index.md` for agent-authored relationships.
 
 Detect correction moments without writing hidden memory:
 

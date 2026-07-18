@@ -2,7 +2,7 @@
 
 A project bundle is the subset of vault knowledge that travels with a specific code repository. It lets a project carry its own decisions, logs, handoffs, and runbooks alongside the source, while the shared vault holds the full cross-project knowledge substrate.
 
-The Piren repository itself is the reference example: `Projects/Piren/` in the vault mirrors a project bundle structure.
+The Piren repository itself is the reference example: its vault project bundle mirrors this structure.
 
 ## The Projects/ orientation
 
@@ -48,7 +48,7 @@ Projects/
 
 ## Co-locating project docs with source
 
-A project bundle can be checked into the same repository as the source code, or kept in the shared vault only. The Piren project keeps the authoritative project docs in the vault at `Projects/Piren/`, and the repository carries `AGENTS.md` and `docs/` as the code-adjacent surface.
+A project bundle can be checked into the same repository as the source code, or kept in the shared vault only. The Piren project keeps the authoritative project docs in its vault project bundle, and the repository carries `AGENTS.md` and `docs/` as the code-adjacent surface.
 
 The split (ADR-0020):
 
@@ -67,7 +67,7 @@ The project bundle is the source of truth for project-level decisions. When a de
 3. Append a `Projects/<p>/log.md` entry recording the change.
 4. Update repository `docs/` if the decision affects operator-facing behavior.
 
-For normal implementation work, the order inverts: RED-GREEN TDD first, then docs. Direction changes go docs-first so the design is agreed before code. See [ADR-0020](../decisions/ADR-0020-documentation-and-public-site.md).
+For normal implementation work, the order inverts: RED-GREEN TDD first, then docs. Direction changes go docs-first so the design is agreed before code. See ADR-0020.
 
 ## The knowledge delta rule
 

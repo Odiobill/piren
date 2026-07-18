@@ -1,6 +1,6 @@
 # Open Knowledge Format (OKF)
 
-Piren's vault follows the [Open Knowledge Format (OKF) v0.1](https://github.com/google/knowledge-catalog): a directory tree of Markdown files with YAML frontmatter. OKF is intentionally close to what Piren already does. The full design decision is [ADR-0022](../README.md); this page is the operator reference.
+Piren's vault follows the [Open Knowledge Format (OKF) v0.1](https://github.com/google/knowledge-catalog): a directory tree of Markdown files with YAML frontmatter. OKF is intentionally close to what Piren already does. The full design decision is ADR-0022 in the Piren project vault; this page is the operator reference.
 
 ## The one rule that matters
 
@@ -89,8 +89,8 @@ wiki_update_entity(title, content, description?, tags?, links?)
 Example link values:
 
 ```text
-/Projects/Piren/knowledge-lifecycle.md
-/Projects/Piren/decisions/ADR-0024-inspectable-self-improvement-triggers.md
+/Projects/<project>/index.md
+/Projects/<project>/runbooks/<slug>.md
 ```
 
 ## Link semantics

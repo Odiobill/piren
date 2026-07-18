@@ -135,7 +135,7 @@ See [agent groups and fallback](agent-groups.md) for the semantic fallback story
 
 ## Related
 
-- [ADR-0029: Device-local scheduler](../decisions/ADR-0029-device-local-scheduler.md)
+- ADR-0029 — device-local scheduler
 - [Cron jobs](cron.md)
 - [Service management](service-management.md)
 - [Agent groups and fallback](agent-groups.md)

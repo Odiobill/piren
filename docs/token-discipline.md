@@ -73,5 +73,5 @@ Each of these is inspectable. You can read the vault, read the config, and read 
 - [Scheduler](scheduler.md)
 - [Cron jobs](cron.md)
 - [Skills](skills.md)
-- [ADR-0017: Lazy skill loading](../decisions/ADR-0017-lazy-skill-loading.md)
-- [ADR-0023: Script-only cron](../decisions/ADR-0023-script-only-cron.md)
+- ADR-0017 — lazy skill loading
+- ADR-0023 — script-only cron

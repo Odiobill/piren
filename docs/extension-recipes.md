@@ -111,7 +111,7 @@ npm run smoke
 
 ## Related
 
-- [ADR-0013: Pi package extensibility](../decisions/ADR-0013-pi-package-extensibility.md)
+- ADR-0013 — Pi package extensibility
 - [Skills](skills.md)
 - [Configuration](configuration.md)
 - [Operations](operations.md)

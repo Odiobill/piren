@@ -4,7 +4,7 @@ Piren service targets (gateway, Telegram, Discord, and the scheduler) are
 long-running processes. This page describes how to keep them running on
 homelab and edge devices using Piren's built-in service lifecycle management.
 
-See [ADR-0021](https://github.com/Odiobill/piren) for the design decisions.
+The design decisions are recorded as ADR-0021 in the Piren project vault.
 
 ## Overview
 

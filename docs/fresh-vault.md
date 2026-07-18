@@ -53,7 +53,7 @@ allowed_agents:
 
 4. Run `piren doctor` to verify.
 
-The agent identity, memory, inbox, skills, and project knowledge travel with the vault. Local installation policy (which agents this device may run) stays outside the vault. See [ADR-0002](../decisions/ADR-0002-vault-as-source-of-truth.md).
+The agent identity, memory, inbox, skills, and project knowledge travel with the vault. Local installation policy (which agents this device may run) stays outside the vault. See ADR-0002.
 
 ## Packaging a vault for a new team
 

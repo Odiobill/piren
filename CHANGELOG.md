@@ -12,7 +12,7 @@ The first non-prerelease official release. Adds the device-local scheduler servi
 ### Added
 
 - **Scheduler service MVP (ADR-0029, O7):** `piren scheduler --once` runs one bounded claim-first tick; `piren scheduler` runs the opt-in loop until SIGINT/SIGTERM. Claim-scoped bounded execution for inbox tasks (S2) and agent-mode cron jobs (S3), one-shot tick execution (S4), explicit loop with local config (S5), and service lifecycle integration (`piren service install scheduler`, S6). All layers preserve the same boundaries: off by default, local allowed-agent policy, claim-first execution, at most one executed item per tick, conservative one-at-a-time concurrency, no hidden state, and no automatic cross-agent fallback. 78 new tests (832 total).
-- **Seventh scheduler-service plan:** `Projects/Piren/scheduler-service-o7-plan.md` decomposes the MVP into seven reviewable slices (S1–S7).
+- **Seventh scheduler-service plan:** decomposes the scheduler MVP into seven reviewable slices (S1–S7).
 
 ### Changed
 

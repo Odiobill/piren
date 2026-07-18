@@ -16,15 +16,15 @@ Before non-trivial implementation work:
    - `test-driven-development` for production behavior changes.
    - `pi-coding-agent-extensions` for Pi extension, CLI, tool, smoke, or package work.
 2. Read the Piren vault project docs, at minimum:
-   - `/mnt/nas/Documents/vault/Projects/Piren/index.md`
-   - `/mnt/nas/Documents/vault/Projects/Piren/knowledge-lifecycle.md`
-   - `/mnt/nas/Documents/vault/Projects/Piren/implementation-plan.md`
-   - `/mnt/nas/Documents/vault/Projects/Piren/handoff-prompt.md`
+   - `/mnt/nas/Piren/Projects/Piren/index.md`
+   - `/mnt/nas/Piren/Projects/Piren/knowledge-lifecycle.md`
+   - `/mnt/nas/Piren/Projects/Piren/implementation-plan.md`
+   - `/mnt/nas/Piren/Projects/Piren/handoff-prompt.md`
 3. For architecture or authority-boundary changes, also read:
-   - `/mnt/nas/Documents/vault/Projects/Piren/architecture.md`
-   - `/mnt/nas/Documents/vault/Projects/Piren/bootstrap-config.md`
-   - `/mnt/nas/Documents/vault/Projects/Piren/vault-protocol.md`
-   - `/mnt/nas/Documents/vault/Projects/Piren/runtime-placement.md`
+   - `/mnt/nas/Piren/Projects/Piren/architecture.md`
+   - `/mnt/nas/Piren/Projects/Piren/bootstrap-config.md`
+   - `/mnt/nas/Piren/Projects/Piren/vault-protocol.md`
+   - `/mnt/nas/Piren/Projects/Piren/runtime-placement.md`
 
 ## Product thesis to preserve
 
@@ -33,8 +33,8 @@ Piren is not only an agent launcher or task queue. It is a vault-backed team kno
 Until the first release candidate, preserve the thesis in:
 
 ```text
-/mnt/nas/Documents/vault/Projects/Piren/knowledge-lifecycle.md
-/mnt/nas/Documents/vault/Projects/Piren/decisions/ADR-0010-vault-as-team-knowledge-substrate.md
+/mnt/nas/Piren/Projects/Piren/knowledge-lifecycle.md
+/mnt/nas/Piren/Projects/Piren/decisions/ADR-0010-vault-as-team-knowledge-substrate.md
 ```
 
 Every non-trivial task should consider its knowledge delta. Update the minimum useful durable artifact, not everything.
@@ -353,14 +353,14 @@ Open Knowledge Format conformance (ADR-0022, implemented):
 - With TypeScript unions, prefer property checks such as `"path" in result`, `"outboxPath" in result`, or `"reason" in result` when narrowing is stubborn.
 - With `exactOptionalPropertyTypes`, do not pass optional properties as explicit `undefined`. Build option objects with required fields first, then assign optional fields only when defined.
 - When writing YAML or multi-line string content through patch/write tools, avoid TypeScript template literals with escaped newlines in test fixtures. Prefer string concatenation to avoid JSON escaping corruption.
-- When updating docs, search both this repository and `/mnt/nas/Documents/vault/Projects/Piren/` for stale verification baselines and stale next-step wording.
+- When updating docs, search both this repository and `/mnt/nas/Piren/Projects/Piren/` for stale verification baselines and stale next-step wording.
 
 ## Phase-specific handoff location
 
 The current next tracer bullet and transient setup notes live here:
 
 ```text
-/mnt/nas/Documents/vault/Projects/Piren/handoff-prompt.md
+/mnt/nas/Piren/Projects/Piren/handoff-prompt.md
 ```
 
 Do not duplicate long phase histories in prompts. Put stable implementation rules here, current project truth in vault project docs, and only volatile next-session instructions in the handoff prompt.
