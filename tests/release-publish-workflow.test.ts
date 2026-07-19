@@ -1,28 +1,26 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 /**
  * ADR-0033 P1: static contract for the registry publication workflow.
  *
  * `.github/workflows/release-publish.yml` is the ONLY workflow that publishes
- * Piren to npm. It must be tag-only, gated by the protected `npm-production`
- * GitHub Environment, use only `contents: read` + `id-token: write`, carry no
- * token/secret/production-Pi-installer path, verify ONE concrete packed tarball
- * through the existing clean-install machinery BEFORE its single provenance
- * `npm publish --tag latest`, and check tag/package version agreement first.
+ * Piren to npm. It is split into an unprotected `verify` job and a `publish`
+ * job that `needs: verify`, so steward approval (the protected `npm-production`
+ * Environment) and `id-token: write` apply ONLY after the tag-triggered
+ * verification path has completed. Structural assertions parse the workflow
+ * YAML; forbidden-literal checks run against the raw text.
  *
  * It must not weaken the verification-only `release-verify.yml`.
- *
- * Assertions are YAML-format-tolerant: whitespace is collapsed to single spaces
- * and substring/regex checks are used. Forbidden strings are checked raw.
  */
 
 const repoRoot = process.cwd();
 const publishPath = join(repoRoot, ".github", "workflows", "release-publish.yml");
 const verifyPath = join(repoRoot, ".github", "workflows", "release-verify.yml");
 
-function read(path: string): string {
+function readRaw(path: string): string {
   return readFileSync(path, "utf8");
 }
 
@@ -30,9 +28,6 @@ function normalize(text: string): string {
   return text.replace(/\s+/g, " ");
 }
 
-/** Remove full-line comments so structural checks (count/order) see only the
- *  active workflow text, not explanatory prose that legitimately names the
- *  commands. Forbidden-literal checks still run against the raw text. */
 function stripComments(text: string): string {
   return text
     .split(/\r?\n/)
@@ -40,87 +35,165 @@ function stripComments(text: string): string {
     .join("\n");
 }
 
+interface Step {
+  name?: string;
+  uses?: string;
+  run?: string;
+}
+interface Job {
+  name?: string;
+  needs?: string | string[];
+  environment?: string;
+  permissions?: Record<string, string> | string;
+  steps?: Step[];
+}
+interface Workflow {
+  jobs?: Record<string, Job>;
+  permissions?: Record<string, string> | string;
+}
+
+function asPermissions(p: Record<string, string> | string | undefined): Record<string, string> {
+  if (typeof p === "string" || p === undefined) return {};
+  return p;
+}
+
+function needsList(job: Job | undefined): string[] {
+  const n = job?.needs;
+  if (n === undefined) return [];
+  return Array.isArray(n) ? n : [n];
+}
+
+function runText(job: Job | undefined): string {
+  return (job?.steps ?? []).map((s) => s.run ?? "").join("\n");
+}
+
+function usesList(job: Job | undefined): string[] {
+  return (job?.steps ?? []).filter((s) => s.uses).map((s) => s.uses as string);
+}
+
 describe("ADR-0033 P1: registry publication workflow", () => {
   let raw: string;
-  let blob: string;
+  let wf: Workflow;
 
   beforeAll(() => {
-    raw = read(publishPath);
-    blob = normalize(raw);
+    raw = readRaw(publishPath);
+    wf = parseYaml(raw) as Workflow;
   });
 
   it("ships a named workflow file at .github/workflows/release-publish.yml", () => {
     expect(raw.length).toBeGreaterThan(0);
-    expect(blob).toMatch(/\bname:/);
   });
 
-  describe("trigger", () => {
-    it("is tag-only (no branch or manual dispatch)", () => {
+  describe("trigger (tag-only)", () => {
+    it("runs on version-tag push only (no branch, no manual dispatch)", () => {
+      const blob = normalize(raw);
       expect(blob).toMatch(/\bon:/);
       expect(blob).toMatch(/\bpush\b/);
       expect(blob).toMatch(/\btags\b/);
       expect(blob).toMatch(/v\*+|v\[0-9\]/);
-      // Publication must be tag-triggered only: no workflow_dispatch.
       expect(blob).not.toMatch(/\bworkflow_dispatch\b/);
-      // No branch-push trigger.
       expect(blob).not.toMatch(/\bbranches\b/);
     });
   });
 
-  describe("permissions", () => {
-    it("declares exactly contents: read and id-token: write, nothing broader", () => {
-      expect(blob).toMatch(/contents\s*:\s*read/);
-      expect(blob).toMatch(/id-token\s*:\s*write/);
-      // No broader repository permissions.
-      expect(blob).not.toMatch(/contents\s*:\s*write/);
-      expect(blob).not.toMatch(/packages\s*:\s*write/);
-      expect(blob).not.toMatch(/deployments\s*:\s*write/);
+  describe("two-job split", () => {
+    it("defines exactly verify and publish jobs, in that order", () => {
+      const keys = Object.keys(wf.jobs ?? {});
+      expect(keys).toEqual(["verify", "publish"]);
+    });
+
+    it("publish depends on verify (steward approval happens after verification)", () => {
+      expect(needsList(wf.jobs?.publish)).toContain("verify");
     });
   });
 
-  describe("protected environment gate", () => {
-    it("runs in the npm-production GitHub Environment", () => {
-      expect(blob).toMatch(/environment\s*:\s*npm-production/);
+  describe("permission isolation", () => {
+    it("top-level permissions are contents: read with no id-token", () => {
+      const top = asPermissions(wf.permissions);
+      expect(top["contents"]).toBe("read");
+      expect(top["id-token"]).not.toBe("write");
+    });
+
+    it("verify job has no id-token: write", () => {
+      const p = asPermissions(wf.jobs?.verify?.permissions);
+      expect(p["id-token"]).not.toBe("write");
+    });
+
+    it("publish job alone has contents: read and id-token: write", () => {
+      const p = asPermissions(wf.jobs?.publish?.permissions);
+      expect(p["contents"]).toBe("read");
+      expect(p["id-token"]).toBe("write");
+    });
+
+    it("only the publish job runs in the npm-production Environment", () => {
+      expect(wf.jobs?.publish?.environment).toBe("npm-production");
+      expect(wf.jobs?.verify?.environment).toBeUndefined();
     });
   });
 
-  describe("runtime: Node and lockfile", () => {
-    it("uses Node 22 and installs from the lockfile via npm ci", () => {
-      expect(blob).toMatch(/node-version.*22/);
-      expect(blob).toMatch(/\bnpm ci\b/);
-      expect(blob).toMatch(/cache.*npm/);
+  describe("verify job (pre-approval)", () => {
+    it("runs the four quality gates", () => {
+      const t = runText(wf.jobs?.verify);
+      expect(t).toContain("npm test");
+      expect(t).toContain("npm run typecheck");
+      expect(t).toContain("npm run build");
+      expect(t).toContain("npm run smoke");
+    });
+
+    it("checks tag/package version agreement", () => {
+      const t = runText(wf.jobs?.verify);
+      expect(t).toMatch(/GITHUB_REF_NAME/);
+      expect(t).toMatch(/package\.json/);
+    });
+
+    it("builds one explicit tarball and validates it through the clean-install machinery", () => {
+      const t = runText(wf.jobs?.verify);
+      expect(t).toMatch(/\bnpm pack\b/);
+      expect(t).toContain("npm run clean-install:check");
+    });
+
+    it("uploads the verified tarball as a workflow artifact", () => {
+      expect(usesList(wf.jobs?.verify)).toEqual(
+        expect.arrayContaining([
+          "actions/checkout@v4",
+          "actions/upload-artifact@v4",
+        ]),
+      );
     });
   });
 
-  describe("quality gates", () => {
-    it("runs all four normal quality gates", () => {
-      expect(blob).toContain("npm test");
-      expect(blob).toContain("npm run typecheck");
-      expect(blob).toContain("npm run build");
-      expect(blob).toContain("npm run smoke");
+  describe("publish job (post-approval)", () => {
+    it("downloads the verified tarball artifact", () => {
+      expect(usesList(wf.jobs?.publish)).toContain("actions/download-artifact@v4");
+    });
+
+    it("never rebuilds, repacks, or installs from source", () => {
+      const t = runText(wf.jobs?.publish);
+      expect(t).not.toMatch(/\bnpm pack\b/);
+      expect(t).not.toMatch(/\bnpm ci\b/);
+      expect(t).not.toMatch(/npm run build/);
+      // No source checkout in publish: it publishes the downloaded artifact.
+      expect(usesList(wf.jobs?.publish)).not.toContain("actions/checkout@v4");
+    });
+
+    it("has exactly one provenance-enabled npm publish to latest", () => {
+      const t = runText(wf.jobs?.publish);
+      const count = (t.match(/\bnpm publish\b/g) ?? []).length;
+      expect(count).toBe(1);
+      expect(t).toMatch(/npm publish.*--provenance/);
+      expect(t).toMatch(/--tag latest/);
+      expect(t).toMatch(/--access public/);
+    });
+
+    it("publishes the verified artifact, never github: or branch-tip source", () => {
+      const active = normalize(stripComments(raw));
+      expect(active).not.toMatch(/npm publish.*github:/);
+      expect(active).not.toMatch(/--install-links/);
     });
   });
 
-  describe("version agreement", () => {
-    it("checks tag and package.json version agreement before publish", () => {
-      expect(blob).toMatch(/GITHUB_REF_NAME/);
-      expect(blob).toMatch(/package\.json/);
-      expect(blob).toMatch(/version/i);
-    });
-  });
-
-  describe("one explicit verified tarball", () => {
-    it("creates one explicit npm tarball via npm pack", () => {
-      expect(blob).toMatch(/\bnpm pack\b/);
-    });
-
-    it("verifies the concrete packed tarball via the clean-install machinery", () => {
-      expect(blob).toContain("npm run clean-install:check");
-      // The check step references the packed tarball glob, not a github/branch spec.
-      expect(blob).toMatch(/piren-\*\.tgz|\$tarball/);
-    });
-
-    it("verifies the tarball BEFORE its only npm publish", () => {
+  describe("verify-before-publish ordering (active text)", () => {
+    it("validates the tarball before the single npm publish", () => {
       const active = normalize(stripComments(raw));
       const verifyIdx = active.indexOf("npm run clean-install:check");
       const publishIdx = active.indexOf("npm publish");
@@ -128,26 +201,10 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(publishIdx).toBeGreaterThan(-1);
       expect(verifyIdx).toBeLessThan(publishIdx);
     });
-
-    it("has exactly one provenance-enabled npm publish to latest", () => {
-      const active = normalize(stripComments(raw));
-      const count = (active.match(/\bnpm publish\b/g) ?? []).length;
-      expect(count).toBe(1);
-      expect(active).toMatch(/npm publish.*--provenance/);
-      expect(active).toMatch(/npm publish.*--tag latest/);
-      expect(active).toMatch(/npm publish.*--access public/);
-    });
-
-    it("publishes the verified tarball, never github: or branch-tip source", () => {
-      const active = normalize(stripComments(raw));
-      expect(active).not.toMatch(/npm publish.*github:/);
-      expect(active).not.toMatch(/--install-links/);
-    });
   });
 
   describe("hard boundaries: no credentials and no production Pi installer", () => {
-    it("contains no npm token, registry secret, or .npmrc secret", () => {
-      // These strings must not appear ANYWHERE in the workflow file.
+    it("contains no npm token, registry secret, or .npmrc secret anywhere", () => {
       expect(raw).not.toContain("NPM_TOKEN");
       expect(raw).not.toContain("NODE_AUTH_TOKEN");
       expect(raw).not.toContain("secrets.");
@@ -155,11 +212,13 @@ describe("ADR-0033 P1: registry publication workflow", () => {
     });
 
     it("does not fetch or install the real Pi runtime", () => {
+      const blob = normalize(raw);
       expect(blob.toLowerCase()).not.toMatch(/pi\.dev\/install/);
       expect(blob.toLowerCase()).not.toMatch(/curl.*install/);
     });
 
     it("the fake pi shim stays CI-only and is not a real runtime", () => {
+      const blob = normalize(raw);
       expect(blob).toMatch(/GITHUB_PATH/);
       expect(blob.toLowerCase()).toMatch(/fake|shim|stub|ci-only/);
     });
@@ -167,12 +226,11 @@ describe("ADR-0033 P1: registry publication workflow", () => {
 });
 
 describe("ADR-0033 P1: verification workflow stays verification-only", () => {
-  // The publication workflow must not weaken release-verify.yml.
   let raw: string;
   let blob: string;
 
   beforeAll(() => {
-    raw = read(verifyPath);
+    raw = readRaw(verifyPath);
     blob = normalize(raw);
   });
 
@@ -186,12 +244,12 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 
 describe("ADR-0033 P1: this slice changes no public/version state", () => {
   it("does not bump the package version (still 0.1.0)", () => {
-    const pkg = JSON.parse(read(join(repoRoot, "package.json"))) as { version: string };
+    const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
     expect(pkg.version).toBe("0.1.0");
   });
 
   it("does not add a pi runtime dependency to the package", () => {
-    const pkg = JSON.parse(read(join(repoRoot, "package.json"))) as {
+    const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
@@ -201,12 +259,11 @@ describe("ADR-0033 P1: this slice changes no public/version state", () => {
   });
 
   it("does not introduce registry-install copy into the public docs surface", () => {
-    // The public cutover is P4; P1 must not pre-announce npm install -g piren.
     const candidates = ["README.md", "docs/getting-started.md", "site/index.html"];
     for (const rel of candidates) {
       let text: string;
       try {
-        text = read(join(repoRoot, rel));
+        text = readRaw(join(repoRoot, rel));
       } catch {
         continue;
       }

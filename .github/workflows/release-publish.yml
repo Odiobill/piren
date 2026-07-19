@@ -2,26 +2,28 @@
 #
 # This is the ONLY workflow that publishes Piren to npm. It is deliberately
 # distinct from release-verify.yml (which stays verification-only) and never
-# weakens or repurposes it. Publication is tag-triggered and gated by a
-# protected GitHub Environment named `npm-production`, so a steward must
-# approve the run in GitHub after the tag-triggered verification path reaches
-# that gate.
+# weakens or repurposes it.
+#
+# It is split into two jobs so steward approval happens AFTER artifact
+# verification, not before:
+#   - verify: unprotected, only contents: read. Checks out the tag, runs the
+#     four quality gates, checks tag/package version agreement, builds ONE
+#     explicit tarball, validates + installs that exact tarball through the
+#     existing clean-install machinery (CI-only fake pi shim), then uploads it
+#     as a workflow artifact.
+#   - publish: needs verify, gated by the protected npm-production GitHub
+#     Environment (steward approval), and is the ONLY job with id-token: write.
+#     It downloads the verified tarball artifact and publishes that artifact
+#     with provenance to the stable latest dist-tag. It never rebuilds, repacks,
+#     or uses branch-tip/github source.
 #
 # Hard boundaries (intentional):
-#   - Publishes ONLY from a release tag (v*), and only after checking that the
-#     tag version and package.json version agree. It fails before `npm publish`
-#     on any mismatch.
-#   - Permissions are minimal and explicit: contents: read + id-token: write
-#     (npm provenance via OIDC trusted publishing). It uses no npm access
-#     token, no registry secret, and no .npmrc secret anywhere.
-#   - Builds once, creates ONE explicit npm tarball via `npm pack`, then
-#     validates + installs THAT EXACT tarball through the existing clean-install
-#     machinery (packed surface + isolated install + Pi-runtime policy via the
-#     CI-only fake pi shim). Only that verified tarball is published, with
-#     provenance to the stable `latest` dist-tag.
-#   - Never publishes GitHub branch-tip source or a `github:` spec.
-#   - Does not bundle or install Pi. The fake pi shim is CI-only and unshipped,
-#     exactly as in release-verify.yml.
+#   - Publishes ONLY from a release tag (v*), after tag/package version
+#     agreement. It uses no npm access token, no registry secret, and no
+#     .npmrc secret anywhere; auth is OIDC trusted publishing (configured in P2).
+#   - id-token: write is granted only to the publish job, and only after verify
+#     succeeds and a steward approves the npm-production Environment.
+#   - Does not bundle or install Pi; the fake pi shim is CI-only and unshipped.
 name: Release publish
 
 on:
@@ -29,17 +31,15 @@ on:
     tags:
       - "v*"
 
+# Default minimal permissions for every job. The publish job alone widens to
+# id-token: write, and only after the verify job succeeds.
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
-    name: Publish release to npm
+  verify:
+    name: Verify release artifact
     runs-on: ubuntu-latest
-    # Protected GitHub Environment: a steward approves this run in GitHub before
-    # any publish step can execute. Configured operationally in P2.
-    environment: npm-production
     steps:
       - name: Checkout tag source
         uses: actions/checkout@v4
@@ -81,7 +81,7 @@ jobs:
 
       # One explicit npm tarball. `npm pack` runs `prepack` (npm run build) so
       # the tarball carries freshly built dist/. This file is the single
-      # artifact that is validated, installed, and published.
+      # artifact that is validated, installed, uploaded, and published.
       - name: Build the npm tarball (one explicit artifact)
         run: npm pack
 
@@ -121,9 +121,42 @@ jobs:
           echo "Verifying packed tarball: $tarball"
           npm run clean-install:check -- "$tarball"
 
-      # Publish ONLY the verified tarball, with npm provenance (OIDC), to the
-      # stable `latest` dist-tag. No token secret is used; trusted publishing is
-      # configured operationally in P2.
+      # Hand the verified tarball to the publish job as a workflow artifact so
+      # publish never rebuilds or repacks.
+      - name: Upload the verified tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tarball
+          path: piren-*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: Publish verified release to npm
+    runs-on: ubuntu-latest
+    needs: verify
+    # Protected GitHub Environment: a steward approves this job in GitHub before
+    # it runs. Because publish needs verify, approval happens AFTER the
+    # tag-triggered verification path has completed. Configured in P2.
+    environment: npm-production
+    # id-token: write is granted ONLY here, after verify + approval, for npm
+    # provenance via OIDC trusted publishing. No token secret is used.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download the verified tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: release-tarball
+
+      # Publish ONLY the downloaded verified artifact, with npm provenance
+      # (OIDC), to the stable latest dist-tag. No rebuild, no repack, no
+      # branch-tip/github source. `--access public` and `--tag latest` explicit.
       - name: Publish the verified tarball to npm latest with provenance
         run: |
           set -euo pipefail
