@@ -287,8 +287,17 @@ export interface PromoteStagedSkillResult {
  * The staged name is validated before any path resolution or filesystem
  * access. The target scope is validated with the established scope-existence
  * rules. Target collisions are refused unless `force` is set. All validation
- * and collision checks happen before any write, so a failed or non-forced
- * promotion retains the staged artifact and leaves the target untouched.
+ * and collision checks happen before any write.
+ *
+ * The promotion is transactional and rollback-safe: the original target (when
+ * present) is moved aside to a backup, the promoted content is committed via a
+ * temp file plus an atomic rename (the target is never torn), and only then is
+ * the staged source removed. If staged removal fails, the target is rolled
+ * back to its original state (backup restored, or the just-created target
+ * removed), so a failed promotion retains both the staged artifact and the
+ * original target and leaves no partial activation. If rollback itself cannot
+ * complete, an explicit error names the surviving artifacts instead of
+ * concealing the partial state.
  *
  * On success the promoted document keeps `type: Skill`, the original body, and
  * the imported provenance (`source`, `imported_at`, `checksum`), drops the

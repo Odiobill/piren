@@ -941,6 +941,15 @@ function renderPromotedSkillDocument(args) {
     ];
     return [...frontmatter, args.body].join("\n");
 }
+/** Best-effort removal of a transaction artifact; never throws. */
+async function cleanupArtifact(deps, path) {
+    try {
+        await deps.unlink(path);
+    }
+    catch {
+        // Best-effort: a leftover dot-prefixed non-.md artifact is not scanned.
+    }
+}
 /**
  * Promote exactly one E1 staged skill (`skill-candidates/imports/<name>.md`)
  * into an existing active shared/group/agent scope.
@@ -948,8 +957,17 @@ function renderPromotedSkillDocument(args) {
  * The staged name is validated before any path resolution or filesystem
  * access. The target scope is validated with the established scope-existence
  * rules. Target collisions are refused unless `force` is set. All validation
- * and collision checks happen before any write, so a failed or non-forced
- * promotion retains the staged artifact and leaves the target untouched.
+ * and collision checks happen before any write.
+ *
+ * The promotion is transactional and rollback-safe: the original target (when
+ * present) is moved aside to a backup, the promoted content is committed via a
+ * temp file plus an atomic rename (the target is never torn), and only then is
+ * the staged source removed. If staged removal fails, the target is rolled
+ * back to its original state (backup restored, or the just-created target
+ * removed), so a failed promotion retains both the staged artifact and the
+ * original target and leaves no partial activation. If rollback itself cannot
+ * complete, an explicit error names the surviving artifacts instead of
+ * concealing the partial state.
  *
  * On success the promoted document keeps `type: Skill`, the original body, and
  * the imported provenance (`source`, `imported_at`, `checksum`), drops the
@@ -997,11 +1015,84 @@ export async function promoteStagedSkill(deps, vaultRoot, name, scope, opts) {
         checksum,
         body,
     });
-    // 9. Write the target first, then remove the staged source. Write-first means
-    //    a failed target write leaves the staged artifact intact.
-    await deps.mkdir(dirname(target.absolutePath), { recursive: true });
-    await deps.writeFile(target.absolutePath, promoted);
-    await deps.unlink(staged.absolutePath);
+    // Transactional, rollback-safe promotion. Two original artifacts must survive
+    // any failure: the staged source and (when present) the original target. We:
+    //   (a) move the original target aside to a backup if it exists (--force),
+    //   (b) commit the promoted content to the target via a temp file + atomic
+    //       rename so the target is never torn,
+    //   (c) remove the staged source; on failure roll the target back to its
+    //       original state (restore the backup, or remove the just-created target).
+    // If rollback itself cannot complete we throw an explicit error naming the
+    // surviving artifacts, rather than concealing a partial state.
+    const targetDir = dirname(target.absolutePath);
+    const tempPath = join(targetDir, `.${name}.promote.tmp`);
+    const backupPath = join(targetDir, `.${name}.promote.bak`);
+    assertPathWithinVault(vaultRoot, tempPath);
+    assertPathWithinVault(vaultRoot, backupPath);
+    await deps.mkdir(targetDir, { recursive: true });
+    // (a) Back up the original target so it can be restored on failure.
+    if (targetExists) {
+        await deps.rename(target.absolutePath, backupPath);
+    }
+    // (b) Commit: write the promoted content to a temp file, then atomically
+    //     rename it over the target. On failure, restore the original target.
+    try {
+        await deps.writeFile(tempPath, promoted);
+        await deps.rename(tempPath, target.absolutePath);
+    }
+    catch (commitErr) {
+        await cleanupArtifact(deps, tempPath);
+        if (targetExists) {
+            try {
+                await deps.rename(backupPath, target.absolutePath);
+            }
+            catch {
+                throw new Error(`Promotion of '${name}' failed during commit and the original target could not be restored. ` +
+                    `The original skill is preserved at ${backupPath}; the staged copy remains at ${staged.vaultRelativePath}. ` +
+                    `Restore the original manually. Cause: ${commitErr instanceof Error ? commitErr.message : String(commitErr)}`);
+            }
+        }
+        throw commitErr;
+    }
+    // (c) Remove the staged source. On failure, roll the target back to its
+    //     original state so the vault reflects the pre-promotion state.
+    try {
+        await deps.unlink(staged.absolutePath);
+    }
+    catch (unlinkErr) {
+        let rolledBack = false;
+        if (targetExists) {
+            // Restore the original target (atomically overwrites the promoted copy).
+            try {
+                await deps.rename(backupPath, target.absolutePath);
+                rolledBack = true;
+            }
+            catch {
+                rolledBack = false;
+            }
+        }
+        else {
+            // No original target: remove the just-created promoted target.
+            try {
+                await deps.unlink(target.absolutePath);
+                rolledBack = true;
+            }
+            catch {
+                rolledBack = false;
+            }
+        }
+        if (rolledBack) {
+            throw unlinkErr;
+        }
+        throw new Error(`Promotion of '${name}' committed to ${target.vaultRelativePath} but could not remove the staged source, and rollback failed. ` +
+            `The promoted skill may be active at ${target.vaultRelativePath}` +
+            (targetExists ? ` while the original is preserved at ${backupPath}` : "") +
+            `; the staged copy remains at ${staged.vaultRelativePath}. Inspect and clean up manually.`);
+    }
+    // 9. Success: the backup held the original target; discard it.
+    if (targetExists) {
+        await cleanupArtifact(deps, backupPath);
+    }
     return {
         name,
         fromPath: staged.vaultRelativePath,

@@ -1710,4 +1710,79 @@ describe("promoteStagedSkill", () => {
     expect(precFinal.source).toBe("agent");
     expect(precFinal.body).toContain("# From Agent");
   });
+
+  // -------------------------------------------------------------------------
+  // Failure-safe / rollback semantics (E2a review blocker)
+  // -------------------------------------------------------------------------
+
+  /** Injected deps whose `unlink` fails only for a specific path. */
+  function depsWithUnlinkFailureOn(deps: SkillCliDeps, failPath: string): SkillCliDeps {
+    return {
+      ...deps,
+      unlink: async (p: string) => {
+        if (p === failPath) throw new Error(`EUNLINK: forced unlink failure for ${p}`);
+        return deps.unlink(p);
+      },
+    };
+  }
+
+  function stagedAbsPath(name: string): string {
+    return join(VAULT, "skill-candidates", "imports", `${name}.md`);
+  }
+
+  it("on staged-unlink failure with an ABSENT target: rolls back, leaves no partial activation, retains staged", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await seedStaged(fs, "rb-absent", "# Should Not Activate\n");
+    const failing = depsWithUnlinkFailureOn(fs.toDeps(), stagedAbsPath("rb-absent"));
+
+    await expect(
+      promoteStagedSkill(failing, VAULT, "rb-absent", { kind: "shared" }),
+    ).rejects.toThrow();
+
+    // Staged artifact survives.
+    expect(fs.readFile(stagedAbsPath("rb-absent"))).toContain("staged: true");
+    // No partial activation: the target must NOT exist.
+    expect(() => fs.readFile(join(VAULT, "skills", "rb-absent.md"))).toThrow();
+    // No leftover transaction artifacts in the target directory.
+    const entries = fs.readdir(join(VAULT, "skills")).map((e) => e.name);
+    expect(entries.some((n) => n.includes("promote"))).toBe(false);
+  });
+
+  it("on staged-unlink failure with --force over an existing target: restores the original target, retains staged", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    // Original active target that must survive a failed forced promotion.
+    fs.file(join(VAULT, "skills", "rb-force.md"), skillContent("rb-force", "original active body"));
+    await seedStaged(fs, "rb-force", "# Promoted Body\n");
+    const failing = depsWithUnlinkFailureOn(fs.toDeps(), stagedAbsPath("rb-force"));
+
+    await expect(
+      promoteStagedSkill(failing, VAULT, "rb-force", { kind: "shared" }, { force: true }),
+    ).rejects.toThrow();
+
+    // Staged artifact survives.
+    expect(fs.readFile(stagedAbsPath("rb-force"))).toContain("staged: true");
+    // Original target restored, not the promoted content.
+    const target = fs.readFile(join(VAULT, "skills", "rb-force.md"));
+    expect(target).toContain("original active body");
+    expect(target).not.toContain("# Promoted Body");
+    expect(target).not.toContain("staged: true");
+    // No leftover transaction artifacts.
+    const entries = fs.readdir(join(VAULT, "skills")).map((e) => e.name);
+    expect(entries.some((n) => n.includes("promote"))).toBe(false);
+  });
+
+  it("successful --force promotion leaves no backup/temp artifacts behind", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.file(join(VAULT, "skills", "clean-force.md"), skillContent("clean-force", "old"));
+    await seedStaged(fs, "clean-force", "# New\n");
+
+    await promoteStagedSkill(fs.toDeps(), VAULT, "clean-force", { kind: "shared" }, { force: true });
+
+    const entries = fs.readdir(join(VAULT, "skills")).map((e) => e.name);
+    expect(entries).toEqual(["clean-force.md"]);
+    expect(fs.readFile(join(VAULT, "skills", "clean-force.md"))).toContain("# New");
+  });
 });
