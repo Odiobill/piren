@@ -5,6 +5,22 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - unreleased
+
+Post-0.1 CLI usability and registry-distribution hardening. This version is **not yet published**: the first registry release is a one-time, steward-controlled manual bootstrap (ADR-0035), which may lack OIDC provenance; the documented operator install path is unchanged and no npm registry install command is presented as available for this release.
+
+### Added
+
+- **Staged skill import (CLI Slice E1):** `piren skill import <local-file.md> --staged`, `piren skill staged list`, and `piren skill staged show <name>` import a local Markdown skill into an inactive review area (`skill-candidates/imports/`) that no active skill-loading path scans. Imports normalize to OKF `type: Skill`, preserve the body, and record `source` / `imported_at` / SHA-256 `checksum` provenance. Local files only; no remote fetching.
+- **Staged skill promotion (CLI Slice E2a):** `piren skill staged promote <name> --to shared|group:<group>|agent:<agent> [--force]` moves one staged artifact into an active scope. Promotion is transactional and rollback-safe: the original target is backed up, promoted content commits via a temp file plus an atomic rename, and staged-removal failure rolls the target back to its original state with no partial activation. Pre-existing `.promote.bak` / `.promote.tmp` recovery artifacts are refused and never overwritten, and incomplete cleanup is surfaced rather than concealed.
+- **Registry publication workflow (ADR-0033 P1/P1b):** `.github/workflows/release-publish.yml` is the only npm-publishing workflow. It is tag-only (`v*`), split into an unprotected `verify` job (quality gates, tag/version agreement, one explicit `npm pack`, validate + install that exact tarball via the clean-install machinery) and a steward-approved `publish` job (`npm-production` Environment, `id-token: write`) that publishes only the verified artifact with provenance to the stable `latest` dist-tag. Both jobs pin Node 22.14.0; the publish job installs npm 11.5.1 and runs a fail-closed Node/npm version preflight. `release-verify.yml` stays verification-only.
+- **Prebuilt-tarball clean-install verifier:** `npm run clean-install:check -- <file.tgz>` validates a packed tarball's required surface (dist + docs) and installs that exact tarball in an isolated clean HOME/prefix.
+- **Release metadata:** package version bumped to 0.1.1 and canonical npm provenance `repository` metadata added to `package.json`.
+
+### Changed
+
+- **Documentation:** `docs/skills.md` documents staged import and promotion; `AGENTS.md` documents the publication workflow, clean-install paths, and the trusted-publishing toolchain floor.
+
 ## [0.1.0] - 2026-07-08
 
 The first non-prerelease official release. Adds the device-local scheduler service MVP (`--dry-run`/`--once`/loop/service lifecycle) on top of the rc.3 core.

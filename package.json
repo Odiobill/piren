@@ -1,9 +1,13 @@
 {
   "name": "piren",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Piren: lightweight, local-first agent layer on top of Pi Coding Agent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Odiobill/piren.git"
+  },
   "engines": {
     "node": ">=22"
   },
