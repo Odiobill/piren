@@ -439,4 +439,23 @@ describe("piren skill (CLI dispatch)", () => {
     const list = runPirenSkill(["list", "--agent", "dipu"], { HOME: home });
     expect(list.stdout).toContain("promo-agent");
   });
+
+  it("aborts promotion when a pre-existing recovery artifact is present, preserving staged", async () => {
+    const sourcePath = join(home, "promo-recovery.md");
+    await writeFile(sourcePath, "# Recovery Promo\n");
+    runPirenSkill(["import", sourcePath, "--staged"], { HOME: home });
+    // Simulate a leftover recovery artifact from a previous interrupted promotion.
+    await writeFile(join(vault, "skills", ".promo-recovery.promote.bak"), "RECOVERY BACKUP");
+
+    const promote = runPirenSkill(["staged", "promote", "promo-recovery", "--to", "shared"], { HOME: home });
+    expect(promote.status).not.toBe(0);
+    expect(promote.stderr).toMatch(/transaction artifact|recovery/i);
+
+    // Staged source retained (not removed by the aborted promotion).
+    const stagedList = runPirenSkill(["staged", "list"], { HOME: home });
+    expect(stagedList.stdout).toContain("promo-recovery");
+    // Recovery artifact preserved.
+    const artifact = await readFile(join(vault, "skills", ".promo-recovery.promote.bak"), "utf8");
+    expect(artifact).toBe("RECOVERY BACKUP");
+  });
 });

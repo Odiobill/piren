@@ -279,6 +279,10 @@ export interface PromoteStagedSkillResult {
     toScope: ParsedScope;
     /** True if an existing active skill was overwritten (`--force`). */
     overwritten: boolean;
+    /** Set when the promotion committed but a transaction artifact could not be
+     * cleaned up. The promotion succeeded; the named artifact remains as
+     * recovery evidence and is protected from later overwrite. */
+    cleanupWarning?: string;
 }
 /**
  * Promote exactly one E1 staged skill (`skill-candidates/imports/<name>.md`)
@@ -289,15 +293,20 @@ export interface PromoteStagedSkillResult {
  * rules. Target collisions are refused unless `force` is set. All validation
  * and collision checks happen before any write.
  *
- * The promotion is transactional and rollback-safe: the original target (when
- * present) is moved aside to a backup, the promoted content is committed via a
- * temp file plus an atomic rename (the target is never torn), and only then is
- * the staged source removed. If staged removal fails, the target is rolled
- * back to its original state (backup restored, or the just-created target
- * removed), so a failed promotion retains both the staged artifact and the
- * original target and leaves no partial activation. If rollback itself cannot
- * complete, an explicit error names the surviving artifacts instead of
- * concealing the partial state.
+ * The promotion is transactional and rollback-safe: any pre-existing
+ * transaction artifact (`.<name>.promote.bak`/`.promote.tmp`, recovery evidence
+ * from a previous interrupted promotion) is refused before any mutation and is
+ * never overwritten. The original target (when present) is moved aside to a
+ * backup, the promoted content is committed via a temp file plus an atomic
+ * rename (the target is never torn), and only then is the staged source
+ * removed. If staged removal fails, the target is rolled back to its original
+ * state (backup restored, or the just-created target removed), so a failed
+ * promotion retains both the staged artifact and the original target and
+ * leaves no partial activation. If rollback itself cannot complete, an explicit
+ * error names the surviving artifacts instead of concealing the partial state.
+ * If the backup cannot be discarded after a successful promotion, the result
+ * carries a `cleanupWarning` naming the leftover artifact (it is protected from
+ * later overwrite by the pre-flight check) instead of silently claiming success.
  *
  * On success the promoted document keeps `type: Skill`, the original body, and
  * the imported provenance (`source`, `imported_at`, `checksum`), drops the

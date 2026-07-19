@@ -1624,6 +1624,9 @@ async function runSkillCommand(args) {
                 process.exit(1);
             }
             console.log(`Promoted staged skill '${result.name}' from ${result.fromPath} to ${result.toPath}${result.overwritten ? " (overwrote existing)" : ""}.`);
+            if (result.cleanupWarning !== undefined) {
+                console.warn(`Warning: ${result.cleanupWarning}`);
+            }
             return;
         }
         console.error("Usage: piren skill staged <list|show|promote> [args]");

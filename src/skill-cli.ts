@@ -1277,6 +1277,10 @@ export interface PromoteStagedSkillResult {
   toScope: ParsedScope;
   /** True if an existing active skill was overwritten (`--force`). */
   overwritten: boolean;
+  /** Set when the promotion committed but a transaction artifact could not be
+   * cleaned up. The promotion succeeded; the named artifact remains as
+   * recovery evidence and is protected from later overwrite. */
+  cleanupWarning?: string;
 }
 
 function renderPromotedSkillDocument(args: {
@@ -1301,12 +1305,14 @@ function renderPromotedSkillDocument(args: {
   return [...frontmatter, args.body].join("\n");
 }
 
-/** Best-effort removal of a transaction artifact; never throws. */
-async function cleanupArtifact(deps: SkillCliDeps, path: string): Promise<void> {
+/** Best-effort removal of a transaction artifact. Returns true on success (or
+ * if it did not exist), false if it existed but could not be removed. */
+async function tryRemove(deps: SkillCliDeps, path: string): Promise<boolean> {
   try {
     await deps.unlink(path);
+    return true;
   } catch {
-    // Best-effort: a leftover dot-prefixed non-.md artifact is not scanned.
+    return false;
   }
 }
 
@@ -1319,15 +1325,20 @@ async function cleanupArtifact(deps: SkillCliDeps, path: string): Promise<void> 
  * rules. Target collisions are refused unless `force` is set. All validation
  * and collision checks happen before any write.
  *
- * The promotion is transactional and rollback-safe: the original target (when
- * present) is moved aside to a backup, the promoted content is committed via a
- * temp file plus an atomic rename (the target is never torn), and only then is
- * the staged source removed. If staged removal fails, the target is rolled
- * back to its original state (backup restored, or the just-created target
- * removed), so a failed promotion retains both the staged artifact and the
- * original target and leaves no partial activation. If rollback itself cannot
- * complete, an explicit error names the surviving artifacts instead of
- * concealing the partial state.
+ * The promotion is transactional and rollback-safe: any pre-existing
+ * transaction artifact (`.<name>.promote.bak`/`.promote.tmp`, recovery evidence
+ * from a previous interrupted promotion) is refused before any mutation and is
+ * never overwritten. The original target (when present) is moved aside to a
+ * backup, the promoted content is committed via a temp file plus an atomic
+ * rename (the target is never torn), and only then is the staged source
+ * removed. If staged removal fails, the target is rolled back to its original
+ * state (backup restored, or the just-created target removed), so a failed
+ * promotion retains both the staged artifact and the original target and
+ * leaves no partial activation. If rollback itself cannot complete, an explicit
+ * error names the surviving artifacts instead of concealing the partial state.
+ * If the backup cannot be discarded after a successful promotion, the result
+ * carries a `cleanupWarning` naming the leftover artifact (it is protected from
+ * later overwrite by the pre-flight check) instead of silently claiming success.
  *
  * On success the promoted document keeps `type: Skill`, the original body, and
  * the imported provenance (`source`, `imported_at`, `checksum`), drops the
@@ -1375,14 +1386,37 @@ export async function promoteStagedSkill(
     );
   }
 
-  // 7. Parse staged provenance + body.
+  // 7. Resolve the transaction artifact paths and refuse pre-existing recovery
+  //    artifacts BEFORE any mutation. A leftover `.promote.bak`/`.promote.tmp`
+  //    is recovery evidence from a previous interrupted promotion; overwriting
+  //    it (e.g. a later forced promotion's backup rename) would destroy the
+  //    preserved original target. Never overwrite these artifacts.
+  const targetDir = dirname(target.absolutePath);
+  const targetRelDir = dirname(target.vaultRelativePath);
+  const tempPath = join(targetDir, `.${name}.promote.tmp`);
+  const backupPath = join(targetDir, `.${name}.promote.bak`);
+  const tempRelPath = `${targetRelDir}/.${name}.promote.tmp`;
+  const backupRelPath = `${targetRelDir}/.${name}.promote.bak`;
+  assertPathWithinVault(vaultRoot, tempPath);
+  assertPathWithinVault(vaultRoot, backupPath);
+  const blockingArtifacts: string[] = [];
+  if (await exists(deps, tempPath)) blockingArtifacts.push(tempRelPath);
+  if (await exists(deps, backupPath)) blockingArtifacts.push(backupRelPath);
+  if (blockingArtifacts.length > 0) {
+    throw new Error(
+      `Cannot promote '${name}': a transaction artifact from a previous interrupted promotion already exists (${blockingArtifacts.join(", ")}). ` +
+        `It may be recovery evidence. Inspect it and remove it manually before retrying.`,
+    );
+  }
+
+  // 8. Parse staged provenance + body.
   const { record, body } = parseFrontmatterRecord(stagedContent);
   const description = (record && asString(record.description)) ?? "";
   const source = record ? recordString(record, "source") : "";
   const importedAt = record ? recordString(record, "imported_at") : "";
   const checksum = record ? recordString(record, "checksum") : "";
 
-  // 8. Render the promoted document (drop staged marker; keep type: Skill + provenance).
+  // 9. Render the promoted document (drop staged marker; keep type: Skill + provenance).
   const promoted = renderPromotedSkillDocument({
     name,
     description,
@@ -1392,8 +1426,9 @@ export async function promoteStagedSkill(
     body,
   });
 
-  // Transactional, rollback-safe promotion. Two original artifacts must survive
-  // any failure: the staged source and (when present) the original target. We:
+  // Transactional, rollback-safe promotion (see the pre-flight artifact check
+  // in step 7 for collision handling). Two original artifacts must survive any
+  // failure: the staged source and (when present) the original target. We:
   //   (a) move the original target aside to a backup if it exists (--force),
   //   (b) commit the promoted content to the target via a temp file + atomic
   //       rename so the target is never torn,
@@ -1401,12 +1436,6 @@ export async function promoteStagedSkill(
   //       original state (restore the backup, or remove the just-created target).
   // If rollback itself cannot complete we throw an explicit error naming the
   // surviving artifacts, rather than concealing a partial state.
-  const targetDir = dirname(target.absolutePath);
-  const tempPath = join(targetDir, `.${name}.promote.tmp`);
-  const backupPath = join(targetDir, `.${name}.promote.bak`);
-  assertPathWithinVault(vaultRoot, tempPath);
-  assertPathWithinVault(vaultRoot, backupPath);
-
   await deps.mkdir(targetDir, { recursive: true });
 
   // (a) Back up the original target so it can be restored on failure.
@@ -1420,7 +1449,7 @@ export async function promoteStagedSkill(
     await deps.writeFile(tempPath, promoted);
     await deps.rename(tempPath, target.absolutePath);
   } catch (commitErr) {
-    await cleanupArtifact(deps, tempPath);
+    await tryRemove(deps, tempPath);
     if (targetExists) {
       try {
         await deps.rename(backupPath, target.absolutePath);
@@ -1469,18 +1498,26 @@ export async function promoteStagedSkill(
     );
   }
 
-  // 9. Success: the backup held the original target; discard it.
-  if (targetExists) {
-    await cleanupArtifact(deps, backupPath);
+  // 10. Success: discard the backup that held the original target. If it cannot
+  //     be removed, surface an explicit incomplete-cleanup condition rather than
+  //     silently claiming success; the leftover backup is protected from later
+  //     overwrite by the pre-flight artifact check.
+  let cleanupWarning: string | undefined;
+  if (targetExists && !(await tryRemove(deps, backupPath))) {
+    cleanupWarning =
+      `Promotion succeeded, but the original-target backup could not be removed and remains at ${backupRelPath}. ` +
+      `It is protected from later overwrite; remove it manually once verified.`;
   }
 
-  return {
+  const result: PromoteStagedSkillResult = {
     name,
     fromPath: staged.vaultRelativePath,
     toPath: target.vaultRelativePath,
     toScope: scope,
     overwritten: targetExists,
   };
+  if (cleanupWarning !== undefined) result.cleanupWarning = cleanupWarning;
+  return result;
 }
 
 /**

@@ -1785,4 +1785,71 @@ describe("promoteStagedSkill", () => {
     expect(entries).toEqual(["clean-force.md"]);
     expect(fs.readFile(join(VAULT, "skills", "clean-force.md"))).toContain("# New");
   });
+
+  // -------------------------------------------------------------------------
+  // Collision-safe transaction artifacts (E2a re-review 2)
+  // -------------------------------------------------------------------------
+
+  it("aborts before any mutation when a pre-existing .promote.tmp recovery artifact exists", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await seedStaged(fs, "pre-tmp");
+    // Recovery artifact left by a previous interrupted promotion.
+    fs.file(join(VAULT, "skills", ".pre-tmp.promote.tmp"), "RECOVERY TEMP ARTIFACT");
+
+    await expect(
+      promoteStagedSkill(fs.toDeps(), VAULT, "pre-tmp", { kind: "shared" }),
+    ).rejects.toThrow(/transaction artifact|recovery|already exists/i);
+
+    // Staged source unchanged.
+    expect(fs.readFile(stagedAbsPath("pre-tmp"))).toContain("staged: true");
+    // No target created (no partial activation).
+    expect(() => fs.readFile(join(VAULT, "skills", "pre-tmp.md"))).toThrow();
+    // Recovery artifact preserved verbatim.
+    expect(fs.readFile(join(VAULT, "skills", ".pre-tmp.promote.tmp"))).toBe("RECOVERY TEMP ARTIFACT");
+  });
+
+  it("aborts a forced promotion when a pre-existing .promote.bak recovery artifact exists, preserving target and artifact", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.file(join(VAULT, "skills", "pre-bak.md"), skillContent("pre-bak", "original active"));
+    // Recovery backup left by a previous rollback-failed promotion.
+    fs.file(join(VAULT, "skills", ".pre-bak.promote.bak"), "RECOVERY BACKUP ARTIFACT");
+    await seedStaged(fs, "pre-bak", "# Promoted Body\n");
+
+    await expect(
+      promoteStagedSkill(fs.toDeps(), VAULT, "pre-bak", { kind: "shared" }, { force: true }),
+    ).rejects.toThrow(/transaction artifact|recovery/i);
+
+    // Staged source unchanged.
+    expect(fs.readFile(stagedAbsPath("pre-bak"))).toContain("staged: true");
+    // Original target unchanged (not overwritten by the promoted body).
+    const target = fs.readFile(join(VAULT, "skills", "pre-bak.md"));
+    expect(target).toContain("original active");
+    expect(target).not.toContain("# Promoted Body");
+    // Recovery backup preserved verbatim (not destroyed).
+    expect(fs.readFile(join(VAULT, "skills", ".pre-bak.promote.bak"))).toBe("RECOVERY BACKUP ARTIFACT");
+  });
+
+  it("surfaces an incomplete-cleanup warning (not silent success) when the backup cannot be removed after success", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.file(join(VAULT, "skills", "warn-clean.md"), skillContent("warn-clean", "old"));
+    await seedStaged(fs, "warn-clean", "# New\n");
+    const backupAbs = join(VAULT, "skills", ".warn-clean.promote.bak");
+    // unlink fails only for the backup path; staged removal still succeeds.
+    const failing = depsWithUnlinkFailureOn(fs.toDeps(), backupAbs);
+
+    const result = await promoteStagedSkill(failing, VAULT, "warn-clean", { kind: "shared" }, { force: true });
+
+    // Promotion itself succeeded.
+    expect(result.overwritten).toBe(true);
+    expect(() => fs.readFile(stagedAbsPath("warn-clean"))).toThrow();
+    expect(fs.readFile(join(VAULT, "skills", "warn-clean.md"))).toContain("# New");
+    // Incomplete cleanup is surfaced, not swallowed.
+    expect(result.cleanupWarning).toBeTruthy();
+    expect(result.cleanupWarning).toContain(".warn-clean.promote.bak");
+    // The leftover backup (original target) remains, protected from later overwrite.
+    expect(fs.readFile(backupAbs)).toContain("old");
+  });
 });
