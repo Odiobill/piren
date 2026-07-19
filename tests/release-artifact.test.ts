@@ -54,25 +54,28 @@ describe("ADR-0033 P3a: 0.1.1 release-preparation artifact", () => {
     expect(lock.packages?.[""]?.version).toBe("0.1.1");
   });
 
-  it("CHANGELOG has an unreleased [0.1.1] entry", () => {
+  it("CHANGELOG has a [0.1.1] entry dated for the intended tag", () => {
     const cl = read("CHANGELOG.md");
-    expect(cl).toMatch(/## \[0\.1\.1\]/);
-    // Not dated as a released version (no release-date claim).
-    expect(cl).not.toMatch(/## \[0\.1\.1\] - \d{4}-\d{2}-\d{2}/);
+    expect(cl).toMatch(/## \[0\.1\.1\] - 2026-07-19/);
   });
 
-  it("the [0.1.1] changelog entry does not claim publication, provenance, or a registry install path", () => {
+  it("the [0.1.1] entry describes the ADR-0035 bootstrap without claiming publication success", () => {
     const cl = read("CHANGELOG.md");
     const start = cl.indexOf("## [0.1.1]");
     const end = cl.indexOf("## [0.1.0]");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const section = cl.slice(start, end);
-    // Explicitly states it is not yet published.
-    expect(section).toMatch(/not (?:yet )?published|unreleased/i);
+    // Precise ADR-0035 process language: approved single interactive 2FA-protected bootstrap.
+    expect(section).toMatch(/ADR-0035/);
+    expect(section).toMatch(/bootstrap/i);
+    expect(section).toMatch(/2FA/);
+    // Acknowledges this bootstrap may lack OIDC provenance.
+    expect(section).toMatch(/provenance/i);
     // Does not present a registry install command as already available.
     expect(section).not.toMatch(/npm install -g piren\b/);
-    // Does not state 0.1.1 itself is published or provenance-backed.
-    expect(section).not.toMatch(/0\.1\.1 (?:is |has been )(?:published|provenance)/i);
+    // Does not state 0.1.1 itself is already published / on npm / on latest.
+    expect(section).not.toMatch(/0\.1\.1 (?:is |has been )published/i);
+    expect(section).not.toMatch(/0\.1\.1 (?:is |has been )published to (?:npm|latest)/i);
   });
 });

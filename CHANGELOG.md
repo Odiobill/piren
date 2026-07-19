@@ -5,9 +5,9 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.1] - unreleased
+## [0.1.1] - 2026-07-19
 
-Post-0.1 CLI usability and registry-distribution hardening. This version is **not yet published**: the first registry release is a one-time, steward-controlled manual bootstrap (ADR-0035), which may lack OIDC provenance; the documented operator install path is unchanged and no npm registry install command is presented as available for this release.
+Post-0.1 CLI usability and registry-distribution hardening. This is the approved single, interactive, 2FA-protected npm bootstrap publication under ADR-0035 (the package's first registry artifact, which may lack OIDC provenance); all subsequent releases use the existing OIDC trusted-publishing workflow. The documented operator install path is unchanged for this release.
 
 ### Added
 
