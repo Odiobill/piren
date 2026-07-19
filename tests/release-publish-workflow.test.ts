@@ -46,6 +46,7 @@ interface Job {
   needs?: string | string[];
   environment?: string;
   permissions?: Record<string, string> | string;
+  if?: string;
   steps?: Step[];
 }
 interface Workflow {
@@ -132,6 +133,29 @@ describe("ADR-0033 P1: registry publication workflow", () => {
     });
 
     it("publish depends on verify (steward approval happens after verification)", () => {
+      expect(needsList(wf.jobs?.publish)).toContain("verify");
+    });
+  });
+
+  describe("ADR-0035 bootstrap exception (P1c)", () => {
+    it("the publish job is skipped for exactly v0.1.1 (the one-time manual bootstrap tag)", () => {
+      expect(wf.jobs?.publish?.if).toBe("github.ref_name != 'v0.1.1'");
+    });
+
+    it("the guard skips only v0.1.1, not all v0.* or later tags", () => {
+      const expr = wf.jobs?.publish?.if ?? "";
+      // Narrow equality against the exact bootstrap tag, not a v0.* glob.
+      expect(expr).toContain("github.ref_name");
+      expect(expr).toContain("!=");
+      expect(expr).toContain("v0.1.1");
+      expect(expr).not.toMatch(/v0\.\*|v\*/);
+    });
+
+    it("the verify job always runs (no skip guard)", () => {
+      expect(wf.jobs?.verify?.if).toBeUndefined();
+    });
+
+    it("normal later-tag publication still depends on verify", () => {
       expect(needsList(wf.jobs?.publish)).toContain("verify");
     });
   });

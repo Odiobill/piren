@@ -134,6 +134,12 @@ jobs:
     name: Publish verified release to npm
     runs-on: ubuntu-latest
     needs: verify
+    # One-time ADR-0035 bootstrap exception: v0.1.1 is published by Davide's
+    # interactive, 2FA-protected manual bootstrap, NOT by this OIDC workflow.
+    # Skip the publish job for exactly that tag so the workflow verifies the
+    # artifact (verify still runs) but never attempts a duplicate npm publish.
+    # All later release tags use the normal provenance path below.
+    if: github.ref_name != 'v0.1.1'
     # Protected GitHub Environment: a steward approves this job in GitHub before
     # it runs. Because publish needs verify, approval happens AFTER the
     # tag-triggered verification path has completed. Configured in P2.
