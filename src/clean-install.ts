@@ -1,5 +1,5 @@
 import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 
@@ -168,6 +168,7 @@ export const REQUIRED_PACKED_ARTIFACTS = [
 /** Discriminated install-spec resolved from CLI args. */
 export type InstallSpec =
   | { kind: "packed-tarball"; source: "local" }
+  | { kind: "prebuilt-tarball"; spec: string }
   | { kind: "explicit"; spec: string };
 
 /** Result of validating a packed file surface. */
@@ -204,7 +205,7 @@ export interface PackOutcome {
 
 /** Source attribution printed in the final report. */
 export interface CleanInstallSourceInfo {
-  kind: "packed-tarball" | "explicit-spec";
+  kind: "packed-tarball" | "explicit-spec" | "prebuilt-tarball";
   spec: string;
   tarballPath?: string;
   packageName?: string;
@@ -219,11 +220,20 @@ export interface CleanInstallReportResult extends CleanInstallAssessment {
   source?: CleanInstallSourceInfo;
 }
 
-/** Resolve the install spec from CLI args. Default = packed-tarball/local. */
+/** Whether a spec string denotes a local prepacked npm tarball file. */
+export function isLocalTarballSpec(spec: string): boolean {
+  if (spec.includes("://")) return false;
+  return spec.endsWith(".tgz");
+}
+
+/** Resolve the install spec from CLI args. Default = packed-tarball/local; a
+ *  local `.tgz` positional selects the surface-validated prebuilt-tarball path;
+ *  any other positional is the explicit escape hatch (github:/git+ specs). */
 export function resolveInstallSpec(args: string[]): InstallSpec {
   const explicit = args.find((a) => !a.startsWith("-"));
-  if (explicit !== undefined) return { kind: "explicit", spec: explicit };
-  return { kind: "packed-tarball", source: "local" };
+  if (explicit === undefined) return { kind: "packed-tarball", source: "local" };
+  if (isLocalTarballSpec(explicit)) return { kind: "prebuilt-tarball", spec: explicit };
+  return { kind: "explicit", spec: explicit };
 }
 
 /** Pure: check a packed file surface contains every required runtime artifact. */
@@ -589,6 +599,123 @@ export async function runPackedCleanInstallCheck(options: PackedCheckOptions): P
       await packDeps.remove(pack.tarballPath);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Prepacked-tarball verification (ADR-0033 P1).
+//
+// The publication workflow packs the tarball itself (`npm pack`) and then asks
+// the clean-install machinery to validate + install THAT exact tarball. This
+// composes the existing pieces: `checkPackedArtifacts` for the packed surface
+// (the same REQUIRED_PACKED_ARTIFACTS contract) and `runCleanInstallCheck` for
+// the isolated install + dist/binary/Pi-runtime probe. It is not a divergent
+// verifier. The caller owns the tarball, so it is never removed here.
+// ---------------------------------------------------------------------------
+
+/** Injected tarball-listing deps (e.g. `tar -tf`) used to inspect a prepacked tarball. */
+export interface TarballListDeps {
+  list(tarballPath: string): Promise<{ code: number; stdout: string; stderr: string }>;
+}
+
+/** Parse `tar -tf` output into a list of entry paths (one per non-empty line). */
+export function parseTarListing(stdout: string): string[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+/** Real `tar -tf` adapter for inspecting a prepacked tarball's surface. */
+export function createRealTarballListDeps(): TarballListDeps {
+  return {
+    list: (tarballPath) => run("tar", ["-tf", tarballPath], { cwd: process.cwd(), env: process.env, timeout: 60_000 }),
+  };
+}
+
+export interface PrebuiltCheckOptions {
+  /** Absolute path to an existing npm tarball to validate and install. */
+  tarballPath: string;
+  /** PATH for the install verification (node/npm/pi). Defaults to process.env.PATH. */
+  pathEnv?: string;
+  /** Injected tarball-listing deps for tests; defaults to the real tar adapter. */
+  listDeps?: TarballListDeps;
+  /** Injected install runner for tests; defaults to runCleanInstallCheck. */
+  runInstall?: InstallRunner;
+  /** Optional logger. */
+  log?: (message: string) => void;
+}
+
+/**
+ * Validate and install a PRE-PACKED npm tarball (ADR-0033 P1). This is the
+ * publication path's verifier: the caller (the release workflow) owns the
+ * tarball, so this validates its packed surface (the same
+ * REQUIRED_PACKED_ARTIFACTS contract as the local-pack path) and then installs
+ * that exact tarball through the existing `runCleanInstallCheck` machinery. It
+ * never removes the tarball — the caller decides its lifecycle (e.g. publish).
+ */
+export async function runPrebuiltTarballCheck(options: PrebuiltCheckOptions): Promise<CleanInstallReportResult> {
+  const log = options.log ?? (() => {});
+  const listDeps = options.listDeps ?? createRealTarballListDeps();
+  const runInstall = options.runInstall ?? runCleanInstallCheck;
+
+  // Resolve an absolute tarball path: the isolated install runs with cwd set
+  // to the clean prefix, so a relative tarball path would not resolve there.
+  const tarballPath = resolve(options.tarballPath);
+
+  log(`clean-install-check: inspecting prebuilt tarball ${tarballPath}`);
+  const listing = await listDeps.list(tarballPath);
+  if (listing.code !== 0) {
+    const message = `Could not list tarball ${tarballPath} (tar exited ${listing.code})${listing.stderr ? `: ${listing.stderr.trim()}` : ""}.`;
+    return {
+      ok: false,
+      installDir: "",
+      checks: [{ id: "packed-surface", status: "fail", message }],
+      source: { kind: "prebuilt-tarball", spec: tarballPath, tarballPath, artifactsOk: false },
+    };
+  }
+
+  const files = parseTarListing(listing.stdout);
+  const surface = checkPackedArtifacts(files);
+  const source: CleanInstallSourceInfo = {
+    kind: "prebuilt-tarball",
+    spec: tarballPath,
+    tarballPath,
+    artifactsOk: surface.ok,
+    ...(files.length > 0 ? { packedFileCount: files.length } : {}),
+    ...(surface.missing.length > 0 ? { missing: surface.missing } : {}),
+  };
+
+  if (!surface.ok) {
+    return {
+      ok: false,
+      installDir: "",
+      checks: [
+        { id: "packed-surface", status: "fail", message: `Prebuilt tarball is missing required artifacts: ${surface.missing.join(", ")}.` },
+      ],
+      source,
+    };
+  }
+
+  const base = await mkdtemp(join(tmpdir(), "piren-clean-"));
+  const prefix = join(base, "prefix");
+  const cleanHome = join(base, "home");
+  const pathEnv = options.pathEnv ?? process.env.PATH ?? "";
+
+  const install = await runInstall({
+    spec: tarballPath,
+    prefix,
+    cleanHome,
+    pathEnv,
+    log,
+    cleanup: true,
+  });
+
+  return {
+    ok: install.ok,
+    installDir: install.installDir,
+    checks: install.checks,
+    source,
+  };
 }
 
 /**

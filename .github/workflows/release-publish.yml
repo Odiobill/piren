@@ -1,0 +1,132 @@
+# Registry publication workflow (ADR-0033 P1).
+#
+# This is the ONLY workflow that publishes Piren to npm. It is deliberately
+# distinct from release-verify.yml (which stays verification-only) and never
+# weakens or repurposes it. Publication is tag-triggered and gated by a
+# protected GitHub Environment named `npm-production`, so a steward must
+# approve the run in GitHub after the tag-triggered verification path reaches
+# that gate.
+#
+# Hard boundaries (intentional):
+#   - Publishes ONLY from a release tag (v*), and only after checking that the
+#     tag version and package.json version agree. It fails before `npm publish`
+#     on any mismatch.
+#   - Permissions are minimal and explicit: contents: read + id-token: write
+#     (npm provenance via OIDC trusted publishing). It uses no npm access
+#     token, no registry secret, and no .npmrc secret anywhere.
+#   - Builds once, creates ONE explicit npm tarball via `npm pack`, then
+#     validates + installs THAT EXACT tarball through the existing clean-install
+#     machinery (packed surface + isolated install + Pi-runtime policy via the
+#     CI-only fake pi shim). Only that verified tarball is published, with
+#     provenance to the stable `latest` dist-tag.
+#   - Never publishes GitHub branch-tip source or a `github:` spec.
+#   - Does not bundle or install Pi. The fake pi shim is CI-only and unshipped,
+#     exactly as in release-verify.yml.
+name: Release publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish release to npm
+    runs-on: ubuntu-latest
+    # Protected GitHub Environment: a steward approves this run in GitHub before
+    # any publish step can execute. Configured operationally in P2.
+    environment: npm-production
+    steps:
+      - name: Checkout tag source
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22 with npm lockfile cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies from the repository lockfile
+        run: npm ci
+
+      - name: Quality gate - unit tests
+        run: npm test
+
+      - name: Quality gate - typecheck
+        run: npm run typecheck
+
+      - name: Quality gate - build
+        run: npm run build
+
+      - name: Quality gate - smoke
+        run: npm run smoke
+
+      # Fail before any publish if the tag and package.json versions disagree.
+      # GITHUB_REF_NAME is the tag (e.g. v0.1.1); strip the leading "v".
+      - name: Check tag and package version agreement
+        run: |
+          set -euo pipefail
+          pkg_version="$(node -p "require('./package.json').version")"
+          tag_version="${GITHUB_REF_NAME#v}"
+          echo "package version: $pkg_version"
+          echo "tag version: $tag_version"
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "Version mismatch: package.json is $pkg_version but tag is $tag_version. Aborting before publish."
+            exit 1
+          fi
+
+      # One explicit npm tarball. `npm pack` runs `prepack` (npm run build) so
+      # the tarball carries freshly built dist/. This file is the single
+      # artifact that is validated, installed, and published.
+      - name: Build the npm tarball (one explicit artifact)
+        run: npm pack
+
+      # Narrowly scoped CI-only fake pi (same approach as release-verify.yml).
+      # Piren's policy requires a `pi` command on PATH; the clean-install check
+      # verifies that policy through `piren doctor`. This shim satisfies that
+      # probe WITHOUT bundling Pi, altering production runtime resolution, or
+      # calling a network installer. It is NOT shipped with Piren.
+      - name: Provide CI-only fake pi on PATH (release verification only)
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/fake-pi"
+          mkdir -p "$dir"
+          cat > "$dir/pi" <<'SHIM'
+          #!/usr/bin/env bash
+          # CI-only fake pi shim for release publication. NOT shipped with Piren.
+          case "${1:-}" in
+            --version)
+              echo "0.0.0-piren-ci-shim"
+              ;;
+            *)
+              echo "fake pi shim for piren release verification"
+              ;;
+          esac
+          exit 0
+          SHIM
+          chmod +x "$dir/pi"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      # Validate + install THAT EXACT packed tarball through the existing
+      # clean-install machinery: packed surface (dist + docs) then an isolated
+      # clean HOME/prefix install with the dist/binary/Pi-runtime probes.
+      - name: Validate and clean-install the packed tarball
+        run: |
+          set -euo pipefail
+          tarball="$(ls -1 piren-*.tgz | head -n 1)"
+          echo "Verifying packed tarball: $tarball"
+          npm run clean-install:check -- "$tarball"
+
+      # Publish ONLY the verified tarball, with npm provenance (OIDC), to the
+      # stable `latest` dist-tag. No token secret is used; trusted publishing is
+      # configured operationally in P2.
+      - name: Publish the verified tarball to npm latest with provenance
+        run: |
+          set -euo pipefail
+          tarball="$(ls -1 piren-*.tgz | head -n 1)"
+          echo "Publishing verified tarball: $tarball"
+          npm publish "$tarball" --provenance --access public --tag latest

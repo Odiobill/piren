@@ -31,6 +31,7 @@
 import {
   resolveInstallSpec,
   runPackedCleanInstallCheck,
+  runPrebuiltTarballCheck,
   defaultCleanInstallCheck,
   formatCleanInstallReport,
 } from "../src/clean-install.js";
@@ -51,6 +52,21 @@ async function main() {
     });
     console.log(formatCleanInstallReport(result));
     if (!result.ok) {
+      console.error("clean-install-check: FAILED");
+      process.exit(1);
+    }
+    console.error("clean-install-check: PASSED");
+    return;
+  }
+
+  if (spec.kind === "prebuilt-tarball") {
+    console.error(`clean-install-check: validating prebuilt tarball ${spec.spec}`);
+    const prebuilt = await runPrebuiltTarballCheck({
+      tarballPath: spec.spec,
+      log: (m) => console.error(m),
+    });
+    console.log(formatCleanInstallReport(prebuilt));
+    if (!prebuilt.ok) {
       console.error("clean-install-check: FAILED");
       process.exit(1);
     }

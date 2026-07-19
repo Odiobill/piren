@@ -5,7 +5,9 @@ import {
   resolveInstallSpec,
   checkPackedArtifacts,
   parseNpmPackJson,
+  parseTarListing,
   buildLocalTarball,
+  runPrebuiltTarballCheck,
   needsInstallLinks,
   runPackedCleanInstallCheck,
   REQUIRED_PACKED_ARTIFACTS,
@@ -35,12 +37,18 @@ describe("resolveInstallSpec", () => {
     expect(resolveInstallSpec(["github:Odiobill/piren"])).toEqual({ kind: "explicit", spec: "github:Odiobill/piren" });
   });
 
-  it("accepts an explicit tarball path as an explicit spec", () => {
-    expect(resolveInstallSpec(["/abs/path/piren-0.1.0.tgz"])).toEqual({ kind: "explicit", spec: "/abs/path/piren-0.1.0.tgz" });
+  it("routes a local tarball path to the prebuilt-tarball verifier (surface-validated)", () => {
+    expect(resolveInstallSpec(["/abs/path/piren-0.1.0.tgz"])).toEqual({ kind: "prebuilt-tarball", spec: "/abs/path/piren-0.1.0.tgz" });
+    expect(resolveInstallSpec(["./piren-0.1.1.tgz"])).toEqual({ kind: "prebuilt-tarball", spec: "./piren-0.1.1.tgz" });
+  });
+
+  it("keeps github/git specs on the explicit escape hatch", () => {
+    expect(resolveInstallSpec(["github:Odiobill/piren"])).toEqual({ kind: "explicit", spec: "github:Odiobill/piren" });
+    expect(resolveInstallSpec(["git+https://example.com/piren.git"])).toEqual({ kind: "explicit", spec: "git+https://example.com/piren.git" });
   });
 
   it("ignores flags after the first positional", () => {
-    expect(resolveInstallSpec(["/x.tgz", "--allow-scripts", "--keep"])).toEqual({ kind: "explicit", spec: "/x.tgz" });
+    expect(resolveInstallSpec(["/x.tgz", "--allow-scripts", "--keep"])).toEqual({ kind: "prebuilt-tarball", spec: "/x.tgz" });
   });
 });
 
@@ -374,5 +382,139 @@ describe("package metadata (registry distribution)", () => {
     const minMatch = range.match(/(\d+)/);
     expect(minMatch).not.toBeNull();
     expect(Number(minMatch![1])).toBeGreaterThanOrEqual(22);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseTarListing + runPrebuiltTarballCheck (ADR-0033 P1): consume an explicitly
+// pre-packed tarball, validate its packed surface (incl. docs), then install it.
+// Reuses runCleanInstallCheck + checkPackedArtifacts; never removes the
+// caller-owned tarball.
+// ---------------------------------------------------------------------------
+
+const TAR_SURFACE_OK =
+  "package/package.json\n" +
+  "package/dist/src/cli.js\n" +
+  "package/dist/public/index.html\n" +
+  "package/dist/src/pi-extension.js\n" +
+  "package/docs/getting-started.md\n";
+
+const TAR_SURFACE_MISSING_DOCS =
+  "package/package.json\n" +
+  "package/dist/src/cli.js\n" +
+  "package/dist/public/index.html\n" +
+  "package/dist/src/pi-extension.js\n";
+
+describe("parseTarListing", () => {
+  it("extracts one entry per non-empty line", () => {
+    expect(parseTarListing("a\nb\nc\n")).toEqual(["a", "b", "c"]);
+  });
+
+  it("tolerates trailing/blank lines and CRLF", () => {
+    expect(parseTarListing("a\r\nb\n\n")).toEqual(["a", "b"]);
+  });
+
+  it("returns an empty list for blank input", () => {
+    expect(parseTarListing("")).toEqual([]);
+  });
+});
+
+describe("runPrebuiltTarballCheck", () => {
+  const okProbe2: CleanInstallProbe = {
+    installDir: "/prefix/node_modules/piren",
+    cliJsExists: true,
+    publicIndexExists: true,
+    extensionJsExists: true,
+    binaryRuns: true,
+    piRuntimeSource: "path",
+  };
+
+  function makeListDeps(stdout: string, code = 0): { listDeps: import("../src/clean-install.js").TarballListDeps; calls: string[] } {
+    const calls: string[] = [];
+    return {
+      calls,
+      listDeps: {
+        list: async (tarballPath: string) => {
+          calls.push(tarballPath);
+          return { code, stdout, stderr: code === 0 ? "" : "tar error" };
+        },
+      },
+    };
+  }
+
+  it("installs the prebuilt tarball when its surface is valid", async () => {
+    const { listDeps, calls } = makeListDeps(TAR_SURFACE_OK);
+    let installedSpec: string | undefined;
+    const runInstall: InstallRunner = async (opts) => {
+      installedSpec = opts.spec;
+      return { ok: true, installDir: opts.prefix + "/node_modules/piren", checks: [{ id: "dist-cli", status: "ok", message: "present." }], probe: okProbe2 };
+    };
+    const result = await runPrebuiltTarballCheck({ tarballPath: "/repo/piren-0.1.0.tgz", listDeps, runInstall });
+
+    expect(calls).toEqual(["/repo/piren-0.1.0.tgz"]);
+    expect(installedSpec).toBe("/repo/piren-0.1.0.tgz");
+    expect(result.ok).toBe(true);
+    expect(result.source?.kind).toBe("prebuilt-tarball");
+    expect(result.source?.tarballPath).toBe("/repo/piren-0.1.0.tgz");
+    expect(result.source?.artifactsOk).toBe(true);
+  });
+
+  it("fails before install when the packed surface is missing artifacts (e.g. docs)", async () => {
+    const { listDeps } = makeListDeps(TAR_SURFACE_MISSING_DOCS);
+    let installCalled = false;
+    const runInstall: InstallRunner = async () => {
+      installCalled = true;
+      return { ok: true, installDir: "/x", checks: [], probe: okProbe2 };
+    };
+    const result = await runPrebuiltTarballCheck({ tarballPath: "/repo/piren-0.1.0.tgz", listDeps, runInstall });
+
+    expect(result.ok).toBe(false);
+    expect(installCalled).toBe(false);
+    expect(result.source?.artifactsOk).toBe(false);
+    expect(result.source?.missing).toContain("docs/getting-started.md");
+    expect(result.checks.some((c) => c.id === "packed-surface" && c.status === "fail")).toBe(true);
+  });
+
+  it("fails when the tarball cannot be listed", async () => {
+    const { listDeps } = makeListDeps("", 2);
+    let installCalled = false;
+    const runInstall: InstallRunner = async () => {
+      installCalled = true;
+      return { ok: true, installDir: "/x", checks: [], probe: okProbe2 };
+    };
+    const result = await runPrebuiltTarballCheck({ tarballPath: "/repo/missing.tgz", listDeps, runInstall });
+
+    expect(result.ok).toBe(false);
+    expect(installCalled).toBe(false);
+  });
+
+  it("never removes the caller-owned prebuilt tarball", async () => {
+    const { listDeps } = makeListDeps(TAR_SURFACE_OK);
+    const runInstall: InstallRunner = async () => ({
+      ok: true,
+      installDir: "/x",
+      checks: [{ id: "dist-cli", status: "ok", message: "present." }],
+      probe: okProbe2,
+    });
+    const result = await runPrebuiltTarballCheck({ tarballPath: "/repo/piren-0.1.0.tgz", listDeps, runInstall });
+    expect(result.ok).toBe(true);
+    // No removal hook is exercised; the tarball is owned by the caller/workflow.
+    expect(result.source?.tarballPath).toBe("/repo/piren-0.1.0.tgz");
+  });
+
+  it("resolves a relative tarball path to an absolute install spec (regression)", async () => {
+    const { listDeps, calls } = makeListDeps(TAR_SURFACE_OK);
+    let installedSpec: string | undefined;
+    const runInstall: InstallRunner = async (opts) => {
+      installedSpec = opts.spec;
+      return { ok: true, installDir: "/x", checks: [{ id: "dist-cli", status: "ok", message: "present." }], probe: okProbe2 };
+    };
+    await runPrebuiltTarballCheck({ tarballPath: "piren-0.1.0.tgz", listDeps, runInstall });
+    // The isolated install runs with cwd set to the clean prefix, so the
+    // tarball must be resolved to an absolute path before installing.
+    expect(installedSpec).toMatch(/.*piren-0\.1\.0\.tgz$/);
+    expect(installedSpec?.startsWith("/")).toBe(true);
+    // The listing also receives the resolved absolute path.
+    expect(calls[0]?.startsWith("/")).toBe(true);
   });
 });

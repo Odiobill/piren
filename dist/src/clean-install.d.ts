@@ -54,6 +54,9 @@ export type InstallSpec = {
     kind: "packed-tarball";
     source: "local";
 } | {
+    kind: "prebuilt-tarball";
+    spec: string;
+} | {
     kind: "explicit";
     spec: string;
 };
@@ -91,7 +94,7 @@ export interface PackOutcome {
 }
 /** Source attribution printed in the final report. */
 export interface CleanInstallSourceInfo {
-    kind: "packed-tarball" | "explicit-spec";
+    kind: "packed-tarball" | "explicit-spec" | "prebuilt-tarball";
     spec: string;
     tarballPath?: string;
     packageName?: string;
@@ -104,7 +107,11 @@ export interface CleanInstallSourceInfo {
 export interface CleanInstallReportResult extends CleanInstallAssessment {
     source?: CleanInstallSourceInfo;
 }
-/** Resolve the install spec from CLI args. Default = packed-tarball/local. */
+/** Whether a spec string denotes a local prepacked npm tarball file. */
+export declare function isLocalTarballSpec(spec: string): boolean;
+/** Resolve the install spec from CLI args. Default = packed-tarball/local; a
+ *  local `.tgz` positional selects the surface-validated prebuilt-tarball path;
+ *  any other positional is the explicit escape hatch (github:/git+ specs). */
 export declare function resolveInstallSpec(args: string[]): InstallSpec;
 /** Pure: check a packed file surface contains every required runtime artifact. */
 export declare function checkPackedArtifacts(packedFiles: string[]): PackArtifactsResult;
@@ -185,6 +192,39 @@ export type InstallRunner = (options: CleanInstallOptions) => Promise<CleanInsta
  * (enforced by a single try/finally around the whole post-pack body).
  */
 export declare function runPackedCleanInstallCheck(options: PackedCheckOptions): Promise<CleanInstallReportResult>;
+/** Injected tarball-listing deps (e.g. `tar -tf`) used to inspect a prepacked tarball. */
+export interface TarballListDeps {
+    list(tarballPath: string): Promise<{
+        code: number;
+        stdout: string;
+        stderr: string;
+    }>;
+}
+/** Parse `tar -tf` output into a list of entry paths (one per non-empty line). */
+export declare function parseTarListing(stdout: string): string[];
+/** Real `tar -tf` adapter for inspecting a prepacked tarball's surface. */
+export declare function createRealTarballListDeps(): TarballListDeps;
+export interface PrebuiltCheckOptions {
+    /** Absolute path to an existing npm tarball to validate and install. */
+    tarballPath: string;
+    /** PATH for the install verification (node/npm/pi). Defaults to process.env.PATH. */
+    pathEnv?: string;
+    /** Injected tarball-listing deps for tests; defaults to the real tar adapter. */
+    listDeps?: TarballListDeps;
+    /** Injected install runner for tests; defaults to runCleanInstallCheck. */
+    runInstall?: InstallRunner;
+    /** Optional logger. */
+    log?: (message: string) => void;
+}
+/**
+ * Validate and install a PRE-PACKED npm tarball (ADR-0033 P1). This is the
+ * publication path's verifier: the caller (the release workflow) owns the
+ * tarball, so this validates its packed surface (the same
+ * REQUIRED_PACKED_ARTIFACTS contract as the local-pack path) and then installs
+ * that exact tarball through the existing `runCleanInstallCheck` machinery. It
+ * never removes the tarball — the caller decides its lifecycle (e.g. publish).
+ */
+export declare function runPrebuiltTarballCheck(options: PrebuiltCheckOptions): Promise<CleanInstallReportResult>;
 /**
  * Convenience entry for a full default run against the real github spec.
  * Used by scripts/clean-install-check.ts. Returns the formatted report string.
