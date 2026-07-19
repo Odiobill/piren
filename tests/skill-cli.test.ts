@@ -26,6 +26,7 @@ import {
   isValidStagedSkillName,
   resolveStagedSkillPath,
   importStagedSkill,
+  promoteStagedSkill,
   listStagedSkills,
   showStagedSkill,
   formatStagedSkillList,
@@ -1534,5 +1535,179 @@ describe("listStagedSkills / showStagedSkill", () => {
     expect(shown).toContain("Source: /tmp/apple.md");
     expect(shown).toContain("Staged: true");
     expect(shown).toContain("# Apple");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Staged skill promotion (Slice E2a)
+// ---------------------------------------------------------------------------
+
+describe("promoteStagedSkill", () => {
+  const fixedNow = () => new Date("2026-07-19T12:00:00.000Z");
+  const fakeChecksum = (content: string) => `sha256-${content.length}`;
+
+  async function seedStaged(
+    fs: FakeFs,
+    name: string,
+    body = "# Imported\n\nDo the thing.\n",
+  ): Promise<void> {
+    await importStagedSkill(fs.toDeps(), VAULT, `/tmp/${name}.md`, body, {
+      checksum: fakeChecksum,
+      now: fixedNow,
+      name,
+    });
+  }
+
+  it("validates the staged name before any filesystem access", async () => {
+    const fs = new FakeFs();
+    // Unsafe names throw without resolving paths or touching the FS.
+    await expect(
+      promoteStagedSkill(fs.toDeps(), VAULT, "..", { kind: "shared" }),
+    ).rejects.toThrow(/invalid staged skill name/i);
+    await expect(
+      promoteStagedSkill(fs.toDeps(), VAULT, "foo/bar", { kind: "shared" }),
+    ).rejects.toThrow(/invalid staged skill name/i);
+  });
+
+  it("throws when the staged source does not exist", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    await expect(
+      promoteStagedSkill(fs.toDeps(), VAULT, "missing", { kind: "shared" }),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it("validates the target group scope exists", async () => {
+    const fs = new FakeFs();
+    await seedStaged(fs, "g-skill");
+    await expect(
+      promoteStagedSkill(fs.toDeps(), VAULT, "g-skill", { kind: "group", group: "no-such-group" }),
+    ).rejects.toThrow(/group.*not found/i);
+    // Staged artifact retained on the failed promotion.
+    expect(fs.readFile(join(VAULT, "skill-candidates", "imports", "g-skill.md"))).toContain("staged: true");
+  });
+
+  it("validates the target agent scope exists", async () => {
+    const fs = new FakeFs();
+    await seedStaged(fs, "a-skill");
+    await expect(
+      promoteStagedSkill(fs.toDeps(), VAULT, "a-skill", { kind: "agent", agent: "ghost" }),
+    ).rejects.toThrow(/agent.*not found/i);
+  });
+
+  it("promotes a staged skill into the shared scope and removes the staged source", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    const deps = fs.toDeps();
+    await seedStaged(fs, "promote-me");
+
+    const result = await promoteStagedSkill(deps, VAULT, "promote-me", { kind: "shared" });
+    expect(result.fromPath).toBe("skill-candidates/imports/promote-me.md");
+    expect(result.toPath).toBe("skills/promote-me.md");
+    expect(result.overwritten).toBe(false);
+
+    // Staged source removed.
+    expect(() => fs.readFile(join(VAULT, "skill-candidates", "imports", "promote-me.md"))).toThrow();
+
+    const active = fs.readFile(join(VAULT, "skills", "promote-me.md"));
+    // type: Skill kept, staged marker removed.
+    expect(active).toContain("type: Skill");
+    expect(active).not.toContain("staged: true");
+    // Body + provenance preserved.
+    expect(active).toContain("# Imported");
+    expect(active).toContain("source: \"/tmp/promote-me.md\"");
+    expect(active).toContain("imported_at: 2026-07-19T12:00:00.000Z");
+    expect(active).toContain(`checksum: ${fakeChecksum("# Imported\n\nDo the thing.\n")}`);
+  });
+
+  it("refuses a target collision without force and leaves staged + target intact", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    const deps = fs.toDeps();
+    // Pre-existing active skill at the target.
+    fs.file(join(VAULT, "skills", "clash.md"), skillContent("clash", "original active"));
+    await seedStaged(fs, "clash", "# Staged Body\n");
+
+    await expect(
+      promoteStagedSkill(deps, VAULT, "clash", { kind: "shared" }),
+    ).rejects.toThrow(/already exists/i);
+
+    // Staged retained.
+    expect(fs.readFile(join(VAULT, "skill-candidates", "imports", "clash.md"))).toContain("staged: true");
+    // Target undamaged.
+    const target = fs.readFile(join(VAULT, "skills", "clash.md"));
+    expect(target).toContain("original active");
+    expect(target).not.toContain("# Staged Body");
+  });
+
+  it("overwrites the target with --force and removes the staged source", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    const deps = fs.toDeps();
+    fs.file(join(VAULT, "skills", "clash.md"), skillContent("clash", "original active"));
+    await seedStaged(fs, "clash", "# Staged Body\n");
+
+    const result = await promoteStagedSkill(deps, VAULT, "clash", { kind: "shared" }, { force: true });
+    expect(result.overwritten).toBe(true);
+
+    expect(() => fs.readFile(join(VAULT, "skill-candidates", "imports", "clash.md"))).toThrow();
+    const target = fs.readFile(join(VAULT, "skills", "clash.md"));
+    expect(target).toContain("# Staged Body");
+    expect(target).not.toContain("original active");
+    expect(target).not.toContain("staged: true");
+  });
+
+  it("promoted shared skill is discoverable by the active loader", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.dir(join(VAULT, "team", "dipu", "skills"));
+    const deps = fs.toDeps();
+    await seedStaged(fs, "discover-me");
+
+    await promoteStagedSkill(deps, VAULT, "discover-me", { kind: "shared" });
+
+    const scanned = await scanAllSkills(deps, VAULT);
+    expect(scanned.find((s) => s.name === "discover-me" && s.source === "shared")).toBeDefined();
+
+    const effective = await resolveEffectiveSkills(deps, VAULT, "dipu");
+    expect(effective.find((s) => s.name === "discover-me")).toBeDefined();
+
+    const shown = await showSkill(deps, VAULT, "discover-me");
+    expect(shown?.skill.body).toContain("# Imported");
+  });
+
+  it("promotes into group and agent scopes and respects precedence shared < group < agent", async () => {
+    const fs = new FakeFs();
+    fs.dir(join(VAULT, "skills"));
+    fs.dir(join(VAULT, "agent-groups", "devs", "skills"));
+    fs.file(join(VAULT, "agent-groups", "devs", "config.yml"), "agents:\n  - dipu\n");
+    fs.dir(join(VAULT, "team", "dipu", "skills"));
+    fs.file(join(VAULT, "team", "dipu", "SOUL.md"), "# Dipu\n");
+    const deps = fs.toDeps();
+
+    await seedStaged(fs, "shared-one", "# Shared\n");
+    await seedStaged(fs, "group-one", "# Group\n");
+    await seedStaged(fs, "agent-one", "# Agent\n");
+
+    await promoteStagedSkill(deps, VAULT, "shared-one", { kind: "shared" });
+    await promoteStagedSkill(deps, VAULT, "group-one", { kind: "group", group: "devs" });
+    await promoteStagedSkill(deps, VAULT, "agent-one", { kind: "agent", agent: "dipu" });
+
+    // Precedence: promote a same-name skill to shared, group, and agent; agent wins for dipu.
+    await seedStaged(fs, "prec", "# From Shared\n");
+    await promoteStagedSkill(deps, VAULT, "prec", { kind: "shared" });
+    await seedStaged(fs, "prec", "# From Group\n");
+    await promoteStagedSkill(deps, VAULT, "prec", { kind: "group", group: "devs" }, { force: true });
+    // Agent copy of prec does not exist yet, so group should be effective.
+    const groupEffective = await resolveEffectiveSkills(deps, VAULT, "dipu");
+    const precGroup = groupEffective.find((s) => s.name === "prec")!;
+    expect(precGroup.source).toBe("group");
+
+    await seedStaged(fs, "prec", "# From Agent\n");
+    await promoteStagedSkill(deps, VAULT, "prec", { kind: "agent", agent: "dipu" });
+    const finalEffective = await resolveEffectiveSkills(deps, VAULT, "dipu");
+    const precFinal = finalEffective.find((s) => s.name === "prec")!;
+    expect(precFinal.source).toBe("agent");
+    expect(precFinal.body).toContain("# From Agent");
   });
 });

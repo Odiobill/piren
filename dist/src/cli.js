@@ -32,7 +32,7 @@ import { createRealGroupWriteDeps, readGroupConfig, createGroup, addAgentToGroup
 import { resolveAgentGroups, parseGroupConfigs } from "./agent-groups.js";
 import { createRealCronWriteDeps, createCronJob, createScriptCronJob, enableCronJob, disableCronJob, validateCronJobs, formatCronList, formatCronShow, formatCronRuns, formatCronValidationReport, readCronJobFile, } from "./cron-cli.js";
 import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, validateServiceMethod, crontabAvailableFromInvocation, systemdUserAvailableFromInvocation, } from "./service-lifecycle.js";
-import { createRealSkillCliDeps, scanAllSkills, filterSkills, showSkill, explainSkill, createSkill, moveSkill, promoteSkill, demoteSkill, listConflicts, validateSkills, formatSkillList, formatSkillShow, formatSkillExplain, formatSkillConflicts, formatSkillValidation, importStagedSkill, listStagedSkills, showStagedSkill, formatStagedSkillList, formatStagedSkillShow, realSha256, parseScope, formatScope, } from "./skill-cli.js";
+import { createRealSkillCliDeps, scanAllSkills, filterSkills, showSkill, explainSkill, createSkill, moveSkill, promoteSkill, demoteSkill, listConflicts, validateSkills, formatSkillList, formatSkillShow, formatSkillExplain, formatSkillConflicts, formatSkillValidation, importStagedSkill, promoteStagedSkill, listStagedSkills, showStagedSkill, formatStagedSkillList, formatStagedSkillShow, realSha256, parseScope, formatScope, } from "./skill-cli.js";
 import { createRealTaskCliDeps, resolveTaskIdOrPath, readVaultFile, readTaskDetail, formatTaskList, formatTaskDetail, isValidCliPriority, CLI_PRIORITIES, } from "./task-cli.js";
 import { sanitizeDeviceId } from "./scheduler-once.js";
 import { createInboxTask, listInboxTasks, claimInboxTask, updateInboxTaskStatus, } from "./inbox.js";
@@ -1603,7 +1603,30 @@ async function runSkillCommand(args) {
             console.log(formatStagedSkillShow(skill));
             return;
         }
-        console.error("Usage: piren skill staged <list|show> [args]");
+        if (subsub === "promote") {
+            const name = args.positionals[2];
+            const toRaw = findRawFlag("--to");
+            if (!name || !toRaw) {
+                console.error("Usage: piren skill staged promote <name> --to shared|group:<group>|agent:<agent> [--force]");
+                process.exit(2);
+            }
+            const scope = parseScope(toRaw);
+            if (scope === null) {
+                console.error(`Invalid --to scope: ${toRaw}. Use shared, group:<name>, or agent:<name>.`);
+                process.exit(2);
+            }
+            let result;
+            try {
+                result = await promoteStagedSkill(deps, vaultRoot, name, scope, { force: args.force });
+            }
+            catch (err) {
+                console.error(err instanceof Error ? err.message : String(err));
+                process.exit(1);
+            }
+            console.log(`Promoted staged skill '${result.name}' from ${result.fromPath} to ${result.toPath}${result.overwritten ? " (overwrote existing)" : ""}.`);
+            return;
+        }
+        console.error("Usage: piren skill staged <list|show|promote> [args]");
         process.exit(2);
     }
     if (sub === "conflicts") {

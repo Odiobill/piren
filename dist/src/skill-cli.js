@@ -927,6 +927,89 @@ export async function importStagedSkill(deps, vaultRoot, sourcePath, sourceConte
     await deps.writeFile(absolutePath, content);
     return { name, path: vaultRelativePath, source: sourcePath, checksum, importedAt, overwritten: existed };
 }
+function renderPromotedSkillDocument(args) {
+    const frontmatter = [
+        "---",
+        "type: Skill",
+        `name: ${args.name}`,
+        `description: ${JSON.stringify(args.description)}`,
+        `source: ${JSON.stringify(args.source)}`,
+        `imported_at: ${args.importedAt}`,
+        `checksum: ${args.checksum}`,
+        "---",
+        "",
+    ];
+    return [...frontmatter, args.body].join("\n");
+}
+/**
+ * Promote exactly one E1 staged skill (`skill-candidates/imports/<name>.md`)
+ * into an existing active shared/group/agent scope.
+ *
+ * The staged name is validated before any path resolution or filesystem
+ * access. The target scope is validated with the established scope-existence
+ * rules. Target collisions are refused unless `force` is set. All validation
+ * and collision checks happen before any write, so a failed or non-forced
+ * promotion retains the staged artifact and leaves the target untouched.
+ *
+ * On success the promoted document keeps `type: Skill`, the original body, and
+ * the imported provenance (`source`, `imported_at`, `checksum`), drops the
+ * lifecycle-only `staged: true` marker, and the staged source is removed. The
+ * destination is a normal active skill file, discovered by the regular loader.
+ */
+export async function promoteStagedSkill(deps, vaultRoot, name, scope, opts) {
+    // 1. Validate the staged name BEFORE any path resolution or FS access.
+    if (!isValidStagedSkillName(name)) {
+        throw new Error(`Invalid staged skill name: '${name}'. Use lowercase letters, numbers, dashes, and underscores; must start with a letter or number.`);
+    }
+    // 2. Resolve + contain the staged source path.
+    const staged = resolveStagedSkillPath(vaultRoot, name);
+    assertPathWithinVault(vaultRoot, staged.absolutePath);
+    // 3. Validate the target scope exists (throws before any write).
+    await assertScopeExists(deps, vaultRoot, scope);
+    // 4. Resolve + contain the target active path.
+    const target = resolveSkillPath(vaultRoot, name, scope);
+    assertPathWithinVault(vaultRoot, target.absolutePath);
+    // 5. Read the staged source (must exist).
+    let stagedContent;
+    try {
+        stagedContent = await deps.readFile(staged.absolutePath);
+    }
+    catch {
+        throw new Error(`Staged skill '${name}' not found at ${staged.vaultRelativePath}.`);
+    }
+    // 6. Collision check BEFORE any write (failure-safe: staged retained, target undamaged).
+    const targetExists = await exists(deps, target.absolutePath);
+    if (targetExists && !opts?.force) {
+        throw new Error(`Skill '${name}' already exists at ${target.vaultRelativePath}. Use --force to overwrite.`);
+    }
+    // 7. Parse staged provenance + body.
+    const { record, body } = parseFrontmatterRecord(stagedContent);
+    const description = (record && asString(record.description)) ?? "";
+    const source = record ? recordString(record, "source") : "";
+    const importedAt = record ? recordString(record, "imported_at") : "";
+    const checksum = record ? recordString(record, "checksum") : "";
+    // 8. Render the promoted document (drop staged marker; keep type: Skill + provenance).
+    const promoted = renderPromotedSkillDocument({
+        name,
+        description,
+        source,
+        importedAt,
+        checksum,
+        body,
+    });
+    // 9. Write the target first, then remove the staged source. Write-first means
+    //    a failed target write leaves the staged artifact intact.
+    await deps.mkdir(dirname(target.absolutePath), { recursive: true });
+    await deps.writeFile(target.absolutePath, promoted);
+    await deps.unlink(staged.absolutePath);
+    return {
+        name,
+        fromPath: staged.vaultRelativePath,
+        toPath: target.vaultRelativePath,
+        toScope: scope,
+        overwritten: targetExists,
+    };
+}
 /**
  * List staged skill documents deterministically (sorted by name). Returns an
  * empty list when the staged area does not exist. Tolerant of malformed

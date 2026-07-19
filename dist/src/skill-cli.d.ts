@@ -269,6 +269,35 @@ export declare function resolveStagedSkillPath(vaultRoot: string, name: string):
  * skill-loading path scans.
  */
 export declare function importStagedSkill(deps: SkillCliDeps, vaultRoot: string, sourcePath: string, sourceContent: string, opts: ImportStagedSkillOptions): Promise<ImportStagedSkillResult>;
+export interface PromoteStagedSkillResult {
+    name: string;
+    /** Vault-relative path of the staged source that was removed. */
+    fromPath: string;
+    /** Vault-relative path of the active destination. */
+    toPath: string;
+    /** Active scope the skill was promoted into. */
+    toScope: ParsedScope;
+    /** True if an existing active skill was overwritten (`--force`). */
+    overwritten: boolean;
+}
+/**
+ * Promote exactly one E1 staged skill (`skill-candidates/imports/<name>.md`)
+ * into an existing active shared/group/agent scope.
+ *
+ * The staged name is validated before any path resolution or filesystem
+ * access. The target scope is validated with the established scope-existence
+ * rules. Target collisions are refused unless `force` is set. All validation
+ * and collision checks happen before any write, so a failed or non-forced
+ * promotion retains the staged artifact and leaves the target untouched.
+ *
+ * On success the promoted document keeps `type: Skill`, the original body, and
+ * the imported provenance (`source`, `imported_at`, `checksum`), drops the
+ * lifecycle-only `staged: true` marker, and the staged source is removed. The
+ * destination is a normal active skill file, discovered by the regular loader.
+ */
+export declare function promoteStagedSkill(deps: SkillCliDeps, vaultRoot: string, name: string, scope: ParsedScope, opts?: {
+    force?: boolean;
+}): Promise<PromoteStagedSkillResult>;
 /**
  * List staged skill documents deterministically (sorted by name). Returns an
  * empty list when the staged area does not exist. Tolerant of malformed

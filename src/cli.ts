@@ -117,6 +117,7 @@ import {
   formatSkillConflicts,
   formatSkillValidation,
   importStagedSkill,
+  promoteStagedSkill,
   listStagedSkills,
   showStagedSkill,
   formatStagedSkillList,
@@ -1823,7 +1824,31 @@ async function runSkillCommand(args: RunSkillCommandArgs): Promise<void> {
       console.log(formatStagedSkillShow(skill));
       return;
     }
-    console.error("Usage: piren skill staged <list|show> [args]");
+    if (subsub === "promote") {
+      const name = args.positionals[2];
+      const toRaw = findRawFlag("--to");
+      if (!name || !toRaw) {
+        console.error("Usage: piren skill staged promote <name> --to shared|group:<group>|agent:<agent> [--force]");
+        process.exit(2);
+      }
+      const scope = parseScope(toRaw);
+      if (scope === null) {
+        console.error(`Invalid --to scope: ${toRaw}. Use shared, group:<name>, or agent:<name>.`);
+        process.exit(2);
+      }
+      let result;
+      try {
+        result = await promoteStagedSkill(deps, vaultRoot, name, scope, { force: args.force });
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+      console.log(
+        `Promoted staged skill '${result.name}' from ${result.fromPath} to ${result.toPath}${result.overwritten ? " (overwrote existing)" : ""}.`,
+      );
+      return;
+    }
+    console.error("Usage: piren skill staged <list|show|promote> [args]");
     process.exit(2);
   }
 

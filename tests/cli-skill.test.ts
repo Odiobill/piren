@@ -328,4 +328,115 @@ describe("piren skill (CLI dispatch)", () => {
     expect(force.status).toBe(0);
     expect(force.stdout).toMatch(/overwrote existing/i);
   });
+
+  // -------------------------------------------------------------------------
+  // Staged skill promotion (Slice E2a)
+  // -------------------------------------------------------------------------
+
+  it("promotes a staged skill into the shared scope and activates it", async () => {
+    const sourcePath = join(home, "promo-shared.md");
+    await writeFile(
+      sourcePath,
+      [
+        "---",
+        "name: Promo Shared",
+        "description: A skill to promote",
+        "---",
+        "",
+        "# Promo Shared",
+        "",
+        "Activated body.",
+        "",
+      ].join("\n"),
+    );
+    const imp = runPirenSkill(["import", sourcePath, "--staged"], { HOME: home });
+    expect(imp.status).toBe(0);
+
+    const promote = runPirenSkill(["staged", "promote", "promo-shared", "--to", "shared"], { HOME: home });
+    expect(promote.status).toBe(0);
+    expect(promote.stdout).toContain("Promoted staged skill 'promo-shared'");
+    expect(promote.stdout).toContain("skills/promo-shared.md");
+
+    // Staged source removed.
+    await expect(readFile(join(vault, "skill-candidates", "imports", "promo-shared.md"), "utf8")).rejects.toThrow();
+
+    // No longer staged.
+    const stagedList = runPirenSkill(["staged", "list"], { HOME: home });
+    expect(stagedList.stdout).not.toContain("promo-shared");
+
+    // Active discovery.
+    const list = runPirenSkill(["list"], { HOME: home });
+    expect(list.stdout).toContain("promo-shared");
+
+    const show = runPirenSkill(["show", "promo-shared"], { HOME: home });
+    expect(show.status).toBe(0);
+    expect(show.stdout).toContain("Source: shared");
+    expect(show.stdout).toContain("Activated body.");
+
+    // Promoted artifact keeps type: Skill and provenance, drops staged marker.
+    const active = await readFile(join(vault, "skills", "promo-shared.md"), "utf8");
+    expect(active).toContain("type: Skill");
+    expect(active).not.toContain("staged: true");
+    expect(active).toContain(`source: ${JSON.stringify(sourcePath)}`);
+    expect(active).toContain("imported_at:");
+    expect(active).toContain("checksum:");
+  });
+
+  it("promote requires --to", async () => {
+    const result = runPirenSkill(["staged", "promote", "promo-shared"], { HOME: home });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/--to/i);
+  });
+
+  it("promote rejects an unknown staged name", () => {
+    const result = runPirenSkill(["staged", "promote", "never-staged", "--to", "shared"], { HOME: home });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/not found/i);
+  });
+
+  it("promote rejects a missing target group", async () => {
+    const sourcePath = join(home, "promo-group-missing.md");
+    await writeFile(sourcePath, "# body\n");
+    runPirenSkill(["import", sourcePath, "--staged"], { HOME: home });
+    const result = runPirenSkill(["staged", "promote", "promo-group-missing", "--to", "group:no-such-group"], { HOME: home });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/group.*not found/i);
+    // Staged retained.
+    const stagedList = runPirenSkill(["staged", "list"], { HOME: home });
+    expect(stagedList.stdout).toContain("promo-group-missing");
+  });
+
+  it("promote refuses a collision without --force and overwrites with --force", async () => {
+    // Pre-existing active skill.
+    runPirenSkill(["create", "promo-clash", "--scope", "shared", "--force"], { HOME: home });
+    const sourcePath = join(home, "promo-clash.md");
+    await writeFile(sourcePath, "# Promoted Clash\n");
+    runPirenSkill(["import", sourcePath, "--staged", "--name", "promo-clash"], { HOME: home });
+
+    const refuse = runPirenSkill(["staged", "promote", "promo-clash", "--to", "shared"], { HOME: home });
+    expect(refuse.status).not.toBe(0);
+    expect(refuse.stderr).toMatch(/already exists/i);
+    // Staged retained after refusal.
+    expect(runPirenSkill(["staged", "list"], { HOME: home }).stdout).toContain("promo-clash");
+
+    const force = runPirenSkill(["staged", "promote", "promo-clash", "--to", "shared", "--force"], { HOME: home });
+    expect(force.status).toBe(0);
+    expect(force.stdout).toMatch(/overwrote existing/i);
+    // Staged removed after forced promotion.
+    expect(runPirenSkill(["staged", "list"], { HOME: home }).stdout).not.toContain("promo-clash");
+    const active = await readFile(join(vault, "skills", "promo-clash.md"), "utf8");
+    expect(active).toContain("# Promoted Clash");
+  });
+
+  it("promotes into an agent scope and it is discoverable for that agent", async () => {
+    const sourcePath = join(home, "promo-agent.md");
+    await writeFile(sourcePath, "# Agent Promo\n");
+    runPirenSkill(["import", sourcePath, "--staged"], { HOME: home });
+    const promote = runPirenSkill(["staged", "promote", "promo-agent", "--to", "agent:dipu"], { HOME: home });
+    expect(promote.status).toBe(0);
+    expect(promote.stdout).toContain("team/dipu/skills/promo-agent.md");
+
+    const list = runPirenSkill(["list", "--agent", "dipu"], { HOME: home });
+    expect(list.stdout).toContain("promo-agent");
+  });
 });

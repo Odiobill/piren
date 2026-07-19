@@ -99,7 +99,7 @@ Staged imports land in a dedicated inactive review area:
 skill-candidates/imports/<name>.md
 ```
 
-This area is **never** scanned by the active skill loader or `piren skill list`/`validate`. A staged skill is therefore not injected into agent context, not executed, and not discovered until it is explicitly moved into an active scope. Promotion and removal are a separate, later slice; today there is no command that activates a staged import.
+This area is **never** scanned by the active skill loader or `piren skill list`/`validate`. A staged skill is therefore not injected into agent context, not executed, and not discovered until it is explicitly promoted into an active scope (see below).
 
 On import, Piren:
 
@@ -110,3 +110,15 @@ On import, Piren:
 - refuses to overwrite an existing staged skill of the same name unless `--force` is passed.
 
 Active-skill precedence is unchanged: shared, then group, then agent-specific. Staged imports do not participate in that precedence at all.
+
+### Promoting a staged skill (activates it)
+
+Promotion is explicit and is the only way a staged import becomes active:
+
+```bash
+piren skill staged promote <name> --to shared|group:<group>|agent:<agent> [--force]
+```
+
+Promotion moves exactly one staged Markdown artifact from `skill-candidates/imports/<name>.md` into an existing active scope (`skills/`, `agent-groups/<group>/skills/`, or `team/<agent>/skills/`). On success the staged source is removed and the destination is a normal active skill, discovered by the loader and subject to the usual precedence.
+
+The promoted document keeps `type: Skill`, the original body, and the imported provenance (`source`, `imported_at`, `checksum`), and drops the lifecycle-only `staged: true` marker so an active skill is not falsely labelled staged. The staged name is validated before any filesystem access, the target scope must already exist, and a target collision is refused unless `--force` is given. A failed or refused promotion leaves the staged artifact and the target untouched. Removing a staged skill without promoting it is a separate later slice.
