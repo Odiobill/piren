@@ -36,6 +36,11 @@ describe("ADR-0033 P3a: 0.1.1 release-preparation artifact", () => {
     });
   });
 
+  it("package is publishable (private is absent or false)", () => {
+    const pkg = JSON.parse(read("package.json")) as { private?: unknown };
+    expect(pkg.private === undefined || pkg.private === false).toBe(true);
+  });
+
   it("readVersion reports 0.1.1 from the real package.json", () => {
     expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.1");
   });
