@@ -74,6 +74,11 @@ describe("ADR-0033 P3a: 0.1.1 release-preparation artifact", () => {
     expect(section).toMatch(/provenance/i);
     // Does not present a registry install command as already available.
     expect(section).not.toMatch(/npm install -g piren\b/);
+    // Reject completed-state language: no "first registry artifact" or "published"
+    // outcome claim (pre-publication bootstrap, not an assertion that npm/latest/
+    // provenance already exists). Process words like publication/bootstrap are fine.
+    expect(section).not.toMatch(/first registry artifact/i);
+    expect(section).not.toMatch(/\bpublished\b/i);
     // Does not state 0.1.1 itself is already published / on npm / on latest.
     expect(section).not.toMatch(/0\.1\.1 (?:is |has been )published/i);
     expect(section).not.toMatch(/0\.1\.1 (?:is |has been )published to (?:npm|latest)/i);

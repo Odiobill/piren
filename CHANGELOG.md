@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.1] - 2026-07-19
 
-Post-0.1 CLI usability and registry-distribution hardening. This is the approved single, interactive, 2FA-protected npm bootstrap publication under ADR-0035 (the package's first registry artifact, which may lack OIDC provenance); all subsequent releases use the existing OIDC trusted-publishing workflow. The documented operator install path is unchanged for this release.
+Post-0.1 CLI usability and registry-distribution hardening. This release's approved publication process is a single, interactive, 2FA-protected manual npm bootstrap under ADR-0035; it may lack OIDC provenance; all subsequent releases use the existing OIDC trusted-publishing workflow. The documented operator install path remains unchanged until post-publication verification.
 
 ### Added
 
