@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -225,5 +225,107 @@ describe("piren skill (CLI dispatch)", () => {
     );
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/Invalid skill name/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Staged local skill import (Slice E1)
+  // ---------------------------------------------------------------------------
+
+  it("imports a local skill file staged, then lists and shows it", async () => {
+    const sourcePath = join(home, "staged-source.md");
+    await writeFile(
+      sourcePath,
+      [
+        "---",
+        "type: concept",
+        "name: External Procedural Skill",
+        "description: An external procedure to review",
+        "---",
+        "",
+        "# External Procedural Skill",
+        "",
+        "Follow these steps.",
+        "",
+      ].join("\n"),
+    );
+
+    const imp = runPirenSkill(["import", sourcePath, "--staged"], { HOME: home });
+    expect(imp.status).toBe(0);
+    expect(imp.stdout).toContain("Imported staged skill 'staged-source'");
+    expect(imp.stdout).toContain("skill-candidates/imports/staged-source.md");
+    expect(imp.stdout).toContain("checksum:");
+    expect(imp.stdout).toContain("imported_at:");
+
+    const list = runPirenSkill(["staged", "list"], { HOME: home });
+    expect(list.status).toBe(0);
+    expect(list.stdout).toContain("staged-source");
+    expect(list.stdout).toContain(sourcePath);
+
+    const show = runPirenSkill(["staged", "show", "staged-source"], { HOME: home });
+    expect(show.status).toBe(0);
+    expect(show.stdout).toContain("Name: staged-source");
+    expect(show.stdout).toContain("Path: skill-candidates/imports/staged-source.md");
+    expect(show.stdout).toContain(`Source: ${sourcePath}`);
+    expect(show.stdout).toContain("Staged: true");
+    expect(show.stdout).toContain("# External Procedural Skill");
+
+    // The written artifact normalizes the OKF type and drops the source type.
+    const written = await readFile(join(vault, "skill-candidates", "imports", "staged-source.md"), "utf8");
+    expect(written).toContain("type: Skill");
+    expect(written).not.toContain("type: concept");
+  });
+
+  it("staged imports are inactive: not shown by `piren skill list`", async () => {
+    const list = runPirenSkill(["list"], { HOME: home });
+    expect(list.status).toBe(0);
+    expect(list.stdout).not.toContain("staged-source");
+    expect(list.stdout).not.toContain("skill-candidates/imports");
+  });
+
+  it("staged list on an empty vault reports none", async () => {
+    const emptyHome = await mkdtemp(join(tmpdir(), "piren-skill-empty-home-"));
+    const emptyVault = join(emptyHome, "vault");
+    await mkdir(join(emptyVault, "skills"), { recursive: true });
+    await writeFile(join(emptyVault, ".piren-vault"), "");
+    await mkdir(join(emptyHome, ".config", "piren"), { recursive: true });
+    await writeFile(
+      join(emptyHome, ".config", "piren", "config.yml"),
+      ["vault_root: " + emptyVault, ""].join("\n"),
+    );
+    const result = runPirenSkill(["staged", "list"], { HOME: emptyHome });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/No staged skills found/i);
+  });
+
+  it("rejects import without --staged", async () => {
+    const sourcePath = join(home, "needs-flag.md");
+    await writeFile(sourcePath, "# body\n");
+    const result = runPirenSkill(["import", sourcePath], { HOME: home });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/--staged/i);
+  });
+
+  it("rejects import of a non-.md source", async () => {
+    const sourcePath = join(home, "not-markdown.txt");
+    await writeFile(sourcePath, "plain text\n");
+    const result = runPirenSkill(["import", sourcePath, "--staged"], { HOME: home });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/markdown/i);
+  });
+
+  it("supports an explicit --name and refuses overwrite without --force", async () => {
+    const sourcePath = join(home, "named-source.md");
+    await writeFile(sourcePath, "# first\n");
+    const first = runPirenSkill(["import", sourcePath, "--staged", "--name", "custom-name"], { HOME: home });
+    expect(first.status).toBe(0);
+    expect(first.stdout).toContain("custom-name");
+
+    const dup = runPirenSkill(["import", sourcePath, "--staged", "--name", "custom-name"], { HOME: home });
+    expect(dup.status).not.toBe(0);
+    expect(dup.stderr).toMatch(/already exists/i);
+
+    const force = runPirenSkill(["import", sourcePath, "--staged", "--name", "custom-name", "--force"], { HOME: home });
+    expect(force.status).toBe(0);
+    expect(force.stdout).toMatch(/overwrote existing/i);
   });
 });

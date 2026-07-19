@@ -1030,10 +1030,339 @@ export function formatSkillValidation(issues: SkillValidationIssue[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Staged local skill import (Slice E1)
+// ---------------------------------------------------------------------------
+//
+// Staged imports land in an INACTIVE, vault-visible review area. The active
+// skill loader (src/skills.ts) and this module's own scanner/validator only
+// ever read `skills/`, `agent-groups/<group>/skills/`, and
+// `team/<agent>/skills/`. The staged directory below is never scanned by any
+// active-loading path, so staged documents are guaranteed not to be injected
+// into agent context, executed, or discovered until a later explicit
+// promotion slice moves them into an active scope.
+
+/**
+ * Deterministic staged-import directory, relative to the vault root. It lives
+ * under the established `skill-candidates/` convention (already inactive) in an
+ * `imports/` sub-area that is dedicated to imported-but-unpromoted skills.
+ */
+export const STAGED_SKILL_DIR_REL = "skill-candidates/imports";
+
+/** Filename slug pattern for staged imports (lowercase, no spaces). */
+export const STAGED_SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
+/** A staged (inactive, imported) skill document read back from the vault. */
+export interface StagedSkill {
+  name: string;
+  description: string;
+  /** Local source path recorded at import time. */
+  source: string;
+  /** ISO timestamp recorded at import time. */
+  importedAt: string;
+  /** SHA-256 hex of the original source content recorded at import time. */
+  checksum: string;
+  /** Whether the document carries the `staged: true` marker. */
+  staged: boolean;
+  /** Full Markdown body after the frontmatter. */
+  body: string;
+  /** Vault-relative path to the staged document. */
+  path: string;
+}
+
+export interface ImportStagedSkillOptions {
+  /** SHA-256 hex digest of the original source content. Injected for tests. */
+  checksum: (content: string) => string;
+  /** Optional explicit staged name (validated strictly; not slugified). */
+  name?: string;
+  /** Clock for the recorded `imported_at`; defaults to real time in the CLI. */
+  now?: () => Date;
+  /** Allow re-importing over an existing staged skill of the same name. */
+  force?: boolean;
+}
+
+export interface ImportStagedSkillResult {
+  name: string;
+  /** Vault-relative path of the written staged document. */
+  path: string;
+  /** Local source path that was imported. */
+  source: string;
+  /** SHA-256 hex of the original source content. */
+  checksum: string;
+  /** ISO timestamp recorded as `imported_at`. */
+  importedAt: string;
+  /** True if a staged skill of the same name was overwritten. */
+  overwritten: boolean;
+}
+
+/**
+ * Derive a lowercase filename slug from arbitrary input (typically a source
+ * filename stem). Returns the empty string when the input cannot be slugified
+ * into a valid staged name, so callers can require an explicit `--name`.
+ */
+export function slugifyStagedSkillName(input: string): string {
+  const slug = input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return STAGED_SKILL_NAME_PATTERN.test(slug) ? slug : "";
+}
+
+/** Validate a staged skill name: lowercase slug, no traversal, no separators. */
+export function isValidStagedSkillName(name: string): boolean {
+  if (name.includes("..")) return false;
+  if (name.includes("/") || name.includes("\\")) return false;
+  return STAGED_SKILL_NAME_PATTERN.test(name);
+}
+
+/** Resolve the deterministic inactive path for a staged skill of `name`. */
+export function resolveStagedSkillPath(
+  vaultRoot: string,
+  name: string,
+): { absolutePath: string; vaultRelativePath: string } {
+  const absolutePath = join(vaultRoot, STAGED_SKILL_DIR_REL, `${name}.md`);
+  return {
+    absolutePath,
+    vaultRelativePath: `${STAGED_SKILL_DIR_REL}/${name}.md`,
+  };
+}
+
+function sourceFileStem(sourcePath: string): string {
+  return basename(sourcePath).replace(/\.md$/i, "");
+}
+
+/**
+ * Parse frontmatter into the raw record plus body, tolerant of missing or
+ * malformed YAML (returns `{ record: null, body }`). Used to read provenance
+ * fields back from staged documents.
+ */
+function parseFrontmatterRecord(
+  content: string,
+): { record: Record<string, unknown> | null; body: string } {
+  const lines = content.split("\n");
+  if (lines[0]?.trim() !== "---") return { record: null, body: content };
+  let end = -1;
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i]?.trim() === "---") {
+      end = i;
+      break;
+    }
+  }
+  if (end === -1) return { record: null, body: content };
+  const yamlText = lines.slice(1, end).join("\n");
+  const body = lines.slice(end + 1).join("\n").replace(/^\n+/, "");
+  try {
+    const parsed = parseYaml(yamlText) as unknown;
+    if (isRecord(parsed)) return { record: parsed, body };
+  } catch {
+    // Malformed YAML: keep body, no record.
+  }
+  return { record: null, body };
+}
+
+function recordString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
+function recordBool(record: Record<string, unknown>, key: string): boolean {
+  const value = record[key];
+  return value === true;
+}
+
+function renderStagedSkillDocument(args: {
+  name: string;
+  description: string;
+  source: string;
+  importedAt: string;
+  checksum: string;
+  body: string;
+}): string {
+  const frontmatter = [
+    "---",
+    "type: Skill",
+    `name: ${args.name}`,
+    `description: ${JSON.stringify(args.description)}`,
+    `source: ${JSON.stringify(args.source)}`,
+    `imported_at: ${args.importedAt}`,
+    `checksum: ${args.checksum}`,
+    "staged: true",
+    "---",
+    "",
+  ];
+  return [...frontmatter, args.body].join("\n");
+}
+
+/**
+ * Import a local skill Markdown file into the inactive staged review area.
+ *
+ * The source content is read by the caller (CLI adapter) and passed in, so the
+ * core never touches the local filesystem outside the vault. The core:
+ *   - requires a `.md` source,
+ *   - resolves the staged name from an explicit validated `--name` or a slug
+ *     derived from the source filename stem,
+ *   - normalizes frontmatter to OKF `type: Skill` while preserving the body,
+ *   - records source path, import time, and content checksum as provenance,
+ *   - refuses to overwrite an existing staged skill unless `force` is set.
+ *
+ * The destination is always under `skill-candidates/imports/`, which no active
+ * skill-loading path scans.
+ */
+export async function importStagedSkill(
+  deps: SkillCliDeps,
+  vaultRoot: string,
+  sourcePath: string,
+  sourceContent: string,
+  opts: ImportStagedSkillOptions,
+): Promise<ImportStagedSkillResult> {
+  if (!/\.md$/i.test(basename(sourcePath))) {
+    throw new Error(`Source file must be a Markdown (.md) file: ${sourcePath}`);
+  }
+
+  let name: string;
+  if (opts.name !== undefined && opts.name !== "") {
+    name = opts.name;
+    if (!isValidStagedSkillName(name)) {
+      throw new Error(
+        `Invalid staged skill name: '${name}'. Use lowercase letters, numbers, dashes, and underscores; must start with a letter or number.`,
+      );
+    }
+  } else {
+    const slug = slugifyStagedSkillName(sourceFileStem(sourcePath));
+    if (slug === "") {
+      throw new Error(
+        `Could not derive a valid staged skill name from '${sourcePath}'. Pass --name <slug> with lowercase letters, numbers, dashes, and underscores.`,
+      );
+    }
+    name = slug;
+  }
+
+  const { absolutePath, vaultRelativePath } = resolveStagedSkillPath(vaultRoot, name);
+  assertPathWithinVault(vaultRoot, absolutePath);
+
+  const existed = await exists(deps, absolutePath);
+  if (existed && !opts.force) {
+    throw new Error(
+      `Staged skill '${name}' already exists at ${vaultRelativePath}. Use --force to re-import.`,
+    );
+  }
+
+  const checksum = opts.checksum(sourceContent);
+  const now = opts.now ?? (() => new Date());
+  const importedAt = now().toISOString();
+
+  const parsed = parseFrontmatter(sourceContent);
+  const description = parsed.description ?? "";
+
+  await deps.mkdir(dirname(absolutePath), { recursive: true });
+  const content = renderStagedSkillDocument({
+    name,
+    description,
+    source: sourcePath,
+    importedAt,
+    checksum,
+    body: parsed.body,
+  });
+  await deps.writeFile(absolutePath, content);
+
+  return { name, path: vaultRelativePath, source: sourcePath, checksum, importedAt, overwritten: existed };
+}
+
+/**
+ * List staged skill documents deterministically (sorted by name). Returns an
+ * empty list when the staged area does not exist. Tolerant of malformed
+ * frontmatter: the name falls back to the filename stem.
+ */
+export async function listStagedSkills(
+  deps: SkillCliDeps,
+  vaultRoot: string,
+): Promise<StagedSkill[]> {
+  const dir = join(vaultRoot, STAGED_SKILL_DIR_REL);
+  let entries: { name: string; isFile(): boolean; isDirectory(): boolean }[];
+  try {
+    entries = await deps.readdir(dir);
+  } catch {
+    return [];
+  }
+
+  const results: StagedSkill[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+
+    const filePath = join(dir, entry.name);
+    let content: string;
+    try {
+      content = await deps.readFile(filePath);
+    } catch {
+      continue;
+    }
+
+    const { record, body } = parseFrontmatterRecord(content);
+    const name = (record && asString(record.name)) ?? deriveName(entry.name);
+    results.push({
+      name,
+      description: (record && asString(record.description)) ?? "",
+      source: record ? recordString(record, "source") : "",
+      importedAt: record ? recordString(record, "imported_at") : "",
+      checksum: record ? recordString(record, "checksum") : "",
+      staged: record ? recordBool(record, "staged") : false,
+      body,
+      path: `${STAGED_SKILL_DIR_REL}/${entry.name}`,
+    });
+  }
+
+  return results.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Show a single staged skill by resolved name; null when not found. */
+export async function showStagedSkill(
+  deps: SkillCliDeps,
+  vaultRoot: string,
+  name: string,
+): Promise<StagedSkill | null> {
+  const all = await listStagedSkills(deps, vaultRoot);
+  return all.find((s) => s.name === name) ?? null;
+}
+
+/** Format a staged skill list deterministically (sorted, provenance per entry). */
+export function formatStagedSkillList(skills: StagedSkill[]): string {
+  if (skills.length === 0) return "No staged skills found.";
+  const lines: string[] = [];
+  for (const s of skills) {
+    lines.push(`${s.name}  (imported ${s.importedAt || "unknown"})`);
+    lines.push(`  source:   ${s.source || "(unknown)"}`);
+    lines.push(`  checksum: ${s.checksum || "(unknown)"}`);
+    lines.push(`  ${s.description || "(no description)"}`);
+  }
+  return lines.join("\n");
+}
+
+/** Format a single staged skill with full provenance and body. */
+export function formatStagedSkillShow(skill: StagedSkill): string {
+  const lines: string[] = [];
+  lines.push(`Name: ${skill.name}`);
+  lines.push(`Path: ${skill.path}`);
+  lines.push(`Source: ${skill.source || "(unknown)"}`);
+  lines.push(`Imported: ${skill.importedAt || "(unknown)"}`);
+  lines.push(`Checksum: ${skill.checksum || "(unknown)"}`);
+  if (skill.description) lines.push(`Description: ${skill.description}`);
+  lines.push(`Staged: ${skill.staged ? "true (inactive, not loaded)" : "false"}`);
+  lines.push("");
+  lines.push(skill.body);
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Real adapter
 // ---------------------------------------------------------------------------
 
+import { createHash } from "node:crypto";
 import { readFile as fsReadFile, writeFile, mkdir as fsMkdir, stat as fsStat, readdir as fsReaddir, rename, unlink, rmdir, access } from "node:fs/promises";
+
+/** Real SHA-256 hex digest for staged-import provenance. */
+export function realSha256(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
 
 export function createRealSkillCliDeps(): SkillCliDeps {
   return {

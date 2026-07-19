@@ -192,4 +192,95 @@ export declare function formatSkillExplain(result: SkillExplainResult): string;
 export declare function formatSkillConflicts(conflicts: SkillConflict[]): string;
 /** Format validation issues. */
 export declare function formatSkillValidation(issues: SkillValidationIssue[]): string;
+/**
+ * Deterministic staged-import directory, relative to the vault root. It lives
+ * under the established `skill-candidates/` convention (already inactive) in an
+ * `imports/` sub-area that is dedicated to imported-but-unpromoted skills.
+ */
+export declare const STAGED_SKILL_DIR_REL = "skill-candidates/imports";
+/** Filename slug pattern for staged imports (lowercase, no spaces). */
+export declare const STAGED_SKILL_NAME_PATTERN: RegExp;
+/** A staged (inactive, imported) skill document read back from the vault. */
+export interface StagedSkill {
+    name: string;
+    description: string;
+    /** Local source path recorded at import time. */
+    source: string;
+    /** ISO timestamp recorded at import time. */
+    importedAt: string;
+    /** SHA-256 hex of the original source content recorded at import time. */
+    checksum: string;
+    /** Whether the document carries the `staged: true` marker. */
+    staged: boolean;
+    /** Full Markdown body after the frontmatter. */
+    body: string;
+    /** Vault-relative path to the staged document. */
+    path: string;
+}
+export interface ImportStagedSkillOptions {
+    /** SHA-256 hex digest of the original source content. Injected for tests. */
+    checksum: (content: string) => string;
+    /** Optional explicit staged name (validated strictly; not slugified). */
+    name?: string;
+    /** Clock for the recorded `imported_at`; defaults to real time in the CLI. */
+    now?: () => Date;
+    /** Allow re-importing over an existing staged skill of the same name. */
+    force?: boolean;
+}
+export interface ImportStagedSkillResult {
+    name: string;
+    /** Vault-relative path of the written staged document. */
+    path: string;
+    /** Local source path that was imported. */
+    source: string;
+    /** SHA-256 hex of the original source content. */
+    checksum: string;
+    /** ISO timestamp recorded as `imported_at`. */
+    importedAt: string;
+    /** True if a staged skill of the same name was overwritten. */
+    overwritten: boolean;
+}
+/**
+ * Derive a lowercase filename slug from arbitrary input (typically a source
+ * filename stem). Returns the empty string when the input cannot be slugified
+ * into a valid staged name, so callers can require an explicit `--name`.
+ */
+export declare function slugifyStagedSkillName(input: string): string;
+/** Validate a staged skill name: lowercase slug, no traversal, no separators. */
+export declare function isValidStagedSkillName(name: string): boolean;
+/** Resolve the deterministic inactive path for a staged skill of `name`. */
+export declare function resolveStagedSkillPath(vaultRoot: string, name: string): {
+    absolutePath: string;
+    vaultRelativePath: string;
+};
+/**
+ * Import a local skill Markdown file into the inactive staged review area.
+ *
+ * The source content is read by the caller (CLI adapter) and passed in, so the
+ * core never touches the local filesystem outside the vault. The core:
+ *   - requires a `.md` source,
+ *   - resolves the staged name from an explicit validated `--name` or a slug
+ *     derived from the source filename stem,
+ *   - normalizes frontmatter to OKF `type: Skill` while preserving the body,
+ *   - records source path, import time, and content checksum as provenance,
+ *   - refuses to overwrite an existing staged skill unless `force` is set.
+ *
+ * The destination is always under `skill-candidates/imports/`, which no active
+ * skill-loading path scans.
+ */
+export declare function importStagedSkill(deps: SkillCliDeps, vaultRoot: string, sourcePath: string, sourceContent: string, opts: ImportStagedSkillOptions): Promise<ImportStagedSkillResult>;
+/**
+ * List staged skill documents deterministically (sorted by name). Returns an
+ * empty list when the staged area does not exist. Tolerant of malformed
+ * frontmatter: the name falls back to the filename stem.
+ */
+export declare function listStagedSkills(deps: SkillCliDeps, vaultRoot: string): Promise<StagedSkill[]>;
+/** Show a single staged skill by resolved name; null when not found. */
+export declare function showStagedSkill(deps: SkillCliDeps, vaultRoot: string, name: string): Promise<StagedSkill | null>;
+/** Format a staged skill list deterministically (sorted, provenance per entry). */
+export declare function formatStagedSkillList(skills: StagedSkill[]): string;
+/** Format a single staged skill with full provenance and body. */
+export declare function formatStagedSkillShow(skill: StagedSkill): string;
+/** Real SHA-256 hex digest for staged-import provenance. */
+export declare function realSha256(content: string): string;
 export declare function createRealSkillCliDeps(): SkillCliDeps;

@@ -125,9 +125,9 @@ export const HELP_TOPICS = [
     },
     {
         command: "skill",
-        short: "Manage vault skills: list, show, explain, create, move, promote, demote, conflicts, validate.",
-        flags: ["<list|show|explain|create|move|promote|demote|conflicts|validate>", "<name>", "--agent <agent>", "--group <group>", "--scope shared|group:<name>|agent:<name>", "--from <scope>", "--to <scope>", "--force"],
-        example: "piren skill list --agent dipu && piren skill create my-skill --scope shared",
+        short: "Manage vault skills: list, show, explain, create, move, promote, demote, conflicts, validate, and staged local import (inactive until a later promotion slice).",
+        flags: ["<list|show|explain|create|move|promote|demote|conflicts|validate>", "import <local-file.md> --staged [--name <slug>] [--force]", "staged <list|show> <name>", "<name>", "--agent <agent>", "--group <group>", "--scope shared|group:<name>|agent:<name>", "--from <scope>", "--to <scope>", "--force"],
+        example: "piren skill list --agent dipu && piren skill import ./external.md --staged && piren skill staged list",
     },
     {
         command: "task",

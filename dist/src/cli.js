@@ -32,7 +32,7 @@ import { createRealGroupWriteDeps, readGroupConfig, createGroup, addAgentToGroup
 import { resolveAgentGroups, parseGroupConfigs } from "./agent-groups.js";
 import { createRealCronWriteDeps, createCronJob, createScriptCronJob, enableCronJob, disableCronJob, validateCronJobs, formatCronList, formatCronShow, formatCronRuns, formatCronValidationReport, readCronJobFile, } from "./cron-cli.js";
 import { detectServiceManager, executeServiceAction, formatServiceReport, resolvePirenCommand, updateServiceStatusYaml, validateTransport, validateAction, validateServiceMethod, crontabAvailableFromInvocation, systemdUserAvailableFromInvocation, } from "./service-lifecycle.js";
-import { createRealSkillCliDeps, scanAllSkills, filterSkills, showSkill, explainSkill, createSkill, moveSkill, promoteSkill, demoteSkill, listConflicts, validateSkills, formatSkillList, formatSkillShow, formatSkillExplain, formatSkillConflicts, formatSkillValidation, parseScope, formatScope, } from "./skill-cli.js";
+import { createRealSkillCliDeps, scanAllSkills, filterSkills, showSkill, explainSkill, createSkill, moveSkill, promoteSkill, demoteSkill, listConflicts, validateSkills, formatSkillList, formatSkillShow, formatSkillExplain, formatSkillConflicts, formatSkillValidation, importStagedSkill, listStagedSkills, showStagedSkill, formatStagedSkillList, formatStagedSkillShow, realSha256, parseScope, formatScope, } from "./skill-cli.js";
 import { createRealTaskCliDeps, resolveTaskIdOrPath, readVaultFile, readTaskDetail, formatTaskList, formatTaskDetail, isValidCliPriority, CLI_PRIORITIES, } from "./task-cli.js";
 import { sanitizeDeviceId } from "./scheduler-once.js";
 import { createInboxTask, listInboxTasks, claimInboxTask, updateInboxTaskStatus, } from "./inbox.js";
@@ -1544,6 +1544,68 @@ async function runSkillCommand(args) {
         console.log(`Demoted skill '${name}' from ${result.fromPath} to ${result.toPath}.`);
         return;
     }
+    if (sub === "import") {
+        const sourceFile = args.positionals[1];
+        const stagedFlag = rawArgv.includes("--staged");
+        const nameOverride = findRawFlag("--name");
+        if (!sourceFile) {
+            console.error("Usage: piren skill import <local-file.md> --staged [--name <slug>] [--force]");
+            process.exit(2);
+        }
+        if (!stagedFlag) {
+            console.error("Only staged local import is supported in this slice. Pass --staged to import into the inactive review area (skill-candidates/imports/).");
+            process.exit(2);
+        }
+        let sourceContent;
+        try {
+            sourceContent = await readFile(sourceFile, "utf8");
+        }
+        catch {
+            console.error(`Could not read source file: ${sourceFile}`);
+            process.exit(1);
+        }
+        let result;
+        try {
+            result = await importStagedSkill(deps, vaultRoot, sourceFile, sourceContent, {
+                checksum: realSha256,
+                now: () => new Date(),
+                ...(nameOverride !== undefined ? { name: nameOverride } : {}),
+                force: args.force,
+            });
+        }
+        catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(1);
+        }
+        console.log(`Imported staged skill '${result.name}' from ${result.source} -> ${result.path}${result.overwritten ? " (overwrote existing)" : ""}.`);
+        console.log(`  checksum: ${result.checksum}`);
+        console.log(`  imported_at: ${result.importedAt}`);
+        return;
+    }
+    if (sub === "staged") {
+        const subsub = args.positionals[1];
+        if (subsub === "list") {
+            const skills = await listStagedSkills(deps, vaultRoot);
+            console.log(formatStagedSkillList(skills));
+            return;
+        }
+        if (subsub === "show") {
+            const name = args.positionals[2];
+            if (!name) {
+                console.error("Usage: piren skill staged show <name>");
+                process.exit(2);
+            }
+            const skill = await showStagedSkill(deps, vaultRoot, name);
+            if (skill === null) {
+                console.error(`Staged skill '${name}' not found.`);
+                process.exit(1);
+            }
+            console.log(formatStagedSkillShow(skill));
+            return;
+        }
+        console.error("Usage: piren skill staged <list|show> [args]");
+        process.exit(2);
+    }
     if (sub === "conflicts") {
         const conflicts = await listConflicts(deps, vaultRoot, agent);
         console.log(formatSkillConflicts(conflicts));
@@ -1559,7 +1621,7 @@ async function runSkillCommand(args) {
         return;
     }
     // Unknown subcommand
-    console.error("Usage: piren skill <list|show|explain|create|move|promote|demote|conflicts|validate> [args]");
+    console.error("Usage: piren skill <list|show|explain|create|move|promote|demote|conflicts|validate|import|staged> [args]");
     process.exit(2);
 }
 async function runTaskCommand(args) {

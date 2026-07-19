@@ -22,10 +22,20 @@ import {
   formatSkillConflicts,
   formatSkillValidation,
   createRealSkillCliDeps,
+  slugifyStagedSkillName,
+  isValidStagedSkillName,
+  resolveStagedSkillPath,
+  importStagedSkill,
+  listStagedSkills,
+  showStagedSkill,
+  formatStagedSkillList,
+  formatStagedSkillShow,
+  STAGED_SKILL_DIR_REL,
   type SkillCliDeps,
   type ScannedSkill,
   type SkillListOptions,
   type ParsedScope,
+  type StagedSkill,
 } from "../src/skill-cli.js";
 
 // ---------------------------------------------------------------------------
@@ -1254,5 +1264,275 @@ describe("nonexistent scope rejection (Blocker 3)", () => {
     await expect(
       moveSkill(fs.toDeps(), VAULT, "s", { kind: "shared" }, { kind: "agent", agent: "nonexistent" }),
     ).rejects.toThrow(/agent.*not found/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Staged local skill import (Slice E1)
+// ---------------------------------------------------------------------------
+
+describe("staged skill name + path helpers", () => {
+  it("slugifyStagedSkillName derives a lowercase slug from a filename stem", () => {
+    expect(slugifyStagedSkillName("My Cool Skill")).toBe("my-cool-skill");
+    expect(slugifyStagedSkillName("deploy_v2")).toBe("deploy-v2");
+    expect(slugifyStagedSkillName("a.b.c")).toBe("a-b-c");
+  });
+
+  it("slugifyStagedSkillName returns empty string for unslugifiable input", () => {
+    expect(slugifyStagedSkillName("...")).toBe("");
+    expect(slugifyStagedSkillName("   ")).toBe("");
+    expect(slugifyStagedSkillName("ÉÀÇ")).toBe("");
+  });
+
+  it("isValidStagedSkillName accepts lowercase slug names and rejects unsafe ones", () => {
+    expect(isValidStagedSkillName("my-skill")).toBe(true);
+    expect(isValidStagedSkillName("deploy_v2")).toBe(true);
+    expect(isValidStagedSkillName("a")).toBe(true);
+    // Reject traversal, separators, uppercase, spaces, leading dash.
+    expect(isValidStagedSkillName("..")).toBe(false);
+    expect(isValidStagedSkillName("foo/bar")).toBe(false);
+    expect(isValidStagedSkillName("Bad Name")).toBe(false);
+    expect(isValidStagedSkillName("-leading")).toBe(false);
+    expect(isValidStagedSkillName("UPPER")).toBe(false);
+  });
+
+  it("resolveStagedSkillPath resolves a deterministic inactive path", () => {
+    const { absolutePath, vaultRelativePath } = resolveStagedSkillPath(VAULT, "my-skill");
+    expect(vaultRelativePath).toBe("skill-candidates/imports/my-skill.md");
+    expect(absolutePath).toBe(join(VAULT, "skill-candidates", "imports", "my-skill.md"));
+  });
+
+  it("STAGED_SKILL_DIR_REL points under the inactive skill-candidates area", () => {
+    expect(STAGED_SKILL_DIR_REL).toBe("skill-candidates/imports");
+  });
+});
+
+describe("importStagedSkill", () => {
+  const fixedNow = () => new Date("2026-07-19T12:00:00.000Z");
+  const fakeChecksum = (content: string) => `sha256-${content.length}`;
+
+  function sourceWithFrontmatter(): string {
+    return [
+      "---",
+      "type: concept",
+      "name: External Skill",
+      "description: An imported external procedure",
+      "---",
+      "",
+      "# External Skill",
+      "",
+      "Do the thing.",
+      "",
+    ].join("\n");
+  }
+
+  it("imports a source file into the inactive staged area with normalized frontmatter and provenance", async () => {
+    const fs = new FakeFs();
+    const deps = fs.toDeps();
+    const sourcePath = "/home/user/external-skill.md";
+
+    const result = await importStagedSkill(deps, VAULT, sourcePath, sourceWithFrontmatter(), {
+      checksum: fakeChecksum,
+      now: fixedNow,
+    });
+
+    expect(result.name).toBe("external-skill");
+    expect(result.path).toBe("skill-candidates/imports/external-skill.md");
+    expect(result.source).toBe(sourcePath);
+    expect(result.importedAt).toBe("2026-07-19T12:00:00.000Z");
+    expect(result.checksum).toBe(fakeChecksum(sourceWithFrontmatter()));
+    expect(result.overwritten).toBe(false);
+
+    const written = fs.readFile(join(VAULT, "skill-candidates", "imports", "external-skill.md"));
+    // Normalized OKF type.
+    expect(written).toContain("type: Skill");
+    // Must NOT retain the source's original type.
+    expect(written).not.toContain("type: concept");
+    expect(written).toContain("name: external-skill");
+    expect(written).toContain("description: \"An imported external procedure\"");
+    expect(written).toContain(`source: ${JSON.stringify(sourcePath)}`);
+    expect(written).toContain("imported_at: 2026-07-19T12:00:00.000Z");
+    expect(written).toContain(`checksum: ${fakeChecksum(sourceWithFrontmatter())}`);
+    expect(written).toContain("staged: true");
+    // Useful body content preserved verbatim.
+    expect(written).toContain("# External Skill");
+    expect(written).toContain("Do the thing.");
+  });
+
+  it("derives the staged name from the filename stem when no --name is given", async () => {
+    const fs = new FakeFs();
+    const result = await importStagedSkill(fs.toDeps(), VAULT, "/tmp/My Cool Skill.md", "# just a body\n", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+    });
+    expect(result.name).toBe("my-cool-skill");
+    expect(result.path).toBe("skill-candidates/imports/my-cool-skill.md");
+  });
+
+  it("uses an explicit validated --name and rejects an invalid explicit name", async () => {
+    const fs = new FakeFs();
+    const ok = await importStagedSkill(fs.toDeps(), VAULT, "/tmp/foo.md", "body", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+      name: "custom-name",
+    });
+    expect(ok.name).toBe("custom-name");
+    expect(ok.path).toBe("skill-candidates/imports/custom-name.md");
+
+    await expect(
+      importStagedSkill(fs.toDeps(), VAULT, "/tmp/foo.md", "body", {
+        checksum: fakeChecksum,
+        now: fixedNow,
+        name: "Bad Name!",
+      }),
+    ).rejects.toThrow(/invalid staged skill name/i);
+  });
+
+  it("rejects a non-.md source file", async () => {
+    const fs = new FakeFs();
+    await expect(
+      importStagedSkill(fs.toDeps(), VAULT, "/tmp/foo.txt", "body", {
+        checksum: fakeChecksum,
+        now: fixedNow,
+      }),
+    ).rejects.toThrow(/markdown/i);
+  });
+
+  it("rejects an unslugifiable filename stem without --name", async () => {
+    const fs = new FakeFs();
+    await expect(
+      importStagedSkill(fs.toDeps(), VAULT, "/tmp/ÉÀÇ.md", "body", {
+        checksum: fakeChecksum,
+        now: fixedNow,
+      }),
+    ).rejects.toThrow(/--name/i);
+  });
+
+  it("refuses to overwrite an existing staged skill without force and overwrites with force", async () => {
+    const fs = new FakeFs();
+    await importStagedSkill(fs.toDeps(), VAULT, "/tmp/a.md", "first body", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+    });
+    await expect(
+      importStagedSkill(fs.toDeps(), VAULT, "/tmp/a.md", "second body", {
+        checksum: fakeChecksum,
+        now: fixedNow,
+      }),
+    ).rejects.toThrow(/already exists/i);
+
+    const result = await importStagedSkill(fs.toDeps(), VAULT, "/tmp/a.md", "second body", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+      force: true,
+    });
+    expect(result.overwritten).toBe(true);
+    const written = fs.readFile(join(VAULT, "skill-candidates", "imports", "a.md"));
+    expect(written).toContain("second body");
+    expect(written).not.toContain("first body");
+  });
+
+  it("tolerates a source with no frontmatter (name from stem, empty description)", async () => {
+    const fs = new FakeFs();
+    const result = await importStagedSkill(fs.toDeps(), VAULT, "/tmp/plain.md", "# Plain\n\nNo frontmatter.\n", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+    });
+    expect(result.name).toBe("plain");
+    const written = fs.readFile(join(VAULT, "skill-candidates", "imports", "plain.md"));
+    expect(written).toContain("type: Skill");
+    expect(written).toContain("name: plain");
+    expect(written).toContain("description: \"\"");
+    expect(written).toContain("# Plain");
+  });
+});
+
+describe("listStagedSkills / showStagedSkill", () => {
+  const fixedNow = () => new Date("2026-07-19T12:00:00.000Z");
+  const fakeChecksum = (content: string) => `sha256-${content.length}`;
+
+  it("lists staged skills deterministically sorted by name and round-trips provenance", async () => {
+    const fs = new FakeFs();
+    const deps = fs.toDeps();
+    await importStagedSkill(deps, VAULT, "/tmp/zebra.md", "# Z\n", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+    });
+    await importStagedSkill(deps, VAULT, "/tmp/apple.md", "# A\n", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+    });
+
+    const list = await listStagedSkills(deps, VAULT);
+    expect(list.map((s) => s.name)).toEqual(["apple", "zebra"]);
+    const apple = list.find((s) => s.name === "apple")!;
+    expect(apple.source).toBe("/tmp/apple.md");
+    expect(apple.importedAt).toBe("2026-07-19T12:00:00.000Z");
+    expect(apple.checksum).toBe(fakeChecksum("# A\n"));
+    expect(apple.staged).toBe(true);
+    expect(apple.path).toBe("skill-candidates/imports/apple.md");
+  });
+
+  it("returns an empty list when the staged area does not exist", async () => {
+    const fs = new FakeFs();
+    expect(await listStagedSkills(fs.toDeps(), VAULT)).toEqual([]);
+  });
+
+  it("showStagedSkill returns the matching skill and null when unknown", async () => {
+    const fs = new FakeFs();
+    const deps = fs.toDeps();
+    await importStagedSkill(deps, VAULT, "/tmp/foo.md", "# Foo\n", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+    });
+    const shown = await showStagedSkill(deps, VAULT, "foo");
+    expect(shown?.name).toBe("foo");
+    expect(shown?.body).toContain("# Foo");
+    expect(await showStagedSkill(deps, VAULT, "missing")).toBeNull();
+  });
+
+  it("is NOT discovered by the active skill scanner, resolver, or validator", async () => {
+    const fs = new FakeFs();
+    const deps = fs.toDeps();
+    fs.dir(join(VAULT, "skills"));
+    await importStagedSkill(deps, VAULT, "/tmp/staged-only.md", "# Staged\n", {
+      checksum: fakeChecksum,
+      now: fixedNow,
+    });
+
+    const scanned = await scanAllSkills(deps, VAULT);
+    expect(scanned.find((s) => s.name === "staged-only")).toBeUndefined();
+
+    const effective = await resolveEffectiveSkills(deps, VAULT, "dipu");
+    expect(effective.find((s) => s.name === "staged-only")).toBeUndefined();
+
+    const issues = await validateSkills(deps, VAULT);
+    expect(issues.find((i) => i.path.includes("staged-only"))).toBeUndefined();
+  });
+
+  it("formatters render a list and a single show deterministically", () => {
+    const skills: StagedSkill[] = [
+      {
+        name: "apple",
+        description: "an apple",
+        source: "/tmp/apple.md",
+        importedAt: "2026-07-19T12:00:00.000Z",
+        checksum: "abc123",
+        staged: true,
+        body: "# Apple\n",
+        path: "skill-candidates/imports/apple.md",
+      },
+    ];
+    const list = formatStagedSkillList(skills);
+    expect(list).toContain("apple");
+    expect(list).toContain("/tmp/apple.md");
+    expect(list).toContain("abc123");
+
+    const shown = formatStagedSkillShow(skills[0]!);
+    expect(shown).toContain("Name: apple");
+    expect(shown).toContain("Path: skill-candidates/imports/apple.md");
+    expect(shown).toContain("Source: /tmp/apple.md");
+    expect(shown).toContain("Staged: true");
+    expect(shown).toContain("# Apple");
   });
 });

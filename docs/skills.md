@@ -82,3 +82,31 @@ Agents can belong to groups that share a skill set. Skills load in this preceden
 3. **Agent-specific** (`team/<agent>/skills/`) - overrides everything by name.
 
 This lets a `developers` group share a TDD workflow skill pack without duplicating it under every developer agent. See [agent groups and fallback](agent-groups.md) for group configuration and fallback policy.
+
+## Staged imports (inactive)
+
+External skills can be imported for review without making them active:
+
+```bash
+piren skill import ./external-skill.md --staged [--name <slug>] [--force]
+piren skill staged list
+piren skill staged show <name>
+```
+
+Staged imports land in a dedicated inactive review area:
+
+```text
+skill-candidates/imports/<name>.md
+```
+
+This area is **never** scanned by the active skill loader or `piren skill list`/`validate`. A staged skill is therefore not injected into agent context, not executed, and not discovered until it is explicitly moved into an active scope. Promotion and removal are a separate, later slice; today there is no command that activates a staged import.
+
+On import, Piren:
+
+- requires a local `.md` source file (no URL or remote fetching),
+- derives the staged name from the source filename stem, or uses an explicit `--name <slug>` (lowercase letters, numbers, dashes, underscores),
+- normalizes the document to OKF `type: Skill` frontmatter while preserving the body,
+- records provenance in the frontmatter: `source` (the local path given), `imported_at` (ISO timestamp), and `checksum` (SHA-256 of the original source content),
+- refuses to overwrite an existing staged skill of the same name unless `--force` is passed.
+
+Active-skill precedence is unchanged: shared, then group, then agent-specific. Staged imports do not participate in that precedence at all.
