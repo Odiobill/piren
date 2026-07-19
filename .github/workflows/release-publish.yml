@@ -44,10 +44,10 @@ jobs:
       - name: Checkout tag source
         uses: actions/checkout@v4
 
-      - name: Setup Node 22 with npm lockfile cache
+      - name: Setup Node 22.14.0 (trusted-publishing floor) with npm lockfile cache
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.14.0"
           cache: "npm"
 
       - name: Install dependencies from the repository lockfile
@@ -144,10 +144,26 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Setup Node 22
+      - name: Setup Node 22.14.0 (trusted-publishing floor)
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.14.0"
+
+      # npm trusted publishing requires npm CLI >=11.5.1. Node 22.14.0 bundles an
+      # older npm, and jobs are isolated (verify's npm is not shared here), so
+      # publish installs the required npm itself. No token, registry-url, or
+      # .npmrc is involved; this is a toolchain self-upgrade, not a package
+      # dependency. verify needs only the Node floor (its ci/pack/clean-install
+      # run on the bundled npm), so npm is not standardized across both jobs.
+      - name: Install npm CLI >=11.5.1 (trusted publishing)
+        run: npm install -g npm@11.5.1
+
+      # Fail-closed toolchain preflight: report versions and abort before the
+      # provenance publish if either Node or npm is below the official floor.
+      - name: Trusted-publishing toolchain preflight (Node >=22.14.0, npm >=11.5.1)
+        run: |
+          set -euo pipefail
+          node -e 'const cp=require("child_process");const P=s=>s.split(".").map(n=>parseInt(n,10)||0);const G=(a,b)=>{const x=P(a),y=P(b);for(let i=0;i<3;i++){if((x[i]||0)>(y[i]||0))return 1;if((x[i]||0)<(y[i]||0))return -1;}return 0;};const nv=process.versions.node;const mv=cp.execSync("npm -v").toString().trim();console.log("node "+nv);console.log("npm "+mv);let ok=true;if(G(nv,"22.14.0")<0){console.error("FAIL: node "+nv+" is below the trusted-publishing floor 22.14.0");ok=false;}if(G(mv,"11.5.1")<0){console.error("FAIL: npm "+mv+" is below the trusted-publishing floor 11.5.1");ok=false;}if(!ok)process.exit(1);'
 
       - name: Download the verified tarball
         uses: actions/download-artifact@v4

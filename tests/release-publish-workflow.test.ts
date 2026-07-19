@@ -39,6 +39,7 @@ interface Step {
   name?: string;
   uses?: string;
   run?: string;
+  with?: Record<string, string>;
 }
 interface Job {
   name?: string;
@@ -69,6 +70,34 @@ function runText(job: Job | undefined): string {
 
 function usesList(job: Job | undefined): string[] {
   return (job?.steps ?? []).filter((s) => s.uses).map((s) => s.uses as string);
+}
+
+function setupNodeStep(job: Job | undefined): Step | undefined {
+  return (job?.steps ?? []).find((s) => s.uses?.startsWith("actions/setup-node"));
+}
+
+function nodeVersion(job: Job | undefined): string | undefined {
+  return setupNodeStep(job)?.with?.["node-version"];
+}
+
+function npmInstallVersion(job: Job | undefined): string | undefined {
+  const m = runText(job).match(/npm install(?:\s+--global|\s+-g)?\s+npm@([0-9][^\s"'@]*)/);
+  return m?.[1];
+}
+
+function stepIndex(job: Job | undefined, pred: (s: Step) => boolean): number {
+  return (job?.steps ?? []).findIndex(pred);
+}
+
+/** Pure numeric semver >= comparison over the first three components. */
+function semverGte(a: string, b: string): boolean {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i += 1) {
+    if ((pa[i] ?? 0) > (pb[i] ?? 0)) return true;
+    if ((pa[i] ?? 0) < (pb[i] ?? 0)) return false;
+  }
+  return true;
 }
 
 describe("ADR-0033 P1: registry publication workflow", () => {
@@ -200,6 +229,50 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(verifyIdx).toBeGreaterThan(-1);
       expect(publishIdx).toBeGreaterThan(-1);
       expect(verifyIdx).toBeLessThan(publishIdx);
+    });
+  });
+
+  describe("trusted-publishing toolchain floor (P1b)", () => {
+    it("both jobs pin a Node version satisfying the >=22.14.0 floor", () => {
+      const verifyNode = nodeVersion(wf.jobs?.verify);
+      const publishNode = nodeVersion(wf.jobs?.publish);
+      expect(verifyNode).toBeDefined();
+      expect(publishNode).toBeDefined();
+      expect(semverGte(verifyNode!, "22.14.0")).toBe(true);
+      expect(semverGte(publishNode!, "22.14.0")).toBe(true);
+      // Not an ambiguous bare major ("22" alone does not express the floor).
+      expect(verifyNode).not.toBe("22");
+      expect(publishNode).not.toBe("22");
+    });
+
+    it("the publish job installs an npm CLI satisfying >=11.5.1", () => {
+      const v = npmInstallVersion(wf.jobs?.publish);
+      expect(v).toBeDefined();
+      expect(semverGte(v!, "11.5.1")).toBe(true);
+      // verify does not need the provenance npm; it must not install it.
+      expect(npmInstallVersion(wf.jobs?.verify)).toBeUndefined();
+    });
+
+    it("the publish job has a fail-closed Node/npm version preflight before npm publish", () => {
+      const publish = wf.jobs?.publish;
+      const preflightIdx = stepIndex(
+        publish,
+        (s) => /22\.14\.0/.test(s.run ?? "") && /11\.5\.1/.test(s.run ?? ""),
+      );
+      const npmPublishIdx = stepIndex(publish, (s) => /\bnpm publish\b/.test(s.run ?? ""));
+      expect(preflightIdx).toBeGreaterThanOrEqual(0);
+      expect(npmPublishIdx).toBeGreaterThan(preflightIdx);
+      // Fail-closed: the preflight exits non-zero on a below-floor toolchain.
+      const preflightRun = publish?.steps?.[preflightIdx]?.run ?? "";
+      expect(preflightRun).toMatch(/process\.exit\(1\)|exit 1/);
+    });
+
+    it("the npm install adds no token, registry-url, or auth path", () => {
+      const t = runText(wf.jobs?.publish);
+      expect(t).not.toMatch(/registry-url/i);
+      expect(t).not.toContain("NODE_AUTH_TOKEN");
+      expect(t).not.toContain("_authToken");
+      expect(t).not.toContain("secrets.");
     });
   });
 
