@@ -227,7 +227,7 @@ Implemented CLI:
 - `piren task <list|send|show|claim|complete|cancel> [args] [--agent <agent>] [--body <vault-file>] [--result <vault-file>] [--priority normal|high|urgent] [--device <id>]` (human-facing inbox task CLI over the existing one-file-per-task inbox primitives; reuses `createInboxTask`/`listInboxTasks`/`claimInboxTask`/`updateInboxTaskStatus`; default sender `from: steward`; no polling, no scheduler changes, no Web UI, no new task-file schema)
 - `piren clean`
 - `piren version`
-- `piren update` (runs `npm install -g --install-links github:Odiobill/piren`)
+- `piren update` (runs `npm install -g @odiobill/piren`; refuses a major-version jump unless `--yes`)
 - `piren -h|--help` and `piren <command> --help`
 
 Implemented extension command:

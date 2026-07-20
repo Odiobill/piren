@@ -56,12 +56,23 @@ Cron runs only through opt-in worker mode. Default interactive sessions do not p
 
 ## Install artifact policy
 
-GitHub installs use the committed `dist/` release artifacts and do not compile
-TypeScript on the target machine. On npm 11, install GitHub sources with
-`--install-links` so the global bin points at a copied package instead of npm's
-temporary git cache. `npm pack` runs the `prepack` build before creating a
-tarball. If `dist/` is missing after install, the source or tarball being
-installed is incomplete. Run `npm run clean-install:check` before release.
+The normal operator install is the scoped npm registry package
+`npm install -g @odiobill/piren`. Published versions are immutable, and a
+version-pinned install (`npm install -g @odiobill/piren@<version>`) is
+reproducible. npm signs published packages; releases from v0.1.4 onward are
+published with npm provenance through GitHub Actions OIDC. Treat the current
+`0.1.3` registry artifact as the allowed one-time manual bootstrap: it may lack
+OIDC provenance, so do not assume a provenance attestation for it. Verify a
+release artifact's integrity and provenance before trusting it in production.
+
+GitHub / local-tarball installs are contributor, emergency, or offline paths,
+not the normal operator install. They use the committed `dist/` release
+artifacts and do not compile TypeScript on the target machine. On npm 11,
+install GitHub sources with `--install-links` so the global bin points at a
+copied package instead of npm's temporary git cache. `npm pack` runs the
+`prepack` build before creating a tarball. If `dist/` is missing after install,
+the source or tarball being installed is incomplete. Run
+`npm run clean-install:check` before release.
 
 ## Current limitations
 

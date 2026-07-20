@@ -19,7 +19,7 @@ Pi runtime policy: Piren requires a `pi` binary already available on `PATH`. If 
 ## Five-minute quickstart
 
 ```bash
-npm install -g --install-links github:Odiobill/piren
+npm install -g @odiobill/piren
 curl -fsSL https://pi.dev/install.sh | sh   # if pi is not already installed
 pi                                           # inside Pi: /login, then /quit
 piren setup                                  # create the Piren vault + first agent
@@ -41,12 +41,14 @@ piren --vault-root /tmp/piren-vault --agent piren gateway
 # open http://127.0.0.1:7317/
 ```
 
-For a global install from this repository:
+Install or update the stable registry release:
 
 ```bash
-npm install -g --install-links github:Odiobill/piren
+npm install -g @odiobill/piren
 piren status
 ```
+
+Contributor, emergency, or offline installs from GitHub or a local tarball are documented in [Getting started](docs/getting-started.md) and [Operations](docs/operations.md).
 
 ## Feature overview
 
@@ -121,6 +123,8 @@ Update an existing global install with:
 ```bash
 piren update
 ```
+
+`piren update` installs the latest `@odiobill/piren` release from the npm registry. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`), never prompts interactively, and has no automatic rollback — if `npm install` fails it reports the error and exits non-zero.
 
 Known limitations:
 

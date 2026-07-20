@@ -31,7 +31,7 @@ On a clean machine or container:
 Example from a global install:
 
 ```bash
-npm install -g --install-links github:Odiobill/piren
+npm install -g @odiobill/piren
 piren init --vault-root /tmp/piren-vault
 piren setup --apply --vault-root /tmp/piren-vault --agent piren
 piren setup --apply --vault-root /tmp/piren-vault --agent piren --provider anthropic --model claude-sonnet-4-6 --thinking medium
@@ -45,7 +45,7 @@ piren status
 piren update
 ```
 
-`piren update` runs `npm install -g --install-links github:Odiobill/piren`, then prints the command output and exits non-zero if npm fails. Use it when a device already has a working global `piren` binary and should pull the latest `origin/main` release artifacts.
+`piren update` resolves the latest `@odiobill/piren` release from the npm registry and runs `npm install -g @odiobill/piren`. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`), never prompts interactively, and has no automatic rollback: if `npm install` fails it reports the error and exits non-zero without changing your install.
 
 ## Automated clean-install validation
 
@@ -80,7 +80,7 @@ Because the default path packs the local source, it does not depend on remote
 state and is not blocked by npm `EALLOWGIT` policies. GitHub/explicit-spec
 installs remain available as an explicit escape hatch.
 
-### GitHub installs and build artifacts
+### Contributor / emergency: GitHub installs and build artifacts
 
 Piren does not build TypeScript on the target machine during `github:`
 installation. The repository carries committed `dist/` release artifacts, so
@@ -92,15 +92,21 @@ If a clean-install check reports missing `dist/` files, the GitHub source or
 tarball being installed did not include the release artifacts. Rebuild and
 commit `dist/`, or install from a freshly generated tarball.
 
-## Global install smoke
+## Contributor / emergency: global install smoke
 
 ```bash
-npm install -g --install-links github:Odiobill/piren
+npm install -g @odiobill/piren
 piren --version || true
 piren status
 ```
 
-Piren's package uses committed `dist` artifacts for git installs, so `npm install -g --install-links github:Odiobill/piren` does not need to compile TypeScript on the target machine. `--install-links` avoids npm 11 leaving a global bin symlink that points into the temporary git cache. `npm run clean-install:check` automates the full verification described above.
+For contributor, emergency, or offline verification from GitHub instead of the registry:
+
+```bash
+npm install -g --install-links github:Odiobill/piren   # contributor/emergency; needs git-dependency support
+```
+
+Piren's package uses committed `dist` artifacts for git installs, so that GitHub command does not need to compile TypeScript on the target machine. `--install-links` avoids npm 11 leaving a global bin symlink that points into the temporary git cache. `npm run clean-install:check` automates the full verification described above.
 
 ## Running long-lived transports
 
@@ -143,7 +149,13 @@ piren clean --force
 Then uninstall the package if installed globally:
 
 ```bash
-npm uninstall -g piren
+npm uninstall -g @odiobill/piren
+```
+
+Legacy unscoped cleanup: if you installed Piren from GitHub before it became the scoped `@odiobill/piren` package, the orphaned unscoped global entry can be removed separately as a one-time manual migration step (never done automatically by `piren update`):
+
+```bash
+npm uninstall -g piren   # legacy migration only; only for old unscoped GitHub installs
 ```
 
 `piren clean` targets local Piren state, not the vault.

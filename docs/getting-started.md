@@ -12,12 +12,10 @@ This guide gets Piren running from source with a disposable vault.
 ## Install Piren
 
 ```bash
-npm install -g --install-links github:Odiobill/piren
+npm install -g @odiobill/piren
 ```
 
-`--install-links` is required for reliable npm 11 GitHub installs: it makes npm
-copy the package into the global prefix instead of leaving the `piren` command
-pointing into npm's temporary Git cache.
+This installs the current stable release from the npm registry `latest` channel. The executable is `piren`; no `--install-links` flag is needed for registry installs.
 
 To update an existing global install later:
 
@@ -25,8 +23,18 @@ To update an existing global install later:
 piren update
 ```
 
-This runs the same GitHub install command internally:
-`npm install -g --install-links github:Odiobill/piren`.
+`piren update` installs the latest `@odiobill/piren` release from the npm registry. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`), never prompts interactively, and has no automatic rollback.
+
+### Contributor / emergency install
+
+GitHub and local-tarball installs are not the normal operator path; use them only for contributor workflows, offline or emergency installs, or clean-install verification:
+
+```bash
+npm install -g --install-links github:Odiobill/piren   # contributor/emergency; needs git-dependency support
+npm install -g /path/to/odiobill-piren-<version>.tgz   # local packed tarball
+```
+
+`--install-links` is required only for npm 11 GitHub/git-dependency installs: it makes npm copy the package into the global prefix instead of leaving the `piren` command pointing into npm's temporary Git cache.
 
 ## Configure Pi
 
