@@ -49,16 +49,29 @@ describe("buildUpdateCommand", () => {
 
 describe("parseSemver (strict, no dependency)", () => {
   it("parses a normal release", () => {
-    expect(parseSemver("0.1.3")).toEqual({ major: 0, minor: 1, patch: 3, prerelease: "", build: "" });
-    expect(parseSemver("1.2.3")).toEqual({ major: 1, minor: 2, patch: 3, prerelease: "", build: "" });
-    expect(parseSemver("10.20.30")?.major).toBe(10);
+    expect(parseSemver("0.1.3")).toEqual({ major: 0n, minor: 1n, patch: 3n, prerelease: "", build: "" });
+    expect(parseSemver("1.2.3")).toEqual({ major: 1n, minor: 2n, patch: 3n, prerelease: "", build: "" });
+    expect(parseSemver("10.20.30")?.major).toBe(10n);
   });
 
   it("parses a valid prerelease and build suffix", () => {
     const v = parseSemver("1.2.3-rc.1+build.5");
-    expect(v).toEqual({ major: 1, minor: 2, patch: 3, prerelease: "rc.1", build: "build.5" });
+    expect(v).toEqual({ major: 1n, minor: 2n, patch: 3n, prerelease: "rc.1", build: "build.5" });
     expect(parseSemver("1.0.0-alpha")?.prerelease).toBe("alpha");
     expect(parseSemver("1.0.0+exp.sha.5114f85")?.build).toBe("exp.sha.5114f85");
+  });
+
+  it("preserves major identifiers beyond Number.MAX_SAFE_INTEGER exactly (no lossy Number)", () => {
+    // These two distinct majors collapse to the same JS Number.
+    expect(Number("9007199254740992")).toBe(Number("9007199254740993"));
+    const a = parseSemver("9007199254740992.0.0");
+    const b = parseSemver("9007199254740993.0.0");
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a?.major).toBe(9007199254740992n);
+    expect(b?.major).toBe(9007199254740993n);
+    expect(a?.major).not.toBe(b?.major);
+    expect((b?.major ?? 0n) > (a?.major ?? 0n)).toBe(true);
   });
 
   it("rejects malformed versions", () => {
@@ -116,6 +129,26 @@ describe("planUpdate", () => {
     const plan = planUpdate({ currentVersion: "0.1.3", targetVersion: "garbage", allowMajor: false });
     expect(plan.action).toBe("version-error");
     if (plan.action === "version-error") expect(plan.field).toBe("target");
+  });
+
+  it("refuses a higher major beyond Number.MAX_SAFE_INTEGER without --yes", () => {
+    // These two distinct majors collapse to the same JS Number; the comparator
+    // must still detect the increase and refuse without --yes.
+    const plan = planUpdate({
+      currentVersion: "9007199254740992.0.0",
+      targetVersion: "9007199254740993.0.0",
+      allowMajor: false,
+    });
+    expect(plan.action).toBe("refuse-major");
+  });
+
+  it("allows a higher major beyond Number.MAX_SAFE_INTEGER with --yes", () => {
+    const plan = planUpdate({
+      currentVersion: "9007199254740992.0.0",
+      targetVersion: "9007199254740993.0.0",
+      allowMajor: true,
+    });
+    expect(plan.action).toBe("install");
   });
 });
 
@@ -199,6 +232,27 @@ describe("runPirenUpdate", () => {
       { match: isInstall("@odiobill/piren"), result: { exitCode: 0, stdout: "added\n", stderr: "" } },
     ]);
     const outcome = await runPirenUpdate(deps, { currentVersion: "0.1.3", allowMajor: true });
+    expect(outcome.kind).toBe("installed");
+    expect(deps.calls.some((c) => c.args[0] === "install")).toBe(true);
+  });
+
+  it("refuses an unbounded-major jump beyond MAX_SAFE_INTEGER without --yes and installs nothing", async () => {
+    const deps = makeDeps([
+      { match: isView("@odiobill/piren"), result: { exitCode: 0, stdout: "9007199254740993.0.0\n", stderr: "" } },
+      { match: isInstall("@odiobill/piren"), result: { exitCode: 0, stdout: "", stderr: "" } },
+    ]);
+    const outcome = await runPirenUpdate(deps, { currentVersion: "9007199254740992.0.0", allowMajor: false });
+    expect(outcome.kind).toBe("refused-major");
+    if (outcome.kind === "refused-major") expect(outcome.targetVersion).toBe("9007199254740993.0.0");
+    expect(deps.calls.some((c) => c.args[0] === "install")).toBe(false);
+  });
+
+  it("allows an unbounded-major jump beyond MAX_SAFE_INTEGER with --yes and installs", async () => {
+    const deps = makeDeps([
+      { match: isView("@odiobill/piren"), result: { exitCode: 0, stdout: "9007199254740993.0.0\n", stderr: "" } },
+      { match: isInstall("@odiobill/piren"), result: { exitCode: 0, stdout: "added\n", stderr: "" } },
+    ]);
+    const outcome = await runPirenUpdate(deps, { currentVersion: "9007199254740992.0.0", allowMajor: true });
     expect(outcome.kind).toBe("installed");
     expect(deps.calls.some((c) => c.args[0] === "install")).toBe(true);
   });

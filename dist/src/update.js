@@ -37,16 +37,19 @@ const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\
 /**
  * Parse a strict SemVer string. Returns `null` for any malformed version
  * (wrong arity, leading zeros, non-numeric components, leading `v`, surrounding
- * whitespace, malformed prerelease/build). Does not mutate the input.
+ * whitespace, malformed prerelease/build). Numeric identifiers are parsed as
+ * `bigint` so arbitrary valid SemVer majors/minors/patches compare exactly —
+ * never lossy JS `Number` (which collapses above `Number.MAX_SAFE_INTEGER`).
+ * Does not mutate the input.
  */
 export function parseSemver(version) {
     const match = SEMVER_RE.exec(version);
     if (!match)
         return null;
     return {
-        major: Number(match[1] ?? "0"),
-        minor: Number(match[2] ?? "0"),
-        patch: Number(match[3] ?? "0"),
+        major: BigInt(match[1] ?? "0"),
+        minor: BigInt(match[2] ?? "0"),
+        patch: BigInt(match[3] ?? "0"),
         prerelease: match[4] ?? "",
         build: match[5] ?? "",
     };

@@ -39,9 +39,9 @@ export declare const DEFAULT_UPDATE_SPEC = "@odiobill/piren";
  */
 export declare function buildUpdateCommand(spec?: string): UpdateCommand;
 export interface Semver {
-    major: number;
-    minor: number;
-    patch: number;
+    major: bigint;
+    minor: bigint;
+    patch: bigint;
     /** Prerelease identifiers without the leading `-`, or "" when absent. */
     prerelease: string;
     /** Build metadata without the leading `+`, or "" when absent. */
@@ -50,7 +50,10 @@ export interface Semver {
 /**
  * Parse a strict SemVer string. Returns `null` for any malformed version
  * (wrong arity, leading zeros, non-numeric components, leading `v`, surrounding
- * whitespace, malformed prerelease/build). Does not mutate the input.
+ * whitespace, malformed prerelease/build). Numeric identifiers are parsed as
+ * `bigint` so arbitrary valid SemVer majors/minors/patches compare exactly —
+ * never lossy JS `Number` (which collapses above `Number.MAX_SAFE_INTEGER`).
+ * Does not mutate the input.
  */
 export declare function parseSemver(version: string): Semver | null;
 export type UpdatePlan = {
