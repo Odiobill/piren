@@ -138,6 +138,14 @@ describe("P4b: public registry-install/update copy contract", () => {
     }
   });
 
+  it("piren update operations guidance guarantees no automatic rollback, not a no-state-change guarantee", () => {
+    // npm global install is not transactional: a failed install may already have
+    // changed state. P4a only guarantees no automatic rollback, so the public
+    // copy must not claim the install is left unchanged.
+    expect(OPERATIONS.toLowerCase()).toContain("automatic rollback");
+    expect(OPERATIONS).not.toContain("without changing your install");
+  });
+
   it("keeps the Pi-on-PATH / separate-runtime boundary visible", () => {
     expect(README.toLowerCase()).toContain("path");
     expect(GETTING_STARTED.toLowerCase()).toContain("path");

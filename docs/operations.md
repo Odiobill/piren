@@ -45,7 +45,7 @@ piren status
 piren update
 ```
 
-`piren update` resolves the latest `@odiobill/piren` release from the npm registry and runs `npm install -g @odiobill/piren`. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`), never prompts interactively, and has no automatic rollback: if `npm install` fails it reports the error and exits non-zero without changing your install.
+`piren update` resolves the latest `@odiobill/piren` release from the npm registry and runs `npm install -g @odiobill/piren`. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`), never prompts interactively, and has no automatic rollback. If `npm install` fails it reports the error and exits non-zero; npm global installation is not transactional, so state may already have changed.
 
 ## Automated clean-install validation
 
