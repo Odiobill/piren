@@ -246,7 +246,7 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       const diagnose = wf.jobs?.diagnose_oidc_exchange;
       const t = runText(diagnose);
       expect(diagnose?.if).toBe("github.event_name == 'workflow_dispatch'");
-      expect(t).toContain("/-/npm/v1/oidc/token/exchange/package/%40odiobill%2Fpiren");
+      expect(t).toContain("/-/npm/v1/oidc/token/exchange/package/@odiobill%2fpiren");
       expect(t).toContain("npm:registry.npmjs.org");
       expect(t).not.toMatch(/npm\s+publish/);
       expect(t).not.toMatch(/npm\s+install/);

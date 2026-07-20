@@ -233,7 +233,7 @@ jobs:
           }
 
           const exchangeResponse = await fetch(
-            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/%40odiobill%2Fpiren",
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@odiobill%2fpiren",
             {
               method: "POST",
               headers: {
