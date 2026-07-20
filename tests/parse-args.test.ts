@@ -145,6 +145,12 @@ describe("parseArgs: preserved behavior", () => {
     expect(KNOWN_COMMANDS).toContain("update");
   });
 
+  it("recognizes --yes for update (major-version opt-in)", () => {
+    expect(parseArgs(["update", "--yes"]).yes).toBe(true);
+    expect(parseArgs(["update", "-y"]).yes).toBe(true);
+    expect(parseArgs(["update"]).yes).toBe(false);
+  });
+
   it("sets help=true for --help anywhere before the -- passthrough", () => {
     expect(parseArgs(["--help"]).help).toBe(true);
     expect(parseArgs(["gateway", "--help"]).help).toBe(true);

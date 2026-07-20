@@ -15,7 +15,7 @@ import { PiRpcClient } from "./gateway-rpc.js";
 import { askAgent } from "./ask.js";
 import { cleanPiren, formatCleanReport } from "./clean.js";
 import { readVersion } from "./version.js";
-import { executePirenUpdate, formatUpdateReport } from "./update.js";
+import { formatRunPirenUpdate, runPirenUpdate } from "./update.js";
 import { validateAgentName, agentDirPath, executeAddAgent, executeRemoveAgent, executeCloneAgent, } from "./agent-manage.js";
 import { resolveGatewayToken, assertAuthGate, isLocalhostBind, defaultTokenFilePath } from "./gateway-auth.js";
 import { formatHelp, formatCommandHelp, isHelpRequest } from "./help.js";
@@ -445,9 +445,12 @@ try {
         console.log(readVersion(packageJsonPath));
     }
     else if (command === "update") {
-        const report = await executePirenUpdate({ runCommand: runCommandWithArgs });
-        console.log(formatUpdateReport(report));
-        if (!report.ok)
+        const packageJsonPath = join(thisDir, "..", "..", "package.json");
+        const currentVersion = readVersion(packageJsonPath);
+        const outcome = await runPirenUpdate({ runCommand: runCommandWithArgs }, { currentVersion, allowMajor: parsed.yes });
+        console.log(formatRunPirenUpdate(outcome));
+        const ok = outcome.kind === "installed" && outcome.report.ok;
+        if (!ok)
             process.exit(1);
     }
     else if (command === "scheduler") {

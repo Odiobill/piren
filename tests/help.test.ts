@@ -31,9 +31,13 @@ describe("help: top-level help", () => {
     expect(formatHelp()).toContain("version");
   });
 
-  it("includes the update command", () => {
+  it("includes the update command describing registry latest and the --yes opt-in", () => {
     expect(formatHelp()).toContain("update");
-    expect(formatCommandHelp("update")).toContain("github:Odiobill/piren");
+    const text = formatCommandHelp("update");
+    expect(text).toContain("@odiobill/piren");
+    expect(text).toContain("--yes");
+    expect(text).not.toContain("github:Odiobill/piren");
+    expect(text).not.toContain("--install-links");
   });
 
   it("mentions global flags", () => {

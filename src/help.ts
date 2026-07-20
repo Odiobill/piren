@@ -104,8 +104,9 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
   },
   {
     command: "update",
-    short: "Update the global Piren install from GitHub.",
-    example: "piren update  # runs npm install -g --install-links github:Odiobill/piren",
+    short: "Update the global Piren install from the npm registry latest channel.",
+    flags: ["--yes"],
+    example: "piren update  # runs npm install -g @odiobill/piren (--yes allows a major version update)",
   },
   {
     command: "package",
