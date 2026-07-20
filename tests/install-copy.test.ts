@@ -93,6 +93,10 @@ describe("P4b: public registry-install/update copy contract", () => {
     expect(siteRegistryCount).toBeGreaterThanOrEqual(2);
   });
 
+  it("landing page links to the canonical npm package", () => {
+    expect(SITE).toContain("https://www.npmjs.com/package/@odiobill/piren");
+  });
+
   it("pure operator entry surfaces (README, landing page) do not present the GitHub command as default", () => {
     for (const [name, content] of [
       ["README.md", README],

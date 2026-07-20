@@ -5,9 +5,21 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.3] - unreleased
+## [0.1.4] - unreleased
 
-Scoped replacement one-time manual npm bootstrap under ADR-0037 after the unscoped `piren` name was rejected by npm's similarity policy. The canonical npm identity is now `@odiobill/piren` (the executable command stays `piren`). This release's approved publication process is a single, interactive, 2FA-protected manual npm bootstrap; it may lack OIDC provenance; all subsequent releases use the existing OIDC trusted-publishing workflow. The documented operator install path remains unchanged until post-publication verification.
+Registry-first public/operator cutover (ADR-0033). This is a source-only `0.1.4` release candidate on `main`; it is **not yet published** to npm, has no provenance attestation, and is not verified on the registry. It is staged for a future OIDC publication.
+
+### Changed
+
+- **Registry-canonical install (P4b):** `npm install -g @odiobill/piren` is the primary stable install across README, docs/getting-started, docs/operations, and both site CTAs. GitHub/local/tarball installs are retained only as explicitly labelled contributor/emergency paths.
+- **`piren update` registry migration (P4a):** default `piren update` now installs the scoped registry `latest` package (`npm install -g @odiobill/piren`) instead of GitHub `main`, with no `--install-links`. It resolves the target via `npm view @odiobill/piren version` and refuses a major-version jump unless the operator passes `--yes` (`piren update --yes`); same/minor/patch updates install normally; there is no interactive prompt and no automatic rollback (npm global install is not transactional).
+- **No-silent-major safeguard:** the new strict no-dependency SemVer parser (`parseSemver`) compares major identifiers exactly via `bigint`, so valid SemVer majors beyond `Number.MAX_SAFE_INTEGER` cannot round together and bypass the safeguard.
+- **Uninstall:** standardized to `npm uninstall -g @odiobill/piren`; the unscoped `npm uninstall -g piren` is documented only as a labelled legacy migration step for old GitHub installs.
+- **Landing page:** both install CTAs use the registry command; the footer now links to the canonical npm package and uses version-neutral release wording.
+
+## [0.1.3] - 2026-07-20
+
+Scoped one-time manual npm bootstrap under ADR-0037 after the unscoped `piren` name was rejected by npm's similarity policy. The canonical npm identity is `@odiobill/piren` (the executable command stays `piren`). Published to npm `latest` via a single, interactive, 2FA-protected manual bootstrap; it may lack OIDC provenance (no provenance attestation is claimed for this version). All subsequent releases use the existing OIDC trusted-publishing workflow.
 
 ### Added
 
