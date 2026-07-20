@@ -2,10 +2,12 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { doctorPiren, formatDoctorReport } from "../src/doctor.js";
+import { doctorPiren, formatDoctorReport, type PiRuntimeCheck } from "../src/doctor.js";
 import { initVault } from "../src/init.js";
 
 let root: string;
+
+const localPiRuntime = async (): Promise<PiRuntimeCheck> => ({ source: "path", version: "0.80.2" });
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "piren-okf-doctor-"));
@@ -24,7 +26,7 @@ describe("piren doctor OKF conformance", () => {
     const configPath = join(root, "config.yml");
     await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     const okfCheck = report.checks.find((c) => c.id === "vault-okf-conformance");
     expect(okfCheck).toBeDefined();
@@ -42,7 +44,7 @@ describe("piren doctor OKF conformance", () => {
     const configPath = join(root, "config.yml");
     await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     const okfCheck = report.checks.find((c) => c.id === "vault-okf-conformance");
     expect(okfCheck?.status).toBe("warn");
@@ -55,7 +57,7 @@ describe("piren doctor OKF conformance", () => {
     const configPath = join(root, "config.yml");
     await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
     const output = formatDoctorReport(report);
 
     expect(output).toContain("vault-okf-conformance");
@@ -65,7 +67,7 @@ describe("piren doctor OKF conformance", () => {
     const configPath = join(root, "config.yml");
     await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
 
-    const report = await doctorPiren({ cliAgent: "thor", cliVaultRoot: root, env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", cliVaultRoot: root, env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     // When vault resolution fails the okf check should not crash doctor; the
     // bootstrap-fail path returns early, so the check is simply absent or warn,

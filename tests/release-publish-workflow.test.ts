@@ -137,17 +137,19 @@ describe("ADR-0033 P1: registry publication workflow", () => {
     });
   });
 
-  describe("ADR-0035 bootstrap exception (P1c)", () => {
-    it("the publish job is skipped for exactly v0.1.1 (the one-time manual bootstrap tag)", () => {
-      expect(wf.jobs?.publish?.if).toBe("github.ref_name != 'v0.1.1'");
+  describe("ADR-0035/ADR-0036 bootstrap exception (P1c + P3c)", () => {
+    it("the publish job is skipped for both bootstrap tags v0.1.1 and v0.1.2", () => {
+      expect(wf.jobs?.publish?.if).toBe("github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2'");
     });
 
-    it("the guard skips only v0.1.1, not all v0.* or later tags", () => {
+    it("the guard skips only those two tags, not all v0.* or later tags", () => {
       const expr = wf.jobs?.publish?.if ?? "";
-      // Narrow equality against the exact bootstrap tag, not a v0.* glob.
+      // Narrow equality against the two exact bootstrap tags, not a v0.* glob.
       expect(expr).toContain("github.ref_name");
       expect(expr).toContain("!=");
       expect(expr).toContain("v0.1.1");
+      expect(expr).toContain("v0.1.2");
+      expect(expr).not.toContain("v0.1.3");
       expect(expr).not.toMatch(/v0\.\*|v\*/);
     });
 
@@ -340,9 +342,9 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 });
 
 describe("ADR-0033: release artifact and public-surface guards", () => {
-  it("package version is the 0.1.1 development release (P3a bump)", () => {
+  it("package version is the 0.1.2 development release (P3c replacement bump)", () => {
     const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
-    expect(pkg.version).toBe("0.1.1");
+    expect(pkg.version).toBe("0.1.2");
   });
 
   it("does not add a pi runtime dependency to the package", () => {

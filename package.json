@@ -1,6 +1,6 @@
 {
   "name": "piren",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Piren: lightweight, local-first agent layer on top of Pi Coding Agent",
   "repository": {

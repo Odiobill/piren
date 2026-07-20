@@ -20,10 +20,10 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("ADR-0033 P3a: 0.1.1 release-preparation artifact", () => {
-  it("package.json version is 0.1.1", () => {
+describe("ADR-0036 P3c: 0.1.2 replacement release-preparation artifact", () => {
+  it("package.json version is 0.1.2", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
-    expect(pkg.version).toBe("0.1.1");
+    expect(pkg.version).toBe("0.1.2");
   });
 
   it("package.json declares canonical npm provenance repository metadata", () => {
@@ -41,46 +41,49 @@ describe("ADR-0033 P3a: 0.1.1 release-preparation artifact", () => {
     expect(pkg.private === undefined || pkg.private === false).toBe(true);
   });
 
-  it("readVersion reports 0.1.1 from the real package.json", () => {
-    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.1");
+  it("readVersion reports 0.1.2 from the real package.json", () => {
+    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.2");
   });
 
-  it("package-lock.json version agrees with package.json (0.1.1)", () => {
+  it("package-lock.json version agrees with package.json (0.1.2)", () => {
     const lock = JSON.parse(read("package-lock.json")) as {
       version?: string;
       packages?: Record<string, { version?: string }>;
     };
-    expect(lock.version).toBe("0.1.1");
-    expect(lock.packages?.[""]?.version).toBe("0.1.1");
+    expect(lock.version).toBe("0.1.2");
+    expect(lock.packages?.[""]?.version).toBe("0.1.2");
   });
 
-  it("CHANGELOG has a [0.1.1] entry dated for the intended tag", () => {
+  it("CHANGELOG has a pending [0.1.2] replacement entry (not dated as released)", () => {
     const cl = read("CHANGELOG.md");
-    expect(cl).toMatch(/## \[0\.1\.1\] - 2026-07-19/);
+    expect(cl).toMatch(/## \[0\.1\.2\]/);
+    expect(cl).not.toMatch(/## \[0\.1\.2\] - \d{4}-\d{2}-\d{2}/);
   });
 
-  it("the [0.1.1] entry describes the ADR-0035 bootstrap without claiming publication success", () => {
+  it("the [0.1.2] entry describes the ADR-0036 replacement bootstrap without claiming success", () => {
+    const cl = read("CHANGELOG.md");
+    const start = cl.indexOf("## [0.1.2]");
+    const end = cl.indexOf("## [0.1.1]");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const section = cl.slice(start, end);
+    expect(section).toMatch(/ADR-0036/);
+    expect(section).toMatch(/bootstrap/i);
+    expect(section).toMatch(/2FA/);
+    expect(section).toMatch(/provenance/i);
+    expect(section).not.toMatch(/npm install -g piren\b/);
+    expect(section).not.toMatch(/first registry artifact/i);
+    expect(section).not.toMatch(/\bpublished\b/i);
+  });
+
+  it("retains a compact [0.1.1] audit entry as an unpublished failed candidate", () => {
     const cl = read("CHANGELOG.md");
     const start = cl.indexOf("## [0.1.1]");
     const end = cl.indexOf("## [0.1.0]");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const section = cl.slice(start, end);
-    // Precise ADR-0035 process language: approved single interactive 2FA-protected bootstrap.
-    expect(section).toMatch(/ADR-0035/);
-    expect(section).toMatch(/bootstrap/i);
-    expect(section).toMatch(/2FA/);
-    // Acknowledges this bootstrap may lack OIDC provenance.
-    expect(section).toMatch(/provenance/i);
-    // Does not present a registry install command as already available.
-    expect(section).not.toMatch(/npm install -g piren\b/);
-    // Reject completed-state language: no "first registry artifact" or "published"
-    // outcome claim (pre-publication bootstrap, not an assertion that npm/latest/
-    // provenance already exists). Process words like publication/bootstrap are fine.
-    expect(section).not.toMatch(/first registry artifact/i);
-    expect(section).not.toMatch(/\bpublished\b/i);
-    // Does not state 0.1.1 itself is already published / on npm / on latest.
-    expect(section).not.toMatch(/0\.1\.1 (?:is |has been )published/i);
-    expect(section).not.toMatch(/0\.1\.1 (?:is |has been )published to (?:npm|latest)/i);
+    expect(section).toMatch(/unpublished/i);
+    expect(section).toMatch(/fail/i);
   });
 });

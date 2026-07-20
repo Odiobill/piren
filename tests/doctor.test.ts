@@ -89,7 +89,7 @@ describe("Piren doctor", () => {
     const configPath = join(root, "config.yml");
     await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     expect(report.ok).toBe(false);
     expect(report.checks).toContainEqual(expect.objectContaining({
@@ -100,7 +100,7 @@ describe("Piren doctor", () => {
   });
 
   it("formats report checks for CLI output", async () => {
-    const report = await doctorPiren({ cliAgentDir: join(root, "missing", "team", "thor"), env: {}, configPath: join(root, "missing-config.yml") });
+    const report = await doctorPiren({ cliAgentDir: join(root, "missing", "team", "thor"), env: {}, configPath: join(root, "missing-config.yml"), piRuntimeChecker: localPiRuntime });
 
     const output = formatDoctorReport(report);
 
@@ -114,7 +114,7 @@ describe("Piren doctor", () => {
     // vault_root set, but no allowed_agents --- any agent could run
     await writeFile(configPath, "vault_root: " + root + "\n");
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     expect(report.ok).toBe(true); // warn, not fail
     expect(report.checks).toEqual(expect.arrayContaining([
@@ -128,7 +128,7 @@ describe("Piren doctor", () => {
     // odin exists in allowed but not in vault team/
     await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "  - odin\n");
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     expect(report.ok).toBe(true); // warn, not fail
     expect(report.checks).toEqual(expect.arrayContaining([
@@ -143,7 +143,7 @@ describe("Piren doctor", () => {
     // thor in both lists — excluded wins for execution, but it's a config smell
     await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "  - odin\n" + "excluded_agents:\n" + "  - thor\n");
 
-    const report = await doctorPiren({ cliAgent: "odin", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "odin", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     expect(report.ok).toBe(true); // warn, not fail (odin is still runnable)
     expect(report.checks).toEqual(expect.arrayContaining([
@@ -157,7 +157,7 @@ describe("Piren doctor", () => {
     // "Bad Agent" has a space, "UPPER" has uppercase — both invalid
     await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "  - Bad Agent\n" + "  - UPPER\n");
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     expect(report.ok).toBe(true); // warn, not fail
     expect(report.checks).toEqual(expect.arrayContaining([
@@ -171,7 +171,7 @@ describe("Piren doctor", () => {
     await writeFile(configPath, "vault_root: " + root + "\n" + "allowed_agents:\n" + "  - thor\n" + "packages:\n" + '  - "@piren/web-search"\n');
     const fakeResolver = (name: string) => "/fake/node_modules/" + name + "/index.js";
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, packageResolver: fakeResolver });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, packageResolver: fakeResolver, piRuntimeChecker: localPiRuntime });
 
     expect(report.ok).toBe(true);
     expect(report.checks).toContainEqual(
@@ -188,7 +188,7 @@ describe("Piren doctor", () => {
       return "/fake/node_modules/" + name + "/index.js";
     };
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, packageResolver: fakeResolver });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, packageResolver: fakeResolver, piRuntimeChecker: localPiRuntime });
 
     expect(report.ok).toBe(true); // warn, not fail
     expect(report.checks).toContainEqual(
@@ -201,7 +201,7 @@ describe("Piren doctor", () => {
     const configPath = join(root, "config.yml");
     await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
 
-    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath });
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     expect(report.checks).not.toContainEqual(
       expect.objectContaining({ id: "packages" }),
@@ -375,5 +375,33 @@ describe("Piren doctor", () => {
     expect(membershipIdx).not.toBe(-1);
     expect(agentFilesIdx).not.toBe(-1);
     expect(membershipIdx).toBeLessThan(agentFilesIdx);
+  });
+
+  it("warning/OK doctor scenarios do not depend on host Pi (hermetic)", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    // Empty allowed_agents yields a policy-gap warning (ok, not fail).
+    await writeFile(configPath, `vault_root: ${root}\n`);
+
+    // No pi on PATH, but the injected checker makes the result deterministic and
+    // independent of the host (the CI runner has no pi during unit tests).
+    const report = await doctorPiren({ cliAgent: "thor", env: { PATH: "/var/empty" }, configPath, piRuntimeChecker: localPiRuntime });
+
+    expect(report.ok).toBe(true); // warn, not fail — holds with NO pi on PATH
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: "pi-runtime", status: "ok" }));
+  });
+
+  it("default pi-runtime check fails when PATH has no pi (CI no-Pi condition)", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, `vault_root: ${root}\nallowed_agents:\n  - thor\n`);
+
+    // No injected checker: the default checker consults PATH. With no pi
+    // resolvable (the CI unit-test condition), pi-runtime fails and doctor is
+    // not ok. This documents why non-Pi-discovery tests must inject a checker.
+    const report = await doctorPiren({ cliAgent: "thor", env: { PATH: "/var/empty" }, configPath });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks).toContainEqual(expect.objectContaining({ id: "pi-runtime", status: "fail" }));
   });
 });
