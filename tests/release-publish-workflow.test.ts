@@ -115,21 +115,23 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   });
 
   describe("trigger (tag-only)", () => {
-    it("runs on version-tag push only (no branch, no manual dispatch)", () => {
+    it("runs release jobs on version-tag pushes and permits a manual diagnostic only", () => {
       const blob = normalize(raw);
       expect(blob).toMatch(/\bon:/);
       expect(blob).toMatch(/\bpush\b/);
       expect(blob).toMatch(/\btags\b/);
       expect(blob).toMatch(/v\*+|v\[0-9\]/);
-      expect(blob).not.toMatch(/\bworkflow_dispatch\b/);
+      expect(blob).toMatch(/\bworkflow_dispatch\b/);
       expect(blob).not.toMatch(/\bbranches\b/);
+      expect(wf.jobs?.verify?.if).toBe("github.event_name == 'push'");
+      expect(wf.jobs?.publish?.if).toContain("github.event_name == 'push'");
     });
   });
 
   describe("two-job split", () => {
-    it("defines exactly verify and publish jobs, in that order", () => {
+    it("defines verify, publish, and a manual-only OIDC exchange diagnostic in that order", () => {
       const keys = Object.keys(wf.jobs ?? {});
-      expect(keys).toEqual(["verify", "publish"]);
+      expect(keys).toEqual(["verify", "publish", "diagnose_oidc_exchange"]);
     });
 
     it("publish depends on verify (steward approval happens after verification)", () => {
@@ -139,7 +141,7 @@ describe("ADR-0033 P1: registry publication workflow", () => {
 
   describe("ADR-0035/0036/0037 bootstrap exception (P1c + P3c + P3e)", () => {
     it("the publish job is skipped for the three manual-bootstrap tags v0.1.1, v0.1.2, v0.1.3", () => {
-      expect(wf.jobs?.publish?.if).toBe("github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3'");
+      expect(wf.jobs?.publish?.if).toBe("github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3'");
     });
 
     it("the guard skips only those three tags, not later tags", () => {
@@ -153,8 +155,8 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(expr).not.toMatch(/v0\.\*|v\*/);
     });
 
-    it("the verify job always runs (no skip guard)", () => {
-      expect(wf.jobs?.verify?.if).toBeUndefined();
+    it("the verify job runs only for a tag push, never a manual diagnostic", () => {
+      expect(wf.jobs?.verify?.if).toBe("github.event_name == 'push'");
     });
 
     it("normal later-tag publication still depends on verify", () => {
@@ -174,14 +176,16 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(p["id-token"]).not.toBe("write");
     });
 
-    it("publish job alone has contents: read and id-token: write", () => {
-      const p = asPermissions(wf.jobs?.publish?.permissions);
-      expect(p["contents"]).toBe("read");
-      expect(p["id-token"]).toBe("write");
+    it("publish and the manual diagnostic alone have contents: read and id-token: write", () => {
+      const publish = asPermissions(wf.jobs?.publish?.permissions);
+      const diagnose = asPermissions(wf.jobs?.diagnose_oidc_exchange?.permissions);
+      expect(publish).toEqual({ contents: "read", "id-token": "write" });
+      expect(diagnose).toEqual({ contents: "read", "id-token": "write" });
     });
 
-    it("only the publish job runs in the npm-production Environment", () => {
+    it("only the publish and manual diagnostic jobs run in the npm-production Environment", () => {
       expect(wf.jobs?.publish?.environment).toBe("npm-production");
+      expect(wf.jobs?.diagnose_oidc_exchange?.environment).toBe("npm-production");
       expect(wf.jobs?.verify?.environment).toBeUndefined();
     });
   });
@@ -234,6 +238,20 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       // Smoke and packed-tarball clean-install run AFTER the shim (Pi on PATH).
       expect(fakePiIdx).toBeLessThan(smokeIdx);
       expect(fakePiIdx).toBeLessThan(cleanInstallIdx);
+    });
+  });
+
+  describe("manual OIDC exchange diagnostic", () => {
+    it("can run only by manual dispatch and exchanges the npm-audience ID token without publishing or logging a token", () => {
+      const diagnose = wf.jobs?.diagnose_oidc_exchange;
+      const t = runText(diagnose);
+      expect(diagnose?.if).toBe("github.event_name == 'workflow_dispatch'");
+      expect(t).toContain("/-/npm/v1/oidc/token/exchange/package/%40odiobill%2Fpiren");
+      expect(t).toContain("npm:registry.npmjs.org");
+      expect(t).not.toMatch(/npm\s+publish/);
+      expect(t).not.toMatch(/npm\s+install/);
+      expect(t).not.toMatch(/console\.log\(.*token/);
+      expect(t).not.toMatch(/console\.log\(.*value/);
     });
   });
 

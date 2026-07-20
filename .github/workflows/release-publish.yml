@@ -12,17 +12,19 @@
 #     existing clean-install machinery (CI-only fake pi shim), then uploads it
 #     as a workflow artifact.
 #   - publish: needs verify, gated by the protected npm-production GitHub
-#     Environment (steward approval), and is the ONLY job with id-token: write.
-#     It downloads the verified tarball artifact and publishes that artifact
-#     with provenance to the stable latest dist-tag. It never rebuilds, repacks,
-#     or uses branch-tip/github source.
+#     Environment (steward approval). It downloads the verified tarball artifact
+#     and publishes that artifact with provenance to the stable latest dist-tag.
+#     It never rebuilds, repacks, or uses branch-tip/github source.
+#   - diagnose_oidc_exchange: manual-only, also gated by npm-production, and
+#     exchanges an npm-audience GitHub ID token under this workflow filename.
+#     It never publishes, installs npm packages, or logs a token.
 #
 # Hard boundaries (intentional):
 #   - Publishes ONLY from a release tag (v*), after tag/package version
 #     agreement. It uses no npm access token, no registry secret, and no
 #     .npmrc secret anywhere; auth is OIDC trusted publishing (configured in P2).
-#   - id-token: write is granted only to the publish job, and only after verify
-#     succeeds and a steward approves the npm-production Environment.
+#   - id-token: write is granted only to publish after verify, or to the
+#     manual-only non-publishing OIDC exchange diagnostic after approval.
 #   - Does not bundle or install Pi; the fake pi shim is CI-only and unshipped.
 name: Release publish
 
@@ -30,15 +32,18 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
-# Default minimal permissions for every job. The publish job alone widens to
-# id-token: write, and only after the verify job succeeds.
+# Default minimal permissions for every job. The publish job widens to
+# id-token: write only after verify succeeds; the manual diagnostic does so
+# only after its own npm-production approval.
 permissions:
   contents: read
 
 jobs:
   verify:
     name: Verify release artifact
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout tag source
@@ -144,7 +149,7 @@ jobs:
     # Skip the publish job for exactly those three tags so the workflow still
     # verifies the artifact (verify runs) but never attempts an npm publish for
     # any of them. v0.1.4 and later use the normal provenance path below.
-    if: github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3'
+    if: github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3'
     # Protected GitHub Environment: a steward approves this job in GitHub before
     # it runs. Because publish needs verify, approval happens AFTER the
     # tag-triggered verification path has completed. Configured in P2.
@@ -190,3 +195,59 @@ jobs:
           tarball="$(ls -1 odiobill-piren-*.tgz | head -n 1)"
           echo "Publishing verified tarball: $tarball"
           npm publish "$tarball" --provenance --access public --tag latest
+
+  diagnose_oidc_exchange:
+    name: Diagnose npm OIDC exchange without publishing
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Exchange the npm-audience OIDC token without exposing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+          const requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+          if (!requestUrl || !requestToken) {
+            throw new Error("GitHub did not provide OIDC request credentials");
+          }
+
+          const oidcUrl = new URL(requestUrl);
+          oidcUrl.searchParams.set("audience", "npm:registry.npmjs.org");
+          const oidcResponse = await fetch(oidcUrl, {
+            headers: {
+              Accept: "application/json",
+              Authorization: `Bearer ${requestToken}`,
+            },
+          });
+          if (!oidcResponse.ok) {
+            throw new Error(`OIDC token request failed with HTTP ${oidcResponse.status}`);
+          }
+          const oidcBody = await oidcResponse.json();
+          if (typeof oidcBody.value !== "string") {
+            throw new Error("OIDC token response did not contain a JWT");
+          }
+
+          const exchangeResponse = await fetch(
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/%40odiobill%2Fpiren",
+            {
+              method: "POST",
+              headers: {
+                Accept: "application/json",
+                Authorization: `Bearer ${oidcBody.value}`,
+              },
+            },
+          );
+          console.log(JSON.stringify({
+            package: "@odiobill/piren",
+            oidc_exchange_status: exchangeResponse.status,
+            accepted: exchangeResponse.ok,
+          }, null, 2));
+          if (!exchangeResponse.ok) {
+            process.exitCode = 1;
+          }
+          NODE
