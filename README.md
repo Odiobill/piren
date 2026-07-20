@@ -126,6 +126,8 @@ piren update
 
 `piren update` installs the latest `@odiobill/piren` release from the npm registry. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`), never prompts interactively, and has no automatic rollback — if `npm install` fails it reports the error and exits non-zero.
 
+**Upgrading from 0.1.3?** Run `npm install -g @odiobill/piren` once. The `piren update` command bundled with 0.1.3 still uses the retired GitHub install path; after this one-time registry install, `piren update` uses the registry.
+
 Known limitations:
 
 - Release candidate: not a stable 1.0. APIs and vault layouts may change before the first official release.

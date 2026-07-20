@@ -142,6 +142,17 @@ describe("P4b: public registry-install/update copy contract", () => {
     }
   });
 
+  it("warns existing 0.1.3 users to use the canonical registry install once", () => {
+    for (const [name, content] of [
+      ["README.md", README],
+      ["site/index.html", SITE],
+    ] as Array<[string, string]>) {
+      expect(content, `${name} should identify the one-time 0.1.3 migration`).toContain("Upgrading from 0.1.3?");
+      expect(content, `${name} should give the canonical manual migration command`).toContain(REGISTRY_INSTALL);
+      expect(content, `${name} should explain why old piren update cannot be used`).toContain("GitHub");
+    }
+  });
+
   it("piren update operations guidance guarantees no automatic rollback, not a no-state-change guarantee", () => {
     // npm global install is not transactional: a failed install may already have
     // changed state. P4a only guarantees no automatic rollback, so the public
