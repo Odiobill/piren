@@ -22,6 +22,10 @@ Replacement one-time manual npm bootstrap under ADR-0036 after the failed v0.1.1
 
 - **Documentation:** `docs/skills.md` documents staged import and promotion; `AGENTS.md` documents the publication workflow, clean-install paths, and the trusted-publishing toolchain floor.
 
+### Fixed
+
+- **Release-workflow CI ordering (ADR-0036 P3d):** both release workflows now install the CI-only fake Pi on PATH after unit tests but before smoke and packed-tarball verification, so smoke (`buildPiRunCommand`, which requires `pi`) and the clean-install check see Pi on PATH while unit tests stay hermetic with no runner Pi.
+
 ## [0.1.1] - 2026-07-19 (unpublished)
 
 Tagged candidate whose release verification failed before registry publication: eight doctor / doctor-OKF unit tests relied on a local `pi` binary instead of an injected runtime checker and failed on the GitHub runner, which has no Pi during unit tests. The immutable tag at `3226cb1` was never published to npm, no GitHub release was created, and it must not be deleted, moved, reused, or published. See ADR-0036; the replacement release is [0.1.2].

@@ -215,6 +215,23 @@ describe("ADR-0033 P1: registry publication workflow", () => {
         ]),
       );
     });
+
+    it("installs the CI-only fake Pi after unit tests but before smoke and clean-install (ADR-0036 P3d)", () => {
+      const verify = wf.jobs?.verify;
+      const unitTestsIdx = stepIndex(verify, (s) => /\bnpm test\b/.test(s.run ?? ""));
+      const fakePiIdx = stepIndex(verify, (s) => /fake pi/i.test(s.name ?? "") || /fake pi/i.test(s.run ?? ""));
+      const smokeIdx = stepIndex(verify, (s) => /npm run smoke/.test(s.run ?? ""));
+      const cleanInstallIdx = stepIndex(verify, (s) => /npm run clean-install:check/.test(s.run ?? ""));
+      expect(unitTestsIdx).toBeGreaterThanOrEqual(0);
+      expect(fakePiIdx).toBeGreaterThanOrEqual(0);
+      expect(smokeIdx).toBeGreaterThanOrEqual(0);
+      expect(cleanInstallIdx).toBeGreaterThanOrEqual(0);
+      // Unit tests run BEFORE the shim (no runner Pi during tests -> hermetic).
+      expect(fakePiIdx).toBeGreaterThan(unitTestsIdx);
+      // Smoke and packed-tarball clean-install run AFTER the shim (Pi on PATH).
+      expect(fakePiIdx).toBeLessThan(smokeIdx);
+      expect(fakePiIdx).toBeLessThan(cleanInstallIdx);
+    });
   });
 
   describe("publish job (post-approval)", () => {

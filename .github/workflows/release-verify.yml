@@ -55,14 +55,12 @@ jobs:
       - name: Quality gate - build
         run: npm run build
 
-      - name: Quality gate - smoke
-        run: npm run smoke
-
       # Narrowly scoped CI-only fake pi. Piren's policy requires a `pi` command
-      # on PATH; the clean-install check verifies that policy through `piren
-      # doctor`. This shim satisfies that probe WITHOUT bundling Pi into the
-      # package, altering production runtime resolution, or calling a network
-      # installer. It is the terminal setup before the packed-tarball check.
+      # on PATH; smoke (buildPiRunCommand) and the clean-install check both need
+      # it. Installed AFTER unit tests (so unit tests stay hermetic with no
+      # runner Pi) and BEFORE smoke + packed-tarball verification. NOT shipped
+      # with Piren, does not alter production runtime resolution, and calls no
+      # network installer.
       - name: Provide CI-only fake pi on PATH (release verification only)
         run: |
           set -euo pipefail
@@ -83,6 +81,9 @@ jobs:
           SHIM
           chmod +x "$dir/pi"
           echo "$dir" >> "$GITHUB_PATH"
+
+      - name: Quality gate - smoke
+        run: npm run smoke
 
       - name: Packed-tarball clean-install check (ADR-0033 R1)
         run: npm run clean-install:check

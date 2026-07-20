@@ -131,4 +131,24 @@ describe("ADR-0033 R2: release-artifact verification workflow", () => {
       expect(keys.filter((k) => k.startsWith("@pi/"))).toEqual([]);
     });
   });
+
+  describe("ADR-0036 P3d: CI fake-Pi ordering (release-verify)", () => {
+    it("installs the CI-only fake Pi after unit tests but before smoke and clean-install", () => {
+      // Steps appear in execution order in the file; step names are unique, so
+      // their raw-text positions reflect the run order.
+      const unitTestsIdx = raw.indexOf("Quality gate - unit tests");
+      const fakePiIdx = raw.indexOf("Provide CI-only fake pi on PATH");
+      const smokeIdx = raw.indexOf("Quality gate - smoke");
+      const cleanInstallIdx = raw.indexOf("npm run clean-install:check");
+      expect(unitTestsIdx).toBeGreaterThan(-1);
+      expect(fakePiIdx).toBeGreaterThan(-1);
+      expect(smokeIdx).toBeGreaterThan(-1);
+      expect(cleanInstallIdx).toBeGreaterThan(-1);
+      // Unit tests run BEFORE the shim (no runner Pi during tests -> hermetic).
+      expect(fakePiIdx).toBeGreaterThan(unitTestsIdx);
+      // Smoke and packed-tarball clean-install run AFTER the shim (Pi on PATH).
+      expect(fakePiIdx).toBeLessThan(smokeIdx);
+      expect(fakePiIdx).toBeLessThan(cleanInstallIdx);
+    });
+  });
 });

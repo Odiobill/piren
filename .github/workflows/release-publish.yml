@@ -62,6 +62,32 @@ jobs:
       - name: Quality gate - build
         run: npm run build
 
+      # Narrowly scoped CI-only fake pi (same approach as release-verify.yml).
+      # Piren's policy requires a `pi` command on PATH; smoke (buildPiRunCommand)
+      # and the clean-install check both need it. Installed AFTER unit tests (so
+      # unit tests stay hermetic with no runner Pi) and BEFORE smoke + packed-
+      # tarball verification. NOT shipped with Piren.
+      - name: Provide CI-only fake pi on PATH (release verification only)
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/fake-pi"
+          mkdir -p "$dir"
+          cat > "$dir/pi" <<'SHIM'
+          #!/usr/bin/env bash
+          # CI-only fake pi shim for release publication. NOT shipped with Piren.
+          case "${1:-}" in
+            --version)
+              echo "0.0.0-piren-ci-shim"
+              ;;
+            *)
+              echo "fake pi shim for piren release verification"
+              ;;
+          esac
+          exit 0
+          SHIM
+          chmod +x "$dir/pi"
+          echo "$dir" >> "$GITHUB_PATH"
+
       - name: Quality gate - smoke
         run: npm run smoke
 
@@ -84,32 +110,6 @@ jobs:
       # artifact that is validated, installed, uploaded, and published.
       - name: Build the npm tarball (one explicit artifact)
         run: npm pack
-
-      # Narrowly scoped CI-only fake pi (same approach as release-verify.yml).
-      # Piren's policy requires a `pi` command on PATH; the clean-install check
-      # verifies that policy through `piren doctor`. This shim satisfies that
-      # probe WITHOUT bundling Pi, altering production runtime resolution, or
-      # calling a network installer. It is NOT shipped with Piren.
-      - name: Provide CI-only fake pi on PATH (release verification only)
-        run: |
-          set -euo pipefail
-          dir="$RUNNER_TEMP/fake-pi"
-          mkdir -p "$dir"
-          cat > "$dir/pi" <<'SHIM'
-          #!/usr/bin/env bash
-          # CI-only fake pi shim for release publication. NOT shipped with Piren.
-          case "${1:-}" in
-            --version)
-              echo "0.0.0-piren-ci-shim"
-              ;;
-            *)
-              echo "fake pi shim for piren release verification"
-              ;;
-          esac
-          exit 0
-          SHIM
-          chmod +x "$dir/pi"
-          echo "$dir" >> "$GITHUB_PATH"
 
       # Validate + install THAT EXACT packed tarball through the existing
       # clean-install machinery: packed surface (dist + docs) then an isolated
