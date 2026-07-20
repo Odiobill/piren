@@ -117,7 +117,7 @@ export declare function resolveInstallSpec(args: string[]): InstallSpec;
 export declare function checkPackedArtifacts(packedFiles: string[]): PackArtifactsResult;
 /**
  * Parse `npm pack --json` stdout. Handles both the current object-keyed
- * shape (`{ "piren": {...} }`) and the older array shape (`[ {...} ]`).
+ * shape (`{ "@odiobill/piren": {...} }`) and the older array shape (`[ {...} ]`).
  * Returns null when the output is not parseable or has no filename.
  */
 export declare function parseNpmPackJson(stdout: string): ParsedPackJson | null;

@@ -1,6 +1,6 @@
 {
-  "name": "piren",
-  "version": "0.1.2",
+  "name": "@odiobill/piren",
+  "version": "0.1.3",
   "type": "module",
   "description": "Piren: lightweight, local-first agent layer on top of Pi Coding Agent",
   "repository": {

@@ -117,7 +117,7 @@ jobs:
       - name: Validate and clean-install the packed tarball
         run: |
           set -euo pipefail
-          tarball="$(ls -1 piren-*.tgz | head -n 1)"
+          tarball="$(ls -1 odiobill-piren-*.tgz | head -n 1)"
           echo "Verifying packed tarball: $tarball"
           npm run clean-install:check -- "$tarball"
 
@@ -127,22 +127,24 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-tarball
-          path: piren-*.tgz
+          path: odiobill-piren-*.tgz
           if-no-files-found: error
 
   publish:
     name: Publish verified release to npm
     runs-on: ubuntu-latest
     needs: verify
-    # Two narrowly bounded manual-bootstrap exceptions (ADR-0035 + ADR-0036):
+    # Three narrowly bounded manual-bootstrap exceptions (ADR-0035 + ADR-0036 +
+    # ADR-0037):
     #   - v0.1.1: tagged candidate whose release verification FAILED before
-    #     registry publication; it is permanently unpublished and must never be
-    #     published by this workflow.
-    #   - v0.1.2: the sole replacement one-time manual npm bootstrap.
-    # Skip the publish job for exactly those two tags so the workflow still
+    #     registry publication; permanently unpublished.
+    #   - v0.1.2: exact tarball rejected by npm (unscoped `piren` too similar to
+    #     `porek`) before publication; permanently unpublished.
+    #   - v0.1.3: the sole scoped (@odiobill/piren) one-time manual bootstrap.
+    # Skip the publish job for exactly those three tags so the workflow still
     # verifies the artifact (verify runs) but never attempts an npm publish for
-    # either. v0.1.3 and later use the normal provenance path below.
-    if: github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2'
+    # any of them. v0.1.4 and later use the normal provenance path below.
+    if: github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3'
     # Protected GitHub Environment: a steward approves this job in GitHub before
     # it runs. Because publish needs verify, approval happens AFTER the
     # tag-triggered verification path has completed. Configured in P2.
@@ -185,6 +187,6 @@ jobs:
       - name: Publish the verified tarball to npm latest with provenance
         run: |
           set -euo pipefail
-          tarball="$(ls -1 piren-*.tgz | head -n 1)"
+          tarball="$(ls -1 odiobill-piren-*.tgz | head -n 1)"
           echo "Publishing verified tarball: $tarball"
           npm publish "$tarball" --provenance --access public --tag latest

@@ -246,7 +246,7 @@ export function checkPackedArtifacts(packedFiles: string[]): PackArtifactsResult
 
 /**
  * Parse `npm pack --json` stdout. Handles both the current object-keyed
- * shape (`{ "piren": {...} }`) and the older array shape (`[ {...} ]`).
+ * shape (`{ "@odiobill/piren": {...} }`) and the older array shape (`[ {...} ]`).
  * Returns null when the output is not parseable or has no filename.
  */
 export function parseNpmPackJson(stdout: string): ParsedPackJson | null {
@@ -425,7 +425,9 @@ export async function runCleanInstallCheck(options: CleanInstallOptions): Promis
     log(`npm install exited ${install.code}\n${install.stderr}`);
   }
 
-  const installDir = join(options.prefix, "node_modules", "piren");
+  // The package installs under its scoped node_modules subpath (@odiobill/piren,
+  // ADR-0037). The executable bin name stays `piren`.
+  const installDir = join(options.prefix, "node_modules", "@odiobill/piren");
   const cliJs = join(installDir, "dist", "src", "cli.js");
   const publicIndex = join(installDir, "dist", "public", "index.html");
   const extensionJs = join(installDir, "dist", "src", "pi-extension.js");

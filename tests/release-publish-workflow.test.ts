@@ -137,19 +137,19 @@ describe("ADR-0033 P1: registry publication workflow", () => {
     });
   });
 
-  describe("ADR-0035/ADR-0036 bootstrap exception (P1c + P3c)", () => {
-    it("the publish job is skipped for both bootstrap tags v0.1.1 and v0.1.2", () => {
-      expect(wf.jobs?.publish?.if).toBe("github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2'");
+  describe("ADR-0035/0036/0037 bootstrap exception (P1c + P3c + P3e)", () => {
+    it("the publish job is skipped for the three manual-bootstrap tags v0.1.1, v0.1.2, v0.1.3", () => {
+      expect(wf.jobs?.publish?.if).toBe("github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3'");
     });
 
-    it("the guard skips only those two tags, not all v0.* or later tags", () => {
+    it("the guard skips only those three tags, not later tags", () => {
       const expr = wf.jobs?.publish?.if ?? "";
-      // Narrow equality against the two exact bootstrap tags, not a v0.* glob.
       expect(expr).toContain("github.ref_name");
       expect(expr).toContain("!=");
       expect(expr).toContain("v0.1.1");
       expect(expr).toContain("v0.1.2");
-      expect(expr).not.toContain("v0.1.3");
+      expect(expr).toContain("v0.1.3");
+      expect(expr).not.toContain("v0.1.4");
       expect(expr).not.toMatch(/v0\.\*|v\*/);
     });
 
@@ -205,6 +205,9 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       const t = runText(wf.jobs?.verify);
       expect(t).toMatch(/\bnpm pack\b/);
       expect(t).toContain("npm run clean-install:check");
+      // The scoped package packs to odiobill-piren-<version>.tgz; the workflow
+      // globs that scoped name (not the old unscoped piren-*.tgz).
+      expect(normalize(stripComments(raw))).toMatch(/odiobill-piren-\*\.tgz/);
     });
 
     it("uploads the verified tarball as a workflow artifact", () => {
@@ -359,9 +362,9 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 });
 
 describe("ADR-0033: release artifact and public-surface guards", () => {
-  it("package version is the 0.1.2 development release (P3c replacement bump)", () => {
+  it("package version is the 0.1.3 development release (P3e scoped recovery bump)", () => {
     const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
-    expect(pkg.version).toBe("0.1.2");
+    expect(pkg.version).toBe("0.1.3");
   });
 
   it("does not add a pi runtime dependency to the package", () => {

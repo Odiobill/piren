@@ -5,17 +5,18 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.2] - unreleased
+## [0.1.3] - unreleased
 
-Replacement one-time manual npm bootstrap under ADR-0036 after the failed v0.1.1 verification. This release's approved publication process is a single, interactive, 2FA-protected manual npm bootstrap under ADR-0036, replacing the failed v0.1.1 candidate; it may lack OIDC provenance; all subsequent releases use the existing OIDC trusted-publishing workflow. The documented operator install path remains unchanged until post-publication verification.
+Scoped replacement one-time manual npm bootstrap under ADR-0037 after the unscoped `piren` name was rejected by npm's similarity policy. The canonical npm identity is now `@odiobill/piren` (the executable command stays `piren`). This release's approved publication process is a single, interactive, 2FA-protected manual npm bootstrap; it may lack OIDC provenance; all subsequent releases use the existing OIDC trusted-publishing workflow. The documented operator install path remains unchanged until post-publication verification.
 
 ### Added
 
 - **Staged skill import (CLI Slice E1):** `piren skill import <local-file.md> --staged`, `piren skill staged list`, and `piren skill staged show <name>` import a local Markdown skill into an inactive review area (`skill-candidates/imports/`) that no active skill-loading path scans. Imports normalize to OKF `type: Skill`, preserve the body, and record `source` / `imported_at` / SHA-256 `checksum` provenance. Local files only; no remote fetching.
 - **Staged skill promotion (CLI Slice E2a):** `piren skill staged promote <name> --to shared|group:<group>|agent:<agent> [--force]` moves one staged artifact into an active scope. Promotion is transactional and rollback-safe: the original target is backed up, promoted content commits via a temp file plus an atomic rename, and staged-removal failure rolls the target back to its original state with no partial activation. Pre-existing `.promote.bak` / `.promote.tmp` recovery artifacts are refused and never overwritten, and incomplete cleanup is surfaced rather than concealed.
-- **Registry publication workflow (ADR-0033 P1/P1b/P1c):** `.github/workflows/release-publish.yml` is the only npm-publishing workflow. It is tag-only (`v*`), split into an unprotected `verify` job (quality gates, tag/version agreement, one explicit `npm pack`, validate + install that exact tarball via the clean-install machinery) and a steward-approved `publish` job (`npm-production` Environment, `id-token: write`) that publishes only the verified artifact with provenance to the stable `latest` dist-tag. Both jobs pin Node 22.14.0; the publish job installs npm 11.5.1 and runs a fail-closed Node/npm version preflight. The publish job skips exactly v0.1.1 and v0.1.2 (the two manual-bootstrap tags); v0.1.3 and later use the normal OIDC path. `release-verify.yml` stays verification-only.
-- **Prebuilt-tarball clean-install verifier:** `npm run clean-install:check -- <file.tgz>` validates a packed tarball's required surface (dist + docs) and installs that exact tarball in an isolated clean HOME/prefix.
-- **Release metadata:** package version set to 0.1.2 and canonical npm provenance `repository` metadata added to `package.json`.
+- **Registry publication workflow (ADR-0033 P1/P1b/P1c):** `.github/workflows/release-publish.yml` is the only npm-publishing workflow. It is tag-only (`v*`), split into an unprotected `verify` job (quality gates, tag/version agreement, one explicit `npm pack`, validate + install that exact tarball via the clean-install machinery) and a steward-approved `publish` job (`npm-production` Environment, `id-token: write`) that publishes only the verified artifact with provenance to the stable `latest` dist-tag. Both jobs pin Node 22.14.0; the publish job installs npm 11.5.1 and runs a fail-closed Node/npm version preflight. The publish job skips exactly v0.1.1, v0.1.2, and v0.1.3 (the unpublished candidates plus the sole scoped manual bootstrap); v0.1.4 and later use the normal OIDC path. `release-verify.yml` stays verification-only.
+- **Prebuilt-tarball clean-install verifier:** `npm run clean-install:check -- <file.tgz>` validates a packed tarball's required surface (dist + docs) and installs that exact tarball in an isolated clean HOME/prefix (now targeting the scoped `node_modules/@odiobill/piren` path).
+- **Scoped npm identity (ADR-0037 P3e):** canonical npm package name changed from `piren` to `@odiobill/piren` (the unscoped name was rejected by npm's similarity policy); the executable bin name stays `piren`. Canonical npm provenance `repository` metadata retained.
+- **Release metadata:** package version set to 0.1.3.
 - **Test hermeticity fix (ADR-0036):** doctor / doctor-OKF unit tests that are not exercising Pi discovery now inject a deterministic Pi runtime checker instead of relying on a host `pi` binary, so CI passes without Pi on PATH during unit tests. Added regression coverage reproducing the no-Pi condition.
 
 ### Changed
@@ -25,6 +26,10 @@ Replacement one-time manual npm bootstrap under ADR-0036 after the failed v0.1.1
 ### Fixed
 
 - **Release-workflow CI ordering (ADR-0036 P3d):** both release workflows now install the CI-only fake Pi on PATH after unit tests but before smoke and packed-tarball verification, so smoke (`buildPiRunCommand`, which requires `pi`) and the clean-install check see Pi on PATH while unit tests stay hermetic with no runner Pi.
+
+## [0.1.2] - 2026-07-20 (unpublished)
+
+Tagged candidate whose exact unscoped `piren` tarball was rejected by npm with E403 before publication because the name is too similar to the existing package `porek`. The immutable tag at `dffc91f` was never published to npm, no GitHub release or dist-tag was created, and it must not be deleted, moved, reused, or published. See ADR-0037; the scoped replacement release is [0.1.3].
 
 ## [0.1.1] - 2026-07-19 (unpublished)
 
