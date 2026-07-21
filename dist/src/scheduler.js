@@ -1,4 +1,5 @@
 import { selectOwningDevice } from "./cron.js";
+import { evaluateTaskDependencyEligibility } from "./scheduler-dependencies.js";
 // ---------------------------------------------------------------------------
 // Pure scheduler planner
 // ---------------------------------------------------------------------------
@@ -11,7 +12,7 @@ import { selectOwningDevice } from "./cron.js";
  * jobs, active devices) and executing or displaying the proposed claims.
  */
 export function planSchedulerTick(options) {
-    const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now } = options;
+    const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes } = options;
     const claims = [];
     const enabledSet = new Set(enabledAgents);
     // Process inbox tasks
@@ -19,6 +20,11 @@ export function planSchedulerTick(options) {
         if (!enabledSet.has(task.agentName))
             continue;
         if (task.status === "pending") {
+            // Dependency eligibility (ADR-0038 R1): a task with unsatisfied or
+            // invalid dependencies is never claimable. Fail closed when a task
+            // declares dependencies but the resolver is unavailable.
+            if (!isDependencyEligible(task, dependencyNodes))
+                continue;
             // Unclaimed task: propose a claim
             const priority = devicePriorityForAgent(activeDevices, task.agentName, deviceId);
             claims.push({
@@ -82,6 +88,30 @@ export function planSchedulerTick(options) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+/**
+ * Decide whether a pending task passes its `depends_on` gate. Tasks without
+ * any declared dependency (no ids, no declaration error) are always eligible,
+ * preserving pre-ADR-0038 behavior. A task that declares a dependency but
+ * cannot be resolved (missing id or resolver) is blocked (fail-closed).
+ */
+function isDependencyEligible(task, nodes) {
+    const hasDeps = (task.dependsOn !== undefined && task.dependsOn.length > 0) || task.dependsOnError !== undefined;
+    if (!hasDeps)
+        return true;
+    // A declaration exists; an id is required to evaluate self/cycle cases, and
+    // a resolver is required to look up targets. Fail closed when absent.
+    if (task.id === undefined || nodes === undefined)
+        return false;
+    const candidate = {
+        id: task.id,
+        status: "pending",
+        dependsOn: task.dependsOn ?? [],
+        path: task.path,
+    };
+    if (task.dependsOnError !== undefined)
+        candidate.dependsOnError = task.dependsOnError;
+    return evaluateTaskDependencyEligibility(candidate, nodes).eligible;
+}
 function devicePriorityForAgent(activeDevices, agentName, deviceId) {
     const devices = activeDevices.get(agentName) ?? [];
     const match = devices.find((d) => d.deviceId === deviceId);

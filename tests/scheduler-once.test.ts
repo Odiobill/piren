@@ -463,3 +463,40 @@ describe("schedulerOnce default device id", () => {
     expect(inboxCalls[0]?.claimedTaskPath).toMatch(/\.claimed\.heimdall\.md$/);
   });
 });
+
+describe("schedulerOnce dependency eligibility (ADR-0038 R1)", () => {
+  it("does not claim or execute a task whose prerequisite is unsatisfied", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
+    // A pending implementation task (no deps) AND a pending review that depends
+    // on the still-pending implementation. Only the implementation is runnable.
+    await writeFile(
+      join(vault, "team", "codex", "inbox", "20260721T120000000Z-implement-slice.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: pending", "from: nora", "to: codex", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl", "", "Do it."].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "codex", "inbox", "20260721T130000000Z-review-slice.md"),
+      ["---", "id: 20260721T130000000Z-review-slice", "status: pending", "depends_on:", "  - 20260721T120000000Z-implement-slice", "from: nora", "to: codex", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Review", "", "Review it."].join("\n"),
+    );
+
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    // Only the runnable implementation is planned (review is filtered out).
+    expect(result.plannedCount).toBe(1);
+    expect(result.executed).toBe(true);
+    expect(result.executedItemPath).toMatch(/implement-slice\.claimed\.heimdall\.md$/);
+    // The review was never claimed or executed.
+    expect(inboxCalls).toHaveLength(1);
+    expect(inboxCalls[0]?.claimedTaskPath).toMatch(/implement-slice/);
+    // The review file is untouched (still pending, unclaimed).
+    const review = await readFile(join(vault, "team", "codex", "inbox", "20260721T130000000Z-review-slice.md"), "utf8");
+    expect(review).toContain("status: pending");
+  });
+});

@@ -1,13 +1,14 @@
 import { hostname } from "node:os";
 import { resolve } from "node:path";
 import { DEFAULT_CONFIG_PATH, readYamlConfig, resolveEnabledAgents, } from "./scheduler-cli.js";
-import { claimInboxTask, listInboxTasks, } from "./inbox.js";
+import { claimInboxTask, } from "./inbox.js";
 import { claimCronJob, isScheduleDue, listActiveDevices, listCronJobs, } from "./cron.js";
 import { planSchedulerTick } from "./scheduler.js";
 import { registerDevice } from "./devices.js";
 import { executeClaimedAgentCronJob, } from "./scheduler-cron-executor.js";
 import { executeScriptCronJob } from "./cron.js";
 import { executeClaimedInboxTask } from "./scheduler-executor.js";
+import { loadSchedulerInboxState } from "./scheduler-dependencies.js";
 /** Real claim functions, used when no fake claims are injected. */
 export const defaultClaims = {
     claimInboxTask,
@@ -15,6 +16,19 @@ export const defaultClaims = {
 };
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
+}
+/** Map a loaded inbox task to the planner's task shape, carrying dependency fields. */
+function toPlannerTask(task) {
+    const plannerTask = {
+        path: task.path,
+        agentName: task.agentName,
+        status: "pending",
+    };
+    plannerTask.id = task.id;
+    plannerTask.dependsOn = task.dependsOn;
+    if (task.dependsOnError !== undefined)
+        plannerTask.dependsOnError = task.dependsOnError;
+    return plannerTask;
 }
 /**
  * Normalize a raw hostname (e.g. os.hostname()) into a safe Piren device id.
@@ -105,22 +119,14 @@ export async function schedulerOnce(options) {
             // Skip agents whose vault dir is missing; they have no work to plan.
         }
     }
-    // 2. Load pending inbox tasks, due cron jobs, and active devices.
-    const pendingTasks = [];
+    // 2. Load pending inbox tasks (with dependency state), due cron jobs, and
+    //    active devices. Inbox state is loaded once across enabled agents so the
+    //    resolver includes claimed prerequisite files (ADR-0038 R1).
+    const inboxState = await loadSchedulerInboxState({ vaultRoot: root, enabledAgents });
+    const pendingTasks = inboxState.pendingTasks.map((t) => toPlannerTask(t));
     const dueCronJobs = [];
     const cronJobsByPath = new Map();
     for (const agentName of enabledAgents) {
-        try {
-            const inboxResult = await listInboxTasks({ vaultRoot: root, agentName });
-            for (const task of inboxResult.tasks) {
-                if (task.status === "pending") {
-                    pendingTasks.push({ path: task.path, agentName, status: "pending" });
-                }
-            }
-        }
-        catch {
-            // Agent inbox may not exist yet; skip.
-        }
         try {
             const cronResult = await listCronJobs({ vaultRoot: root, agentName, now });
             for (const job of cronResult.jobs) {
@@ -155,7 +161,8 @@ export async function schedulerOnce(options) {
             activeDevices.set(agentName, []);
         }
     }
-    // 3. Plan proposed claims (pure).
+    // 3. Plan proposed claims (pure). Dependency-blocked tasks are excluded by
+    //    the planner using the resolver map (fail-closed).
     const planned = planSchedulerTick({
         enabledAgents,
         pendingTasks,
@@ -164,6 +171,7 @@ export async function schedulerOnce(options) {
         deviceId,
         staleAfterMs,
         now: now(),
+        dependencyNodes: inboxState.dependencyNodes,
     });
     // 4. Walk planned claims in priority order; claim first, execute only on
     //    success, skip failures, stop after the first execution attempt.

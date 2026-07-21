@@ -1,4 +1,5 @@
 import { selectOwningDevice, type ActiveDevice } from "./cron.js";
+import { evaluateTaskDependencyEligibility, type DependencyTaskNode } from "./scheduler-dependencies.js";
 
 // ---------------------------------------------------------------------------
 // Scheduler planner types
@@ -11,6 +12,12 @@ export interface PlannerTask {
   status: "pending" | "claimed";
   /** Device ID that claimed the task (only set when status is "claimed"). */
   claimedBy?: string;
+  /** Stable task id, used for dependency evaluation (ADR-0038 R1). */
+  id?: string;
+  /** Declared prerequisite task IDs (ADR-0038). Empty/absent = no deps. */
+  dependsOn?: string[];
+  /** Set when the task's `depends_on` declaration is structurally malformed. */
+  dependsOnError?: string;
 }
 
 export interface PlannerCronJob {
@@ -43,6 +50,13 @@ export interface PlanSchedulerTickOptions {
   deviceId: string;
   staleAfterMs: number;
   now: Date;
+  /**
+   * Visible task nodes (id -> node) used to resolve `depends_on` prerequisites
+   * (ADR-0038 R1). Must include ordinary AND `.claimed.<device>.md` inbox
+   * files so atomic claiming never hides a prerequisite. When omitted, any
+   * task that declares dependencies is treated as blocked (fail-closed).
+   */
+  dependencyNodes?: Map<string, DependencyTaskNode>;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +72,7 @@ export interface PlanSchedulerTickOptions {
  * jobs, active devices) and executing or displaying the proposed claims.
  */
 export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedClaim[] {
-  const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now } = options;
+  const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes } = options;
   const claims: PlannedClaim[] = [];
   const enabledSet = new Set(enabledAgents);
 
@@ -67,6 +81,10 @@ export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedCla
     if (!enabledSet.has(task.agentName)) continue;
 
     if (task.status === "pending") {
+      // Dependency eligibility (ADR-0038 R1): a task with unsatisfied or
+      // invalid dependencies is never claimable. Fail closed when a task
+      // declares dependencies but the resolver is unavailable.
+      if (!isDependencyEligible(task, dependencyNodes)) continue;
       // Unclaimed task: propose a claim
       const priority = devicePriorityForAgent(activeDevices, task.agentName, deviceId);
       claims.push({
@@ -134,6 +152,31 @@ export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedCla
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Decide whether a pending task passes its `depends_on` gate. Tasks without
+ * any declared dependency (no ids, no declaration error) are always eligible,
+ * preserving pre-ADR-0038 behavior. A task that declares a dependency but
+ * cannot be resolved (missing id or resolver) is blocked (fail-closed).
+ */
+function isDependencyEligible(
+  task: PlannerTask,
+  nodes: Map<string, DependencyTaskNode> | undefined,
+): boolean {
+  const hasDeps = (task.dependsOn !== undefined && task.dependsOn.length > 0) || task.dependsOnError !== undefined;
+  if (!hasDeps) return true;
+  // A declaration exists; an id is required to evaluate self/cycle cases, and
+  // a resolver is required to look up targets. Fail closed when absent.
+  if (task.id === undefined || nodes === undefined) return false;
+  const candidate: DependencyTaskNode = {
+    id: task.id,
+    status: "pending",
+    dependsOn: task.dependsOn ?? [],
+    path: task.path,
+  };
+  if (task.dependsOnError !== undefined) candidate.dependsOnError = task.dependsOnError;
+  return evaluateTaskDependencyEligibility(candidate, nodes).eligible;
+}
 
 function devicePriorityForAgent(
   activeDevices: Map<string, PlannerActiveDevice[]>,

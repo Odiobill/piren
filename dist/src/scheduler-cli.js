@@ -3,9 +3,9 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
-import { listInboxTasks } from "./inbox.js";
 import { listCronJobs, listActiveDevices } from "./cron.js";
 import { planSchedulerTick } from "./scheduler.js";
+import { evaluateTaskDependencyEligibility, loadSchedulerInboxState, } from "./scheduler-dependencies.js";
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
 /**
  * Resolve the locally enabled agent set: allowed_agents minus excluded_agents.
@@ -56,26 +56,14 @@ export async function schedulerDryRun(options) {
     if (enabledAgents.length === 0) {
         return `SCHEDULER DRY-RUN (device: ${deviceId})\n\nNo enabled agents. Configure allowed_agents in local config.\n`;
     }
-    // Load pending tasks and due cron jobs for each enabled agent
-    const pendingTasks = [];
+    // Load inbox state (pending candidates + dependency resolver) across all
+    // enabled agents. The resolver includes claimed files so an atomic claim
+    // never hides a prerequisite (ADR-0038 R1).
+    const inboxState = await loadSchedulerInboxState({ vaultRoot, enabledAgents });
+    const pendingTasks = inboxState.pendingTasks.map((t) => toPlannerTask(t));
+    // Load due cron jobs for each enabled agent (cron jobs carry no deps).
     const dueCronJobs = [];
     for (const agentName of enabledAgents) {
-        try {
-            // Load inbox tasks
-            const inboxResult = await listInboxTasks({ vaultRoot, agentName });
-            for (const task of inboxResult.tasks) {
-                if (task.status === "pending") {
-                    pendingTasks.push({
-                        path: task.path,
-                        agentName,
-                        status: "pending",
-                    });
-                }
-            }
-        }
-        catch {
-            // Agent directory may not exist yet, skip
-        }
         try {
             // Load cron jobs
             const cronResult = await listCronJobs({ vaultRoot, agentName });
@@ -102,7 +90,8 @@ export async function schedulerDryRun(options) {
             activeDevices.set(agentName, []);
         }
     }
-    // Plan claims
+    // Plan claims. The planner excludes dependency-blocked tasks from claim
+    // proposals using the resolver map (fail-closed).
     const claims = planSchedulerTick({
         enabledAgents,
         pendingTasks,
@@ -111,11 +100,52 @@ export async function schedulerDryRun(options) {
         deviceId,
         staleAfterMs,
         now,
+        dependencyNodes: inboxState.dependencyNodes,
     });
+    // Separately classify pending candidates for the human-readable report so
+    // the dry-run can distinguish runnable from dependency-blocked work without
+    // mutating anything. This reuses the same pure evaluator the planner uses.
+    const blocked = classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes);
     // Format output
-    return formatSchedulerDryRun(deviceId, enabledAgents, claims);
+    return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked);
 }
-function formatSchedulerDryRun(deviceId, enabledAgents, claims) {
+/** Map a loaded inbox task to the planner's task shape, carrying dependency fields. */
+function toPlannerTask(task) {
+    const plannerTask = {
+        path: task.path,
+        agentName: task.agentName,
+        status: "pending",
+    };
+    plannerTask.id = task.id;
+    plannerTask.dependsOn = task.dependsOn;
+    if (task.dependsOnError !== undefined)
+        plannerTask.dependsOnError = task.dependsOnError;
+    return plannerTask;
+}
+/** Evaluate every pending candidate and return the blocked ones with reasons. */
+function classifyBlockedTasks(pendingTasks, dependencyNodes) {
+    const blocked = [];
+    for (const task of pendingTasks) {
+        const candidate = {
+            id: task.id,
+            status: task.status,
+            dependsOn: task.dependsOn,
+            path: task.path,
+        };
+        if (task.dependsOnError !== undefined)
+            candidate.dependsOnError = task.dependsOnError;
+        const verdict = evaluateTaskDependencyEligibility(candidate, dependencyNodes);
+        if (!verdict.eligible) {
+            blocked.push({
+                agentName: task.agentName,
+                path: task.path,
+                reason: verdict.reason ?? "dependency-blocked",
+            });
+        }
+    }
+    return blocked;
+}
+function formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked) {
     const lines = [];
     lines.push(`SCHEDULER DRY-RUN (device: ${deviceId})`);
     // Group claims by agent
@@ -125,17 +155,28 @@ function formatSchedulerDryRun(deviceId, enabledAgents, claims) {
         list.push(claim);
         agentClaims.set(claim.agentName, list);
     }
-    // Report claims per agent
+    // Group dependency-blocked tasks by agent
+    const agentBlocked = new Map();
+    for (const item of blocked) {
+        const list = agentBlocked.get(item.agentName) ?? [];
+        list.push(item);
+        agentBlocked.set(item.agentName, list);
+    }
+    // Report claims and blocked tasks per agent
     for (const agentName of enabledAgents) {
         const agentClaimList = agentClaims.get(agentName) ?? [];
+        const agentBlockedList = (agentBlocked.get(agentName) ?? []).slice().sort((a, b) => a.path.localeCompare(b.path));
         lines.push(`  agent: ${agentName}`);
-        if (agentClaimList.length === 0) {
+        if (agentClaimList.length === 0 && agentBlockedList.length === 0) {
             lines.push(`    (no claims)`);
         }
         else {
             for (const claim of agentClaimList) {
                 const tag = "[CLAIM]";
                 lines.push(`    ${tag} ${claim.itemType.padEnd(12)} ${claim.itemPath} (priority ${claim.priority}) - ${claim.rationale}`);
+            }
+            for (const item of agentBlockedList) {
+                lines.push(`    [BLOCK] ${"inbox_task".padEnd(12)} ${item.path} - ${item.reason}`);
             }
         }
     }

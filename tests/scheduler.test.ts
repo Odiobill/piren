@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { planSchedulerTick, type PlannerTask, type PlannerCronJob, type PlannerActiveDevice } from "../src/scheduler.js";
+import type { DependencyTaskNode } from "../src/scheduler-dependencies.js";
+
+const IMPL = "20260721T120000000Z-implement-slice";
+const REVIEW = "20260721T130000000Z-review-slice";
+
+function depNode(opts: { id: string; status?: DependencyTaskNode["status"]; dependsOn?: string[]; path?: string }): DependencyTaskNode {
+  return {
+    id: opts.id,
+    status: opts.status ?? "pending",
+    dependsOn: opts.dependsOn ?? [],
+    path: opts.path ?? `team/codex/inbox/${opts.id}.md`,
+  };
+}
 
 const deviceId = "heimdall";
 const staleAfterMs = 300_000;
@@ -266,5 +279,134 @@ describe("scheduler planner", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]!.priority).toBe(3);
+  });
+});
+
+describe("scheduler planner dependency eligibility (ADR-0038 R1)", () => {
+  it("proposes no claim for a task whose prerequisite is unsatisfied", () => {
+    const dependencyNodes = new Map<string, DependencyTaskNode>([
+      [IMPL, depNode({ id: IMPL, status: "pending" })],
+      [REVIEW, depNode({ id: REVIEW, dependsOn: [IMPL] })],
+    ]);
+
+    const result = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: [
+        { path: "team/codex/inbox/review.md", agentName: "codex", status: "pending", id: REVIEW, dependsOn: [IMPL] },
+        { path: "team/codex/inbox/impl.md", agentName: "codex", status: "pending", id: IMPL },
+      ],
+      dueCronJobs: [],
+      activeDevices: new Map(),
+      deviceId,
+      staleAfterMs,
+      now,
+      dependencyNodes,
+    });
+
+    // impl (no deps) is claimable; review (blocked) is not.
+    expect(result.map((c) => c.itemPath)).toEqual(["team/codex/inbox/impl.md"]);
+  });
+
+  it("proposes a claim once the prerequisite is completed", () => {
+    const dependencyNodes = new Map<string, DependencyTaskNode>([
+      [IMPL, depNode({ id: IMPL, status: "completed" })],
+      [REVIEW, depNode({ id: REVIEW, dependsOn: [IMPL] })],
+    ]);
+
+    const result = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: [
+        { path: "team/codex/inbox/review.md", agentName: "codex", status: "pending", id: REVIEW, dependsOn: [IMPL] },
+      ],
+      dueCronJobs: [],
+      activeDevices: new Map(),
+      deviceId,
+      staleAfterMs,
+      now,
+      dependencyNodes,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.itemPath).toBe("team/codex/inbox/review.md");
+  });
+
+  it("fails closed when a task declares deps but no dependencyNodes are provided", () => {
+    const result = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: [
+        { path: "team/codex/inbox/review.md", agentName: "codex", status: "pending", id: REVIEW, dependsOn: [IMPL] },
+      ],
+      dueCronJobs: [],
+      activeDevices: new Map(),
+      deviceId,
+      staleAfterMs,
+      now,
+      // dependencyNodes intentionally omitted
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it("resolves a cross-agent prerequisite through dependencyNodes", () => {
+    // review belongs to dipu; impl belongs to codex and is completed.
+    const dependencyNodes = new Map<string, DependencyTaskNode>([
+      [IMPL, depNode({ id: IMPL, status: "completed", path: "team/codex/inbox/impl.md" })],
+      [REVIEW, depNode({ id: REVIEW, dependsOn: [IMPL], path: "team/dipu/inbox/review.md" })],
+    ]);
+
+    const result = planSchedulerTick({
+      enabledAgents: ["dipu"],
+      pendingTasks: [
+        { path: "team/dipu/inbox/review.md", agentName: "dipu", status: "pending", id: REVIEW, dependsOn: [IMPL] },
+      ],
+      dueCronJobs: [],
+      activeDevices: new Map(),
+      deviceId,
+      staleAfterMs,
+      now,
+      dependencyNodes,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.itemPath).toBe("team/dipu/inbox/review.md");
+  });
+
+  it("keeps a self-dependent task out of claim proposals", () => {
+    const dependencyNodes = new Map<string, DependencyTaskNode>([
+      [REVIEW, depNode({ id: REVIEW, dependsOn: [REVIEW] })],
+    ]);
+
+    const result = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: [
+        { path: "team/codex/inbox/review.md", agentName: "codex", status: "pending", id: REVIEW, dependsOn: [REVIEW] },
+      ],
+      dueCronJobs: [],
+      activeDevices: new Map(),
+      deviceId,
+      staleAfterMs,
+      now,
+      dependencyNodes,
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it("leaves tasks without depends_on unaffected (backward compatible)", () => {
+    const result = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: [
+        { path: "team/codex/inbox/plain.md", agentName: "codex", status: "pending" },
+      ],
+      dueCronJobs: [],
+      activeDevices: new Map(),
+      deviceId,
+      staleAfterMs,
+      now,
+      // no dependencyNodes, no id/dependsOn: unchanged behavior
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.itemPath).toBe("team/codex/inbox/plain.md");
   });
 });

@@ -126,4 +126,80 @@ Run the hourly briefing.`,
     expect(output).toContain("hourly-brief.md");
     expect(output).toContain("[CLAIM]");
   });
+
+  it("reports a dependency-blocked task with its reason and proposes no claim for it", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    // Implementation task (pending, no deps) -> claimable.
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T120000000Z-implement-slice.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: pending", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl", "", "Do it."].join("\n"),
+    );
+    // Review task (pending, depends on the still-pending impl) -> blocked.
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T130000000Z-review-slice.md"),
+      ["---", "id: 20260721T130000000Z-review-slice", "status: pending", "depends_on:", "  - 20260721T120000000Z-implement-slice", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Review", "", "Review it."].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    // The runnable impl is proposed for a claim.
+    expect(output).toContain("[CLAIM]");
+    expect(output).toContain("implement-slice");
+    // The review is dependency-blocked with an exact reason, not claimed.
+    expect(output).toContain("[BLOCK]");
+    expect(output).toContain("review-slice");
+    expect(output).toContain("unsatisfied");
+    // Dry-run never mutates vault state.
+    const review = await readFile(join(vault, "team", "thor", "inbox", "20260721T130000000Z-review-slice.md"), "utf8");
+    expect(review).toContain("status: pending");
+  });
+
+  it("proposes a claim for a task once its prerequisite is completed", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T120000000Z-implement-slice.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: completed", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl", "", "Done."].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T130000000Z-review-slice.md"),
+      ["---", "id: 20260721T130000000Z-review-slice", "status: pending", "depends_on:", "  - 20260721T120000000Z-implement-slice", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Review", "", "Review it."].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    // The completed impl is not a pending candidate; the review is now runnable.
+    expect(output).toContain("[CLAIM]");
+    expect(output).toContain("review-slice");
+    expect(output).not.toContain("[BLOCK]");
+  });
+
+  it("resolves a claimed prerequisite as unsatisfied, not missing", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    // The prerequisite is claimed (pending, claimed filename) by another device.
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T120000000Z-implement-slice.claimed.ironman.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: pending", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl", "", "In progress."].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T130000000Z-review-slice.md"),
+      ["---", "id: 20260721T130000000Z-review-slice", "status: pending", "depends_on:", "  - 20260721T120000000Z-implement-slice", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Review", "", "Review it."].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    // The claimed prerequisite blocks the review as unsatisfied (pending), and
+    // is NOT reported as missing because the claimed file is still visible.
+    expect(output).toContain("[BLOCK]");
+    expect(output).toContain("review-slice");
+    expect(output).toContain("unsatisfied");
+    expect(output).not.toContain("missing");
+    // The claimed prerequisite is itself not a pending candidate.
+    expect(output).not.toContain("[CLAIM]");
+  });
 });
