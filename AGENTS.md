@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  98 passed (98)
-Tests       1333 passed (1333)
+Test Files  99 passed (99)
+Tests       1377 passed (1377)
 SMOKE PASSED
 ```
 
@@ -310,7 +310,9 @@ Service lifecycle management (ADR-0021, implemented):
 - Tests: `tests/service-lifecycle.test.ts` (22), `tests/service-lifecycle-exec.test.ts` (7), `tests/service-status-yaml.test.ts` (5), `tests/help.test.ts` (12), `tests/wizard.test.ts` (16), `tests/wizard-models.test.ts` (10), `tests/wizard-agent-config.test.ts` (4), `tests/wizard-transport-config.test.ts` (5), `tests/wizard-run.test.ts` (7), `tests/doctor-service.test.ts` (7), plus parser help tests.
 
 Device-local scheduler service MVP (ADR-0029, O7 S2-S6, implemented):
-- `src/scheduler.ts` is the pure scheduler planner core, callable directly from tests without Pi auth. It exports `planSchedulerTick` (takes enabled agents, active devices, pending tasks, due cron jobs, and `now`; returns proposed claim attempts sorted by device priority). Composes with the existing `selectOwningDevice` and `listActiveDevices` from `src/cron.ts`.
+- `src/scheduler.ts` is the pure scheduler planner core, callable directly from tests without Pi auth. It exports `planSchedulerTick` (takes enabled agents, active devices, pending tasks, due cron jobs, and `now`; returns proposed claim attempts sorted by device priority). Composes with the existing `selectOwningDevice` and `listActiveDevices` from `src/cron.ts`. `PlannerTask` carries optional `id`/`dependsOn`/`dependsOnError`; `PlanSchedulerTickOptions` carries an optional `dependencyNodes` resolver map. A pending task with unsatisfied/invalid `depends_on` is never proposed for a claim (fail-closed when a declaration exists but the resolver is unavailable).
+- Scheduler task dependency eligibility (ADR-0038 R1, implemented): `src/scheduler-dependencies.ts` is the pure core, callable directly from tests without Pi auth. It exports `TASK_ID_PATTERN` (`^[0-9]{8}T[0-9]{9}Z-[a-z0-9]+(?:-[a-z0-9]+)*$`), `extractDependsOn` (parse the `depends_on` YAML sequence from frontmatter), `parseDependencyTaskNode` (tolerant per-file parser), `evaluateTaskDependencyEligibility` (validate and resolve a candidate against a node map; only `status: completed` satisfies; reports malformed/duplicate/self/missing/cycle/unsatisfied with an exact reason), plus the thin real fs adapter `loadInboxDependencyNodes`/`loadSchedulerInboxState` (reads ordinary AND `.claimed.<device>.md` inbox files across enabled agents; pending unclaimed files become candidates, all files populate the resolver). `schedulerDryRun` and `schedulerOnce` load this state and pass `dependencyNodes` to the planner; dry-run emits `[BLOCK]` lines with the exact reason and never mutates the vault. No retry, no execution/timeout changes, no new task statuses, no rerouting, no Web UI, no polling changes, and no hidden state.
+- Tests: `tests/scheduler-dependencies.test.ts` (34: pattern, extraction, all eligibility cases incl. cross-agent and claimed prerequisites, parsing, fs loaders), plus planner/dry-run/once coverage in `tests/scheduler.test.ts` (+7), `tests/scheduler-cli.test.ts` (+3), and `tests/scheduler-once.test.ts` (+1).
 - `src/scheduler-executor.ts` exports the bounded inbox task executor core: `buildClaimedInboxTaskPrompt`, `parseClaimedInboxTaskPath`, `executeClaimedInboxTask`, and `createAskRunner` (adapts to `piren ask` for live execution). Agent-mode claims receive a claim-scoped prompt that reads the claimed file, executes it, writes status/result, and stops.
 - `src/scheduler-cron-executor.ts` exports the bounded cron executor core: `buildClaimedCronJobPrompt`, `parseClaimedCronJobPath`, and `executeClaimedAgentCronJob`. Script-mode cron jobs reuse the existing `executeScriptCronJob` from `src/cron.ts` with no LLM.
 - `src/scheduler-once.ts` exports the one-shot execution core `schedulerOnce` (refreshes heartbeats, plans, attempts atomic claims, executes at most one successfully claimed item, and stops) plus `sanitizeDeviceId` and `createSchedulerExecutors` (factory for inbox/cron executors).
