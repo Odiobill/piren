@@ -5,9 +5,9 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.4] - unreleased
+## [0.1.4] - 2026-07-20
 
-Registry-first public/operator cutover (ADR-0033). This is a source-only `0.1.4` release candidate on `main`; it is **not yet published** to npm, has no provenance attestation, and is not verified on the registry. It is staged for a future OIDC publication.
+Registry-first public/operator cutover (ADR-0033). Published as `@odiobill/piren@0.1.4` to npm `latest` through the protected OIDC trusted-publishing workflow. Registry metadata carries a SLSA provenance attestation (`https://slsa.dev/provenance/v1`), and an isolated registry install reports `piren version` 0.1.4.
 
 ### Changed
 

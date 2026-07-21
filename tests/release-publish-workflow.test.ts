@@ -115,13 +115,13 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   });
 
   describe("trigger (tag-only)", () => {
-    it("runs release jobs on version-tag pushes and permits a manual diagnostic only", () => {
+    it("runs release jobs only on version-tag pushes", () => {
       const blob = normalize(raw);
       expect(blob).toMatch(/\bon:/);
       expect(blob).toMatch(/\bpush\b/);
       expect(blob).toMatch(/\btags\b/);
       expect(blob).toMatch(/v\*+|v\[0-9\]/);
-      expect(blob).toMatch(/\bworkflow_dispatch\b/);
+      expect(blob).not.toMatch(/\bworkflow_dispatch\b/);
       expect(blob).not.toMatch(/\bbranches\b/);
       expect(wf.jobs?.verify?.if).toBe("github.event_name == 'push'");
       expect(wf.jobs?.publish?.if).toContain("github.event_name == 'push'");
@@ -129,9 +129,9 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   });
 
   describe("two-job split", () => {
-    it("defines verify, publish, and a manual-only OIDC exchange diagnostic in that order", () => {
+    it("defines only the verify and publish jobs", () => {
       const keys = Object.keys(wf.jobs ?? {});
-      expect(keys).toEqual(["verify", "publish", "diagnose_oidc_exchange"]);
+      expect(keys).toEqual(["verify", "publish"]);
     });
 
     it("publish depends on verify (steward approval happens after verification)", () => {
@@ -176,16 +176,14 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(p["id-token"]).not.toBe("write");
     });
 
-    it("publish and the manual diagnostic alone have contents: read and id-token: write", () => {
+    it("only the publish job has contents: read and id-token: write", () => {
       const publish = asPermissions(wf.jobs?.publish?.permissions);
-      const diagnose = asPermissions(wf.jobs?.diagnose_oidc_exchange?.permissions);
       expect(publish).toEqual({ contents: "read", "id-token": "write" });
-      expect(diagnose).toEqual({ contents: "read", "id-token": "write" });
+      expect(wf.jobs?.verify?.permissions).toBeUndefined();
     });
 
-    it("only the publish and manual diagnostic jobs run in the npm-production Environment", () => {
+    it("only the publish job runs in the npm-production Environment", () => {
       expect(wf.jobs?.publish?.environment).toBe("npm-production");
-      expect(wf.jobs?.diagnose_oidc_exchange?.environment).toBe("npm-production");
       expect(wf.jobs?.verify?.environment).toBeUndefined();
     });
   });
@@ -238,20 +236,6 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       // Smoke and packed-tarball clean-install run AFTER the shim (Pi on PATH).
       expect(fakePiIdx).toBeLessThan(smokeIdx);
       expect(fakePiIdx).toBeLessThan(cleanInstallIdx);
-    });
-  });
-
-  describe("manual OIDC exchange diagnostic", () => {
-    it("can run only by manual dispatch and exchanges the npm-audience ID token without publishing or logging a token", () => {
-      const diagnose = wf.jobs?.diagnose_oidc_exchange;
-      const t = runText(diagnose);
-      expect(diagnose?.if).toBe("github.event_name == 'workflow_dispatch'");
-      expect(t).toContain("/-/npm/v1/oidc/token/exchange/package/@odiobill%2fpiren");
-      expect(t).toContain("npm:registry.npmjs.org");
-      expect(t).not.toMatch(/npm\s+publish/);
-      expect(t).not.toMatch(/npm\s+install/);
-      expect(t).not.toMatch(/console\.log\(.*token/);
-      expect(t).not.toMatch(/console\.log\(.*value/);
     });
   });
 
@@ -341,6 +325,12 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   });
 
   describe("hard boundaries: no credentials and no production Pi installer", () => {
+    it("contains no manual dispatch or temporary OIDC diagnostic", () => {
+      expect(raw).not.toContain("workflow_dispatch");
+      expect(raw).not.toContain("diagnose_oidc_exchange");
+      expect(raw).not.toContain("oidc/token/exchange");
+    });
+
     it("contains no npm token, registry secret, or .npmrc secret anywhere", () => {
       expect(raw).not.toContain("NPM_TOKEN");
       expect(raw).not.toContain("NODE_AUTH_TOKEN");

@@ -11,10 +11,10 @@ import { readVersion } from "../src/version.js";
  * `piren`. After ADR-0037, `@odiobill/piren@0.1.3` was published to npm
  * `latest` via the sole one-time manual bootstrap (it may lack OIDC
  * provenance). The current development version is the `0.1.4` registry-cutover
- * candidate: source-only, not yet published, no provenance attestation. These
- * guards keep the package metadata, version, and changelog truthful across the
- * published 0.1.3 and the pending 0.1.4 candidate. No tag, publish, or
- * configuration is represented here.
+ * release was published through the trusted OIDC workflow with a SLSA
+ * provenance attestation. These guards keep the package metadata, version, and
+ * changelog truthful across the manual-bootstrap 0.1.3 and OIDC-published
+ * 0.1.4 releases.
  */
 
 const repoRoot = process.cwd();
@@ -23,13 +23,13 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("scoped @odiobill/piren registry releases (0.1.4 candidate, 0.1.3 published)", () => {
+describe("scoped @odiobill/piren registry releases (0.1.4 OIDC, 0.1.3 bootstrap)", () => {
   it("package.json name is the scoped @odiobill/piren identity", () => {
     const pkg = JSON.parse(read("package.json")) as { name: string };
     expect(pkg.name).toBe("@odiobill/piren");
   });
 
-  it("package.json version is the 0.1.4 release candidate", () => {
+  it("package.json version is the published 0.1.4 release", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
     expect(pkg.version).toBe("0.1.4");
   });
@@ -70,24 +70,24 @@ describe("scoped @odiobill/piren registry releases (0.1.4 candidate, 0.1.3 publi
     expect(lock.packages?.[""]?.version).toBe("0.1.4");
   });
 
-  it("CHANGELOG has an unreleased [0.1.4] candidate and a dated published [0.1.3]", () => {
+  it("CHANGELOG has dated published [0.1.4] and [0.1.3] entries", () => {
     const cl = read("CHANGELOG.md");
-    // [0.1.4] is the unreleased candidate, not dated as a release.
-    expect(cl).toMatch(/## \[0\.1\.4\] - unreleased/);
-    expect(cl).not.toMatch(/## \[0\.1\.4\] - \d{4}-\d{2}-\d{2}/);
-    // [0.1.3] is dated as the published manual bootstrap.
+    expect(cl).toMatch(/## \[0\.1\.4\] - 2026-07-20/);
+    expect(cl).not.toMatch(/## \[0\.1\.4\] - unreleased/);
     expect(cl).toMatch(/## \[0\.1\.3\] - 2026-07-20/);
   });
 
-  it("the [0.1.4] candidate does not claim to be published, verified, or provenance-attested", () => {
+  it("the [0.1.4] entry records OIDC publication and SLSA provenance", () => {
     const cl = read("CHANGELOG.md");
     const start = cl.indexOf("## [0.1.4]");
     const end = cl.indexOf("## [0.1.3]");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const section = cl.slice(start, end);
-    expect(section).toMatch(/not yet published/i);
-    expect(section).toMatch(/no provenance attestation/i);
+    expect(section).toMatch(/published/i);
+    expect(section).toMatch(/OIDC/i);
+    expect(section).toMatch(/SLSA provenance/i);
+    expect(section).not.toMatch(/not yet published|no provenance attestation/i);
   });
 
   it("the [0.1.3] entry describes the ADR-0037 published manual bootstrap and disclaims OIDC provenance", () => {
