@@ -409,4 +409,30 @@ describe("scheduler planner dependency eligibility (ADR-0038 R1)", () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.itemPath).toBe("team/codex/inbox/plain.md");
   });
+
+  it("does not propose a claim for a task whose own id is duplicated", () => {
+    const dependencyNodes = new Map<string, DependencyTaskNode>([
+      // IMPL is duplicated, so it is excluded from the resolver and listed in duplicateIds.
+      [REVIEW, depNode({ id: REVIEW, dependsOn: [] })],
+    ]);
+    const duplicateIds = new Set<string>([IMPL]);
+
+    const result = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: [
+        { path: "team/codex/inbox/impl.md", agentName: "codex", status: "pending", id: IMPL },
+        { path: "team/codex/inbox/review.md", agentName: "codex", status: "pending", id: REVIEW },
+      ],
+      dueCronJobs: [],
+      activeDevices: new Map(),
+      deviceId,
+      staleAfterMs,
+      now,
+      dependencyNodes,
+      duplicateIds,
+    });
+
+    // Only the review (unique id) is claimable; the duplicated impl is not.
+    expect(result.map((c) => c.itemPath)).toEqual(["team/codex/inbox/review.md"]);
+  });
 });

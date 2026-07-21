@@ -172,6 +172,7 @@ export async function schedulerOnce(options) {
         staleAfterMs,
         now: now(),
         dependencyNodes: inboxState.dependencyNodes,
+        duplicateIds: inboxState.duplicateIds,
     });
     // 4. Walk planned claims in priority order; claim first, execute only on
     //    success, skip failures, stop after the first execution attempt.

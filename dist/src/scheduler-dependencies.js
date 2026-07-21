@@ -20,6 +20,7 @@ import { parse as parseYaml } from "yaml";
 export const TASK_ID_PATTERN = /^[0-9]{8}T[0-9]{9}Z-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const VALID_STATUSES = ["pending", "in_progress", "completed", "cancelled"];
 const SATISFIED_STATUS = "completed";
+const EMPTY_SET = new Set();
 /**
  * Extract the `depends_on` sequence from a parsed frontmatter object.
  *
@@ -91,63 +92,79 @@ export function parseDependencyTaskNode(content, path) {
 /**
  * Evaluate whether a candidate task is runnable given the full set of visible
  * task nodes. The candidate carries its own id + depends_on; `nodes` provides
- * the prerequisite targets. Pure and deterministic.
+ * the prerequisite targets; `duplicateIds` lists task ids that appear on more
+ * than one visible inbox file. Pure and deterministic.
  *
  * Validation order (first blocking category wins):
  *   1. malformed depends_on declaration (sequence shape)
- *   2. malformed ids (do not match the task-ID pattern)
- *   3. duplicate ids
- *   4. self-dependency
- *   5. missing target ids (no visible task with that id)
- *   6. dependency cycle involving the candidate
- *   7. unsatisfied (target exists but status != completed)
+ *   2. candidate's own id is duplicated in the vault
+ *   3. malformed ids (do not match the task-ID pattern)
+ *   4. duplicate ids within the depends_on list
+ *   5. self-dependency
+ *   6. duplicated target ids (ambiguous resolution), then missing target ids
+ *   7. dependency cycle involving the candidate
+ *   8. unsatisfied prerequisites (claimed target, or status != completed)
  *
- * A task with no depends_on (and no declaration error) is always eligible.
+ * A task with no depends_on (and no declaration error, and a unique id) is
+ * always eligible. A claimed target never satisfies even when its status is
+ * completed (ADR-0038).
  */
-export function evaluateTaskDependencyEligibility(candidate, nodes) {
+export function evaluateTaskDependencyEligibility(candidate, nodes, duplicateIds = EMPTY_SET) {
     // 1. malformed declaration
     if (candidate.dependsOnError !== undefined) {
         return { eligible: false, reason: candidate.dependsOnError };
     }
+    // 2. candidate's own id is duplicated: identity is ambiguous, never claimable.
+    if (duplicateIds.has(candidate.id)) {
+        return { eligible: false, reason: `duplicate task id: ${candidate.id}` };
+    }
     const deps = candidate.dependsOn;
     if (deps.length === 0)
         return { eligible: true };
-    // 2. malformed ids
+    // 3. malformed ids
     const malformed = unique(deps.filter((id) => !TASK_ID_PATTERN.test(id)));
     if (malformed.length > 0) {
         return { eligible: false, reason: `malformed dependency id: ${malformed.join(", ")}` };
     }
-    // 3. duplicate ids
+    // 4. duplicate ids within the depends_on list
     const dupes = duplicates(deps);
     if (dupes.length > 0) {
         return { eligible: false, reason: `duplicate dependency id: ${dupes.join(", ")}` };
     }
-    // 4. self-dependency
+    // 5. self-dependency
     if (deps.includes(candidate.id)) {
         return { eligible: false, reason: `self-dependency: ${candidate.id}` };
     }
-    // 5. missing target ids
+    // 6. duplicated target ids (ambiguous) take precedence over genuinely missing.
+    const duplicatedTargets = deps.filter((id) => duplicateIds.has(id));
+    if (duplicatedTargets.length > 0) {
+        return { eligible: false, reason: `duplicate task id: ${unique(duplicatedTargets).join(", ")}` };
+    }
     const missing = deps.filter((id) => !nodes.has(id));
     if (missing.length > 0) {
         return { eligible: false, reason: `missing dependency: ${missing.join(", ")}` };
     }
-    // 6. dependency cycle involving the candidate
+    // 7. dependency cycle involving the candidate
     const cycle = detectCycleThroughCandidate(candidate, nodes);
     if (cycle !== undefined) {
         return { eligible: false, reason: `dependency cycle: ${cycle.join(" -> ")}` };
     }
-    // 7. unsatisfied prerequisites
-    const unsatisfied = [];
+    // 8. unsatisfied prerequisites. A claimed target never satisfies (ADR-0038),
+    //    even when its status field is completed; otherwise only completed satisfies.
+    const blocking = [];
     for (const id of deps) {
         const target = nodes.get(id);
         if (target === undefined)
             continue; // already reported as missing
-        if (target.status !== SATISFIED_STATUS) {
-            unsatisfied.push(`${id} (status: ${target.status})`);
+        if (target.claimedBy !== undefined) {
+            blocking.push(`${id} (claimed)`);
+        }
+        else if (target.status !== SATISFIED_STATUS) {
+            blocking.push(`${id} (status: ${target.status})`);
         }
     }
-    if (unsatisfied.length > 0) {
-        return { eligible: false, reason: `unsatisfied dependency: ${unsatisfied.join(", ")}` };
+    if (blocking.length > 0) {
+        return { eligible: false, reason: `unsatisfied dependency: ${blocking.join(", ")}` };
     }
     return { eligible: true };
 }
@@ -261,13 +278,19 @@ export async function loadInboxDependencyNodes(options) {
 }
 /**
  * Load scheduler inbox state across the enabled agent set: a resolver map of
- * every visible task node (so claimed/completed prerequisites resolve) plus
- * the pending, unclaimed candidate tasks. Agent inboxes that do not exist are
- * skipped. Task IDs are globally unique (timestamp-based); on an unexpected
- * collision the last-loaded node wins.
+ * every visible task node, the pending unclaimed candidate tasks, and the set
+ * of task ids that appear on more than one visible file. Agent inboxes that do
+ * not exist are skipped.
+ *
+ * Duplicate visible task ids are treated as invalid resolution (ADR-0038): the
+ * duplicated id is recorded in `duplicateIds` and excluded from the resolver
+ * map so resolution can never depend on traversal order. Pending candidates
+ * with a duplicated own id are still returned (so the planner/dry-run can
+ * report them as blocked) but never become claimable.
  */
 export async function loadSchedulerInboxState(options) {
     const dependencyNodes = new Map();
+    const duplicateIds = new Set();
     const pendingTasks = [];
     for (const agentName of options.enabledAgents) {
         let loaded;
@@ -279,13 +302,21 @@ export async function loadSchedulerInboxState(options) {
             continue;
         }
         for (const task of loaded) {
-            dependencyNodes.set(task.id, toNode(task));
+            if (dependencyNodes.has(task.id) || duplicateIds.has(task.id)) {
+                // Collision: this id now spans more than one visible file. Remove any
+                // previously-inserted node so resolution is never first/last-writer-wins.
+                dependencyNodes.delete(task.id);
+                duplicateIds.add(task.id);
+            }
+            else {
+                dependencyNodes.set(task.id, toNode(task));
+            }
             if (task.status === "pending" && task.claimedBy === undefined) {
                 pendingTasks.push(task);
             }
         }
     }
-    return { dependencyNodes, pendingTasks };
+    return { dependencyNodes, pendingTasks, duplicateIds };
 }
 function toNode(task) {
     const node = {
@@ -296,6 +327,8 @@ function toNode(task) {
     };
     if (task.dependsOnError !== undefined)
         node.dependsOnError = task.dependsOnError;
+    if (task.claimedBy !== undefined)
+        node.claimedBy = task.claimedBy;
     return node;
 }
 //# sourceMappingURL=scheduler-dependencies.js.map

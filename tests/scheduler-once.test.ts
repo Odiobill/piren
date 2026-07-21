@@ -499,4 +499,33 @@ describe("schedulerOnce dependency eligibility (ADR-0038 R1)", () => {
     const review = await readFile(join(vault, "team", "codex", "inbox", "20260721T130000000Z-review-slice.md"), "utf8");
     expect(review).toContain("status: pending");
   });
+
+  it("does not claim or execute a task whose own id is duplicated", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
+    // Two files share the same id; both are pending. Neither should be claimable.
+    await writeFile(
+      join(vault, "team", "codex", "inbox", "20260721T120000000Z-implement-slice.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: pending", "from: nora", "to: codex", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl A", "", "Do it."].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "codex", "inbox", "20260721T120000000Z-implement-slice-dup.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: pending", "from: nora", "to: codex", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl B", "", "Do it."].join("\n"),
+    );
+
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    // Duplicated ids are never claimable, so nothing is planned or executed.
+    expect(result.plannedCount).toBe(0);
+    expect(result.executed).toBe(false);
+    expect(result.noWork).toBe(true);
+    expect(inboxCalls).toHaveLength(0);
+  });
 });

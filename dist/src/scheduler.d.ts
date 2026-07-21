@@ -50,6 +50,12 @@ export interface PlanSchedulerTickOptions {
      * task that declares dependencies is treated as blocked (fail-closed).
      */
     dependencyNodes?: Map<string, DependencyTaskNode>;
+    /**
+     * Task ids that appear on more than one visible inbox file (ADR-0038 R1). A
+     * candidate whose own id is duplicated, or a dependency that resolves to a
+     * duplicated id, is never claimable. Defaults to empty.
+     */
+    duplicateIds?: Set<string>;
 }
 /**
  * Plan proposed claims for one scheduler tick. Pure function: takes

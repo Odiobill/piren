@@ -125,12 +125,13 @@ export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<
     staleAfterMs,
     now,
     dependencyNodes: inboxState.dependencyNodes,
+    duplicateIds: inboxState.duplicateIds,
   });
 
   // Separately classify pending candidates for the human-readable report so
   // the dry-run can distinguish runnable from dependency-blocked work without
   // mutating anything. This reuses the same pure evaluator the planner uses.
-  const blocked = classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes);
+  const blocked = classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds);
 
   // Format output
   return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked);
@@ -159,6 +160,7 @@ interface BlockedTask {
 function classifyBlockedTasks(
   pendingTasks: LoadedInboxTask[],
   dependencyNodes: Map<string, DependencyTaskNode>,
+  duplicateIds: Set<string>,
 ): BlockedTask[] {
   const blocked: BlockedTask[] = [];
   for (const task of pendingTasks) {
@@ -169,7 +171,8 @@ function classifyBlockedTasks(
       path: task.path,
     };
     if (task.dependsOnError !== undefined) candidate.dependsOnError = task.dependsOnError;
-    const verdict = evaluateTaskDependencyEligibility(candidate, dependencyNodes);
+    if (task.claimedBy !== undefined) candidate.claimedBy = task.claimedBy;
+    const verdict = evaluateTaskDependencyEligibility(candidate, dependencyNodes, duplicateIds);
     if (!verdict.eligible) {
       blocked.push({
         agentName: task.agentName,

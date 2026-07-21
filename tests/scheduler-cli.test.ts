@@ -202,4 +202,51 @@ Run the hourly briefing.`,
     // The claimed prerequisite is itself not a pending candidate.
     expect(output).not.toContain("[CLAIM]");
   });
+
+  it("blocks a review whose prerequisite is a completed but claimed task (ADR-0038)", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    // The prerequisite was claimed and marked completed; it keeps its claimed
+    // filename. A claimed target must never satisfy, even when completed.
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T120000000Z-implement-slice.claimed.ironman.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: completed", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl", "", "Done."].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T130000000Z-review-slice.md"),
+      ["---", "id: 20260721T130000000Z-review-slice", "status: pending", "depends_on:", "  - 20260721T120000000Z-implement-slice", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Review", "", "Review it."].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toContain("[BLOCK]");
+    expect(output).toContain("review-slice");
+    expect(output).toContain("claimed");
+    // A completed-but-claimed prerequisite must not satisfy.
+    expect(output).not.toContain("[CLAIM]");
+  });
+
+  it("blocks claims and reports an exact reason when task ids are duplicated", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    // Two ordinary files share the same id (one completed, one pending).
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T120000000Z-implement-slice.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: completed", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl A", "", "Done."].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T120000000Z-implement-slice-dup.md"),
+      ["---", "id: 20260721T120000000Z-implement-slice", "status: pending", "from: nora", "to: thor", "created: 2026-07-21T09:00:00Z", "updated: 2026-07-21T09:00:00Z", "---", "", "# Impl B", "", "Do it."].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    // The duplicated id is never claimable and is reported with an exact reason.
+    expect(output).not.toContain("[CLAIM]");
+    expect(output).toContain("[BLOCK]");
+    expect(output).toContain("duplicate task id");
+    expect(output).toContain("implement-slice");
+  });
 });

@@ -24,6 +24,8 @@ export interface DependencyTaskNode {
     path: string;
     /** Set when `depends_on` is present but structurally malformed (not a sequence). */
     dependsOnError?: string;
+    /** Device id when this node comes from a `.claimed.<device>.md` file; a claimed target never satisfies (ADR-0038). */
+    claimedBy?: string;
 }
 /** Eligibility verdict for one candidate task. */
 export interface DependencyEligibility {
@@ -49,6 +51,8 @@ export interface SchedulerInboxLoad {
     dependencyNodes: Map<string, DependencyTaskNode>;
     /** Pending, unclaimed candidate tasks (eligible candidates are derived by the planner). */
     pendingTasks: LoadedInboxTask[];
+    /** Task ids that appear on more than one visible inbox file; a dependency on (or a candidate with) such an id is never claimable (ADR-0038). */
+    duplicateIds: Set<string>;
 }
 /**
  * Extract the `depends_on` sequence from a parsed frontmatter object.
@@ -71,20 +75,24 @@ export declare function parseDependencyTaskNode(content: string, path: string): 
 /**
  * Evaluate whether a candidate task is runnable given the full set of visible
  * task nodes. The candidate carries its own id + depends_on; `nodes` provides
- * the prerequisite targets. Pure and deterministic.
+ * the prerequisite targets; `duplicateIds` lists task ids that appear on more
+ * than one visible inbox file. Pure and deterministic.
  *
  * Validation order (first blocking category wins):
  *   1. malformed depends_on declaration (sequence shape)
- *   2. malformed ids (do not match the task-ID pattern)
- *   3. duplicate ids
- *   4. self-dependency
- *   5. missing target ids (no visible task with that id)
- *   6. dependency cycle involving the candidate
- *   7. unsatisfied (target exists but status != completed)
+ *   2. candidate's own id is duplicated in the vault
+ *   3. malformed ids (do not match the task-ID pattern)
+ *   4. duplicate ids within the depends_on list
+ *   5. self-dependency
+ *   6. duplicated target ids (ambiguous resolution), then missing target ids
+ *   7. dependency cycle involving the candidate
+ *   8. unsatisfied prerequisites (claimed target, or status != completed)
  *
- * A task with no depends_on (and no declaration error) is always eligible.
+ * A task with no depends_on (and no declaration error, and a unique id) is
+ * always eligible. A claimed target never satisfies even when its status is
+ * completed (ADR-0038).
  */
-export declare function evaluateTaskDependencyEligibility(candidate: DependencyTaskNode, nodes: Map<string, DependencyTaskNode>): DependencyEligibility;
+export declare function evaluateTaskDependencyEligibility(candidate: DependencyTaskNode, nodes: Map<string, DependencyTaskNode>, duplicateIds?: Set<string>): DependencyEligibility;
 /**
  * Read every Markdown file in one agent's inbox (ordinary AND claimed) and
  * return the parseable task nodes. Tolerant: unparseable files are skipped.
@@ -95,10 +103,15 @@ export declare function loadInboxDependencyNodes(options: {
 }): Promise<LoadedInboxTask[]>;
 /**
  * Load scheduler inbox state across the enabled agent set: a resolver map of
- * every visible task node (so claimed/completed prerequisites resolve) plus
- * the pending, unclaimed candidate tasks. Agent inboxes that do not exist are
- * skipped. Task IDs are globally unique (timestamp-based); on an unexpected
- * collision the last-loaded node wins.
+ * every visible task node, the pending unclaimed candidate tasks, and the set
+ * of task ids that appear on more than one visible file. Agent inboxes that do
+ * not exist are skipped.
+ *
+ * Duplicate visible task ids are treated as invalid resolution (ADR-0038): the
+ * duplicated id is recorded in `duplicateIds` and excluded from the resolver
+ * map so resolution can never depend on traversal order. Pending candidates
+ * with a duplicated own id are still returned (so the planner/dry-run can
+ * report them as blocked) but never become claimable.
  */
 export declare function loadSchedulerInboxState(options: {
     vaultRoot: string;

@@ -24,6 +24,7 @@ function node(opts: {
   dependsOn?: string[];
   path?: string;
   dependsOnError?: string;
+  claimedBy?: string;
 }): DependencyTaskNode {
   const n: DependencyTaskNode = {
     id: opts.id,
@@ -32,6 +33,7 @@ function node(opts: {
     path: opts.path ?? `team/codex/inbox/${opts.id}.md`,
   };
   if (opts.dependsOnError !== undefined) n.dependsOnError = opts.dependsOnError;
+  if (opts.claimedBy !== undefined) n.claimedBy = opts.claimedBy;
   return n;
 }
 
@@ -210,7 +212,7 @@ describe("evaluateTaskDependencyEligibility", () => {
   it("treats a claimed (pending) prerequisite as unsatisfied, not missing", () => {
     // The prerequisite is a claimed file: status still pending, never completed.
     const candidate = node({ id: REVIEW, dependsOn: [IMPL] });
-    const claimedImpl = node({ id: IMPL, status: "pending", path: "team/codex/inbox/impl.claimed.heimdall.md" });
+    const claimedImpl = node({ id: IMPL, status: "pending", path: "team/codex/inbox/impl.claimed.heimdall.md", claimedBy: "heimdall" });
     const map = nodes(candidate, claimedImpl);
     const verdict = evaluateTaskDependencyEligibility(candidate, map);
     expect(verdict.eligible).toBe(false);
@@ -218,11 +220,62 @@ describe("evaluateTaskDependencyEligibility", () => {
     expect(verdict.reason).not.toContain("missing");
   });
 
+  it("blocks a prerequisite that is claimed even when its status is completed (ADR-0038)", () => {
+    // A scheduler-completed task keeps its claimed filename; the claimed marker
+    // must dominate the status field so it can never silently satisfy.
+    const candidate = node({ id: REVIEW, dependsOn: [IMPL] });
+    const completedClaimedImpl = node({ id: IMPL, status: "completed", path: "team/codex/inbox/impl.claimed.heimdall.md", claimedBy: "heimdall" });
+    const map = nodes(candidate, completedClaimedImpl);
+    const verdict = evaluateTaskDependencyEligibility(candidate, map);
+    expect(verdict.eligible).toBe(false);
+    expect(verdict.reason).toContain("claimed");
+    expect(verdict.reason).toContain(IMPL);
+  });
+
   it("blocks a task whose depends_on declaration is malformed", () => {
     const candidate = node({ id: REVIEW, dependsOnError: "depends_on must be a sequence of task IDs" });
     const verdict = evaluateTaskDependencyEligibility(candidate, nodes(candidate));
     expect(verdict.eligible).toBe(false);
     expect(verdict.reason).toContain("depends_on");
+  });
+});
+
+describe("evaluateTaskDependencyEligibility duplicate task IDs (ADR-0038 R1)", () => {
+  it("blocks a dependency that resolves to a duplicated task id", () => {
+    // IMPL is duplicated in the vault, so it is excluded from `nodes` and
+    // recorded in `duplicateIds`. A dependency on it is ambiguous, not missing.
+    const candidate = node({ id: REVIEW, dependsOn: [IMPL] });
+    const map = nodes(candidate);
+    const verdict = evaluateTaskDependencyEligibility(candidate, map, new Set([IMPL]));
+    expect(verdict.eligible).toBe(false);
+    expect(verdict.reason).toContain("duplicate task id");
+    expect(verdict.reason).toContain(IMPL);
+  });
+
+  it("blocks a candidate whose own id is duplicated, even with no dependencies", () => {
+    const candidate = node({ id: IMPL });
+    const map = nodes(candidate);
+    const verdict = evaluateTaskDependencyEligibility(candidate, map, new Set([IMPL]));
+    expect(verdict.eligible).toBe(false);
+    expect(verdict.reason).toContain("duplicate task id");
+    expect(verdict.reason).toContain(IMPL);
+  });
+
+  it("reports a duplicated dependency id rather than missing when the id is duplicated", () => {
+    const candidate = node({ id: REVIEW, dependsOn: [IMPL, OTHER] });
+    const map = nodes(candidate); // neither IMPL nor OTHER present as nodes
+    const verdict = evaluateTaskDependencyEligibility(candidate, map, new Set([IMPL]));
+    expect(verdict.eligible).toBe(false);
+    expect(verdict.reason).toContain("duplicate task id");
+    expect(verdict.reason).toContain(IMPL);
+    // OTHER is genuinely missing but the duplicated id takes precedence.
+    expect(verdict.reason).not.toContain("missing");
+  });
+
+  it("treats an empty duplicateIds set like the two-argument call", () => {
+    const candidate = node({ id: REVIEW, dependsOn: [IMPL] });
+    const map = nodes(candidate, node({ id: IMPL, status: "completed" }));
+    expect(evaluateTaskDependencyEligibility(candidate, map, new Set())).toEqual({ eligible: true });
   });
 });
 
@@ -355,6 +408,37 @@ describe("loadSchedulerInboxState", () => {
     const state = await loadSchedulerInboxState({ vaultRoot: vault, enabledAgents: ["codex"] });
     expect(state.dependencyNodes.has(IMPL)).toBe(true); // resolves (so not "missing")
     expect(state.pendingTasks).toEqual([]); // claimed -> not a candidate
+  });
+
+  it("preserves the claimed marker on resolver nodes so claimed never satisfies", async () => {
+    await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
+    await writeFile(
+      join(vault, "team", "codex", "inbox", `${IMPL}.claimed.heimdall.md`),
+      ["---", `id: ${IMPL}`, "status: completed", "---", "", "# Impl"].join("\n"),
+    );
+
+    const state = await loadSchedulerInboxState({ vaultRoot: vault, enabledAgents: ["codex"] });
+    const impl = state.dependencyNodes.get(IMPL);
+    expect(impl?.claimedBy).toBe("heimdall");
+  });
+
+  it("records duplicate visible task ids and excludes them from the resolver", async () => {
+    // Two ordinary files share the same id (one completed, one pending).
+    await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
+    await mkdir(join(vault, "team", "dipu", "inbox"), { recursive: true });
+    await writeFile(
+      join(vault, "team", "codex", "inbox", `${IMPL}.md`),
+      ["---", `id: ${IMPL}`, "status: completed", "---", "", "# Impl A"].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "dipu", "inbox", `${IMPL}-dup.md`),
+      ["---", `id: ${IMPL}`, "status: pending", "---", "", "# Impl B"].join("\n"),
+    );
+
+    const state = await loadSchedulerInboxState({ vaultRoot: vault, enabledAgents: ["codex", "dipu"] });
+    expect(state.duplicateIds.has(IMPL)).toBe(true);
+    // Never last-writer-wins: the duplicated id resolves to no single node.
+    expect(state.dependencyNodes.has(IMPL)).toBe(false);
   });
 
   it("skips agents whose inbox directory is missing", async () => {

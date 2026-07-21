@@ -1,6 +1,8 @@
 import { selectOwningDevice, type ActiveDevice } from "./cron.js";
 import { evaluateTaskDependencyEligibility, type DependencyTaskNode } from "./scheduler-dependencies.js";
 
+const EMPTY_DUPLICATE_IDS: Set<string> = new Set();
+
 // ---------------------------------------------------------------------------
 // Scheduler planner types
 // ---------------------------------------------------------------------------
@@ -57,6 +59,12 @@ export interface PlanSchedulerTickOptions {
    * task that declares dependencies is treated as blocked (fail-closed).
    */
   dependencyNodes?: Map<string, DependencyTaskNode>;
+  /**
+   * Task ids that appear on more than one visible inbox file (ADR-0038 R1). A
+   * candidate whose own id is duplicated, or a dependency that resolves to a
+   * duplicated id, is never claimable. Defaults to empty.
+   */
+  duplicateIds?: Set<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,7 +80,7 @@ export interface PlanSchedulerTickOptions {
  * jobs, active devices) and executing or displaying the proposed claims.
  */
 export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedClaim[] {
-  const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes } = options;
+  const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes, duplicateIds } = options;
   const claims: PlannedClaim[] = [];
   const enabledSet = new Set(enabledAgents);
 
@@ -84,7 +92,7 @@ export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedCla
       // Dependency eligibility (ADR-0038 R1): a task with unsatisfied or
       // invalid dependencies is never claimable. Fail closed when a task
       // declares dependencies but the resolver is unavailable.
-      if (!isDependencyEligible(task, dependencyNodes)) continue;
+      if (!isDependencyEligible(task, dependencyNodes, duplicateIds ?? EMPTY_DUPLICATE_IDS)) continue;
       // Unclaimed task: propose a claim
       const priority = devicePriorityForAgent(activeDevices, task.agentName, deviceId);
       claims.push({
@@ -162,7 +170,10 @@ export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedCla
 function isDependencyEligible(
   task: PlannerTask,
   nodes: Map<string, DependencyTaskNode> | undefined,
+  duplicateIds: Set<string>,
 ): boolean {
+  // A task whose own id collides is never claimable, even with no dependencies.
+  if (task.id !== undefined && duplicateIds.has(task.id)) return false;
   const hasDeps = (task.dependsOn !== undefined && task.dependsOn.length > 0) || task.dependsOnError !== undefined;
   if (!hasDeps) return true;
   // A declaration exists; an id is required to evaluate self/cycle cases, and
@@ -175,7 +186,7 @@ function isDependencyEligible(
     path: task.path,
   };
   if (task.dependsOnError !== undefined) candidate.dependsOnError = task.dependsOnError;
-  return evaluateTaskDependencyEligibility(candidate, nodes).eligible;
+  return evaluateTaskDependencyEligibility(candidate, nodes, duplicateIds).eligible;
 }
 
 function devicePriorityForAgent(

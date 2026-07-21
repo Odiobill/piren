@@ -1,5 +1,6 @@
 import { selectOwningDevice } from "./cron.js";
 import { evaluateTaskDependencyEligibility } from "./scheduler-dependencies.js";
+const EMPTY_DUPLICATE_IDS = new Set();
 // ---------------------------------------------------------------------------
 // Pure scheduler planner
 // ---------------------------------------------------------------------------
@@ -12,7 +13,7 @@ import { evaluateTaskDependencyEligibility } from "./scheduler-dependencies.js";
  * jobs, active devices) and executing or displaying the proposed claims.
  */
 export function planSchedulerTick(options) {
-    const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes } = options;
+    const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes, duplicateIds } = options;
     const claims = [];
     const enabledSet = new Set(enabledAgents);
     // Process inbox tasks
@@ -23,7 +24,7 @@ export function planSchedulerTick(options) {
             // Dependency eligibility (ADR-0038 R1): a task with unsatisfied or
             // invalid dependencies is never claimable. Fail closed when a task
             // declares dependencies but the resolver is unavailable.
-            if (!isDependencyEligible(task, dependencyNodes))
+            if (!isDependencyEligible(task, dependencyNodes, duplicateIds ?? EMPTY_DUPLICATE_IDS))
                 continue;
             // Unclaimed task: propose a claim
             const priority = devicePriorityForAgent(activeDevices, task.agentName, deviceId);
@@ -94,7 +95,10 @@ export function planSchedulerTick(options) {
  * preserving pre-ADR-0038 behavior. A task that declares a dependency but
  * cannot be resolved (missing id or resolver) is blocked (fail-closed).
  */
-function isDependencyEligible(task, nodes) {
+function isDependencyEligible(task, nodes, duplicateIds) {
+    // A task whose own id collides is never claimable, even with no dependencies.
+    if (task.id !== undefined && duplicateIds.has(task.id))
+        return false;
     const hasDeps = (task.dependsOn !== undefined && task.dependsOn.length > 0) || task.dependsOnError !== undefined;
     if (!hasDeps)
         return true;
@@ -110,7 +114,7 @@ function isDependencyEligible(task, nodes) {
     };
     if (task.dependsOnError !== undefined)
         candidate.dependsOnError = task.dependsOnError;
-    return evaluateTaskDependencyEligibility(candidate, nodes).eligible;
+    return evaluateTaskDependencyEligibility(candidate, nodes, duplicateIds).eligible;
 }
 function devicePriorityForAgent(activeDevices, agentName, deviceId) {
     const devices = activeDevices.get(agentName) ?? [];
