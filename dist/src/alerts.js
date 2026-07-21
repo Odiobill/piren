@@ -46,6 +46,7 @@ async function atomicWriteFile(target, content) {
 function renderAlert(options) {
     return [
         "---",
+        "type: Alert",
         `id: ${options.id}`,
         `from: ${options.from}`,
         `severity: ${options.severity}`,

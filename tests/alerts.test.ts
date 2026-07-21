@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createStewardAlert } from "../src/alerts.js";
+import { checkOkfConceptDocument } from "../src/okf.js";
 
 let root: string;
 let vault: string;
@@ -45,5 +46,35 @@ describe("Phase 2 steward alerts", () => {
     expect(content).toContain("notify: true");
     expect(content).toContain("# Vault unavailable");
     expect(content).toContain("Thor cannot reach the NAS vault");
+  });
+
+  it("renders a non-empty OKF `type` field in the alert frontmatter", async () => {
+    const result = await createStewardAlert({
+      vaultRoot: vault,
+      from: "thor",
+      title: "Vault unavailable",
+      body: "Cached context only.",
+      now: () => new Date("2026-06-23T10:15:00.000Z"),
+    });
+
+    const content = await readFile(join(vault, result.path), "utf8");
+    // `type` must be the first frontmatter field and non-empty (ADR-0022 / OKF v0.1).
+    expect(content).toMatch(/^---\ntype: Alert\n/);
+  });
+
+  it("produces an alert accepted by the OKF conformance core", async () => {
+    const result = await createStewardAlert({
+      vaultRoot: vault,
+      from: "thor",
+      title: "Vault unavailable",
+      body: "Cached context only.",
+      now: () => new Date("2026-06-23T10:15:00.000Z"),
+    });
+
+    const content = await readFile(join(vault, result.path), "utf8");
+    const check = checkOkfConceptDocument(result.path, content);
+    expect(check.ok).toBe(true);
+    expect(check.type).toBe("Alert");
+    expect(check.problems).toEqual([]);
   });
 });
