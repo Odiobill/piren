@@ -146,6 +146,12 @@ export function createNodeRetryTransitionIo() {
                 await handle.writeFile(content, "utf8");
                 await handle.sync();
             }
+            catch (error) {
+                // A failed temp write must not leave the artifact behind. Cleanup is
+                // best-effort and never masks the original write/sync error.
+                await rm(absolutePath, { force: true }).catch(() => { });
+                throw error;
+            }
             finally {
                 await handle.close();
             }
@@ -239,8 +245,19 @@ export async function applySchedulerFailureTransition(options) {
     const updated = renderWithRetryState(frontmatter, retryState, nowIso);
     if (attempts >= policy.maxAttempts) {
         // Exhausted: record the final visible state in the CLAIMED file and leave
-        // it claimed. It can never enter an automatic retry loop.
-        await atomicOverwrite(io, claimedAbsolutePath, updated);
+        // it claimed. It can never enter an automatic retry loop. A rewrite
+        // failure is total: hold with the prior claimed state preserved.
+        try {
+            await atomicOverwrite(io, claimedAbsolutePath, updated);
+        }
+        catch (error) {
+            return {
+                action: "held",
+                claimedTaskPath: info.claimedTaskPath,
+                reason: `exhausted-state rewrite failed (${errorMessage(error)}); ` +
+                    "task remains claimed with its prior state for triage",
+            };
+        }
         return {
             action: "exhausted",
             claimedTaskPath: info.claimedTaskPath,
@@ -264,7 +281,22 @@ export async function applySchedulerFailureTransition(options) {
             : `pending restore failed (${errorMessage(error)}); task remains claimed for triage`;
         return { action: "held", claimedTaskPath: info.claimedTaskPath, reason };
     }
-    await io.remove(claimedAbsolutePath);
+    try {
+        await io.remove(claimedAbsolutePath);
+    }
+    catch (error) {
+        // The pending file was already restored and may already be observed or
+        // claimed — never delete it. Retain BOTH files: a duplicate visible task
+        // id is intentional fail-closed state that R1 duplicate handling blocks
+        // for both candidates and dependency targets until triage.
+        return {
+            action: "held",
+            claimedTaskPath: info.claimedTaskPath,
+            reason: `claimed unlink failed after pending restore (${errorMessage(error)}); ` +
+                `duplicate visible task id at ${restoredPath} and ${info.claimedTaskPath}; ` +
+                "both files retained for fail-closed R1/R3 triage",
+        };
+    }
     return {
         action: "requeued",
         claimedTaskPath: info.claimedTaskPath,
@@ -314,7 +346,14 @@ function errorMessage(error) {
 /** Crash-atomic in-place rewrite via temp file + rename (overwrites target). */
 async function atomicOverwrite(io, target, content) {
     const tempPath = await writeTempFile(io, target, content);
-    await io.renameOverwrite(tempPath, target);
+    try {
+        await io.renameOverwrite(tempPath, target);
+    }
+    catch (error) {
+        // Best-effort temp cleanup; never mask the original rename error.
+        await io.remove(tempPath).catch(() => { });
+        throw error;
+    }
 }
 /**
  * Fail-closed no-clobber TWO-STEP create: temp file + hard link (rejects when
@@ -327,9 +366,14 @@ async function atomicCreateNoClobber(io, target, content) {
         await io.linkNoClobber(tempPath, target);
     }
     catch (error) {
-        await io.remove(tempPath);
+        // Best-effort temp cleanup; never mask the original link error.
+        await io.remove(tempPath).catch(() => { });
         throw error;
     }
-    await io.remove(tempPath);
+    // Best-effort temp cleanup on the success path too: a leftover dot-temp
+    // artifact is not a visible task id and never justifies failing a restore
+    // whose link already succeeded. The claimed unlink (checked by the caller)
+    // is the step whose failure produces the duplicate-recovery held result.
+    await io.remove(tempPath).catch(() => { });
 }
 //# sourceMappingURL=scheduler-retry.js.map

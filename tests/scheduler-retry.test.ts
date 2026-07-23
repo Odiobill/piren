@@ -5,6 +5,7 @@ import { parse as parseYaml } from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   applySchedulerFailureTransition,
+  createNodeRetryTransitionIo,
   evaluateRetryEligibility,
   isLaunchFailure,
   parseRetryPolicy,
@@ -864,5 +865,165 @@ describe("applySchedulerFailureTransition: injected fake-I/O seam", () => {
     expect(result.action).toBe("held");
     expect(io.ops).toEqual([]);
     expect(io.files.get(CLAIMED_ABS)).toBe(RETRYABLE);
+  });
+
+  it("a non-collision link failure holds with the error and cleans the temp", async () => {
+    const io = seed();
+    io.linkNoClobber = async (): Promise<void> => {
+      throw new Error("EIO: link failed");
+    };
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    expect(result.reason).toContain("pending restore failed");
+    expect(result.reason).toContain("EIO: link failed");
+    expect(io.files.get(CLAIMED_ABS)).toBe(RETRYABLE);
+    expect(io.files.has(PENDING_ABS)).toBe(false);
+    expect(io.tempFiles()).toEqual([]);
+  });
+
+  it("a claimed-unlink failure after restore holds with the duplicate-recovery state and retains both files", async () => {
+    const io = seed();
+    const originalRemove = io.remove.bind(io);
+    io.remove = async (path: string): Promise<void> => {
+      if (path === CLAIMED_ABS) throw new Error("EIO: unlink failed");
+      return originalRemove(path);
+    };
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    expect(result.reason).toContain("claimed unlink failed after pending restore");
+    expect(result.reason).toContain("EIO: unlink failed");
+    expect(result.reason).toContain("duplicate");
+    expect(result.reason).toContain(CLAIMED);
+    expect(result.reason).toContain(`team/kimi/inbox/${TASK_ID}.md`);
+    // Fail-closed duplicate visible-ID recovery state: BOTH files retained,
+    // the restored pending file is NOT deleted (it may already be observed).
+    expect(io.files.get(CLAIMED_ABS)).toBe(RETRYABLE);
+    const pending = io.files.get(PENDING_ABS) ?? "";
+    expect(pending).toContain("attempts: 1");
+    expect(io.tempFiles()).toEqual([]);
+  });
+
+  it("an exhausted-temp-write failure holds and preserves the prior claimed state", async () => {
+    const io = new FakeRetryIo();
+    const almostDone = taskFile({
+      id: TASK_ID,
+      extraFrontmatter: ["retry:", "  safe_to_retry: true", "  max_attempts: 1", "  backoff_seconds: 300"],
+    });
+    io.files.set(CLAIMED_ABS, almostDone);
+    io.createExclusive = async (): Promise<void> => {
+      throw new Error("EIO: disk full");
+    };
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    expect(result.reason).toContain("exhausted-state rewrite failed");
+    expect(result.reason).toContain("EIO: disk full");
+    expect(io.files.get(CLAIMED_ABS)).toBe(almostDone);
+    expect(io.files.has(PENDING_ABS)).toBe(false);
+    expect(io.tempFiles()).toEqual([]);
+  });
+
+  it("an exhausted-rename failure holds, preserves the claimed file, and cleans the temp", async () => {
+    const io = new FakeRetryIo();
+    const almostDone = taskFile({
+      id: TASK_ID,
+      extraFrontmatter: ["retry:", "  safe_to_retry: true", "  max_attempts: 1", "  backoff_seconds: 300"],
+    });
+    io.files.set(CLAIMED_ABS, almostDone);
+    io.renameOverwrite = async (): Promise<void> => {
+      throw new Error("EIO: rename failed");
+    };
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    expect(result.reason).toContain("exhausted-state rewrite failed");
+    expect(result.reason).toContain("EIO: rename failed");
+    expect(io.files.get(CLAIMED_ABS)).toBe(almostDone);
+    expect(io.files.has(PENDING_ABS)).toBe(false);
+    // Best-effort temp cleanup was attempted after the rename failure.
+    expect(io.ops).toContain(`remove ${CLAIMED_ABS}.fake-tmp-0`);
+    expect(io.tempFiles()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Production adapter contract (real fs)
+// ---------------------------------------------------------------------------
+
+describe("createNodeRetryTransitionIo (production adapter, real fs)", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "piren-retry-io-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("createExclusive writes content and rejects EEXIST without clobbering", async () => {
+    const io = createNodeRetryTransitionIo();
+    const target = join(dir, "task.md");
+    await io.createExclusive(target, "first");
+    expect(await readFile(target, "utf8")).toBe("first");
+    await expect(io.createExclusive(target, "second")).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(target, "utf8")).toBe("first");
+  });
+
+  it("createExclusive rejects when the parent directory is missing and leaves nothing", async () => {
+    const io = createNodeRetryTransitionIo();
+    const target = join(dir, "missing", "task.md");
+    await expect(io.createExclusive(target, "content")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await pathExists(target)).toBe(false);
+  });
+
+  it("linkNoClobber rejects EEXIST and keeps the original target", async () => {
+    const io = createNodeRetryTransitionIo();
+    const temp = join(dir, "temp.tmp");
+    const target = join(dir, "task.md");
+    await io.createExclusive(temp, "new");
+    await io.createExclusive(target, "original");
+    await expect(io.linkNoClobber(temp, target)).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(target, "utf8")).toBe("original");
+  });
+
+  it("renameOverwrite overwrites the target and remove tolerates missing paths", async () => {
+    const io = createNodeRetryTransitionIo();
+    const temp = join(dir, "temp.tmp");
+    const target = join(dir, "task.md");
+    await io.createExclusive(temp, "new");
+    await io.createExclusive(target, "original");
+    await io.renameOverwrite(temp, target);
+    expect(await readFile(target, "utf8")).toBe("new");
+    expect(await pathExists(temp)).toBe(false);
+    await io.remove(join(dir, "never-existed.md"));
   });
 });
