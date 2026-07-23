@@ -9,6 +9,7 @@ import {
   isLaunchFailure,
   parseRetryPolicy,
   parseRetryState,
+  type RetryTransitionIo,
 } from "../src/scheduler-retry.js";
 
 const NOW = new Date("2026-07-23T12:00:00.000Z");
@@ -33,6 +34,12 @@ describe("parseRetryPolicy", () => {
       retry: { safe_to_retry: true, max_attempts: 1, backoff_seconds: 0 },
     });
     expect(r.policy).toEqual({ safeToRetry: true, maxAttempts: 1, backoffSeconds: 0 });
+  });
+
+  it("treats retry: null as present malformed, not absent", () => {
+    const r = parseRetryPolicy({ retry: null });
+    expect(r.policy).toBeUndefined();
+    expect(r.error).toBe("retry policy must be a mapping");
   });
 
   it("rejects a non-mapping retry field with an exact reason", () => {
@@ -97,6 +104,12 @@ describe("parseRetryState", () => {
     });
   });
 
+  it("treats retry_state: null as present malformed, not absent", () => {
+    const r = parseRetryState({ retry_state: null });
+    expect(r.state).toBeUndefined();
+    expect(r.error).toBe("retry_state must be a mapping");
+  });
+
   it("rejects a non-mapping retry_state", () => {
     const r = parseRetryState({ retry_state: "launch_failure" });
     expect(r.state).toBeUndefined();
@@ -106,6 +119,22 @@ describe("parseRetryState", () => {
   it("rejects a negative or non-integer attempts count", () => {
     const r = parseRetryState({ retry_state: { ...VALID, attempts: -1 } });
     expect(r.error).toBe("retry_state.attempts must be a non-negative integer");
+  });
+
+  it("rejects parseable-but-non-canonical timestamps (scheduler writes canonical ISO)", () => {
+    const invalid = [
+      "July 23, 2026", // natural language, Date.parse-compatible
+      "2026-07-23", // date only
+      "2026-07-23T12:00:00Z", // missing milliseconds
+      "2026-07-23T12:00:00.000+02:00", // offset form, not the scheduler-written Z form
+      "2026-13-45T99:99:99.999Z", // canonical shape, impossible date
+      " 2026-07-23T12:00:00.000Z ", // surrounding whitespace
+    ];
+    for (const value of invalid) {
+      const r = parseRetryState({ retry_state: { ...VALID, last_attempt_at: value } });
+      expect(r.state).toBeUndefined();
+      expect(r.error).toBe("retry_state.last_attempt_at must be an ISO timestamp");
+    }
   });
 
   it("rejects an invalid last_attempt_at timestamp", () => {
@@ -133,6 +162,18 @@ describe("evaluateRetryEligibility", () => {
 
   it("is eligible with a valid policy and no prior attempts", () => {
     expect(evaluateRetryEligibility({ retry: POLICY }, NOW)).toEqual({ eligible: true });
+  });
+
+  it("is ineligible with retry: null (present malformed value)", () => {
+    const r = evaluateRetryEligibility({ retry: null }, NOW);
+    expect(r.eligible).toBe(false);
+    expect(r.reason).toBe("retry policy must be a mapping");
+  });
+
+  it("is ineligible with retry_state: null under a valid policy", () => {
+    const r = evaluateRetryEligibility({ retry: POLICY, retry_state: null }, NOW);
+    expect(r.eligible).toBe(false);
+    expect(r.reason).toBe("retry_state must be a mapping");
   });
 
   it("is ineligible with an invalid policy and reports the exact reason", () => {
@@ -603,5 +644,225 @@ describe("applySchedulerFailureTransition: exhaustion, policy gates, races", () 
     expect(result.action).toBe("held");
     if (result.action !== "held") return;
     expect(result.reason).toContain("not found");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Injected fake-I/O seam (R2 review: deterministic state-transition tests)
+// ---------------------------------------------------------------------------
+
+/** Deterministic in-memory RetryTransitionIo fake with an operation log. */
+class FakeRetryIo implements RetryTransitionIo {
+  readonly files = new Map<string, string>();
+  readonly ops: string[] = [];
+  private counter = 0;
+
+  tempPathFor(targetPath: string): string {
+    const name = `${targetPath}.fake-tmp-${this.counter}`;
+    this.counter += 1;
+    return name;
+  }
+
+  private coded(code: string, path: string): Error {
+    const error = new Error(`${code}: ${path}`);
+    (error as { code?: string }).code = code;
+    return error;
+  }
+
+  async readFile(absolutePath: string): Promise<string> {
+    this.ops.push(`read ${absolutePath}`);
+    const content = this.files.get(absolutePath);
+    if (content === undefined) throw this.coded("ENOENT", absolutePath);
+    return content;
+  }
+
+  async createExclusive(absolutePath: string, content: string): Promise<void> {
+    this.ops.push(`create ${absolutePath}`);
+    if (this.files.has(absolutePath)) throw this.coded("EEXIST", absolutePath);
+    this.files.set(absolutePath, content);
+  }
+
+  async linkNoClobber(tempPath: string, targetPath: string): Promise<void> {
+    this.ops.push(`link ${tempPath} -> ${targetPath}`);
+    if (this.files.has(targetPath)) throw this.coded("EEXIST", targetPath);
+    const content = this.files.get(tempPath);
+    if (content === undefined) throw this.coded("ENOENT", tempPath);
+    this.files.set(targetPath, content);
+  }
+
+  async renameOverwrite(tempPath: string, targetPath: string): Promise<void> {
+    this.ops.push(`rename ${tempPath} -> ${targetPath}`);
+    const content = this.files.get(tempPath);
+    if (content === undefined) throw this.coded("ENOENT", tempPath);
+    this.files.set(targetPath, content);
+    this.files.delete(tempPath);
+  }
+
+  async remove(absolutePath: string): Promise<void> {
+    this.ops.push(`remove ${absolutePath}`);
+    this.files.delete(absolutePath);
+  }
+
+  tempFiles(): string[] {
+    return [...this.files.keys()].filter((k) => k.includes(".fake-tmp-"));
+  }
+}
+
+describe("applySchedulerFailureTransition: injected fake-I/O seam", () => {
+  const VAULT = "/fake-vault";
+  const CLAIMED = `team/kimi/inbox/${CLAIMED_NAME}`;
+  const CLAIMED_ABS = `${VAULT}/${CLAIMED}`;
+  const PENDING_ABS = `${VAULT}/team/kimi/inbox/${TASK_ID}.md`;
+  const RETRYABLE = taskFile({
+    id: TASK_ID,
+    extraFrontmatter: ["retry:", "  safe_to_retry: true", "  max_attempts: 2", "  backoff_seconds: 300"],
+  });
+
+  function seed(): FakeRetryIo {
+    const io = new FakeRetryIo();
+    io.files.set(CLAIMED_ABS, RETRYABLE);
+    return io;
+  }
+
+  it("requeues through read -> temp create -> no-clobber link -> unlink, deterministically", async () => {
+    const io = seed();
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("requeued");
+    if (result.action !== "requeued") return;
+    // Exact deterministic operation protocol, including the injected temp name.
+    const temp = `${PENDING_ABS}.fake-tmp-0`;
+    expect(io.ops).toEqual([
+      `read ${CLAIMED_ABS}`,
+      `create ${temp}`,
+      `link ${temp} -> ${PENDING_ABS}`,
+      `remove ${temp}`,
+      `remove ${CLAIMED_ABS}`,
+    ]);
+    // Pending restored with visible state; claimed gone; no temp left behind.
+    expect(io.files.has(PENDING_ABS)).toBe(true);
+    expect(io.files.has(CLAIMED_ABS)).toBe(false);
+    expect(io.tempFiles()).toEqual([]);
+    const restored = io.files.get(PENDING_ABS) ?? "";
+    expect(restored).toContain("attempts: 1");
+    expect(restored).toContain("next_eligible_at: 2026-07-23T12:05:00.000Z");
+  });
+
+  it("a no-clobber link collision holds, preserves both files, and cleans the temp", async () => {
+    const io = seed();
+    const conflicting = taskFile({ id: TASK_ID, body: "Conflicting duplicate." });
+    io.files.set(PENDING_ABS, conflicting);
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    expect(result.reason).toContain("pending restore target already exists");
+    expect(io.files.get(CLAIMED_ABS)).toBe(RETRYABLE);
+    expect(io.files.get(PENDING_ABS)).toBe(conflicting);
+    expect(io.tempFiles()).toEqual([]);
+  });
+
+  it("a missing claimed file holds without any write operations", async () => {
+    const io = new FakeRetryIo();
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    expect(result.reason).toContain("not found");
+    expect(io.ops).toEqual([`read ${CLAIMED_ABS}`]);
+    expect(io.files.size).toBe(0);
+  });
+
+  it("exhaustion rewrites the claimed file via temp + overwrite rename, never restores", async () => {
+    const io = new FakeRetryIo();
+    const almostDone = taskFile({
+      id: TASK_ID,
+      extraFrontmatter: [
+        "retry:",
+        "  safe_to_retry: true",
+        "  max_attempts: 1",
+        "  backoff_seconds: 300",
+      ],
+    });
+    io.files.set(CLAIMED_ABS, almostDone);
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("exhausted");
+    if (result.action !== "exhausted") return;
+    const temp = `${CLAIMED_ABS}.fake-tmp-0`;
+    expect(io.ops).toEqual([
+      `read ${CLAIMED_ABS}`,
+      `create ${temp}`,
+      `rename ${temp} -> ${CLAIMED_ABS}`,
+    ]);
+    expect(io.files.has(PENDING_ABS)).toBe(false);
+    const claimed = io.files.get(CLAIMED_ABS) ?? "";
+    expect(claimed).toContain("attempts: 1");
+    expect(claimed).toContain("last_failure: launch_failure");
+    expect(io.tempFiles()).toEqual([]);
+  });
+
+  it("an unexpected temp-write failure holds with the error and leaves the claim untouched", async () => {
+    const io = seed();
+    const original = io.createExclusive.bind(io);
+    io.createExclusive = async (path: string, content: string): Promise<void> => {
+      if (path.includes(".fake-tmp-")) throw new Error("EIO: disk full");
+      return original(path, content);
+    };
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    // Fail closed: held with the underlying error, claim untouched, no pending file.
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    expect(result.reason).toContain("pending restore failed");
+    expect(result.reason).toContain("EIO: disk full");
+    expect(io.files.get(CLAIMED_ABS)).toBe(RETRYABLE);
+    expect(io.files.has(PENDING_ABS)).toBe(false);
+    expect(io.tempFiles()).toEqual([]);
+  });
+
+  it("post-start holds perform no I/O at all", async () => {
+    const io = seed();
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "timeout",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("held");
+    expect(io.ops).toEqual([]);
+    expect(io.files.get(CLAIMED_ABS)).toBe(RETRYABLE);
   });
 });

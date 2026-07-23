@@ -11,8 +11,21 @@ function isPositiveInteger(value) {
 function isNonNegativeInteger(value) {
     return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
+/**
+ * Canonical scheduler-written ISO-8601 timestamp (`Date#toISOString()` shape:
+ * `YYYY-MM-DDTHH:mm:ss.sssZ`). `Date.parse` alone is too lenient — it accepts
+ * natural-language and date-only inputs — so require the exact canonical
+ * shape AND a lossless round trip.
+ */
 function isIsoTimestamp(value) {
-    return typeof value === "string" && !Number.isNaN(Date.parse(value));
+    if (typeof value !== "string")
+        return false;
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value))
+        return false;
+    const ms = Date.parse(value);
+    if (Number.isNaN(ms))
+        return false;
+    return new Date(ms).toISOString() === value;
 }
 /**
  * Parse and validate the optional `retry` policy from parsed frontmatter.
@@ -25,7 +38,9 @@ function isIsoTimestamp(value) {
  */
 export function parseRetryPolicy(frontmatter) {
     const raw = frontmatter["retry"];
-    if (raw === undefined || raw === null)
+    // Only `undefined` means absent. An explicit null is a present malformed
+    // value and must fail closed with an exact reason.
+    if (raw === undefined)
         return {};
     if (!isPlainMapping(raw))
         return { error: "retry policy must be a mapping" };
@@ -53,7 +68,9 @@ export function parseRetryPolicy(frontmatter) {
  */
 export function parseRetryState(frontmatter) {
     const raw = frontmatter["retry_state"];
-    if (raw === undefined || raw === null)
+    // Only `undefined` means absent. An explicit null is a present malformed
+    // value and must fail closed with an exact reason.
+    if (raw === undefined)
         return {};
     if (!isPlainMapping(raw))
         return { error: "retry_state must be a mapping" };
@@ -116,6 +133,32 @@ export function isLaunchFailure(kind) {
     return kind === "launch_failure";
 }
 /**
+ * Production {@link RetryTransitionIo} adapter over node:fs/promises. Temp
+ * files are created with `wx` at mode 0o600 and fsynced before link/rename;
+ * the unique temp name mixes wall time, pid, and randomness.
+ */
+export function createNodeRetryTransitionIo() {
+    return {
+        readFile: (absolutePath) => readFile(absolutePath, "utf8"),
+        async createExclusive(absolutePath, content) {
+            const handle = await open(absolutePath, "wx", 0o600);
+            try {
+                await handle.writeFile(content, "utf8");
+                await handle.sync();
+            }
+            finally {
+                await handle.close();
+            }
+        },
+        linkNoClobber: (tempPath, targetPath) => link(tempPath, targetPath),
+        renameOverwrite: (tempPath, targetPath) => rename(tempPath, targetPath),
+        remove: async (absolutePath) => {
+            await rm(absolutePath, { force: true });
+        },
+        tempPathFor: (targetPath) => resolve(dirname(targetPath), `.${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`),
+    };
+}
+/**
  * Apply a scheduler-observed failure to an already-claimed inbox task.
  *
  * Post-start failures (timeout, non-zero exit, provider error, disconnect)
@@ -139,9 +182,10 @@ export async function applySchedulerFailureTransition(options) {
     }
     const root = resolve(options.vaultRoot);
     const claimedAbsolutePath = resolve(root, info.claimedTaskPath);
+    const io = options.io ?? createNodeRetryTransitionIo();
     let content;
     try {
-        content = await readFile(claimedAbsolutePath, "utf8");
+        content = await io.readFile(claimedAbsolutePath);
     }
     catch {
         // A concurrent transition already handled this claimed file.
@@ -196,7 +240,7 @@ export async function applySchedulerFailureTransition(options) {
     if (attempts >= policy.maxAttempts) {
         // Exhausted: record the final visible state in the CLAIMED file and leave
         // it claimed. It can never enter an automatic retry loop.
-        await atomicOverwrite(claimedAbsolutePath, updated);
+        await atomicOverwrite(io, claimedAbsolutePath, updated);
         return {
             action: "exhausted",
             claimedTaskPath: info.claimedTaskPath,
@@ -211,16 +255,16 @@ export async function applySchedulerFailureTransition(options) {
     const restoredPath = join("team", info.agentName, "inbox", info.fileName);
     const restoredAbsolutePath = resolve(root, restoredPath);
     try {
-        await atomicCreateNoClobber(restoredAbsolutePath, updated);
+        await atomicCreateNoClobber(io, restoredAbsolutePath, updated);
     }
-    catch {
-        return {
-            action: "held",
-            claimedTaskPath: info.claimedTaskPath,
-            reason: `pending restore target already exists (${restoredPath}); concurrent claim or duplicate, task remains claimed for triage`,
-        };
+    catch (error) {
+        const code = error.code;
+        const reason = code === "EEXIST"
+            ? `pending restore target already exists (${restoredPath}); concurrent claim or duplicate, task remains claimed for triage`
+            : `pending restore failed (${errorMessage(error)}); task remains claimed for triage`;
+        return { action: "held", claimedTaskPath: info.claimedTaskPath, reason };
     }
-    await rm(claimedAbsolutePath, { force: true });
+    await io.remove(claimedAbsolutePath);
     return {
         action: "requeued",
         claimedTaskPath: info.claimedTaskPath,
@@ -256,41 +300,36 @@ function renderWithRetryState(split, retryState, updatedIso) {
     fields["updated"] = updatedIso;
     return `---\n${stringifyYaml(fields)}---\n${split.body}`;
 }
-function tempPathFor(target) {
-    const directory = dirname(target);
-    return resolve(directory, `.${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
+function tempPathFor(io, target) {
+    return io.tempPathFor(target);
 }
-async function writeTempFile(target, content) {
-    const tempPath = tempPathFor(target);
-    const handle = await open(tempPath, "wx", 0o600);
-    try {
-        await handle.writeFile(content, "utf8");
-        await handle.sync();
-    }
-    finally {
-        await handle.close();
-    }
+async function writeTempFile(io, target, content) {
+    const tempPath = tempPathFor(io, target);
+    await io.createExclusive(tempPath, content);
     return tempPath;
 }
+function errorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
 /** Crash-atomic in-place rewrite via temp file + rename (overwrites target). */
-async function atomicOverwrite(target, content) {
-    const tempPath = await writeTempFile(target, content);
-    await rename(tempPath, target);
+async function atomicOverwrite(io, target, content) {
+    const tempPath = await writeTempFile(io, target, content);
+    await io.renameOverwrite(tempPath, target);
 }
 /**
- * Crash-atomic create that never clobbers: temp file + hard link. The link
- * fails with EEXIST when the target already exists, so a concurrent claim or
- * duplicate pending file aborts the restore instead of being overwritten.
+ * Fail-closed no-clobber TWO-STEP create: temp file + hard link (rejects when
+ * the target exists), then temp cleanup. NOT a single atomic rename — see the
+ * module header for the intentional duplicate-ID crash window.
  */
-async function atomicCreateNoClobber(target, content) {
-    const tempPath = await writeTempFile(target, content);
+async function atomicCreateNoClobber(io, target, content) {
+    const tempPath = await writeTempFile(io, target, content);
     try {
-        await link(tempPath, target);
+        await io.linkNoClobber(tempPath, target);
     }
     catch (error) {
-        await rm(tempPath, { force: true });
+        await io.remove(tempPath);
         throw error;
     }
-    await rm(tempPath, { force: true });
+    await io.remove(tempPath);
 }
 //# sourceMappingURL=scheduler-retry.js.map

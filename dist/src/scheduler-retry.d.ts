@@ -14,6 +14,21 @@
  *
  * This module is not wired into the scheduler (that is R3). It adds no task
  * statuses, no hidden state, and no retry beyond the bounded policy.
+ *
+ * Restore protocol (claimed -> pending): a fail-closed, no-clobber TWO-STEP
+ * protocol — write a temp file, hard-link it to the pending name (fails when
+ * the target exists), then unlink the claimed file. It is NOT a single atomic
+ * rename: a crash between the link and the unlink can leave both the claimed
+ * and the pending file visible, i.e. duplicate visible task IDs. That is an
+ * intentional fail-closed outcome — the R1 dependency loader treats duplicate
+ * IDs as invalid resolution and blocks both candidates and dependency
+ * targets, so recovery never silently picks a winner. The claimed file is
+ * always preserved on collisions and errors.
+ *
+ * All filesystem/unique-name effects go through the injected
+ * {@link RetryTransitionIo} seam so state transitions are deterministically
+ * testable with a fake filesystem; the production adapter is
+ * {@link createNodeRetryTransitionIo}.
  */
 /** Validated explicit retry policy from task frontmatter. */
 export interface RetryPolicy {
@@ -91,7 +106,36 @@ export interface ApplySchedulerFailureOptions {
     claimedTaskPath: string;
     failureKind: SchedulerFailureKind;
     now?: () => Date;
+    /** Injected I/O seam; production uses {@link createNodeRetryTransitionIo}. */
+    io?: RetryTransitionIo;
 }
+/**
+ * Minimal injected filesystem/unique-temp-name seam for the claimed-task
+ * transition. Implementations must preserve the safety contract:
+ * `createExclusive` and `linkNoClobber` reject with an error carrying
+ * `code: "EEXIST"` when the path/target exists (matching node:fs), and
+ * `remove` tolerates a missing path.
+ */
+export interface RetryTransitionIo {
+    /** Read a file; rejects when it does not exist. */
+    readFile(absolutePath: string): Promise<string>;
+    /** Create a NEW file exclusively (fail if it exists), write content, flush. */
+    createExclusive(absolutePath: string, content: string): Promise<void>;
+    /** Hard-link temp to target; MUST reject when the target already exists. */
+    linkNoClobber(tempPath: string, targetPath: string): Promise<void>;
+    /** Rename temp over target (overwrite allowed). */
+    renameOverwrite(tempPath: string, targetPath: string): Promise<void>;
+    /** Remove a file, tolerating a missing path. */
+    remove(absolutePath: string): Promise<void>;
+    /** A unique temp path for the given final target. */
+    tempPathFor(targetPath: string): string;
+}
+/**
+ * Production {@link RetryTransitionIo} adapter over node:fs/promises. Temp
+ * files are created with `wx` at mode 0o600 and fsynced before link/rename;
+ * the unique temp name mixes wall time, pid, and randomness.
+ */
+export declare function createNodeRetryTransitionIo(): RetryTransitionIo;
 /** Outcome of applying a failure to a claimed task. The task file is the state. */
 export type SchedulerFailureTransition = {
     action: "requeued";
