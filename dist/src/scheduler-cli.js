@@ -6,6 +6,7 @@ import { parse as parseYaml } from "yaml";
 import { listCronJobs, listActiveDevices } from "./cron.js";
 import { planSchedulerTick } from "./scheduler.js";
 import { evaluateTaskDependencyEligibility, loadSchedulerInboxState, } from "./scheduler-dependencies.js";
+import { evaluateRetryEligibility } from "./scheduler-retry.js";
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
 /**
  * Resolve the locally enabled agent set: allowed_agents minus excluded_agents.
@@ -106,7 +107,7 @@ export async function schedulerDryRun(options) {
     // Separately classify pending candidates for the human-readable report so
     // the dry-run can distinguish runnable from dependency-blocked work without
     // mutating anything. This reuses the same pure evaluator the planner uses.
-    const blocked = classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds);
+    const blocked = classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds, now);
     // Format output
     return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked);
 }
@@ -121,10 +122,12 @@ function toPlannerTask(task) {
     plannerTask.dependsOn = task.dependsOn;
     if (task.dependsOnError !== undefined)
         plannerTask.dependsOnError = task.dependsOnError;
+    if (task.frontmatter !== undefined)
+        plannerTask.frontmatter = task.frontmatter;
     return plannerTask;
 }
 /** Evaluate every pending candidate and return the blocked ones with reasons. */
-function classifyBlockedTasks(pendingTasks, dependencyNodes, duplicateIds) {
+function classifyBlockedTasks(pendingTasks, dependencyNodes, duplicateIds, now) {
     const blocked = [];
     for (const task of pendingTasks) {
         const candidate = {
@@ -144,6 +147,19 @@ function classifyBlockedTasks(pendingTasks, dependencyNodes, duplicateIds) {
                 path: task.path,
                 reason: verdict.reason ?? "dependency-blocked",
             });
+            continue;
+        }
+        // Retry eligibility (ADR-0038 R3): report the exact accepted R2 reason
+        // for invalid policy/state, exhausted attempts, or unexpired backoff.
+        if (task.frontmatter !== undefined) {
+            const retry = evaluateRetryEligibility(task.frontmatter, now);
+            if (!retry.eligible) {
+                blocked.push({
+                    agentName: task.agentName,
+                    path: task.path,
+                    reason: retry.reason ?? "retry-blocked",
+                });
+            }
         }
     }
     return blocked;

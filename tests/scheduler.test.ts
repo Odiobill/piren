@@ -436,3 +436,110 @@ describe("scheduler planner dependency eligibility (ADR-0038 R1)", () => {
     expect(result.map((c) => c.itemPath)).toEqual(["team/codex/inbox/review.md"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Retry eligibility in the planner (ADR-0038 R3 wiring of accepted R2 semantics)
+// ---------------------------------------------------------------------------
+
+const VALID_POLICY = { safe_to_retry: true, max_attempts: 2, backoff_seconds: 300 };
+
+function retryTask(frontmatter: Record<string, unknown>): PlannerTask {
+  return {
+    path: "team/codex/inbox/retryable.md",
+    agentName: "codex",
+    status: "pending",
+    id: "20260721T140000000Z-retryable-task",
+    frontmatter,
+  };
+}
+
+function planWith(tasks: PlannerTask[]): ReturnType<typeof planSchedulerTick> {
+  return planSchedulerTick({
+    enabledAgents: ["codex"],
+    pendingTasks: tasks,
+    dueCronJobs: [],
+    activeDevices: new Map(),
+    deviceId,
+    staleAfterMs,
+    now,
+  });
+}
+
+describe("scheduler planner retry eligibility (ADR-0038 R3)", () => {
+  it("does not propose a claim for a task inside its retry backoff window", () => {
+    const result = planWith([
+      retryTask({
+        retry: VALID_POLICY,
+        retry_state: {
+          attempts: 1,
+          last_attempt_at: "2026-07-05T09:55:00.000Z",
+          next_eligible_at: "2026-07-05T10:05:00.000Z", // 5 minutes after `now`
+          last_failure: "launch_failure",
+        },
+      }),
+    ]);
+    expect(result).toEqual([]);
+  });
+
+  it("does not propose a claim for a task with exhausted retry attempts", () => {
+    const result = planWith([
+      retryTask({
+        retry: VALID_POLICY,
+        retry_state: {
+          attempts: 2,
+          last_attempt_at: "2026-07-05T09:00:00.000Z",
+          next_eligible_at: "2026-07-05T09:05:00.000Z",
+          last_failure: "launch_failure",
+        },
+      }),
+    ]);
+    expect(result).toEqual([]);
+  });
+
+  it("does not propose a claim for a task with an invalid retry policy", () => {
+    const result = planWith([
+      retryTask({ retry: { safe_to_retry: false, max_attempts: 2, backoff_seconds: 300 } }),
+    ]);
+    expect(result).toEqual([]);
+  });
+
+  it("does not propose a claim for a task with malformed retry_state", () => {
+    const result = planWith([
+      retryTask({ retry: VALID_POLICY, retry_state: null }),
+    ]);
+    expect(result).toEqual([]);
+  });
+
+  it("proposes a claim for a task with a valid policy and no recorded attempts", () => {
+    const result = planWith([retryTask({ retry: VALID_POLICY })]);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.itemPath).toBe("team/codex/inbox/retryable.md");
+  });
+
+  it("proposes a claim when attempts remain and the backoff has expired", () => {
+    const result = planWith([
+      retryTask({
+        retry: VALID_POLICY,
+        retry_state: {
+          attempts: 1,
+          last_attempt_at: "2026-07-05T09:00:00.000Z",
+          next_eligible_at: "2026-07-05T09:05:00.000Z", // expired before `now`
+          last_failure: "launch_failure",
+        },
+      }),
+    ]);
+    expect(result).toHaveLength(1);
+  });
+
+  it("proposes a claim for a task whose frontmatter carries no retry fields", () => {
+    const result = planWith([retryTask({ id: "20260721T140000000Z-retryable-task", status: "pending" })]);
+    expect(result).toHaveLength(1);
+  });
+
+  it("proposes a claim for a task with no frontmatter at all (legacy planner input)", () => {
+    const result = planWith([
+      { path: "team/codex/inbox/legacy.md", agentName: "codex", status: "pending" },
+    ]);
+    expect(result).toHaveLength(1);
+  });
+});

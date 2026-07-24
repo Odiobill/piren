@@ -37,6 +37,10 @@ import {
   releaseCompletedClaimedTask,
   type SchedulerReleaseTransition,
 } from "./scheduler-release.js";
+import {
+  applySchedulerFailureTransition,
+  type SchedulerFailureTransition,
+} from "./scheduler-retry.js";
 
 // ---------------------------------------------------------------------------
 // Scheduler one-shot tick (ADR-0029 / O7 S4)
@@ -68,6 +72,13 @@ export interface SchedulerOnceOptions {
    * they restore themselves via `cron_record_run`.
    */
   release?: SchedulerOnceRelease;
+  /**
+   * Retry failure-transition seam (ADR-0038 R3). Invoked ONLY when a claimed
+   * inbox execution returns non-ok with a typed `launch_failure` (revision 3
+   * classification); ambiguous and legacy/untyped failures never reach it.
+   * Defaults to the real {@link defaultRetryTransition}.
+   */
+  retryTransition?: SchedulerOnceRetryTransition;
 }
 
 export interface InboxExecuteInput {
@@ -132,6 +143,40 @@ export const defaultRelease: SchedulerOnceRelease = (input) =>
     expectedDeviceId: input.expectedDeviceId,
   });
 
+/** Input for the retry failure-transition seam (ADR-0038 R3). */
+export interface SchedulerOnceRetryTransitionInput {
+  agentName: string;
+  vaultRoot: string;
+  claimedTaskPath: string;
+  /**
+   * The only failure kind the tick may pass: a typed pre-handoff
+   * `launch_failure` (revision 3). Ambiguous outcomes never reach the seam.
+   */
+  failureKind: "launch_failure";
+  /** Tick clock, threaded for deterministic backoff computation. */
+  now: () => Date;
+}
+
+/**
+ * Injected retry failure-transition seam. After a claimed inbox execution
+ * fails with a typed `launch_failure`, the tick calls this exactly once to
+ * apply the accepted R2 transition (record retry_state + requeue, exhaust, or
+ * hold). Tests inject a fake so no real claimed file is required.
+ */
+export type SchedulerOnceRetryTransition = (
+  input: SchedulerOnceRetryTransitionInput,
+) => Promise<SchedulerFailureTransition>;
+
+/** Production retry transition: the accepted R2 core (ADR-0038). */
+export const defaultRetryTransition: SchedulerOnceRetryTransition = (input) =>
+  applySchedulerFailureTransition({
+    vaultRoot: input.vaultRoot,
+    agentName: input.agentName,
+    claimedTaskPath: input.claimedTaskPath,
+    failureKind: input.failureKind,
+    now: input.now,
+  });
+
 export type SchedulerItemType = "inbox_task" | "cron_job";
 export type ClaimOutcome = "executed" | "claim_failed" | "execution_failed";
 
@@ -158,6 +203,10 @@ export interface SchedulerOnceResult {
   releaseStatus?: "released" | "held";
   /** Exact reason when the release was held (task remains claimed for triage). */
   releaseReason?: string;
+  /** Retry-transition outcome for a typed launch_failure (ADR-0038 R3). */
+  retryStatus?: "requeued" | "exhausted" | "held";
+  /** Exact reason when the retry transition was exhausted or held. */
+  retryReason?: string;
   noWork: boolean;
   summary: string;
 }
@@ -176,6 +225,7 @@ function toPlannerTask(task: LoadedInboxTask): PlannerTask {
   plannerTask.id = task.id;
   plannerTask.dependsOn = task.dependsOn;
   if (task.dependsOnError !== undefined) plannerTask.dependsOnError = task.dependsOnError;
+  if (task.frontmatter !== undefined) plannerTask.frontmatter = task.frontmatter;
   return plannerTask;
 }
 
@@ -229,6 +279,10 @@ function formatSummary(result: SchedulerOnceResult): string {
       lines.push(`release: ${result.releaseStatus}`);
       if (result.releaseReason !== undefined) lines.push(`release reason: ${result.releaseReason}`);
     }
+    if (result.retryStatus !== undefined) {
+      lines.push(`retry: ${result.retryStatus}`);
+      if (result.retryReason !== undefined) lines.push(`retry reason: ${result.retryReason}`);
+    }
   } else {
     lines.push("executed: no");
   }
@@ -247,6 +301,7 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
   const now = options.now ?? (() => new Date());
   const claims = options.claims ?? defaultClaims;
   const release = options.release ?? defaultRelease;
+  const retryTransition = options.retryTransition ?? defaultRetryTransition;
   const executors = options.executors;
   const host = rawHost;
 
@@ -353,6 +408,8 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
   let executionSummary: string | undefined;
   let releaseStatus: "released" | "held" | undefined;
   let releaseReason: string | undefined;
+  let retryStatus: "requeued" | "exhausted" | "held" | undefined;
+  let retryReason: string | undefined;
 
   for (const claim of planned) {
     if (executed) break;
@@ -409,6 +466,26 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
           } catch (error) {
             releaseStatus = "held";
             releaseReason = `release failed (${errorMessage(error)}); task remains claimed for triage`;
+          }
+        } else if (res.failure?.kind === "launch_failure") {
+          // Retry transition (ADR-0038 R3): ONLY a typed pre-handoff
+          // launch_failure may requeue. Ambiguous and legacy/untyped failures
+          // never reach the seam; the task stays claimed for triage. A failed
+          // task is never completion-released. A held/throwing transition
+          // never fails the tick.
+          try {
+            const transition = await retryTransition({
+              agentName: claim.agentName,
+              vaultRoot: root,
+              claimedTaskPath: claimedPath,
+              failureKind: "launch_failure",
+              now,
+            });
+            retryStatus = transition.action;
+            if (transition.action !== "requeued") retryReason = transition.reason;
+          } catch (error) {
+            retryStatus = "held";
+            retryReason = `retry transition failed (${errorMessage(error)}); task remains claimed for triage`;
           }
         }
         claimAttempts.push({
@@ -553,6 +630,8 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
   if (executionSummary !== undefined) result.executionSummary = executionSummary;
   if (releaseStatus !== undefined) result.releaseStatus = releaseStatus;
   if (releaseReason !== undefined) result.releaseReason = releaseReason;
+  if (retryStatus !== undefined) result.retryStatus = retryStatus;
+  if (retryReason !== undefined) result.retryReason = retryReason;
   result.summary = formatSummary(result);
   return result;
 }

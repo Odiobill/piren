@@ -10,6 +10,7 @@ import { executeScriptCronJob } from "./cron.js";
 import { executeClaimedInboxTask } from "./scheduler-executor.js";
 import { loadSchedulerInboxState } from "./scheduler-dependencies.js";
 import { releaseCompletedClaimedTask, } from "./scheduler-release.js";
+import { applySchedulerFailureTransition, } from "./scheduler-retry.js";
 /** Real claim functions, used when no fake claims are injected. */
 export const defaultClaims = {
     claimInboxTask,
@@ -21,6 +22,14 @@ export const defaultRelease = (input) => releaseCompletedClaimedTask({
     agentName: input.agentName,
     claimedTaskPath: input.claimedTaskPath,
     expectedDeviceId: input.expectedDeviceId,
+});
+/** Production retry transition: the accepted R2 core (ADR-0038). */
+export const defaultRetryTransition = (input) => applySchedulerFailureTransition({
+    vaultRoot: input.vaultRoot,
+    agentName: input.agentName,
+    claimedTaskPath: input.claimedTaskPath,
+    failureKind: input.failureKind,
+    now: input.now,
 });
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -36,6 +45,8 @@ function toPlannerTask(task) {
     plannerTask.dependsOn = task.dependsOn;
     if (task.dependsOnError !== undefined)
         plannerTask.dependsOnError = task.dependsOnError;
+    if (task.frontmatter !== undefined)
+        plannerTask.frontmatter = task.frontmatter;
     return plannerTask;
 }
 /**
@@ -90,6 +101,11 @@ function formatSummary(result) {
             if (result.releaseReason !== undefined)
                 lines.push(`release reason: ${result.releaseReason}`);
         }
+        if (result.retryStatus !== undefined) {
+            lines.push(`retry: ${result.retryStatus}`);
+            if (result.retryReason !== undefined)
+                lines.push(`retry reason: ${result.retryReason}`);
+        }
     }
     else {
         lines.push("executed: no");
@@ -109,6 +125,7 @@ export async function schedulerOnce(options) {
     const now = options.now ?? (() => new Date());
     const claims = options.claims ?? defaultClaims;
     const release = options.release ?? defaultRelease;
+    const retryTransition = options.retryTransition ?? defaultRetryTransition;
     const executors = options.executors;
     const host = rawHost;
     const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
@@ -199,6 +216,8 @@ export async function schedulerOnce(options) {
     let executionSummary;
     let releaseStatus;
     let releaseReason;
+    let retryStatus;
+    let retryReason;
     for (const claim of planned) {
         if (executed)
             break;
@@ -257,6 +276,29 @@ export async function schedulerOnce(options) {
                     catch (error) {
                         releaseStatus = "held";
                         releaseReason = `release failed (${errorMessage(error)}); task remains claimed for triage`;
+                    }
+                }
+                else if (res.failure?.kind === "launch_failure") {
+                    // Retry transition (ADR-0038 R3): ONLY a typed pre-handoff
+                    // launch_failure may requeue. Ambiguous and legacy/untyped failures
+                    // never reach the seam; the task stays claimed for triage. A failed
+                    // task is never completion-released. A held/throwing transition
+                    // never fails the tick.
+                    try {
+                        const transition = await retryTransition({
+                            agentName: claim.agentName,
+                            vaultRoot: root,
+                            claimedTaskPath: claimedPath,
+                            failureKind: "launch_failure",
+                            now,
+                        });
+                        retryStatus = transition.action;
+                        if (transition.action !== "requeued")
+                            retryReason = transition.reason;
+                    }
+                    catch (error) {
+                        retryStatus = "held";
+                        retryReason = `retry transition failed (${errorMessage(error)}); task remains claimed for triage`;
                     }
                 }
                 claimAttempts.push({
@@ -410,6 +452,10 @@ export async function schedulerOnce(options) {
         result.releaseStatus = releaseStatus;
     if (releaseReason !== undefined)
         result.releaseReason = releaseReason;
+    if (retryStatus !== undefined)
+        result.retryStatus = retryStatus;
+    if (retryReason !== undefined)
+        result.retryReason = retryReason;
     result.summary = formatSummary(result);
     return result;
 }

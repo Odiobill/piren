@@ -44,6 +44,12 @@ export interface LoadedInboxTask extends DependencyTaskNode {
     agentName: string;
     /** Device id when the file is a `.claimed.<device>.md` atomic claim. */
     claimedBy?: string;
+    /**
+     * Parsed task frontmatter, retained for retry-eligibility evaluation
+     * (ADR-0038 R3 wiring of the accepted R2 semantics). Absent when the
+     * frontmatter could not be parsed.
+     */
+    frontmatter?: Record<string, unknown>;
 }
 /** Result of loading scheduler inbox state for one planning tick. */
 export interface SchedulerInboxLoad {

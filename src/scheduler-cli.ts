@@ -12,6 +12,7 @@ import {
   type DependencyTaskNode,
   type LoadedInboxTask,
 } from "./scheduler-dependencies.js";
+import { evaluateRetryEligibility } from "./scheduler-retry.js";
 
 export interface SchedulerDryRunOptions {
   configPath?: string;
@@ -131,7 +132,7 @@ export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<
   // Separately classify pending candidates for the human-readable report so
   // the dry-run can distinguish runnable from dependency-blocked work without
   // mutating anything. This reuses the same pure evaluator the planner uses.
-  const blocked = classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds);
+  const blocked = classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds, now);
 
   // Format output
   return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked);
@@ -147,6 +148,7 @@ function toPlannerTask(task: LoadedInboxTask): PlannerTask {
   plannerTask.id = task.id;
   plannerTask.dependsOn = task.dependsOn;
   if (task.dependsOnError !== undefined) plannerTask.dependsOnError = task.dependsOnError;
+  if (task.frontmatter !== undefined) plannerTask.frontmatter = task.frontmatter;
   return plannerTask;
 }
 
@@ -161,6 +163,7 @@ function classifyBlockedTasks(
   pendingTasks: LoadedInboxTask[],
   dependencyNodes: Map<string, DependencyTaskNode>,
   duplicateIds: Set<string>,
+  now: Date,
 ): BlockedTask[] {
   const blocked: BlockedTask[] = [];
   for (const task of pendingTasks) {
@@ -179,6 +182,19 @@ function classifyBlockedTasks(
         path: task.path,
         reason: verdict.reason ?? "dependency-blocked",
       });
+      continue;
+    }
+    // Retry eligibility (ADR-0038 R3): report the exact accepted R2 reason
+    // for invalid policy/state, exhausted attempts, or unexpired backoff.
+    if (task.frontmatter !== undefined) {
+      const retry = evaluateRetryEligibility(task.frontmatter, now);
+      if (!retry.eligible) {
+        blocked.push({
+          agentName: task.agentName,
+          path: task.path,
+          reason: retry.reason ?? "retry-blocked",
+        });
+      }
     }
   }
   return blocked;

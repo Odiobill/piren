@@ -47,6 +47,27 @@ export function extractDependsOn(frontmatter) {
     return { ids };
 }
 /**
+ * Split and parse one task file's YAML frontmatter mapping. Tolerant:
+ * returns undefined for missing/unparseable/non-mapping frontmatter.
+ * Shared by the dependency-node parser and the inbox loader (which retains
+ * the parsed mapping for retry-eligibility evaluation, ADR-0038 R3).
+ */
+function parseTaskFrontmatter(content) {
+    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+    if (!match)
+        return undefined;
+    let parsed;
+    try {
+        parsed = parseYaml(match[1] ?? "");
+    }
+    catch {
+        return undefined;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        return undefined;
+    return parsed;
+}
+/**
  * Parse one inbox-task file's content into a dependency node. Tolerant: files
  * without parseable frontmatter, a missing id, or an invalid status are skipped
  * (return undefined) so a single malformed file never breaks resolution.
@@ -56,20 +77,9 @@ export function extractDependsOn(frontmatter) {
  * dependency-free.
  */
 export function parseDependencyTaskNode(content, path) {
-    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-    if (!match)
+    const fields = parseTaskFrontmatter(content);
+    if (fields === undefined)
         return undefined;
-    const rawFields = match[1] ?? "";
-    let parsed;
-    try {
-        parsed = parseYaml(rawFields);
-    }
-    catch {
-        return undefined;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-        return undefined;
-    const fields = parsed;
     const id = fields["id"];
     const status = fields["status"];
     if (typeof id !== "string" || id.trim() === "")
@@ -269,6 +279,12 @@ export async function loadInboxDependencyNodes(options) {
         };
         if (node.dependsOnError !== undefined)
             loaded.dependsOnError = node.dependsOnError;
+        // Retain the parsed frontmatter for retry-eligibility evaluation
+        // (ADR-0038 R3). The node parse already succeeded, so the frontmatter
+        // is parseable; re-split shares the same tolerant helper.
+        const frontmatter = parseTaskFrontmatter(content);
+        if (frontmatter !== undefined)
+            loaded.frontmatter = frontmatter;
         const claimedBy = claimedDeviceFromName(entry.name);
         if (claimedBy !== undefined)
             loaded.claimedBy = claimedBy;

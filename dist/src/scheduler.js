@@ -1,5 +1,6 @@
 import { selectOwningDevice } from "./cron.js";
 import { evaluateTaskDependencyEligibility } from "./scheduler-dependencies.js";
+import { evaluateRetryEligibility } from "./scheduler-retry.js";
 const EMPTY_DUPLICATE_IDS = new Set();
 // ---------------------------------------------------------------------------
 // Pure scheduler planner
@@ -25,6 +26,12 @@ export function planSchedulerTick(options) {
             // invalid dependencies is never claimable. Fail closed when a task
             // declares dependencies but the resolver is unavailable.
             if (!isDependencyEligible(task, dependencyNodes, duplicateIds ?? EMPTY_DUPLICATE_IDS))
+                continue;
+            // Retry eligibility (ADR-0038 R3): invalid retry policy/state,
+            // exhausted attempts, or an unexpired backoff make the task
+            // unclaimable. Tasks without parsed frontmatter (or without retry
+            // fields) retain their current eligibility.
+            if (task.frontmatter !== undefined && !evaluateRetryEligibility(task.frontmatter, now).eligible)
                 continue;
             // Unclaimed task: propose a claim
             const priority = devicePriorityForAgent(activeDevices, task.agentName, deviceId);

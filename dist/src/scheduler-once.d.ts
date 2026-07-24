@@ -3,6 +3,7 @@ import { type ClaimCronJobOptions, type ClaimCronJobResult, type ExecuteScriptCr
 import type { ExecuteClaimedInboxTaskResult, ClaimedInboxTaskRunner } from "./scheduler-executor.js";
 import { type ExecuteClaimedAgentCronJobResult } from "./scheduler-cron-executor.js";
 import { type SchedulerReleaseTransition } from "./scheduler-release.js";
+import { type SchedulerFailureTransition } from "./scheduler-retry.js";
 export interface SchedulerOnceOptions {
     configPath?: string;
     deviceId?: string;
@@ -19,6 +20,13 @@ export interface SchedulerOnceOptions {
      * they restore themselves via `cron_record_run`.
      */
     release?: SchedulerOnceRelease;
+    /**
+     * Retry failure-transition seam (ADR-0038 R3). Invoked ONLY when a claimed
+     * inbox execution returns non-ok with a typed `launch_failure` (revision 3
+     * classification); ambiguous and legacy/untyped failures never reach it.
+     * Defaults to the real {@link defaultRetryTransition}.
+     */
+    retryTransition?: SchedulerOnceRetryTransition;
 }
 export interface InboxExecuteInput {
     agentName: string;
@@ -66,6 +74,28 @@ export interface SchedulerOnceReleaseInput {
 export type SchedulerOnceRelease = (input: SchedulerOnceReleaseInput) => Promise<SchedulerReleaseTransition>;
 /** Production release: validated, byte-for-byte, no-clobber (ADR-0038 revision 2). */
 export declare const defaultRelease: SchedulerOnceRelease;
+/** Input for the retry failure-transition seam (ADR-0038 R3). */
+export interface SchedulerOnceRetryTransitionInput {
+    agentName: string;
+    vaultRoot: string;
+    claimedTaskPath: string;
+    /**
+     * The only failure kind the tick may pass: a typed pre-handoff
+     * `launch_failure` (revision 3). Ambiguous outcomes never reach the seam.
+     */
+    failureKind: "launch_failure";
+    /** Tick clock, threaded for deterministic backoff computation. */
+    now: () => Date;
+}
+/**
+ * Injected retry failure-transition seam. After a claimed inbox execution
+ * fails with a typed `launch_failure`, the tick calls this exactly once to
+ * apply the accepted R2 transition (record retry_state + requeue, exhaust, or
+ * hold). Tests inject a fake so no real claimed file is required.
+ */
+export type SchedulerOnceRetryTransition = (input: SchedulerOnceRetryTransitionInput) => Promise<SchedulerFailureTransition>;
+/** Production retry transition: the accepted R2 core (ADR-0038). */
+export declare const defaultRetryTransition: SchedulerOnceRetryTransition;
 export type SchedulerItemType = "inbox_task" | "cron_job";
 export type ClaimOutcome = "executed" | "claim_failed" | "execution_failed";
 export interface SchedulerOnceClaimAttempt {
@@ -90,6 +120,10 @@ export interface SchedulerOnceResult {
     releaseStatus?: "released" | "held";
     /** Exact reason when the release was held (task remains claimed for triage). */
     releaseReason?: string;
+    /** Retry-transition outcome for a typed launch_failure (ADR-0038 R3). */
+    retryStatus?: "requeued" | "exhausted" | "held";
+    /** Exact reason when the retry transition was exhausted or held. */
+    retryReason?: string;
     noWork: boolean;
     summary: string;
 }

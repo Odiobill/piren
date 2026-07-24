@@ -12,6 +12,12 @@ export interface PlannerTask {
     dependsOn?: string[];
     /** Set when the task's `depends_on` declaration is structurally malformed. */
     dependsOnError?: string;
+    /**
+     * Parsed task frontmatter, used for retry eligibility (ADR-0038 R3 wiring
+     * of the accepted R2 semantics). When absent the retry gate is skipped and
+     * the task retains its pre-ADR-0038 eligibility.
+     */
+    frontmatter?: Record<string, unknown>;
 }
 export interface PlannerCronJob {
     /** Vault-relative path, e.g. "cron/jobs/hourly-brief.md" */

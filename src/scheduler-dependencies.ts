@@ -57,6 +57,12 @@ export interface LoadedInboxTask extends DependencyTaskNode {
   agentName: string;
   /** Device id when the file is a `.claimed.<device>.md` atomic claim. */
   claimedBy?: string;
+  /**
+   * Parsed task frontmatter, retained for retry-eligibility evaluation
+   * (ADR-0038 R3 wiring of the accepted R2 semantics). Absent when the
+   * frontmatter could not be parsed.
+   */
+  frontmatter?: Record<string, unknown>;
 }
 
 /** Result of loading scheduler inbox state for one planning tick. */
@@ -94,6 +100,25 @@ export function extractDependsOn(frontmatter: Record<string, unknown>): Dependen
 }
 
 /**
+ * Split and parse one task file's YAML frontmatter mapping. Tolerant:
+ * returns undefined for missing/unparseable/non-mapping frontmatter.
+ * Shared by the dependency-node parser and the inbox loader (which retains
+ * the parsed mapping for retry-eligibility evaluation, ADR-0038 R3).
+ */
+function parseTaskFrontmatter(content: string): Record<string, unknown> | undefined {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!match) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(match[1] ?? "");
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  return parsed as Record<string, unknown>;
+}
+
+/**
  * Parse one inbox-task file's content into a dependency node. Tolerant: files
  * without parseable frontmatter, a missing id, or an invalid status are skipped
  * (return undefined) so a single malformed file never breaks resolution.
@@ -103,17 +128,8 @@ export function extractDependsOn(frontmatter: Record<string, unknown>): Dependen
  * dependency-free.
  */
 export function parseDependencyTaskNode(content: string, path: string): DependencyTaskNode | undefined {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return undefined;
-  const rawFields = match[1] ?? "";
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(rawFields);
-  } catch {
-    return undefined;
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-  const fields = parsed as Record<string, unknown>;
+  const fields = parseTaskFrontmatter(content);
+  if (fields === undefined) return undefined;
   const id = fields["id"];
   const status = fields["status"];
   if (typeof id !== "string" || id.trim() === "") return undefined;
@@ -326,6 +342,11 @@ export async function loadInboxDependencyNodes(options: {
       agentName: options.agentName,
     };
     if (node.dependsOnError !== undefined) loaded.dependsOnError = node.dependsOnError;
+    // Retain the parsed frontmatter for retry-eligibility evaluation
+    // (ADR-0038 R3). The node parse already succeeded, so the frontmatter
+    // is parseable; re-split shares the same tolerant helper.
+    const frontmatter = parseTaskFrontmatter(content);
+    if (frontmatter !== undefined) loaded.frontmatter = frontmatter;
     const claimedBy = claimedDeviceFromName(entry.name);
     if (claimedBy !== undefined) loaded.claimedBy = claimedBy;
     tasks.push(loaded);

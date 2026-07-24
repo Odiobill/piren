@@ -1,5 +1,6 @@
 import { selectOwningDevice, type ActiveDevice } from "./cron.js";
 import { evaluateTaskDependencyEligibility, type DependencyTaskNode } from "./scheduler-dependencies.js";
+import { evaluateRetryEligibility } from "./scheduler-retry.js";
 
 const EMPTY_DUPLICATE_IDS: Set<string> = new Set();
 
@@ -20,6 +21,12 @@ export interface PlannerTask {
   dependsOn?: string[];
   /** Set when the task's `depends_on` declaration is structurally malformed. */
   dependsOnError?: string;
+  /**
+   * Parsed task frontmatter, used for retry eligibility (ADR-0038 R3 wiring
+   * of the accepted R2 semantics). When absent the retry gate is skipped and
+   * the task retains its pre-ADR-0038 eligibility.
+   */
+  frontmatter?: Record<string, unknown>;
 }
 
 export interface PlannerCronJob {
@@ -93,6 +100,11 @@ export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedCla
       // invalid dependencies is never claimable. Fail closed when a task
       // declares dependencies but the resolver is unavailable.
       if (!isDependencyEligible(task, dependencyNodes, duplicateIds ?? EMPTY_DUPLICATE_IDS)) continue;
+      // Retry eligibility (ADR-0038 R3): invalid retry policy/state,
+      // exhausted attempts, or an unexpired backoff make the task
+      // unclaimable. Tasks without parsed frontmatter (or without retry
+      // fields) retain their current eligibility.
+      if (task.frontmatter !== undefined && !evaluateRetryEligibility(task.frontmatter, now).eligible) continue;
       // Unclaimed task: propose a claim
       const priority = devicePriorityForAgent(activeDevices, task.agentName, deviceId);
       claims.push({

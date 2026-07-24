@@ -12,8 +12,18 @@ import {
   type SchedulerOnceExecutors,
   type SchedulerOnceRelease,
   type SchedulerOnceReleaseInput,
+  type SchedulerOnceRetryTransition,
+  type SchedulerOnceRetryTransitionInput,
 } from "../src/scheduler-once.js";
 import type { SchedulerReleaseTransition } from "../src/scheduler-release.js";
+import type { SchedulerFailureTransition } from "../src/scheduler-retry.js";
+import type { BoundedRunFailure, PiRpcClientLike } from "../src/ask.js";
+import type { RpcEvent } from "../src/gateway-rpc.js";
+import {
+  createAskRunner,
+  executeClaimedInboxTask,
+  type ExecuteClaimedInboxTaskResult,
+} from "../src/scheduler-executor.js";
 import { updateInboxTaskStatus } from "../src/inbox.js";
 
 let root: string;
@@ -866,3 +876,449 @@ describe("schedulerOnce completion release (ADR-0038 revision 2, R3)", () => {
     expect(review).toContain("status: completed");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Retry transition seam (ADR-0038 R3): typed launch_failure requeue only
+// ---------------------------------------------------------------------------
+
+describe("schedulerOnce retry transition (ADR-0038 R3)", () => {
+  function recordingRetryTransition(transition: SchedulerFailureTransition): {
+    retryTransition: SchedulerOnceRetryTransition;
+    calls: SchedulerOnceRetryTransitionInput[];
+  } {
+    const calls: SchedulerOnceRetryTransitionInput[] = [];
+    return {
+      retryTransition: async (input) => {
+        calls.push(input);
+        return transition;
+      },
+      calls,
+    };
+  }
+
+  function recordingReleaseSpy(): { release: SchedulerOnceRelease; calls: SchedulerOnceReleaseInput[] } {
+    const calls: SchedulerOnceReleaseInput[] = [];
+    return {
+      release: async (input) => {
+        calls.push(input);
+        return { action: "released", claimedTaskPath: "x", restoredPath: "y", restoredAbsolutePath: "/y" };
+      },
+      calls,
+    };
+  }
+
+  function failingInboxExecutors(failure?: BoundedRunFailure): SchedulerOnceExecutors {
+    return {
+      async executeInboxTask(input) {
+        const result: ExecuteClaimedInboxTaskResult = {
+          agentName: input.agentName,
+          deviceId: "heimdall",
+          claimedTaskPath: input.claimedTaskPath,
+          prompt: "",
+          assistantText: "",
+          exitCode: 1,
+          ok: false,
+          error: failure?.detail ?? "agent run failed",
+        };
+        if (failure !== undefined) result.failure = failure;
+        return result;
+      },
+      executeAgentCronJob: () => {
+        throw new Error("not called");
+      },
+      executeScriptCronJob: () => {
+        throw new Error("not called");
+      },
+    };
+  }
+
+  const LAUNCH_FAILURE: BoundedRunFailure = {
+    kind: "launch_failure",
+    milestone: "start_rejection",
+    detail: "Failed to spawn agent: ENOENT",
+  };
+
+  it("calls the injected retry seam exactly once for a typed launch_failure and reports requeued", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { release, calls: releaseCalls } = recordingReleaseSpy();
+    const { retryTransition, calls } = recordingRetryTransition({
+      action: "requeued",
+      claimedTaskPath: "team/codex/inbox/task-a.claimed.heimdall.md",
+      restoredPath: "team/codex/inbox/task-a.md",
+      restoredAbsolutePath: join(vault, "team/codex/inbox/task-a.md"),
+      retryState: {
+        attempts: 1,
+        lastAttemptAt: "2026-07-07T08:00:00.000Z",
+        nextEligibleAt: "2026-07-07T08:05:00.000Z",
+        lastFailure: "launch_failure",
+      },
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: failingInboxExecutors(LAUNCH_FAILURE),
+      release,
+      retryTransition,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.executionStatus).toBe("failed");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.agentName).toBe("codex");
+    expect(calls[0]?.vaultRoot).toBe(vault);
+    expect(calls[0]?.claimedTaskPath).toMatch(/task-a\.claimed\.heimdall\.md$/);
+    expect(calls[0]?.failureKind).toBe("launch_failure");
+    expect(result.retryStatus).toBe("requeued");
+    expect(result.summary).toContain("retry: requeued");
+    // A failed task is NEVER completion-released.
+    expect(releaseCalls).toHaveLength(0);
+    expect(result.releaseStatus).toBeUndefined();
+  });
+
+  it("reports an exhausted retry transition with its exact reason", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { retryTransition, calls } = recordingRetryTransition({
+      action: "exhausted",
+      claimedTaskPath: "team/codex/inbox/task-a.claimed.heimdall.md",
+      retryState: {
+        attempts: 2,
+        lastAttemptAt: "2026-07-07T08:00:00.000Z",
+        nextEligibleAt: "2026-07-07T08:05:00.000Z",
+        lastFailure: "launch_failure",
+      },
+      reason: "retry attempts exhausted (2/2); task remains claimed for triage",
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: failingInboxExecutors(LAUNCH_FAILURE),
+      retryTransition,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(result.retryStatus).toBe("exhausted");
+    expect(result.retryReason).toContain("retry attempts exhausted (2/2)");
+    expect(result.summary).toContain("retry: exhausted");
+    expect(result.summary).toContain("retry attempts exhausted (2/2)");
+  });
+
+  it("reports a held retry transition with its exact reason", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { retryTransition } = recordingRetryTransition({
+      action: "held",
+      claimedTaskPath: "team/codex/inbox/task-a.claimed.heimdall.md",
+      reason: "no retry policy; launch failure requires explicit coordinator/steward triage",
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: failingInboxExecutors(LAUNCH_FAILURE),
+      retryTransition,
+    });
+
+    expect(result.retryStatus).toBe("held");
+    expect(result.retryReason).toContain("no retry policy");
+    expect(result.summary).toContain("retry: held");
+  });
+
+  it("a throwing retry seam holds without failing the tick", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: failingInboxExecutors(LAUNCH_FAILURE),
+      retryTransition: () => {
+        throw new Error("retry blew up");
+      },
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.executionStatus).toBe("failed");
+    expect(result.retryStatus).toBe("held");
+    expect(result.retryReason).toContain("retry blew up");
+  });
+
+  it("does NOT call the retry seam for a typed ambiguous failure; the task stays claimed", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { retryTransition, calls } = recordingRetryTransition({
+      action: "requeued",
+      claimedTaskPath: "x",
+      restoredPath: "y",
+      restoredAbsolutePath: "/y",
+      retryState: {
+        attempts: 1,
+        lastAttemptAt: "2026-07-07T08:00:00.000Z",
+        nextEligibleAt: "2026-07-07T08:05:00.000Z",
+        lastFailure: "launch_failure",
+      },
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: failingInboxExecutors({
+        kind: "ambiguous",
+        milestone: "prompt_handoff",
+        detail: "Failed to spawn agent: write EPIPE",
+      }),
+      retryTransition,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.executionStatus).toBe("failed");
+    expect(calls).toHaveLength(0);
+    expect(result.retryStatus).toBeUndefined();
+    expect(result.releaseStatus).toBeUndefined();
+  });
+
+  it("does NOT call the retry seam for a legacy non-ok result without a typed failure", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { retryTransition, calls } = recordingRetryTransition({
+      action: "requeued",
+      claimedTaskPath: "x",
+      restoredPath: "y",
+      restoredAbsolutePath: "/y",
+      retryState: {
+        attempts: 1,
+        lastAttemptAt: "2026-07-07T08:00:00.000Z",
+        nextEligibleAt: "2026-07-07T08:05:00.000Z",
+        lastFailure: "launch_failure",
+      },
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: failingInboxExecutors(),
+      retryTransition,
+    });
+
+    expect(result.executionStatus).toBe("failed");
+    expect(calls).toHaveLength(0);
+    expect(result.retryStatus).toBeUndefined();
+  });
+
+  it("default production retry transition requeues a retryable claimed task on the real vault", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
+    const taskPath = "team/codex/inbox/task-a.md";
+    await writeFile(join(vault, taskPath), [
+      "---",
+      "id: task-a",
+      "status: pending",
+      "from: nora",
+      "to: codex",
+      "created: 2026-07-07T08:00:00Z",
+      "updated: 2026-07-07T08:00:00Z",
+      "retry:",
+      "  safe_to_retry: true",
+      "  max_attempts: 2",
+      "  backoff_seconds: 300",
+      "---",
+      "",
+      "# task-a",
+      "",
+      "Do the work.",
+      "",
+    ].join("\n"));
+
+    // No retryTransition option: the production default runs against the real vault.
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: failingInboxExecutors(LAUNCH_FAILURE),
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.retryStatus).toBe("requeued");
+    // The claimed file is gone; the ordinary pending file is restored with
+    // inspectable retry_state recorded by the accepted R2 transition.
+    await expect(readFile(join(vault, taskPath.replace(/\.md$/, ".claimed.heimdall.md")), "utf8")).rejects.toThrow();
+    const restored = await readFile(join(vault, taskPath), "utf8");
+    expect(restored).toContain("status: pending");
+    expect(restored).toContain("retry_state:");
+    expect(restored).toContain("attempts: 1");
+    expect(restored).toContain("last_failure: launch_failure");
+  });
+
+  it("end-to-end: a target_build classification drives the retry path", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const executors: SchedulerOnceExecutors = {
+      executeInboxTask: (input) =>
+        executeClaimedInboxTask({
+          vaultRoot: input.vaultRoot,
+          agentName: input.agentName,
+          claimedTaskPath: input.claimedTaskPath,
+          runner: createAskRunner({
+            targetBuilder: async () => {
+              throw new Error("no local config");
+            },
+          }),
+        }),
+      executeAgentCronJob: () => {
+        throw new Error("not called");
+      },
+      executeScriptCronJob: () => {
+        throw new Error("not called");
+      },
+    };
+    const { retryTransition, calls } = recordingRetryTransition({
+      action: "held",
+      claimedTaskPath: "team/codex/inbox/task-a.claimed.heimdall.md",
+      reason: "no retry policy; launch failure requires explicit coordinator/steward triage",
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      retryTransition,
+    });
+
+    expect(result.executionStatus).toBe("failed");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.failureKind).toBe("launch_failure");
+    expect(result.retryStatus).toBe("held");
+  });
+
+  it("end-to-end: a start_rejection classification drives the retry path", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const executors: SchedulerOnceExecutors = {
+      executeInboxTask: (input) =>
+        executeClaimedInboxTask({
+          vaultRoot: input.vaultRoot,
+          agentName: input.agentName,
+          claimedTaskPath: input.claimedTaskPath,
+          runner: createAskRunner({
+            targetBuilder: async () => ({ command: "fake", args: [], cwd: "/tmp", env: {} }),
+            clientFactory: () => new OnceFakeAskClient({ startError: new Error("Failed to spawn agent: ENOENT") }),
+          }),
+        }),
+      executeAgentCronJob: () => {
+        throw new Error("not called");
+      },
+      executeScriptCronJob: () => {
+        throw new Error("not called");
+      },
+    };
+    const { retryTransition, calls } = recordingRetryTransition({
+      action: "held",
+      claimedTaskPath: "team/codex/inbox/task-a.claimed.heimdall.md",
+      reason: "no retry policy",
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      retryTransition,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.failureKind).toBe("launch_failure");
+    expect(result.retryStatus).toBe("held");
+  });
+
+  it("end-to-end NEGATIVE: spawn-worded prompt-handoff failure stays ambiguous and cannot drive the retry path", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const executors: SchedulerOnceExecutors = {
+      executeInboxTask: (input) =>
+        executeClaimedInboxTask({
+          vaultRoot: input.vaultRoot,
+          agentName: input.agentName,
+          claimedTaskPath: input.claimedTaskPath,
+          runner: createAskRunner({
+            targetBuilder: async () => ({ command: "fake", args: [], cwd: "/tmp", env: {} }),
+            clientFactory: () => new OnceFakeAskClient({ promptError: new Error("Failed to launch agent: spawn EPIPE") }),
+          }),
+        }),
+      executeAgentCronJob: () => {
+        throw new Error("not called");
+      },
+      executeScriptCronJob: () => {
+        throw new Error("not called");
+      },
+    };
+    const { retryTransition, calls } = recordingRetryTransition({
+      action: "requeued",
+      claimedTaskPath: "x",
+      restoredPath: "y",
+      restoredAbsolutePath: "/y",
+      retryState: {
+        attempts: 1,
+        lastAttemptAt: "2026-07-07T08:00:00.000Z",
+        nextEligibleAt: "2026-07-07T08:05:00.000Z",
+        lastFailure: "launch_failure",
+      },
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      retryTransition,
+    });
+
+    expect(result.executionStatus).toBe("failed");
+    expect(calls).toHaveLength(0);
+    expect(result.retryStatus).toBeUndefined();
+    expect(result.releaseStatus).toBeUndefined();
+  });
+});
+
+/** Minimal classified-ask fake for the end-to-end once tests (no live Pi). */
+interface OnceFakeAskClientOptions {
+  startError?: Error;
+  promptError?: Error;
+}
+
+class OnceFakeAskClient implements PiRpcClientLike {
+  private readonly startError: Error | undefined;
+  private readonly promptError: Error | undefined;
+
+  constructor(options: OnceFakeAskClientOptions = {}) {
+    this.startError = options.startError;
+    this.promptError = options.promptError;
+  }
+
+  async start(): Promise<void> {
+    if (this.startError !== undefined) throw this.startError;
+  }
+
+  async stop(): Promise<void> {}
+
+  onEvent(_listener: (event: RpcEvent) => void): () => void {
+    return () => {};
+  }
+
+  onExit(_listener: () => void): () => void {
+    return () => {};
+  }
+
+  async prompt(_message: string): Promise<void> {
+    if (this.promptError !== undefined) throw this.promptError;
+  }
+}

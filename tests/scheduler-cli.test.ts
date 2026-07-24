@@ -249,4 +249,189 @@ Run the hourly briefing.`,
     expect(output).toContain("duplicate task id");
     expect(output).toContain("implement-slice");
   });
+
+  it("reports a retry-backoff task with the exact R2 reason and proposes no claim for it", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T140000000Z-retryable-task.md"),
+      [
+        "---",
+        "id: 20260721T140000000Z-retryable-task",
+        "status: pending",
+        "from: nora",
+        "to: thor",
+        "created: 2026-07-21T09:00:00Z",
+        "updated: 2026-07-21T09:00:00Z",
+        "retry:",
+        "  safe_to_retry: true",
+        "  max_attempts: 2",
+        "  backoff_seconds: 300",
+        "retry_state:",
+        "  attempts: 1",
+        '  last_attempt_at: "2026-07-05T09:56:00.000Z"',
+        '  next_eligible_at: "2026-07-05T10:05:00.000Z"',
+        "  last_failure: launch_failure",
+        "---",
+        "",
+        "# Retryable",
+        "",
+        "Do it.",
+      ].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath, now: new Date("2026-07-05T10:00:00.000Z") });
+
+    expect(output).not.toContain("[CLAIM]");
+    expect(output).toContain("[BLOCK]");
+    expect(output).toContain("retryable-task");
+    expect(output).toContain("retry backoff until 2026-07-05T10:05:00.000Z");
+    // Dry-run never mutates vault state.
+    const after = await readFile(join(vault, "team", "thor", "inbox", "20260721T140000000Z-retryable-task.md"), "utf8");
+    expect(after).toContain("status: pending");
+  });
+
+  it("reports an exhausted-retry task with the exact R2 reason", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T140000000Z-retryable-task.md"),
+      [
+        "---",
+        "id: 20260721T140000000Z-retryable-task",
+        "status: pending",
+        "from: nora",
+        "to: thor",
+        "created: 2026-07-21T09:00:00Z",
+        "updated: 2026-07-21T09:00:00Z",
+        "retry:",
+        "  safe_to_retry: true",
+        "  max_attempts: 1",
+        "  backoff_seconds: 0",
+        "retry_state:",
+        "  attempts: 1",
+        '  last_attempt_at: "2026-07-05T09:00:00.000Z"',
+        '  next_eligible_at: "2026-07-05T09:00:00.000Z"',
+        "  last_failure: launch_failure",
+        "---",
+        "",
+        "# Retryable",
+        "",
+        "Do it.",
+      ].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath, now: new Date("2026-07-05T10:00:00.000Z") });
+
+    expect(output).not.toContain("[CLAIM]");
+    expect(output).toContain("[BLOCK]");
+    expect(output).toContain("retry attempts exhausted (1/1)");
+  });
+
+  it("reports an invalid retry policy with the exact R2 reason", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T140000000Z-retryable-task.md"),
+      [
+        "---",
+        "id: 20260721T140000000Z-retryable-task",
+        "status: pending",
+        "from: nora",
+        "to: thor",
+        "created: 2026-07-21T09:00:00Z",
+        "updated: 2026-07-21T09:00:00Z",
+        "retry:",
+        "  safe_to_retry: false",
+        "  max_attempts: 2",
+        "  backoff_seconds: 300",
+        "---",
+        "",
+        "# Retryable",
+        "",
+        "Do it.",
+      ].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath, now: new Date("2026-07-05T10:00:00.000Z") });
+
+    expect(output).not.toContain("[CLAIM]");
+    expect(output).toContain("[BLOCK]");
+    expect(output).toContain("retry policy requires safe_to_retry: true");
+  });
+
+  it("reports malformed retry_state with the exact R2 reason", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T140000000Z-retryable-task.md"),
+      [
+        "---",
+        "id: 20260721T140000000Z-retryable-task",
+        "status: pending",
+        "from: nora",
+        "to: thor",
+        "created: 2026-07-21T09:00:00Z",
+        "updated: 2026-07-21T09:00:00Z",
+        "retry:",
+        "  safe_to_retry: true",
+        "  max_attempts: 2",
+        "  backoff_seconds: 300",
+        "retry_state: not-a-mapping",
+        "---",
+        "",
+        "# Retryable",
+        "",
+        "Do it.",
+      ].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath, now: new Date("2026-07-05T10:00:00.000Z") });
+
+    expect(output).not.toContain("[CLAIM]");
+    expect(output).toContain("[BLOCK]");
+    expect(output).toContain("retry_state must be a mapping");
+  });
+
+  it("proposes a claim for a retryable task whose backoff has expired", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "20260721T140000000Z-retryable-task.md"),
+      [
+        "---",
+        "id: 20260721T140000000Z-retryable-task",
+        "status: pending",
+        "from: nora",
+        "to: thor",
+        "created: 2026-07-21T09:00:00Z",
+        "updated: 2026-07-21T09:00:00Z",
+        "retry:",
+        "  safe_to_retry: true",
+        "  max_attempts: 2",
+        "  backoff_seconds: 300",
+        "retry_state:",
+        "  attempts: 1",
+        '  last_attempt_at: "2026-07-05T09:00:00.000Z"',
+        '  next_eligible_at: "2026-07-05T09:05:00.000Z"',
+        "  last_failure: launch_failure",
+        "---",
+        "",
+        "# Retryable",
+        "",
+        "Do it.",
+      ].join("\n"),
+    );
+
+    const output = await schedulerDryRun({ configPath, now: new Date("2026-07-05T10:00:00.000Z") });
+
+    expect(output).toContain("[CLAIM]");
+    expect(output).toContain("retryable-task");
+    expect(output).not.toContain("[BLOCK]");
+  });
 });
