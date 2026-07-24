@@ -359,8 +359,12 @@ async function atomicOverwrite(io, target, content) {
  * Fail-closed no-clobber TWO-STEP create: temp file + hard link (rejects when
  * the target exists), then temp cleanup. NOT a single atomic rename — see the
  * module header for the intentional duplicate-ID crash window.
+ *
+ * Exported for the R3 completion release (src/scheduler-release.ts), which
+ * reuses this exact protocol to restore a completed claimed task to its
+ * ordinary filename byte-for-byte (ADR-0038 revision 2).
  */
-async function atomicCreateNoClobber(io, target, content) {
+export async function atomicCreateNoClobber(io, target, content) {
     const tempPath = await writeTempFile(io, target, content);
     try {
         await io.linkNoClobber(tempPath, target);

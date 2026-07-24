@@ -2,6 +2,7 @@ import { type ClaimInboxTaskOptions, type ClaimInboxTaskResult } from "./inbox.j
 import { type ClaimCronJobOptions, type ClaimCronJobResult, type ExecuteScriptCronJobResult } from "./cron.js";
 import type { ExecuteClaimedInboxTaskResult, ClaimedInboxTaskRunner } from "./scheduler-executor.js";
 import { type ExecuteClaimedAgentCronJobResult } from "./scheduler-cron-executor.js";
+import { type SchedulerReleaseTransition } from "./scheduler-release.js";
 export interface SchedulerOnceOptions {
     configPath?: string;
     deviceId?: string;
@@ -12,6 +13,12 @@ export interface SchedulerOnceOptions {
     executors: SchedulerOnceExecutors;
     /** Atomic claim seams. Defaults to the real claimInboxTask/claimCronJob. */
     claims?: SchedulerOnceClaims;
+    /**
+     * Completion-release seam (ADR-0038 revision 2). Defaults to the real
+     * {@link defaultRelease}. Cron jobs are never released through this seam:
+     * they restore themselves via `cron_record_run`.
+     */
+    release?: SchedulerOnceRelease;
 }
 export interface InboxExecuteInput {
     agentName: string;
@@ -41,6 +48,24 @@ export interface SchedulerOnceClaims {
 }
 /** Real claim functions, used when no fake claims are injected. */
 export declare const defaultClaims: SchedulerOnceClaims;
+/** Input for the completion-release seam (ADR-0038 revision 2). */
+export interface SchedulerOnceReleaseInput {
+    agentName: string;
+    vaultRoot: string;
+    claimedTaskPath: string;
+    /** The scheduler's own device id; the release refuses other devices' claims. */
+    expectedDeviceId: string;
+}
+/**
+ * Injected completion-release seam. After a successfully executed inbox task,
+ * the tick calls this exactly once to release the claimed task back to its
+ * ordinary filename so completed prerequisites can satisfy `depends_on`. The
+ * production default is {@link defaultRelease}; tests inject a fake so a
+ * claimed path need not exist on a real filesystem.
+ */
+export type SchedulerOnceRelease = (input: SchedulerOnceReleaseInput) => Promise<SchedulerReleaseTransition>;
+/** Production release: validated, byte-for-byte, no-clobber (ADR-0038 revision 2). */
+export declare const defaultRelease: SchedulerOnceRelease;
 export type SchedulerItemType = "inbox_task" | "cron_job";
 export type ClaimOutcome = "executed" | "claim_failed" | "execution_failed";
 export interface SchedulerOnceClaimAttempt {
@@ -61,6 +86,10 @@ export interface SchedulerOnceResult {
     executedAgentName?: string;
     executionStatus?: string;
     executionSummary?: string;
+    /** Completion-release outcome for a successfully executed inbox task. */
+    releaseStatus?: "released" | "held";
+    /** Exact reason when the release was held (task remains claimed for triage). */
+    releaseReason?: string;
     noWork: boolean;
     summary: string;
 }

@@ -163,3 +163,13 @@ export type SchedulerFailureTransition = {
  * present (ADR-0038).
  */
 export declare function applySchedulerFailureTransition(options: ApplySchedulerFailureOptions): Promise<SchedulerFailureTransition>;
+/**
+ * Fail-closed no-clobber TWO-STEP create: temp file + hard link (rejects when
+ * the target exists), then temp cleanup. NOT a single atomic rename — see the
+ * module header for the intentional duplicate-ID crash window.
+ *
+ * Exported for the R3 completion release (src/scheduler-release.ts), which
+ * reuses this exact protocol to restore a completed claimed task to its
+ * ordinary filename byte-for-byte (ADR-0038 revision 2).
+ */
+export declare function atomicCreateNoClobber(io: RetryTransitionIo, target: string, content: string): Promise<void>;

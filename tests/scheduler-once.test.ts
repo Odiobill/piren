@@ -10,7 +10,11 @@ import {
   type InboxExecuteInput,
   type SchedulerOnceClaims,
   type SchedulerOnceExecutors,
+  type SchedulerOnceRelease,
+  type SchedulerOnceReleaseInput,
 } from "../src/scheduler-once.js";
+import type { SchedulerReleaseTransition } from "../src/scheduler-release.js";
+import { updateInboxTaskStatus } from "../src/inbox.js";
 
 let root: string;
 let vault: string;
@@ -527,5 +531,338 @@ describe("schedulerOnce dependency eligibility (ADR-0038 R1)", () => {
     expect(result.executed).toBe(false);
     expect(result.noWork).toBe(true);
     expect(inboxCalls).toHaveLength(0);
+  });
+});
+
+describe("schedulerOnce completion release (ADR-0038 revision 2, R3)", () => {
+  function recordingRelease(transition: SchedulerReleaseTransition): {
+    release: SchedulerOnceRelease;
+    calls: SchedulerOnceReleaseInput[];
+  } {
+    const calls: SchedulerOnceReleaseInput[] = [];
+    return {
+      release: async (input) => {
+        calls.push(input);
+        return transition;
+      },
+      calls,
+    };
+  }
+
+  it("calls the injected release seam once after a successful inbox execution", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { executors } = recordingExecutors();
+    const { release, calls } = recordingRelease({
+      action: "released",
+      claimedTaskPath: "team/codex/inbox/task-a.claimed.heimdall.md",
+      restoredPath: "team/codex/inbox/task-a.md",
+      restoredAbsolutePath: join(vault, "team/codex/inbox/task-a.md"),
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      release,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.agentName).toBe("codex");
+    expect(calls[0]?.vaultRoot).toBe(vault);
+    expect(calls[0]?.claimedTaskPath).toMatch(/task-a\.claimed\.heimdall\.md$/);
+    expect(calls[0]?.expectedDeviceId).toBe("heimdall");
+    expect(result.releaseStatus).toBe("released");
+    expect(result.summary).toContain("release: released");
+  });
+
+  it("reports a held release with its exact reason without failing the tick", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { executors } = recordingExecutors();
+    const { release } = recordingRelease({
+      action: "held",
+      claimedTaskPath: "team/codex/inbox/task-a.claimed.heimdall.md",
+      reason: "task status is 'pending', not completed; task remains claimed for triage",
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      release,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.executionStatus).toBe("completed");
+    expect(result.releaseStatus).toBe("held");
+    expect(result.releaseReason).toContain("status is 'pending'");
+    expect(result.summary).toContain("release: held");
+    expect(result.summary).toContain("status is 'pending'");
+  });
+
+  it("does not attempt a release when inbox execution reports failure", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const executors: SchedulerOnceExecutors = {
+      async executeInboxTask(input) {
+        return {
+          agentName: input.agentName,
+          deviceId: "heimdall",
+          claimedTaskPath: input.claimedTaskPath,
+          prompt: "",
+          assistantText: "",
+          exitCode: 1,
+          ok: false,
+          error: "agent run failed",
+        };
+      },
+      executeAgentCronJob: () => {
+        throw new Error("not called");
+      },
+      executeScriptCronJob: () => {
+        throw new Error("not called");
+      },
+    };
+    const { release, calls } = recordingRelease({
+      action: "released",
+      claimedTaskPath: "x",
+      restoredPath: "y",
+      restoredAbsolutePath: "/y",
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      release,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.executionStatus).toBe("failed");
+    expect(calls).toHaveLength(0);
+    expect(result.releaseStatus).toBeUndefined();
+  });
+
+  it("does not attempt a release when the inbox executor throws", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const executors: SchedulerOnceExecutors = {
+      executeInboxTask: () => {
+        throw new Error("spawn blew up");
+      },
+      executeAgentCronJob: () => {
+        throw new Error("not called");
+      },
+      executeScriptCronJob: () => {
+        throw new Error("not called");
+      },
+    };
+    const { release, calls } = recordingRelease({
+      action: "released",
+      claimedTaskPath: "x",
+      restoredPath: "y",
+      restoredAbsolutePath: "/y",
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      release,
+    });
+
+    expect(result.executionStatus).toBe("failed");
+    expect(calls).toHaveLength(0);
+    expect(result.releaseStatus).toBeUndefined();
+  });
+
+  it("a throwing release seam holds the release without failing the tick", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "task-a");
+    const { executors } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      release: () => {
+        throw new Error("release blew up");
+      },
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.executionStatus).toBe("completed");
+    expect(result.releaseStatus).toBe("held");
+    expect(result.releaseReason).toContain("release blew up");
+  });
+
+  it("never releases a cron job execution (cron restores via cron_record_run)", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeCronJob({ id: "job-1", agent: "codex" });
+    const { executors } = recordingExecutors();
+    const { release, calls } = recordingRelease({
+      action: "released",
+      claimedTaskPath: "x",
+      restoredPath: "y",
+      restoredAbsolutePath: "/y",
+    });
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      release,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.executedItemType).toBe("cron_job");
+    expect(calls).toHaveLength(0);
+    expect(result.releaseStatus).toBeUndefined();
+  });
+
+  it("default production release restores a validated completed claimed task to its ordinary filename", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    const taskPath = await writeInboxTask("codex", "task-a");
+    const executors: SchedulerOnceExecutors = {
+      async executeInboxTask(input) {
+        // Simulate the bounded agent marking its own claimed task completed.
+        await updateInboxTaskStatus({
+          vaultRoot: input.vaultRoot,
+          taskPath: input.claimedTaskPath,
+          status: "completed",
+          result: "Done by the fake agent.",
+        });
+        return {
+          agentName: input.agentName,
+          deviceId: "heimdall",
+          claimedTaskPath: input.claimedTaskPath,
+          prompt: "",
+          assistantText: "done",
+          exitCode: 0,
+          ok: true,
+        };
+      },
+      executeAgentCronJob: () => {
+        throw new Error("not called");
+      },
+      executeScriptCronJob: () => {
+        throw new Error("not called");
+      },
+    };
+
+    // No release option: the production default runs against the real vault.
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(result.executed).toBe(true);
+    expect(result.releaseStatus).toBe("released");
+    const restored = await readFile(join(vault, taskPath), "utf8");
+    expect(restored).toContain("status: completed");
+    expect(restored).toContain("Done by the fake agent.");
+    await expect(readFile(join(vault, taskPath.replace(/\.md$/, ".claimed.heimdall.md")), "utf8")).rejects.toThrow();
+  });
+
+  it("default release holds when the agent never marked the task completed", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    const taskPath = await writeInboxTask("codex", "task-a");
+    const { executors } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    // recordingExecutors reports ok without updating the file: the default
+    // release re-reads the claimed file, sees pending, and holds the claim.
+    expect(result.executed).toBe(true);
+    expect(result.executionStatus).toBe("completed");
+    expect(result.releaseStatus).toBe("held");
+    expect(result.releaseReason).toContain("status is 'pending'");
+    await expect(readFile(join(vault, taskPath), "utf8")).rejects.toThrow();
+    const claimed = await readFile(join(vault, taskPath.replace(/\.md$/, ".claimed.heimdall.md")), "utf8");
+    expect(claimed).toContain("status: pending");
+  });
+
+  it("a completed prerequisite advances its dependent chain across two ticks (default release)", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    const IMPL_ID = "20260724T100000000Z-implement-slice";
+    const REVIEW_ID = "20260724T100001000Z-review-slice";
+    await writeFile(
+      join(vault, "team", "codex", "inbox", `${IMPL_ID}.md`),
+      ["---", `id: ${IMPL_ID}`, "status: pending", "from: nora", "to: codex", "created: 2026-07-24T09:00:00Z", "updated: 2026-07-24T09:00:00Z", "---", "", "# Impl", "", "Do it."].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "codex", "inbox", `${REVIEW_ID}.md`),
+      ["---", `id: ${REVIEW_ID}`, "status: pending", "depends_on:", `  - ${IMPL_ID}`, "from: nora", "to: codex", "created: 2026-07-24T09:00:00Z", "updated: 2026-07-24T09:00:00Z", "---", "", "# Review", "", "Review it."].join("\n"),
+    );
+
+    const completingExecutors: SchedulerOnceExecutors = {
+      async executeInboxTask(input) {
+        await updateInboxTaskStatus({
+          vaultRoot: input.vaultRoot,
+          taskPath: input.claimedTaskPath,
+          status: "completed",
+          result: "Done.",
+        });
+        return {
+          agentName: input.agentName,
+          deviceId: "heimdall",
+          claimedTaskPath: input.claimedTaskPath,
+          prompt: "",
+          assistantText: "done",
+          exitCode: 0,
+          ok: true,
+        };
+      },
+      executeAgentCronJob: () => {
+        throw new Error("not called");
+      },
+      executeScriptCronJob: () => {
+        throw new Error("not called");
+      },
+    };
+
+    // Tick 1: only the implementation is runnable; it executes and releases.
+    const first = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: completingExecutors,
+    });
+    expect(first.executed).toBe(true);
+    expect(first.executedItemPath).toContain(IMPL_ID);
+    expect(first.releaseStatus).toBe("released");
+
+    // Tick 2: the released completed prerequisite satisfies the review, which
+    // is now planned, claimed, executed, and released in turn.
+    const second = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: completingExecutors,
+    });
+    expect(second.executed).toBe(true);
+    expect(second.executedItemPath).toContain(REVIEW_ID);
+    expect(second.releaseStatus).toBe("released");
+
+    // Both files rest as ordinary completed inbox tasks.
+    const impl = await readFile(join(vault, "team", "codex", "inbox", `${IMPL_ID}.md`), "utf8");
+    const review = await readFile(join(vault, "team", "codex", "inbox", `${REVIEW_ID}.md`), "utf8");
+    expect(impl).toContain("status: completed");
+    expect(review).toContain("status: completed");
   });
 });

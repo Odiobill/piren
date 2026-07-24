@@ -9,11 +9,19 @@ import { executeClaimedAgentCronJob, } from "./scheduler-cron-executor.js";
 import { executeScriptCronJob } from "./cron.js";
 import { executeClaimedInboxTask } from "./scheduler-executor.js";
 import { loadSchedulerInboxState } from "./scheduler-dependencies.js";
+import { releaseCompletedClaimedTask, } from "./scheduler-release.js";
 /** Real claim functions, used when no fake claims are injected. */
 export const defaultClaims = {
     claimInboxTask,
     claimCronJob,
 };
+/** Production release: validated, byte-for-byte, no-clobber (ADR-0038 revision 2). */
+export const defaultRelease = (input) => releaseCompletedClaimedTask({
+    vaultRoot: input.vaultRoot,
+    agentName: input.agentName,
+    claimedTaskPath: input.claimedTaskPath,
+    expectedDeviceId: input.expectedDeviceId,
+});
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -77,6 +85,11 @@ function formatSummary(result) {
         lines.push(`executed: yes (${result.executedItemType}, ${result.executedItemPath})`);
         if (result.executionStatus !== undefined)
             lines.push(`execution status: ${result.executionStatus}`);
+        if (result.releaseStatus !== undefined) {
+            lines.push(`release: ${result.releaseStatus}`);
+            if (result.releaseReason !== undefined)
+                lines.push(`release reason: ${result.releaseReason}`);
+        }
     }
     else {
         lines.push("executed: no");
@@ -95,6 +108,7 @@ export async function schedulerOnce(options) {
     const staleAfterMs = options.staleAfterMs ?? 300_000;
     const now = options.now ?? (() => new Date());
     const claims = options.claims ?? defaultClaims;
+    const release = options.release ?? defaultRelease;
     const executors = options.executors;
     const host = rawHost;
     const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
@@ -183,6 +197,8 @@ export async function schedulerOnce(options) {
     let executedAgentName;
     let executionStatus;
     let executionSummary;
+    let releaseStatus;
+    let releaseReason;
     for (const claim of planned) {
         if (executed)
             break;
@@ -221,6 +237,28 @@ export async function schedulerOnce(options) {
                 executedAgentName = claim.agentName;
                 executionStatus = res.ok ? "completed" : "failed";
                 executionSummary = res.ok ? res.assistantText : res.error ?? "failed";
+                if (res.ok) {
+                    // Completion release (ADR-0038 revision 2): restore the validated
+                    // completed claimed task to its ordinary filename so dependents can
+                    // advance. A held release never fails the tick; the claim remains
+                    // visible for triage. Cron jobs never pass through this seam (they
+                    // restore via cron_record_run).
+                    try {
+                        const transition = await release({
+                            agentName: claim.agentName,
+                            vaultRoot: root,
+                            claimedTaskPath: claimedPath,
+                            expectedDeviceId: deviceId,
+                        });
+                        releaseStatus = transition.action;
+                        if (transition.action === "held")
+                            releaseReason = transition.reason;
+                    }
+                    catch (error) {
+                        releaseStatus = "held";
+                        releaseReason = `release failed (${errorMessage(error)}); task remains claimed for triage`;
+                    }
+                }
                 claimAttempts.push({
                     itemType: "inbox_task",
                     itemPath: claim.itemPath,
@@ -368,6 +406,10 @@ export async function schedulerOnce(options) {
         result.executionStatus = executionStatus;
     if (executionSummary !== undefined)
         result.executionSummary = executionSummary;
+    if (releaseStatus !== undefined)
+        result.releaseStatus = releaseStatus;
+    if (releaseReason !== undefined)
+        result.releaseReason = releaseReason;
     result.summary = formatSummary(result);
     return result;
 }

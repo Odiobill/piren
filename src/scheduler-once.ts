@@ -33,6 +33,10 @@ import {
 import { executeScriptCronJob, type ExecuteScriptCronJobOptions } from "./cron.js";
 import { executeClaimedInboxTask } from "./scheduler-executor.js";
 import { loadSchedulerInboxState, type LoadedInboxTask } from "./scheduler-dependencies.js";
+import {
+  releaseCompletedClaimedTask,
+  type SchedulerReleaseTransition,
+} from "./scheduler-release.js";
 
 // ---------------------------------------------------------------------------
 // Scheduler one-shot tick (ADR-0029 / O7 S4)
@@ -58,6 +62,12 @@ export interface SchedulerOnceOptions {
   executors: SchedulerOnceExecutors;
   /** Atomic claim seams. Defaults to the real claimInboxTask/claimCronJob. */
   claims?: SchedulerOnceClaims;
+  /**
+   * Completion-release seam (ADR-0038 revision 2). Defaults to the real
+   * {@link defaultRelease}. Cron jobs are never released through this seam:
+   * they restore themselves via `cron_record_run`.
+   */
+  release?: SchedulerOnceRelease;
 }
 
 export interface InboxExecuteInput {
@@ -95,6 +105,33 @@ export const defaultClaims: SchedulerOnceClaims = {
   claimCronJob,
 };
 
+/** Input for the completion-release seam (ADR-0038 revision 2). */
+export interface SchedulerOnceReleaseInput {
+  agentName: string;
+  vaultRoot: string;
+  claimedTaskPath: string;
+  /** The scheduler's own device id; the release refuses other devices' claims. */
+  expectedDeviceId: string;
+}
+
+/**
+ * Injected completion-release seam. After a successfully executed inbox task,
+ * the tick calls this exactly once to release the claimed task back to its
+ * ordinary filename so completed prerequisites can satisfy `depends_on`. The
+ * production default is {@link defaultRelease}; tests inject a fake so a
+ * claimed path need not exist on a real filesystem.
+ */
+export type SchedulerOnceRelease = (input: SchedulerOnceReleaseInput) => Promise<SchedulerReleaseTransition>;
+
+/** Production release: validated, byte-for-byte, no-clobber (ADR-0038 revision 2). */
+export const defaultRelease: SchedulerOnceRelease = (input) =>
+  releaseCompletedClaimedTask({
+    vaultRoot: input.vaultRoot,
+    agentName: input.agentName,
+    claimedTaskPath: input.claimedTaskPath,
+    expectedDeviceId: input.expectedDeviceId,
+  });
+
 export type SchedulerItemType = "inbox_task" | "cron_job";
 export type ClaimOutcome = "executed" | "claim_failed" | "execution_failed";
 
@@ -117,6 +154,10 @@ export interface SchedulerOnceResult {
   executedAgentName?: string;
   executionStatus?: string;
   executionSummary?: string;
+  /** Completion-release outcome for a successfully executed inbox task. */
+  releaseStatus?: "released" | "held";
+  /** Exact reason when the release was held (task remains claimed for triage). */
+  releaseReason?: string;
   noWork: boolean;
   summary: string;
 }
@@ -184,6 +225,10 @@ function formatSummary(result: SchedulerOnceResult): string {
   if (result.executed) {
     lines.push(`executed: yes (${result.executedItemType}, ${result.executedItemPath})`);
     if (result.executionStatus !== undefined) lines.push(`execution status: ${result.executionStatus}`);
+    if (result.releaseStatus !== undefined) {
+      lines.push(`release: ${result.releaseStatus}`);
+      if (result.releaseReason !== undefined) lines.push(`release reason: ${result.releaseReason}`);
+    }
   } else {
     lines.push("executed: no");
   }
@@ -201,6 +246,7 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
   const staleAfterMs = options.staleAfterMs ?? 300_000;
   const now = options.now ?? (() => new Date());
   const claims = options.claims ?? defaultClaims;
+  const release = options.release ?? defaultRelease;
   const executors = options.executors;
   const host = rawHost;
 
@@ -305,6 +351,8 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
   let executedAgentName: string | undefined;
   let executionStatus: string | undefined;
   let executionSummary: string | undefined;
+  let releaseStatus: "released" | "held" | undefined;
+  let releaseReason: string | undefined;
 
   for (const claim of planned) {
     if (executed) break;
@@ -343,6 +391,26 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
         executedAgentName = claim.agentName;
         executionStatus = res.ok ? "completed" : "failed";
         executionSummary = res.ok ? res.assistantText : res.error ?? "failed";
+        if (res.ok) {
+          // Completion release (ADR-0038 revision 2): restore the validated
+          // completed claimed task to its ordinary filename so dependents can
+          // advance. A held release never fails the tick; the claim remains
+          // visible for triage. Cron jobs never pass through this seam (they
+          // restore via cron_record_run).
+          try {
+            const transition = await release({
+              agentName: claim.agentName,
+              vaultRoot: root,
+              claimedTaskPath: claimedPath,
+              expectedDeviceId: deviceId,
+            });
+            releaseStatus = transition.action;
+            if (transition.action === "held") releaseReason = transition.reason;
+          } catch (error) {
+            releaseStatus = "held";
+            releaseReason = `release failed (${errorMessage(error)}); task remains claimed for triage`;
+          }
+        }
         claimAttempts.push({
           itemType: "inbox_task",
           itemPath: claim.itemPath,
@@ -483,6 +551,8 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
   if (executedAgentName !== undefined) result.executedAgentName = executedAgentName;
   if (executionStatus !== undefined) result.executionStatus = executionStatus;
   if (executionSummary !== undefined) result.executionSummary = executionSummary;
+  if (releaseStatus !== undefined) result.releaseStatus = releaseStatus;
+  if (releaseReason !== undefined) result.releaseReason = releaseReason;
   result.summary = formatSummary(result);
   return result;
 }
