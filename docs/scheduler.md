@@ -60,6 +60,16 @@ For cron jobs:
 
 Proposed claims are sorted by device priority (lower number = higher precedence).
 
+## Inbox task lifecycle: claim, execute, release
+
+An executed inbox task passes through visible states, all plain files (ADR-0038):
+
+1. **Claimed** — `<task>.claimed.<device>.md`: the tick claimed the task atomically and the bounded agent is working on it. A claimed task never satisfies another task's `depends_on`, even when its status reads `completed`.
+2. **Released** — on validated success only (the bounded runner finished without error AND the claimed file re-reads with `status: completed`; completion is never inferred from the result body), the tick restores the file byte-for-byte to its ordinary name `<task>.md` through a fail-closed no-clobber protocol (temp file, hard link, then unlink the claimed file — never a blind rename). Only then does a completed prerequisite satisfy `depends_on`, letting dependent tasks become claimable on later ticks.
+3. **Held** — cancelled, malformed, missing, or non-completed tasks, a release targeting another device's claim, a collision at the ordinary name, and any failure after process start all keep the task claimed for explicit steward/coordinator triage. The tick summary reports `release: held` with the exact reason.
+
+A crash between the link and the unlink can leave both files visible (a duplicate visible task ID). That is intentional fail-closed state: dependency resolution treats duplicate IDs as invalid and blocks the affected tasks until triage.
+
 ## Local scheduler config
 
 Scheduler runtime config is local installation authority and lives in `~/.config/piren/config.yml` under `scheduler:`. It is never placed in the vault, agent `SOUL.md`, Web UI, gateway state, or `.env` files.
@@ -126,6 +136,7 @@ The generated systemd user unit is `piren-scheduler.service`; the tmux + `@reboo
 - **Broad concurrency.** `max_concurrent_agents` is parsed and reported but effective concurrency is 1 (one-at-a-time); no parallel tick execution is implemented.
 - **Automatic cross-agent fallback.** Device failover (same agent, different device) is supported; semantic fallback between different agents is a separate feature (ADR-0028) and is never automatic.
 - **Hidden state.** No database, queue, lock file, or lease; the only coordination artifacts are the existing claimed task/job files and run records.
+- **Automatic retry.** Retry policy/state parsing (ADR-0038 R2) exists as an unwired core; the only future automatic retry trigger is a pre-spawn `launch_failure`, and any failure after process start stays claimed for manual triage.
 
 ## Relationship to agent fallback (ADR-0028)
 
@@ -136,6 +147,7 @@ See [agent groups and fallback](agent-groups.md) for the semantic fallback story
 ## Related
 
 - ADR-0029 — device-local scheduler
+- ADR-0038 — scheduler dependency and retry safety (incl. revision 2 completion release)
 - [Cron jobs](cron.md)
 - [Service management](service-management.md)
 - [Agent groups and fallback](agent-groups.md)
