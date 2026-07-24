@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
-import { askAgent } from "./ask.js";
+import { askAgentClassified } from "./ask.js";
 import { buildPiRunCommand } from "./run.js";
 // ---------------------------------------------------------------------------
 // Claim-scoped inbox task executor (ADR-0029 / O7 S2)
@@ -123,6 +123,7 @@ export async function executeClaimedInboxTask(options) {
     let assistantText = "";
     let exitCode = 0;
     let errorSummary;
+    let failure;
     try {
         const runResult = await options.runner.run({
             agentName: info.agentName,
@@ -131,10 +132,24 @@ export async function executeClaimedInboxTask(options) {
         });
         assistantText = runResult.assistantText;
         exitCode = runResult.exitCode;
+        if (runResult.failure !== undefined) {
+            // Preserve the typed failure from instrumented runners.
+            failure = runResult.failure;
+        }
+        else if (runResult.exitCode !== 0) {
+            // Legacy runner, nonzero exit: ambiguous by policy (ADR-0038 rev 3).
+            failure = {
+                kind: "ambiguous",
+                detail: `runner exited with code ${runResult.exitCode}`,
+            };
+        }
     }
     catch (error) {
         exitCode = 1;
         errorSummary = error instanceof Error ? error.message : String(error);
+        // Legacy runner, thrown error: ambiguous with no milestone, regardless
+        // of any wording in the message (ADR-0038 revision 3).
+        failure = { kind: "ambiguous", detail: errorSummary };
     }
     const ok = exitCode === 0 && errorSummary === undefined;
     const result = {
@@ -148,14 +163,22 @@ export async function executeClaimedInboxTask(options) {
     };
     if (errorSummary !== undefined)
         result.error = errorSummary;
+    if (failure !== undefined)
+        result.failure = failure;
     return result;
 }
 /**
  * Create a production {@link ClaimedInboxTaskRunner} that builds a Pi RPC
  * target per agent run (via `buildPiRunCommand({ rpcMode: true })`, threaded
  * with the validated `vaultRoot` and `agentName`) and runs the bounded prompt
- * through `askAgent`. Live Pi auth is required; this is the seam S4 wires
- * into the scheduler tick. Unit tests inject a fake runner or target builder.
+ * through the classified ask seam. Live Pi auth is required; this is the
+ * seam S4 wires into the scheduler tick. Unit tests inject a fake target
+ * builder and client factory.
+ *
+ * Failure classification (ADR-0038 revision 3): exactly two pre-handoff
+ * positions produce `launch_failure` — a target-builder throw (`target_build`)
+ * and a client `start()` rejection (`start_rejection`, classified inside
+ * `askAgentClassified`). Every at/after-handoff outcome is `ambiguous`.
  */
 export function createAskRunner(options = {}) {
     const targetBuilder = options.targetBuilder ??
@@ -174,9 +197,31 @@ export function createAskRunner(options = {}) {
         });
     return {
         async run(input) {
-            const target = await targetBuilder(input);
-            const assistantText = await askAgent(target, input.prompt);
-            return { assistantText, exitCode: 0 };
+            let target;
+            try {
+                target = await targetBuilder(input);
+            }
+            catch (error) {
+                // Target-build throw: the first exact launch_failure source. The
+                // prompt was never handed off, so a bounded retry is safe.
+                return {
+                    assistantText: "",
+                    exitCode: 1,
+                    failure: {
+                        kind: "launch_failure",
+                        milestone: "target_build",
+                        detail: error instanceof Error ? error.message : String(error),
+                    },
+                };
+            }
+            const askOptions = {};
+            if (options.clientFactory !== undefined)
+                askOptions.clientFactory = options.clientFactory;
+            const outcome = await askAgentClassified(target, input.prompt, askOptions);
+            if (outcome.ok) {
+                return { assistantText: outcome.text, exitCode: 0 };
+            }
+            return { assistantText: "", exitCode: 1, failure: outcome.failure };
         },
     };
 }

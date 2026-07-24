@@ -1,3 +1,4 @@
+import { type BoundedRunFailure, type PiRpcClientLike } from "./ask.js";
 import type { RpcSpawnTarget } from "./gateway-rpc.js";
 export interface BuildClaimedInboxTaskPromptOptions {
     agentName: string;
@@ -45,6 +46,12 @@ export interface ClaimedInboxTaskRunnerResult {
     assistantText: string;
     /** 0 = success, non-zero = failure. Drives the success indicator. */
     exitCode: number;
+    /**
+     * Typed bounded-run failure (ADR-0038 revision 3). Present on failure
+     * outcomes from instrumented runners; legacy runners omit it and the
+     * executor classifies their failures as ambiguous.
+     */
+    failure?: BoundedRunFailure;
 }
 export interface ClaimedInboxTaskRunner {
     run(input: ClaimedInboxTaskRunInput): Promise<ClaimedInboxTaskRunnerResult>;
@@ -65,6 +72,14 @@ export interface ExecuteClaimedInboxTaskResult {
     ok: boolean;
     /** Error summary when the runner threw; absent on success. */
     error?: string;
+    /**
+     * Typed failure classification (ADR-0038 revision 3). Preserved from the
+     * runner when present; synthesized as `ambiguous` for legacy thrown
+     * runner errors and nonzero exits without a typed failure. Never
+     * `launch_failure` unless the runner reported one of the two exact
+     * pre-handoff milestones.
+     */
+    failure?: BoundedRunFailure;
 }
 /**
  * Execute exactly one already-claimed inbox task through the injected runner.
@@ -83,12 +98,24 @@ export declare function executeClaimedInboxTask(options: ExecuteClaimedInboxTask
 export type ClaimedInboxTaskTargetBuilder = (input: ClaimedInboxTaskRunInput) => Promise<RpcSpawnTarget>;
 export interface CreateAskRunnerOptions {
     targetBuilder?: ClaimedInboxTaskTargetBuilder;
+    /**
+     * Injectable classified-ask client factory (ADR-0038 revision 3). Tests
+     * inject a fake `PiRpcClientLike` to drive start/prompt/termination
+     * outcomes without live Pi auth. Production defaults to `PiRpcClient`.
+     */
+    clientFactory?: (target: RpcSpawnTarget) => PiRpcClientLike;
 }
 /**
  * Create a production {@link ClaimedInboxTaskRunner} that builds a Pi RPC
  * target per agent run (via `buildPiRunCommand({ rpcMode: true })`, threaded
  * with the validated `vaultRoot` and `agentName`) and runs the bounded prompt
- * through `askAgent`. Live Pi auth is required; this is the seam S4 wires
- * into the scheduler tick. Unit tests inject a fake runner or target builder.
+ * through the classified ask seam. Live Pi auth is required; this is the
+ * seam S4 wires into the scheduler tick. Unit tests inject a fake target
+ * builder and client factory.
+ *
+ * Failure classification (ADR-0038 revision 3): exactly two pre-handoff
+ * positions produce `launch_failure` — a target-builder throw (`target_build`)
+ * and a client `start()` rejection (`start_rejection`, classified inside
+ * `askAgentClassified`). Every at/after-handoff outcome is `ambiguous`.
  */
 export declare function createAskRunner(options?: CreateAskRunnerOptions): ClaimedInboxTaskRunner;

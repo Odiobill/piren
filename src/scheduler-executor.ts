@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
-import { askAgent } from "./ask.js";
+import { askAgentClassified, type BoundedRunFailure, type PiRpcClientLike } from "./ask.js";
 import { buildPiRunCommand, type PiRunCommand } from "./run.js";
 import type { RpcSpawnTarget } from "./gateway-rpc.js";
 
@@ -150,6 +150,12 @@ export interface ClaimedInboxTaskRunnerResult {
   assistantText: string;
   /** 0 = success, non-zero = failure. Drives the success indicator. */
   exitCode: number;
+  /**
+   * Typed bounded-run failure (ADR-0038 revision 3). Present on failure
+   * outcomes from instrumented runners; legacy runners omit it and the
+   * executor classifies their failures as ambiguous.
+   */
+  failure?: BoundedRunFailure;
 }
 
 export interface ClaimedInboxTaskRunner {
@@ -173,6 +179,14 @@ export interface ExecuteClaimedInboxTaskResult {
   ok: boolean;
   /** Error summary when the runner threw; absent on success. */
   error?: string;
+  /**
+   * Typed failure classification (ADR-0038 revision 3). Preserved from the
+   * runner when present; synthesized as `ambiguous` for legacy thrown
+   * runner errors and nonzero exits without a typed failure. Never
+   * `launch_failure` unless the runner reported one of the two exact
+   * pre-handoff milestones.
+   */
+  failure?: BoundedRunFailure;
 }
 
 /**
@@ -199,6 +213,7 @@ export async function executeClaimedInboxTask(
   let assistantText = "";
   let exitCode = 0;
   let errorSummary: string | undefined;
+  let failure: BoundedRunFailure | undefined;
   try {
     const runResult = await options.runner.run({
       agentName: info.agentName,
@@ -207,9 +222,22 @@ export async function executeClaimedInboxTask(
     });
     assistantText = runResult.assistantText;
     exitCode = runResult.exitCode;
+    if (runResult.failure !== undefined) {
+      // Preserve the typed failure from instrumented runners.
+      failure = runResult.failure;
+    } else if (runResult.exitCode !== 0) {
+      // Legacy runner, nonzero exit: ambiguous by policy (ADR-0038 rev 3).
+      failure = {
+        kind: "ambiguous",
+        detail: `runner exited with code ${runResult.exitCode}`,
+      };
+    }
   } catch (error) {
     exitCode = 1;
     errorSummary = error instanceof Error ? error.message : String(error);
+    // Legacy runner, thrown error: ambiguous with no milestone, regardless
+    // of any wording in the message (ADR-0038 revision 3).
+    failure = { kind: "ambiguous", detail: errorSummary };
   }
 
   const ok = exitCode === 0 && errorSummary === undefined;
@@ -223,6 +251,7 @@ export async function executeClaimedInboxTask(
     ok,
   };
   if (errorSummary !== undefined) result.error = errorSummary;
+  if (failure !== undefined) result.failure = failure;
   return result;
 }
 
@@ -239,14 +268,26 @@ export type ClaimedInboxTaskTargetBuilder = (input: ClaimedInboxTaskRunInput) =>
 
 export interface CreateAskRunnerOptions {
   targetBuilder?: ClaimedInboxTaskTargetBuilder;
+  /**
+   * Injectable classified-ask client factory (ADR-0038 revision 3). Tests
+   * inject a fake `PiRpcClientLike` to drive start/prompt/termination
+   * outcomes without live Pi auth. Production defaults to `PiRpcClient`.
+   */
+  clientFactory?: (target: RpcSpawnTarget) => PiRpcClientLike;
 }
 
 /**
  * Create a production {@link ClaimedInboxTaskRunner} that builds a Pi RPC
  * target per agent run (via `buildPiRunCommand({ rpcMode: true })`, threaded
  * with the validated `vaultRoot` and `agentName`) and runs the bounded prompt
- * through `askAgent`. Live Pi auth is required; this is the seam S4 wires
- * into the scheduler tick. Unit tests inject a fake runner or target builder.
+ * through the classified ask seam. Live Pi auth is required; this is the
+ * seam S4 wires into the scheduler tick. Unit tests inject a fake target
+ * builder and client factory.
+ *
+ * Failure classification (ADR-0038 revision 3): exactly two pre-handoff
+ * positions produce `launch_failure` — a target-builder throw (`target_build`)
+ * and a client `start()` rejection (`start_rejection`, classified inside
+ * `askAgentClassified`). Every at/after-handoff outcome is `ambiguous`.
  */
 export function createAskRunner(options: CreateAskRunnerOptions = {}): ClaimedInboxTaskRunner {
   const targetBuilder: ClaimedInboxTaskTargetBuilder =
@@ -266,9 +307,29 @@ export function createAskRunner(options: CreateAskRunnerOptions = {}): ClaimedIn
     });
   return {
     async run(input) {
-      const target = await targetBuilder(input);
-      const assistantText = await askAgent(target, input.prompt);
-      return { assistantText, exitCode: 0 };
+      let target: RpcSpawnTarget;
+      try {
+        target = await targetBuilder(input);
+      } catch (error) {
+        // Target-build throw: the first exact launch_failure source. The
+        // prompt was never handed off, so a bounded retry is safe.
+        return {
+          assistantText: "",
+          exitCode: 1,
+          failure: {
+            kind: "launch_failure",
+            milestone: "target_build",
+            detail: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      const askOptions: { clientFactory?: (t: RpcSpawnTarget) => PiRpcClientLike } = {};
+      if (options.clientFactory !== undefined) askOptions.clientFactory = options.clientFactory;
+      const outcome = await askAgentClassified(target, input.prompt, askOptions);
+      if (outcome.ok) {
+        return { assistantText: outcome.text, exitCode: 0 };
+      }
+      return { assistantText: "", exitCode: 1, failure: outcome.failure };
     },
   };
 }

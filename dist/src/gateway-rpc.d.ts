@@ -131,9 +131,11 @@ export declare class PiRpcClient {
     stop(): Promise<void>;
     onEvent(listener: RpcEventListener): () => void;
     /**
-     * Subscribe to agent process exits. The listener fires once when the child
-     * exits (normally or via signal), after stderr has been collected. Useful for
-     * surfacing mid-stream crashes as errors to callers that own a stream.
+     * Subscribe to agent process termination. The listener fires once when the
+     * child exits (normally or via signal) OR when the child errors post-spawn,
+     * after stderr has been collected. Useful for surfacing mid-stream crashes
+     * as errors to callers that own a stream, and for classified waits that
+     * must settle on any termination path (ADR-0038 revision 3).
      */
     onExit(listener: () => void): () => void;
     getStderr(): string;

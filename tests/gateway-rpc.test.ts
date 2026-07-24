@@ -81,4 +81,20 @@ describe("PiRpcClient prompt flow against a fake Pi process", () => {
     await client.stop();
     expect(exited).toBe(true);
   });
+
+  it("onExit also fires on the post-spawn process error path (ADR-0038 revision 3)", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    await client.start();
+    let terminated = false;
+    client.onExit(() => {
+      terminated = true;
+    });
+    // Simulate a post-spawn child 'error' event (for example a failed kill).
+    // TS-private is compile-time only; the test drives the real ChildProcess.
+    const child = (client as unknown as { process: { emit(event: string, error: Error): unknown } | null }).process;
+    expect(child).not.toBeNull();
+    child?.emit("error", new Error("simulated post-spawn error"));
+    expect(terminated).toBe(true);
+    await client.stop();
+  });
 });

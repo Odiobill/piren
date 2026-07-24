@@ -73,6 +73,13 @@ export class PiRpcClient {
             const wrapped = new Error(`Agent process error: ${err.message}. Stderr: ${this.stderr}`);
             this.exitError = wrapped;
             this.rejectPending(wrapped);
+            // Fire exit listeners on the error path too, so classified waits and
+            // stream owners always settle when the process terminates (ADR-0038
+            // revision 3). Listeners that only expect `exit` already treat this as
+            // an unexpected-termination signal.
+            for (const listener of [...this.exitListeners]) {
+                listener();
+            }
         });
         this.stopReading = createJsonlLineReader(child.stdout, (line) => this.handleLine(line));
         // Resolve only once the child has actually spawned; surface spawn-time
@@ -119,9 +126,11 @@ export class PiRpcClient {
         };
     }
     /**
-     * Subscribe to agent process exits. The listener fires once when the child
-     * exits (normally or via signal), after stderr has been collected. Useful for
-     * surfacing mid-stream crashes as errors to callers that own a stream.
+     * Subscribe to agent process termination. The listener fires once when the
+     * child exits (normally or via signal) OR when the child errors post-spawn,
+     * after stderr has been collected. Useful for surfacing mid-stream crashes
+     * as errors to callers that own a stream, and for classified waits that
+     * must settle on any termination path (ADR-0038 revision 3).
      */
     onExit(listener) {
         this.exitListeners.push(listener);

@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { PiRpcClientLike } from "../src/ask.js";
+import type { RpcEvent } from "../src/gateway-rpc.js";
 import {
   buildClaimedInboxTaskPrompt,
   createAskRunner,
@@ -277,7 +279,119 @@ describe("executeClaimedInboxTask", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe("pi crashed");
   });
+
+  it("preserves a typed failure returned by the runner", async () => {
+    const { runner } = fakeRunner(() => ({
+      assistantText: "",
+      exitCode: 1,
+      failure: { kind: "launch_failure" as const, milestone: "target_build" as const, detail: "no local config" },
+    }));
+
+    const result = await executeClaimedInboxTask({
+      vaultRoot,
+      agentName: "codex",
+      claimedTaskPath: "team/codex/inbox/task-1.claimed.heimdall.md",
+      runner,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toEqual({ kind: "launch_failure", milestone: "target_build", detail: "no local config" });
+  });
+
+  it("classifies a nonzero exit without a typed failure as ambiguous", async () => {
+    const { runner } = fakeRunner(() => ({ assistantText: "partial", exitCode: 2 }));
+
+    const result = await executeClaimedInboxTask({
+      vaultRoot,
+      agentName: "codex",
+      claimedTaskPath: "team/codex/inbox/task-1.claimed.heimdall.md",
+      runner,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(2);
+    expect(result.failure?.kind).toBe("ambiguous");
+  });
+
+  it("NEGATIVE: a legacy thrown runner error mentioning 'spawn'/'launch' is ambiguous, never launch_failure", async () => {
+    const { runner } = fakeRunner(() => {
+      throw new Error("Failed to launch agent: spawn pi ENOENT");
+    });
+
+    const result = await executeClaimedInboxTask({
+      vaultRoot,
+      agentName: "codex",
+      claimedTaskPath: "team/codex/inbox/task-1.claimed.heimdall.md",
+      runner,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("Failed to launch agent: spawn pi ENOENT");
+    expect(result.failure?.kind).toBe("ambiguous");
+    // Legacy/uninstrumented runners carry no milestone.
+    expect(result.failure?.milestone).toBeUndefined();
+  });
 });
+
+/**
+ * Fake classified-ask client for the ADR-0038 revision 3 seam. Mirrors the
+ * production `PiRpcClient` contract: `start()` may reject (start_rejection),
+ * `prompt()` may reject (prompt_handoff), and termination fires exit
+ * listeners on BOTH the exit and the error path.
+ */
+interface FakeAskClientOptions {
+  startError?: Error;
+  promptError?: Error;
+  events?: RpcEvent[];
+  terminate?: "none" | "exit" | "error";
+}
+
+class FakeAskClient implements PiRpcClientLike {
+  private readonly startError: Error | undefined;
+  private readonly promptError: Error | undefined;
+  private readonly events: RpcEvent[];
+  private readonly terminate: "none" | "exit" | "error";
+
+  private eventListeners: Array<(event: RpcEvent) => void> = [];
+  private exitListeners: Array<() => void> = [];
+
+  constructor(options: FakeAskClientOptions = {}) {
+    this.startError = options.startError;
+    this.promptError = options.promptError;
+    this.events = options.events ?? [];
+    this.terminate = options.terminate ?? "none";
+  }
+
+  async start(): Promise<void> {
+    if (this.startError !== undefined) throw this.startError;
+  }
+
+  async stop(): Promise<void> {}
+
+  onEvent(listener: (event: RpcEvent) => void): () => void {
+    this.eventListeners.push(listener);
+    return () => {
+      this.eventListeners = this.eventListeners.filter((l) => l !== listener);
+    };
+  }
+
+  onExit(listener: () => void): () => void {
+    this.exitListeners.push(listener);
+    return () => {
+      this.exitListeners = this.exitListeners.filter((l) => l !== listener);
+    };
+  }
+
+  async prompt(_message: string): Promise<void> {
+    if (this.promptError !== undefined) throw this.promptError;
+    for (const event of this.events) {
+      for (const listener of [...this.eventListeners]) listener(event);
+    }
+    if (this.terminate !== "none") {
+      for (const listener of [...this.exitListeners]) listener();
+    }
+  }
+}
 
 describe("createAskRunner", () => {
   it("forwards the full run input (including vaultRoot) to the target builder", async () => {
@@ -289,13 +403,62 @@ describe("createAskRunner", () => {
       },
     });
 
-    await expect(
-      runner.run({ agentName: "codex", vaultRoot: resolve("/tmp/piren-vault"), prompt: "hi" }),
-    ).rejects.toThrow("stop-after-capture");
+    // ADR-0038 revision 3: a target-builder throw is a typed launch_failure
+    // outcome, not a rejection.
+    const result = await runner.run({ agentName: "codex", vaultRoot: resolve("/tmp/piren-vault"), prompt: "hi" });
 
     expect(captured).toBeDefined();
     expect(captured?.vaultRoot).toBe(resolve("/tmp/piren-vault"));
     expect(captured?.agentName).toBe("codex");
     expect(captured?.prompt).toBe("hi");
+    expect(result.exitCode).toBe(1);
+    expect(result.failure?.kind).toBe("launch_failure");
+    expect(result.failure?.milestone).toBe("target_build");
+    expect(result.failure?.detail).toContain("stop-after-capture");
+  });
+
+  it("classifies a client start() rejection as launch_failure at start_rejection", async () => {
+    const runner = createAskRunner({
+      targetBuilder: async () => ({ command: "fake", args: [], cwd: "/tmp", env: {} }),
+      clientFactory: () => new FakeAskClient({ startError: new Error("Failed to spawn agent: ENOENT") }),
+    });
+
+    const result = await runner.run({ agentName: "codex", vaultRoot: resolve("/tmp/piren-vault"), prompt: "hi" });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failure?.kind).toBe("launch_failure");
+    expect(result.failure?.milestone).toBe("start_rejection");
+  });
+
+  it("NEGATIVE: a prompt-handoff failure containing 'spawn' is ambiguous, never launch_failure", async () => {
+    const runner = createAskRunner({
+      targetBuilder: async () => ({ command: "fake", args: [], cwd: "/tmp", env: {} }),
+      clientFactory: () => new FakeAskClient({ promptError: new Error("Failed to spawn agent: write EPIPE") }),
+    });
+
+    const result = await runner.run({ agentName: "codex", vaultRoot: resolve("/tmp/piren-vault"), prompt: "hi" });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failure?.kind).toBe("ambiguous");
+    expect(result.failure?.milestone).toBe("prompt_handoff");
+  });
+
+  it("returns the assistant text on success", async () => {
+    const runner = createAskRunner({
+      targetBuilder: async () => ({ command: "fake", args: [], cwd: "/tmp", env: {} }),
+      clientFactory: () =>
+        new FakeAskClient({
+          events: [
+            { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } },
+            { type: "agent_end" },
+          ],
+        }),
+    });
+
+    const result = await runner.run({ agentName: "codex", vaultRoot: resolve("/tmp/piren-vault"), prompt: "hi" });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.assistantText).toBe("done");
+    expect(result.failure).toBeUndefined();
   });
 });
