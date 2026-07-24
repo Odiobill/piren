@@ -657,6 +657,7 @@ class FakeRetryIo implements RetryTransitionIo {
   readonly files = new Map<string, string>();
   readonly ops: string[] = [];
   private counter = 0;
+  failReadWith?: Error;
 
   tempPathFor(targetPath: string): string {
     const name = `${targetPath}.fake-tmp-${this.counter}`;
@@ -672,6 +673,7 @@ class FakeRetryIo implements RetryTransitionIo {
 
   async readFile(absolutePath: string): Promise<string> {
     this.ops.push(`read ${absolutePath}`);
+    if (this.failReadWith !== undefined) throw this.failReadWith;
     const content = this.files.get(absolutePath);
     if (content === undefined) throw this.coded("ENOENT", absolutePath);
     return content;
@@ -790,6 +792,31 @@ describe("applySchedulerFailureTransition: injected fake-I/O seam", () => {
     expect(result.reason).toContain("not found");
     expect(io.ops).toEqual([`read ${CLAIMED_ABS}`]);
     expect(io.files.size).toBe(0);
+  });
+
+  it("a non-ENOENT claimed-read failure (EACCES) holds with the actual error and performs no writes", async () => {
+    const io = seed();
+    const eacces = new Error("EACCES: permission denied");
+    (eacces as { code?: string }).code = "EACCES";
+    io.failReadWith = eacces;
+    const result = await applySchedulerFailureTransition({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      failureKind: "launch_failure",
+      now: () => NOW,
+      io,
+    });
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    // The actual error is reported; it is NOT misreported as a concurrent
+    // transition ("not found").
+    expect(result.reason).toContain("EACCES");
+    expect(result.reason).not.toContain("not found");
+    expect(io.ops).toEqual([`read ${CLAIMED_ABS}`]);
+    // Claimed file preserved; nothing written.
+    expect(io.files.get(CLAIMED_ABS)).toBe(RETRYABLE);
+    expect(io.tempFiles()).toEqual([]);
   });
 
   it("exhaustion rewrites the claimed file via temp + overwrite rename, never restores", async () => {
