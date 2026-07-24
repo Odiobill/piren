@@ -342,6 +342,7 @@ class FakeReleaseIo implements RetryTransitionIo {
   readonly ops: string[] = [];
   private counter = 0;
   failLinkWith?: Error;
+  failReadWith?: Error;
   failRemoveClaimed = false;
 
   tempPathFor(targetPath: string): string {
@@ -358,6 +359,7 @@ class FakeReleaseIo implements RetryTransitionIo {
 
   async readFile(absolutePath: string): Promise<string> {
     this.ops.push(`read ${absolutePath}`);
+    if (this.failReadWith !== undefined) throw this.failReadWith;
     const content = this.files.get(absolutePath);
     if (content === undefined) throw this.coded("ENOENT", absolutePath);
     return content;
@@ -477,6 +479,31 @@ describe("releaseCompletedClaimedTask: injected fake-I/O seam", () => {
     if (result.action !== "held") return;
     expect(result.reason).toContain("not found");
     expect(io.ops).toEqual([`read ${CLAIMED_ABS}`]);
+  });
+
+  it("a non-ENOENT claimed-read failure (EACCES) holds with the actual error and performs no writes", async () => {
+    const io = seed();
+    const eacces = new Error("EACCES: permission denied");
+    (eacces as { code?: string }).code = "EACCES";
+    io.failReadWith = eacces;
+    const result = await releaseCompletedClaimedTask({
+      vaultRoot: VAULT,
+      agentName: "kimi",
+      claimedTaskPath: CLAIMED,
+      expectedDeviceId: "heimdall",
+      io,
+    });
+    expect(result.action).toBe("held");
+    if (result.action !== "held") return;
+    // The actual error is reported; it is NOT misreported as a concurrent
+    // transition ("not found").
+    expect(result.reason).toContain("EACCES");
+    expect(result.reason).not.toContain("not found");
+    expect(io.ops).toEqual([`read ${CLAIMED_ABS}`]);
+    // Claimed file preserved; nothing written.
+    expect(io.files.get(CLAIMED_ABS)).toBe(COMPLETED);
+    expect(io.files.has(ORDINARY_ABS)).toBe(false);
+    expect(io.tempFiles()).toEqual([]);
   });
 
   it("a no-clobber link collision holds, preserves both files, and cleans the temp", async () => {

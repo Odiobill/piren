@@ -157,12 +157,22 @@ export async function releaseCompletedClaimedTask(
   let content: string;
   try {
     content = await io.readFile(claimedAbsolutePath);
-  } catch {
-    // A concurrent transition already handled this claimed file.
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === "ENOENT") {
+      // A concurrent transition already handled this claimed file.
+      return {
+        action: "held",
+        claimedTaskPath: info.claimedTaskPath,
+        reason: "claimed task file not found; another transition may already have handled it",
+      };
+    }
+    // Any other read failure (EACCES, EIO, ...) is reported with the actual
+    // error; it is never misreported as a concurrent transition.
     return {
       action: "held",
       claimedTaskPath: info.claimedTaskPath,
-      reason: "claimed task file not found; another transition may already have handled it",
+      reason: `claimed task read failed (${errorMessage(error)}); task remains claimed for triage`,
     };
   }
 
