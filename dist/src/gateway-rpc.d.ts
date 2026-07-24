@@ -125,17 +125,25 @@ export declare class PiRpcClient {
     private seq;
     private stderr;
     private exitError;
+    /** One-shot guard: termination listeners fire at most once per start. */
+    private terminationNotified;
     private readonly responseTimeoutMs;
     constructor(target: RpcSpawnTarget);
     start(): Promise<void>;
     stop(): Promise<void>;
     onEvent(listener: RpcEventListener): () => void;
     /**
-     * Subscribe to agent process termination. The listener fires once when the
-     * child exits (normally or via signal) OR when the child errors post-spawn,
-     * after stderr has been collected. Useful for surfacing mid-stream crashes
-     * as errors to callers that own a stream, and for classified waits that
-     * must settle on any termination path (ADR-0038 revision 3).
+     * One-shot termination notification: runs each subscribed listener at most
+     * once per start, even when a post-spawn error is later followed by exit.
+     */
+    private notifyTerminated;
+    /**
+     * Subscribe to agent process termination. The listener fires AT MOST ONCE
+     * per start: when the child exits (normally or via signal) OR when the
+     * child errors post-spawn, whichever happens first, after stderr has been
+     * collected. Useful for surfacing mid-stream crashes as errors to callers
+     * that own a stream, and for classified waits that must settle on any
+     * termination path without duplicate signals (ADR-0038 revision 3).
      */
     onExit(listener: () => void): () => void;
     getStderr(): string;

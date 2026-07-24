@@ -97,4 +97,21 @@ describe("PiRpcClient prompt flow against a fake Pi process", () => {
     expect(terminated).toBe(true);
     await client.stop();
   });
+
+  it("onExit fires at most once when a post-spawn error is followed by exit (one-shot termination)", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    await client.start();
+    let count = 0;
+    client.onExit(() => {
+      count += 1;
+    });
+    const child = (client as unknown as { process: { emit(event: string, error: Error): unknown } | null }).process;
+    expect(child).not.toBeNull();
+    child?.emit("error", new Error("simulated post-spawn error"));
+    expect(count).toBe(1);
+    // stop() SIGTERMs the child, which fires the exit path: the listener
+    // must NOT run a second time (no duplicate SSE errors downstream).
+    await client.stop();
+    expect(count).toBe(1);
+  });
 });

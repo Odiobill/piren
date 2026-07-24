@@ -154,6 +154,8 @@ export class PiRpcClient {
   private seq = 0;
   private stderr = "";
   private exitError: Error | null = null;
+  /** One-shot guard: termination listeners fire at most once per start. */
+  private terminationNotified = false;
   private readonly responseTimeoutMs = 30000;
 
   constructor(private readonly target: RpcSpawnTarget) {}
@@ -164,6 +166,7 @@ export class PiRpcClient {
     }
     this.exitError = null;
     this.stderr = "";
+    this.terminationNotified = false;
 
     const child = spawn(this.target.command, this.target.args, {
       cwd: this.target.cwd,
@@ -180,9 +183,7 @@ export class PiRpcClient {
       if (this.process !== child) return;
       this.exitError = this.createExitError(code, signal);
       this.rejectPending(this.exitError);
-      for (const listener of [...this.exitListeners]) {
-        listener();
-      }
+      this.notifyTerminated();
     });
 
     child.once("error", (err) => {
@@ -190,13 +191,9 @@ export class PiRpcClient {
       const wrapped = new Error(`Agent process error: ${err.message}. Stderr: ${this.stderr}`);
       this.exitError = wrapped;
       this.rejectPending(wrapped);
-      // Fire exit listeners on the error path too, so classified waits and
-      // stream owners always settle when the process terminates (ADR-0038
-      // revision 3). Listeners that only expect `exit` already treat this as
-      // an unexpected-termination signal.
-      for (const listener of [...this.exitListeners]) {
-        listener();
-      }
+      // Notify on the error path too, so classified waits and stream owners
+      // always settle when the process terminates (ADR-0038 revision 3).
+      this.notifyTerminated();
     });
 
     this.stopReading = createJsonlLineReader(child.stdout!, (line) => this.handleLine(line));
@@ -251,11 +248,24 @@ export class PiRpcClient {
   }
 
   /**
-   * Subscribe to agent process termination. The listener fires once when the
-   * child exits (normally or via signal) OR when the child errors post-spawn,
-   * after stderr has been collected. Useful for surfacing mid-stream crashes
-   * as errors to callers that own a stream, and for classified waits that
-   * must settle on any termination path (ADR-0038 revision 3).
+   * One-shot termination notification: runs each subscribed listener at most
+   * once per start, even when a post-spawn error is later followed by exit.
+   */
+  private notifyTerminated(): void {
+    if (this.terminationNotified) return;
+    this.terminationNotified = true;
+    for (const listener of [...this.exitListeners]) {
+      listener();
+    }
+  }
+
+  /**
+   * Subscribe to agent process termination. The listener fires AT MOST ONCE
+   * per start: when the child exits (normally or via signal) OR when the
+   * child errors post-spawn, whichever happens first, after stderr has been
+   * collected. Useful for surfacing mid-stream crashes as errors to callers
+   * that own a stream, and for classified waits that must settle on any
+   * termination path without duplicate signals (ADR-0038 revision 3).
    */
   onExit(listener: () => void): () => void {
     this.exitListeners.push(listener);
