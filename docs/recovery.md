@@ -16,9 +16,8 @@ Keep the vault in git (or any versioned backup) so you can always revert to a kn
 
 A task is claimed by renaming `team/<agent>/inbox/<task>.md` to `team/<agent>/inbox/<task>.claimed.<device>.md`. If the claiming device crashed mid-execution, the task stays claimed and no other device picks it up.
 
-Recovery options:
+Recovery is manual. The shipped scheduler never reclaims a claimed inbox task — it plans only unclaimed `pending` tasks, so a claimed file stays claimed regardless of the claiming device's heartbeat — and `piren task claim` refuses an already-claimed file. The supported paths are the rename operations below.
 
-- **Let the scheduler handle it.** A stale-claimed task (claiming device heartbeat older than `stale_after_seconds`) becomes reclaimable automatically on a later scheduler tick; `piren scheduler --dry-run` shows these as reclaim candidates.
 - **Triage before rerunning.** If the claimed task was being executed by the scheduler when something failed, do not reset it blindly: the agent may already have done work. Follow the at-least-once triage workflow in [Scheduler](scheduler.md#at-least-once-risk-and-manual-triage) first.
 - **Manual reclaim.** If you know the claiming device is gone, rename the file back to the unclaimed name or to a `.claimed.<this-device>.md` for this device:
 

@@ -50,8 +50,7 @@ A scheduler tick is LLM-free. For each locally enabled agent, the planner:
 
 For inbox tasks:
 - An unclaimed `pending` task gets a proposed claim.
-- A task already claimed by a stale device (heartbeat older than `stale_after_seconds`) gets a reclaim proposal.
-- A task claimed by an active device is skipped.
+- A claimed task is never a claim candidate: the scheduler loads only unclaimed `pending` tasks, so a task claimed by any device — stale or not — stays claimed for manual triage (see [Recovery](recovery.md)).
 - A pending task blocked by `depends_on` or by retry eligibility (below) never gets a claim proposal. `--dry-run` reports it as a `[BLOCK]` line with the exact reason.
 
 For cron jobs:
@@ -108,7 +107,7 @@ retry_state:                # written by the scheduler, never by hand
 
 ## At-least-once risk and manual triage
 
-Scheduler execution is at-most-once before the prompt handoff and at-least-once after it. Once the prompt has been handed to the agent, a failure the scheduler observes — a timeout, a disconnect, a non-zero exit — does **not** prove that no work happened. The agent may already have written vault files, sent messages, or completed the task entirely. Never rerun or requeue a post-handoff failure until you have inspected its side effects, or you risk duplicating them.
+Before the prompt handoff no agent work can have begun, which is exactly why a pre-handoff `launch_failure` may be requeued safely under an opt-in policy. After the handoff, execution is at-least-once: a failure the scheduler observes — a timeout, a disconnect, a non-zero exit — does **not** prove that no work happened. The agent may already have written vault files, sent messages, or completed the task entirely. Never rerun or requeue a post-handoff failure until you have inspected its side effects, or you risk duplicating them.
 
 A currently claimed file means one thing only: the task requires manual triage. Task files do not persist an ambiguity classification — an ambiguous failure leaves no marker distinguishing it from a task whose agent is still running or whose scheduler crashed mid-execution. (`retry_state.last_failure: launch_failure` appears only on tasks that went through an automatic launch-failure transition.) The scheduler tick summary (`release: held`, `retry:` lines) and the scheduler's own output are the record of what the tick observed.
 
