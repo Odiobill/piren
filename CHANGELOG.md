@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.5] - 2026-07-25
 
-Scheduler safety and operator surface (ADR-0038). Prepared release candidate: not yet tagged or published; no provenance attestation is claimed at this stage. Publication, if approved after review, happens only through the protected tag-only OIDC trusted-publishing workflow.
+Scheduler safety and operator surface (ADR-0038). Published as `@odiobill/piren@0.1.5` to npm `latest` through the protected tag-only OIDC trusted-publishing workflow from the immutable `v0.1.5` tag (`7fbcded`); registry metadata carries a SLSA provenance attestation (`npm publish --provenance`, `https://slsa.dev/provenance/v1`).
 
 ### Added
 
