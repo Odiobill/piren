@@ -52,6 +52,7 @@ For inbox tasks:
 - An unclaimed `pending` task gets a proposed claim.
 - A task already claimed by a stale device (heartbeat older than `stale_after_seconds`) gets a reclaim proposal.
 - A task claimed by an active device is skipped.
+- A pending task blocked by `depends_on` or by retry eligibility (below) never gets a claim proposal. `--dry-run` reports it as a `[BLOCK]` line with the exact reason.
 
 For cron jobs:
 - The planner uses active-device-priority ownership (ADR-0019) to pick the owning device.
@@ -69,6 +70,58 @@ An executed inbox task passes through visible states, all plain files (ADR-0038)
 3. **Held** — cancelled, malformed, missing, or non-completed tasks, a release targeting another device's claim, a collision at the ordinary name, and any failure after process start all keep the task claimed for explicit steward/coordinator triage. The tick summary reports `release: held` with the exact reason.
 
 A crash between the link and the unlink can leave both files visible (a duplicate visible task ID). That is intentional fail-closed state: dependency resolution treats duplicate IDs as invalid and blocks the affected tasks until triage.
+
+## Task dependencies (`depends_on`)
+
+A task may declare prerequisites in its frontmatter (ADR-0038):
+
+```yaml
+depends_on:
+  - 20260721T120000000Z-implement-slice
+```
+
+- Entries are stable task IDs, never paths or titles. Each ID must match the generated task-ID shape `^[0-9]{8}T[0-9]{9}Z-[a-z0-9]+(?:-[a-z0-9]+)*$`.
+- A dependency is satisfied only when the task with that exact `id` exists as an ordinary (unclaimed) inbox file with `status: completed`. A claimed file never satisfies it, even when its status field reads `completed` — this is why the completion release above exists.
+- Resolution is fail-closed. Malformed IDs, duplicate task IDs, duplicate or self dependencies, cycles, and missing targets are all invalid, and invalid or unsatisfied dependencies are never claimable.
+- `piren scheduler --dry-run` prints each blocked task as `[BLOCK] inbox_task <path> - <exact reason>` (for example `missing dependency: ...`, `unsatisfied dependency: ...`, `dependency cycle: ...`). The dry-run is read-only: it never claims, spawns, or mutates the vault.
+
+## Opt-in automatic retry
+
+Automatic retry is off by default. A task opts in with an explicit frontmatter policy, and the scheduler records visible attempt state alongside it:
+
+```yaml
+retry:
+  safe_to_retry: true
+  max_attempts: 2
+  backoff_seconds: 300
+retry_state:                # written by the scheduler, never by hand
+  attempts: 1
+  last_attempt_at: "2026-07-21T12:05:00.000Z"
+  next_eligible_at: "2026-07-21T12:10:00.000Z"
+  last_failure: launch_failure
+```
+
+- `safe_to_retry` must be `true`; `max_attempts` is a positive integer; `backoff_seconds` is a non-negative integer. An absent policy means no automatic retry. An invalid policy or malformed `retry_state` makes the task unclaimable, and the dry-run reports the exact reason.
+- The only automatic retry trigger is a proven pre-handoff `launch_failure`: the scheduler could not construct the run target, or the agent process rejected `start()`. In both cases no prompt was ever handed to the agent, so no agent work can have begun. The prompt handoff is the point of no return — every failure at or after it (timeout, non-zero exit, provider error, disconnect, mid-stream crash) is ambiguous and is never automatically retried, even when `safe_to_retry` is `true`.
+- A permitted launch-failure retry records `retry_state`, waits until `next_eligible_at`, then returns the task to its ordinary pending filename through the same fail-closed no-clobber protocol as the release. The tick summary prints `retry: requeued` (or `retry: exhausted` / `retry: held`) with the exact reason.
+- Exhausted attempts keep the final state in the claimed file and are never requeued. A launch failure on a task without a valid retry policy stays claimed for triage.
+
+## At-least-once risk and manual triage
+
+Scheduler execution is at-most-once before the prompt handoff and at-least-once after it. Once the prompt has been handed to the agent, a failure the scheduler observes — a timeout, a disconnect, a non-zero exit — does **not** prove that no work happened. The agent may already have written vault files, sent messages, or completed the task entirely. Never rerun or requeue a post-handoff failure until you have inspected its side effects, or you risk duplicating them.
+
+A currently claimed file means one thing only: the task requires manual triage. Task files do not persist an ambiguity classification — an ambiguous failure leaves no marker distinguishing it from a task whose agent is still running or whose scheduler crashed mid-execution. (`retry_state.last_failure: launch_failure` appears only on tasks that went through an automatic launch-failure transition.) The scheduler tick summary (`release: held`, `retry:` lines) and the scheduler's own output are the record of what the tick observed.
+
+Triage workflow for a claimed task `team/<agent>/inbox/<task>.claimed.<device>.md`:
+
+1. **Read the task.** `piren task show <id-or-path>` resolves both ordinary and claimed files; you can also read the claimed file directly.
+2. **Check what the scheduler saw.** Review the tick output for `release: held` / `retry:` lines, and run `piren scheduler --dry-run` for a read-only view of current eligibility.
+3. **Inspect side effects before deciding.** Check the vault (project logs, outbox, `git status` if the vault is versioned) for work the agent may have completed.
+4. **Then choose exactly one outcome:**
+   - *Work verified done* — `piren task complete <id-or-path>`, then rename the claimed file back to its ordinary name so completed `depends_on` prerequisites advance dependent tasks.
+   - *Abandon the work* — `piren task cancel <id-or-path>`. Cancelled tasks are terminal: they are never claimed, released, or retried automatically.
+   - *Verified no side effects and the task should run again* — rename `<task>.claimed.<device>.md` back to `<task>.md`. There is no requeue command; the rename is the manual requeue. If the task carries a valid `retry` policy, its existing `retry_state` still applies.
+   - *Duplicate visible IDs* (a crash left both `<task>.md` and `<task>.claimed.<device>.md`) — both are blocked fail-closed. Read both files, reconcile the content, then delete or rename one. See [Recovery](recovery.md).
 
 ## Local scheduler config
 
@@ -136,7 +189,7 @@ The generated systemd user unit is `piren-scheduler.service`; the tmux + `@reboo
 - **Broad concurrency.** `max_concurrent_agents` is parsed and reported but effective concurrency is 1 (one-at-a-time); no parallel tick execution is implemented.
 - **Automatic cross-agent fallback.** Device failover (same agent, different device) is supported; semantic fallback between different agents is a separate feature (ADR-0028) and is never automatic.
 - **Hidden state.** No database, queue, lock file, or lease; the only coordination artifacts are the existing claimed task/job files and run records.
-- **Automatic retry.** Retry policy/state parsing (ADR-0038 R2) exists as an unwired core; the only future automatic retry trigger is a pre-spawn `launch_failure`, and any failure after process start stays claimed for manual triage.
+- **Automatic retry beyond typed launch failures.** Opt-in retry policy/state is wired (ADR-0038), but the only automatic trigger is a proven pre-handoff `launch_failure`. Every failure at or after prompt handoff stays claimed for manual triage. See "Opt-in automatic retry" and "At-least-once risk and manual triage".
 
 ## Relationship to agent fallback (ADR-0028)
 
@@ -147,7 +200,8 @@ See [agent groups and fallback](agent-groups.md) for the semantic fallback story
 ## Related
 
 - ADR-0029 — device-local scheduler
-- ADR-0038 — scheduler dependency and retry safety (incl. revision 2 completion release)
+- ADR-0038 — scheduler dependency and retry safety (incl. revision 2 completion release and revision 3 failure classification)
+- [Recovery](recovery.md)
 - [Cron jobs](cron.md)
 - [Service management](service-management.md)
 - [Agent groups and fallback](agent-groups.md)

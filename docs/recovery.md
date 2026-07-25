@@ -18,7 +18,8 @@ A task is claimed by renaming `team/<agent>/inbox/<task>.md` to `team/<agent>/in
 
 Recovery options:
 
-- **Let the scheduler handle it.** When the full scheduler loop ships, a stale-claimed task (claiming device heartbeat older than `stale_after_seconds`) becomes reclaimable automatically. Today, the dry-run shows these as reclaim candidates.
+- **Let the scheduler handle it.** A stale-claimed task (claiming device heartbeat older than `stale_after_seconds`) becomes reclaimable automatically on a later scheduler tick; `piren scheduler --dry-run` shows these as reclaim candidates.
+- **Triage before rerunning.** If the claimed task was being executed by the scheduler when something failed, do not reset it blindly: the agent may already have done work. Follow the at-least-once triage workflow in [Scheduler](scheduler.md#at-least-once-risk-and-manual-triage) first.
 - **Manual reclaim.** If you know the claiming device is gone, rename the file back to the unclaimed name or to a `.claimed.<this-device>.md` for this device:
 
 ```bash
