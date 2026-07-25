@@ -370,9 +370,9 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 });
 
 describe("ADR-0033: release artifact and public-surface guards", () => {
-  it("package version is the 0.1.4 registry-cutover release candidate (unreleased)", () => {
+  it("package version is the 0.1.5 scheduler-safety release candidate (unreleased)", () => {
     const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
-    expect(pkg.version).toBe("0.1.4");
+    expect(pkg.version).toBe("0.1.5");
   });
 
   it("does not add a pi runtime dependency to the package", () => {

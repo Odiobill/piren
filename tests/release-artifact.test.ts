@@ -10,11 +10,13 @@ import { readVersion } from "../src/version.js";
  * name was rejected by npm's similarity policy); the executable bin stays
  * `piren`. After ADR-0037, `@odiobill/piren@0.1.3` was published to npm
  * `latest` via the sole one-time manual bootstrap (it may lack OIDC
- * provenance). The current development version is the `0.1.4` registry-cutover
- * release was published through the trusted OIDC workflow with a SLSA
- * provenance attestation. These guards keep the package metadata, version, and
- * changelog truthful across the manual-bootstrap 0.1.3 and OIDC-published
- * 0.1.4 releases.
+ * provenance), and `@odiobill/piren@0.1.4` was published through the trusted
+ * OIDC workflow with a SLSA provenance attestation. The current development
+ * version is the `0.1.5` scheduler-safety (ADR-0038) release candidate:
+ * source-only, not yet tagged or published, no provenance attestation. These
+ * guards keep the package metadata, version, and changelog truthful across
+ * the manual-bootstrap 0.1.3, OIDC-published 0.1.4, and pending 0.1.5
+ * candidate.
  */
 
 const repoRoot = process.cwd();
@@ -23,15 +25,15 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("scoped @odiobill/piren registry releases (0.1.4 OIDC, 0.1.3 bootstrap)", () => {
+describe("scoped @odiobill/piren registry releases (0.1.5 candidate, 0.1.4 OIDC, 0.1.3 bootstrap)", () => {
   it("package.json name is the scoped @odiobill/piren identity", () => {
     const pkg = JSON.parse(read("package.json")) as { name: string };
     expect(pkg.name).toBe("@odiobill/piren");
   });
 
-  it("package.json version is the published 0.1.4 release", () => {
+  it("package.json version is the prepared 0.1.5 release candidate (unpublished)", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
-    expect(pkg.version).toBe("0.1.4");
+    expect(pkg.version).toBe("0.1.5");
   });
 
   it("the executable bin name stays piren (scoped package, unchanged command)", () => {
@@ -54,8 +56,8 @@ describe("scoped @odiobill/piren registry releases (0.1.4 OIDC, 0.1.3 bootstrap)
     expect(pkg.private === undefined || pkg.private === false).toBe(true);
   });
 
-  it("readVersion reports 0.1.4 from the real package.json", () => {
-    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.4");
+  it("readVersion reports 0.1.5 from the real package.json", () => {
+    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.5");
   });
 
   it("package-lock.json name and version agree with package.json", () => {
@@ -65,9 +67,23 @@ describe("scoped @odiobill/piren registry releases (0.1.4 OIDC, 0.1.3 bootstrap)
       packages?: Record<string, { name?: string; version?: string }>;
     };
     expect(lock.name).toBe("@odiobill/piren");
-    expect(lock.version).toBe("0.1.4");
+    expect(lock.version).toBe("0.1.5");
     expect(lock.packages?.[""]?.name).toBe("@odiobill/piren");
-    expect(lock.packages?.[""]?.version).toBe("0.1.4");
+    expect(lock.packages?.[""]?.version).toBe("0.1.5");
+  });
+
+  it("CHANGELOG has a dated [0.1.5] entry that truthfully marks it a prepared, unpublished candidate", () => {
+    const cl = read("CHANGELOG.md");
+    const start = cl.indexOf("## [0.1.5]");
+    const end = cl.indexOf("## [0.1.4]");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const section = cl.slice(start, end);
+    expect(section).toMatch(/## \[0\.1\.5\] - 2026-07-25/);
+    expect(section).toMatch(/ADR-0038/);
+    // Truthful candidate wording: not yet tagged/published, no attestation.
+    expect(section).toMatch(/not yet tagged or published/i);
+    expect(section).not.toMatch(/published to npm/i);
   });
 
   it("CHANGELOG has dated published [0.1.4] and [0.1.3] entries", () => {

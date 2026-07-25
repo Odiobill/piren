@@ -5,6 +5,26 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-07-25
+
+Scheduler safety and operator surface (ADR-0038). Prepared release candidate: not yet tagged or published; no provenance attestation is claimed at this stage. Publication, if approved after review, happens only through the protected tag-only OIDC trusted-publishing workflow.
+
+### Added
+
+- **Task dependency eligibility (R1):** inbox tasks may declare `depends_on` task IDs in frontmatter. Resolution is fail-closed — malformed, duplicate, self-referential, cyclic, missing, or unsatisfied prerequisites are never claimable — and includes both ordinary and `.claimed.<device>.md` files so atomic claiming never hides a prerequisite. `piren scheduler --dry-run` reports each blocked task as a `[BLOCK]` line with the exact reason and stays read-only.
+- **Validated completion release (R3, ADR-0038 revision 2):** after a successful scheduler execution (bounded runner ok AND the claimed file re-reads with `status: completed`, never inferred from the result body), the tick releases the claimed task byte-for-byte to its ordinary filename through a fail-closed two-step no-clobber protocol, gated on device ownership. Only then does a completed prerequisite satisfy `depends_on`, so dependent chains advance. The link/unlink crash window leaves a duplicate visible task ID that dependency resolution blocks fail-closed for triage.
+- **Typed pre-handoff failure classification (R3, revision 3):** exactly two control-flow milestones classify as `launch_failure` — target-build failure and `PiRpcClient.start()` rejection. The prompt handoff is the point of no return; every at/after-handoff outcome is ambiguous. Classification derives from typed milestones only, never error text or exit codes.
+- **Conservative launch-failure-only retry (R2 + R3):** tasks opt in with an explicit `retry` policy (`safe_to_retry: true`, `max_attempts`, `backoff_seconds`); the scheduler writes visible `retry_state` frontmatter. Only a proven pre-handoff `launch_failure` requeues automatically, with backoff; exhausted attempts stay visible in the claimed file and are never requeued. Ambiguous post-start failures (timeout, non-zero exit, provider error, disconnect) are never automatically retried and remain claimed for manual triage. No new task statuses, no hidden state.
+- **Read-only operator report:** `piren scheduler --report` prints an LLM-free, claim-free, write-free diagnostic for the locally enabled agent set: dependency cycles, invalid `retry` policy / malformed `retry_state` (exact parser reasons), exhausted retry attempts, and claimed inbox tasks as manual-triage items. Claimed tasks are never labeled a proven ambiguous failure — the report states they may be active, interrupted, or ambiguous because vault state persists no such classification.
+
+### Changed
+
+- **Operator and recovery documentation:** `docs/scheduler.md` documents `depends_on`, opt-in retry, at-least-once risk, and the manual triage workflow; `docs/recovery.md` accurately documents that there is no automatic stale-claim re-execution and no claim-transfer/requeue command — manual recovery is a frontmatter `status: pending` check plus a rename to the ordinary filename, after side-effect triage.
+
+### Fixed
+
+- **Steward alert OKF conformance:** `flag_steward` alert files now render `type: Alert` frontmatter.
+
 ## [0.1.4] - 2026-07-20
 
 Registry-first public/operator cutover (ADR-0033). Published as `@odiobill/piren@0.1.4` to npm `latest` through the protected OIDC trusted-publishing workflow. Registry metadata carries a SLSA provenance attestation (`https://slsa.dev/provenance/v1`), and an isolated registry install reports `piren version` 0.1.4.
