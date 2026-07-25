@@ -19,14 +19,14 @@ A task is claimed by renaming `team/<agent>/inbox/<task>.md` to `team/<agent>/in
 Recovery is manual. The shipped scheduler never reclaims a claimed inbox task — it plans only unclaimed `pending` tasks, so a claimed file stays claimed regardless of the claiming device's heartbeat — and `piren task claim` refuses an already-claimed file. The supported path is the rename below.
 
 - **Triage before rerunning.** If the claimed task was being executed by the scheduler when something failed, do not reset it blindly: the agent may already have done work. Follow the at-least-once triage workflow in [Scheduler](scheduler.md#at-least-once-risk-and-manual-triage) first.
-- **Manual reset.** After triage, to return a task to pending so the scheduler can pick it up on a later tick, rename the claimed file back to its ordinary name:
+- **Manual reset.** After triage, return the task to pending so the scheduler can pick it up on a later tick. The scheduler plans only unclaimed tasks whose frontmatter reads `status: pending`, and a bounded agent may have left the status at `in_progress` when it was interrupted — so first make sure the frontmatter says `status: pending` (edit the file if needed), then rename the claimed file back to its ordinary name:
 
 ```bash
 cd /path/to/vault
 mv team/codex/inbox/task-1.claimed.thor.md team/codex/inbox/task-1.md
 ```
 
-The rename is what makes the task claimable again; there is no claim-transfer or requeue command.
+Both steps are required: the status edit makes the task eligible and the rename makes it unclaimed. There is no CLI pending/requeue command.
 
 ## Stuck cron job claim
 

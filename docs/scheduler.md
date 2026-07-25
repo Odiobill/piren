@@ -119,7 +119,7 @@ Triage workflow for a claimed task `team/<agent>/inbox/<task>.claimed.<device>.m
 4. **Then choose exactly one outcome:**
    - *Work verified done* — `piren task complete <id-or-path>`, then rename the claimed file back to its ordinary name so completed `depends_on` prerequisites advance dependent tasks.
    - *Abandon the work* — `piren task cancel <id-or-path>`. Cancelled tasks are terminal: they are never claimed, released, or retried automatically.
-   - *Verified no side effects and the task should run again* — rename `<task>.claimed.<device>.md` back to `<task>.md`. There is no requeue command; the rename is the manual requeue. If the task carries a valid `retry` policy, its existing `retry_state` still applies.
+   - *Verified no side effects and the task should run again* — make sure the frontmatter reads `status: pending` (a bounded agent may have left it at `in_progress`; edit the file if needed), then rename `<task>.claimed.<device>.md` back to `<task>.md`. There is no requeue command; the status edit plus the rename is the manual requeue, and the scheduler plans only unclaimed `pending` tasks. If the task carries a valid `retry` policy, its existing `retry_state` still applies.
    - *Duplicate visible IDs* (a crash left both `<task>.md` and `<task>.claimed.<device>.md`) — both are blocked fail-closed. Read both files, reconcile the content, then delete or rename one. See [Recovery](recovery.md).
 
 ## Local scheduler config
