@@ -235,6 +235,22 @@ describe("parseArgs: scheduler --once", () => {
   });
 });
 
+describe("parseArgs: scheduler --report", () => {
+  it("parses --report after the scheduler command", () => {
+    const result = parseArgs(["scheduler", "--report"]);
+    expect(result.command).toBe("scheduler");
+    expect(result.report).toBe(true);
+    expect(result.dryRun).toBe(false);
+    expect(result.once).toBe(false);
+  });
+
+  it("does not set report for bare scheduler, --dry-run, or --once", () => {
+    expect(parseArgs(["scheduler"]).report).toBe(false);
+    expect(parseArgs(["scheduler", "--dry-run"]).report).toBe(false);
+    expect(parseArgs(["scheduler", "--once"]).report).toBe(false);
+  });
+});
+
 describe("parseArgs: scheduler loop is opt-in only (interactive commands unchanged)", () => {
   // S5 regression: the scheduler loop must only be reachable via the explicit
   // `scheduler` command. `--once`/`--dry-run` are scheduler-only flags that the

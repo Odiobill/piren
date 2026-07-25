@@ -59,6 +59,12 @@ export interface SchedulerInboxLoad {
     pendingTasks: LoadedInboxTask[];
     /** Task ids that appear on more than one visible inbox file; a dependency on (or a candidate with) such an id is never claimable (ADR-0038). */
     duplicateIds: Set<string>;
+    /**
+     * Every visible parseable inbox task, ordinary AND claimed, with parsed
+     * frontmatter retained. Read-only consumers (the ADR-0038 R3 operator
+     * report) inspect this set; the planner continues to use pendingTasks.
+     */
+    allTasks: LoadedInboxTask[];
 }
 /**
  * Extract the `depends_on` sequence from a parsed frontmatter object.

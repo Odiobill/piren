@@ -410,6 +410,28 @@ describe("loadSchedulerInboxState", () => {
     expect(state.pendingTasks).toEqual([]); // claimed -> not a candidate
   });
 
+  it("exposes every visible task (ordinary AND claimed, with frontmatter) via allTasks", async () => {
+    // ADR-0038 R3 operator report: claimed files carry retry_state and must be
+    // inspectable without a second read pass.
+    await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
+    await writeFile(
+      join(vault, "team", "codex", "inbox", `${IMPL}.claimed.heimdall.md`),
+      ["---", `id: ${IMPL}`, "status: in_progress", "retry:", "  safe_to_retry: true", "  max_attempts: 2", "  backoff_seconds: 60", "---", "", "# Impl"].join("\n"),
+    );
+    await writeFile(
+      join(vault, "team", "codex", "inbox", `${REVIEW}.md`),
+      ["---", `id: ${REVIEW}`, "status: pending", "---", "", "# Review"].join("\n"),
+    );
+
+    const state = await loadSchedulerInboxState({ vaultRoot: vault, enabledAgents: ["codex"] });
+    expect(state.allTasks.map((t) => t.id).sort()).toEqual([IMPL, REVIEW].sort());
+    const claimed = state.allTasks.find((t) => t.id === IMPL);
+    expect(claimed?.claimedBy).toBe("heimdall");
+    expect(claimed?.frontmatter?.["retry"]).toMatchObject({ safe_to_retry: true });
+    // pendingTasks stays restricted to unclaimed pending candidates.
+    expect(state.pendingTasks.map((t) => t.id)).toEqual([REVIEW]);
+  });
+
   it("preserves the claimed marker on resolver nodes so claimed never satisfies", async () => {
     await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
     await writeFile(

@@ -308,6 +308,7 @@ export async function loadSchedulerInboxState(options) {
     const dependencyNodes = new Map();
     const duplicateIds = new Set();
     const pendingTasks = [];
+    const allTasks = [];
     for (const agentName of options.enabledAgents) {
         let loaded;
         try {
@@ -318,6 +319,7 @@ export async function loadSchedulerInboxState(options) {
             continue;
         }
         for (const task of loaded) {
+            allTasks.push(task);
             if (dependencyNodes.has(task.id) || duplicateIds.has(task.id)) {
                 // Collision: this id now spans more than one visible file. Remove any
                 // previously-inserted node so resolution is never first/last-writer-wins.
@@ -332,7 +334,7 @@ export async function loadSchedulerInboxState(options) {
             }
         }
     }
-    return { dependencyNodes, pendingTasks, duplicateIds };
+    return { dependencyNodes, pendingTasks, duplicateIds, allTasks };
 }
 function toNode(task) {
     const node = {

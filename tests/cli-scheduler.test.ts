@@ -146,6 +146,34 @@ describe("piren scheduler (CLI dispatch)", () => {
     expect(result.stdout).not.toContain("[EXEC]");
   });
 
+  it("'piren scheduler --report' is read-only, exits 0, and never invokes Pi", async () => {
+    const reportHome = await mkdtemp(join(tmpdir(), "piren-scheduler-report-home-"));
+    try {
+      const vault = join(reportHome, "vault");
+      await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
+      await writeFile(join(vault, ".piren-vault"), "");
+      await writeFile(
+        join(vault, "team", "codex", "inbox", "20260725T120000000Z-stuck.claimed.thor.md"),
+        "---\nid: 20260725T120000000Z-stuck\nstatus: in_progress\n---\n\n# Stuck task\n",
+      );
+      await mkdir(join(reportHome, ".config", "piren"), { recursive: true });
+      await writeFile(
+        join(reportHome, ".config", "piren", "config.yml"),
+        `vault_root: ${vault}\nallowed_agents:\n  - codex\n`,
+      );
+      const result = runScheduler(["--report"], { HOME: reportHome });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("SCHEDULER REPORT");
+      expect(result.stdout).toContain("[TRIAGE]");
+      expect(result.stdout).toContain("manual triage");
+      // Read-only: no execution, no Pi spawn, no error output.
+      expect(result.stdout).not.toContain("[EXEC]");
+      expect(result.stderr).toBe("");
+    } finally {
+      await rm(reportHome, { recursive: true, force: true });
+    }
+  });
+
   it("'piren scheduler --once' with a vault but no work exits 0 without spawning Pi", async () => {
     const vault = join(home, "vault-once");
     await mkdir(join(vault, "team", "codex"), { recursive: true });

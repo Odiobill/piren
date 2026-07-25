@@ -8,6 +8,7 @@ The scheduler ships as four layers (ADR-0029 / O7): a read-only dry-run planner,
 
 ```bash
 piren scheduler --dry-run   # LLM-free, claim-free: preview proposed claims for one tick
+piren scheduler --report    # read-only operator report: cycles, retry metadata, claimed-task triage items
 piren scheduler --once      # one live tick: refresh, plan, claim, execute at most one item, stop
 piren scheduler             # opt-in loop: repeats --once every poll interval until SIGINT/SIGTERM
 ```
@@ -121,6 +122,32 @@ Triage workflow for a claimed task `team/<agent>/inbox/<task>.claimed.<device>.m
    - *Abandon the work* — `piren task cancel <id-or-path>`. Cancelled tasks are terminal: they are never claimed, released, or retried automatically.
    - *Verified no side effects and the task should run again* — make sure the frontmatter reads `status: pending` (a bounded agent may have left it at `in_progress`; edit the file if needed), then rename `<task>.claimed.<device>.md` back to `<task>.md`. There is no requeue command; the status edit plus the rename is the manual requeue, and the scheduler plans only unclaimed `pending` tasks. If the task carries a valid `retry` policy, its existing `retry_state` still applies.
    - *Duplicate visible IDs* (a crash left both `<task>.md` and `<task>.claimed.<device>.md`) — both are blocked fail-closed. Read both files, reconcile the content, then delete or rename one. See [Recovery](recovery.md).
+
+## Operator report (`--report`)
+
+`piren scheduler --report` prints a read-only diagnostic for the locally enabled agent set (`allowed_agents` minus `excluded_agents`, same scope as `--dry-run`). It reads only the vault and local config: it never claims, spawns, refreshes heartbeats, writes files, or calls an LLM, and it persists nothing.
+
+It surfaces exactly four actionable conditions, grouped per agent in deterministic order:
+
+- `[CYCLE]` — dependency cycles involving pending tasks, with the exact evaluator reason.
+- `[RETRY]` — invalid `retry` policy or malformed `retry_state` (exact parser reasons), and exhausted retry attempts (`retry attempts exhausted (n/m)`). Unexpired backoff and other blocked-work reasons stay `--dry-run` diagnostics.
+- `[TRIAGE]` — claimed inbox task files. Each is a manual-triage item: it may be active, interrupted, or an ambiguous failure, and the report cannot identify which, because task files do not persist an ambiguity classification. See [At-least-once risk and manual triage](#at-least-once-risk-and-manual-triage) for the triage procedure.
+
+Example output:
+
+```text
+SCHEDULER REPORT
+
+  agent: sam
+    [TRIAGE] team/sam/inbox/20260725T120000000Z-stuck.claimed.thor.md - claimed by thor; requires manual triage: may be active, interrupted, or ambiguous — vault state alone cannot tell
+  agent: nora
+    (no findings)
+
+1 findings (0 cycle, 0 retry, 1 manual-triage)
+
+This report is read-only: it does not claim, spawn, write, or call any LLM.
+A claimed task requires manual triage: it may be active, interrupted, or ambiguous; vault state alone cannot tell (no ambiguity classification is persisted).
+```
 
 ## Local scheduler config
 

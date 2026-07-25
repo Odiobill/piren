@@ -35,6 +35,7 @@ import {
 import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents, listFallbackCandidates, formatFallbackReport } from "./agents.js";
 import { schedulerDryRun, readYamlConfig, resolveEnabledAgents, DEFAULT_CONFIG_PATH } from "./scheduler-cli.js";
+import { schedulerReport } from "./scheduler-report.js";
 import { schedulerOnce, createSchedulerExecutors } from "./scheduler-once.js";
 import {
   resolveSchedulerConfig,
@@ -558,7 +559,12 @@ try {
     const ok = outcome.kind === "installed" && outcome.report.ok;
     if (!ok) process.exit(1);
   } else if (command === "scheduler") {
-    if (parsed.dryRun) {
+    if (parsed.report) {
+      // Read-only operator report (ADR-0038 R3): vault + local config reads
+      // only. Never claims, spawns, writes, or calls Pi.
+      const output = await schedulerReport({});
+      console.log(output);
+    } else if (parsed.dryRun) {
       const output = await schedulerDryRun({});
       console.log(output);
     } else if (parsed.once) {

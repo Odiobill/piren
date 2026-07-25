@@ -29,6 +29,7 @@ export interface ParsedArgs {
   help: boolean;
   dryRun: boolean;
   once: boolean;
+  report: boolean;
   port: number | undefined;
   host: string | undefined;
   token: string | undefined;
@@ -89,6 +90,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let help = false;
   let dryRun = false;
   let once = false;
+  let report = false;
   let port: number | undefined;
   let host: string | undefined;
   let token: string | undefined;
@@ -157,6 +159,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
       dryRun = true;
     } else if (arg === "--once") {
       once = true;
+    } else if (arg === "--report") {
+      report = true;
     } else if (portValue !== undefined) {
       port = Number(portValue);
     } else if (hostValue !== undefined) {
@@ -213,6 +217,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     serviceMethod,
     dryRun,
     once,
+    report,
     positionals,
   };
 }

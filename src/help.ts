@@ -116,8 +116,8 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
   },
   {
     command: "scheduler",
-    short: "Device-local scheduler. Bare runs the opt-in loop; --once runs one bounded tick; --dry-run previews planned claims (LLM-free).",
-    flags: ["--once", "--dry-run"],
+    short: "Device-local scheduler. Bare runs the opt-in loop; --once runs one bounded tick; --dry-run previews planned claims; --report prints a read-only operator report (LLM-free).",
+    flags: ["--once", "--dry-run", "--report"],
     example: "piren scheduler  # opt-in loop until SIGINT/SIGTERM (configure under scheduler: in config.yml)",
   },
   {

@@ -73,6 +73,12 @@ export interface SchedulerInboxLoad {
   pendingTasks: LoadedInboxTask[];
   /** Task ids that appear on more than one visible inbox file; a dependency on (or a candidate with) such an id is never claimable (ADR-0038). */
   duplicateIds: Set<string>;
+  /**
+   * Every visible parseable inbox task, ordinary AND claimed, with parsed
+   * frontmatter retained. Read-only consumers (the ADR-0038 R3 operator
+   * report) inspect this set; the planner continues to use pendingTasks.
+   */
+  allTasks: LoadedInboxTask[];
 }
 
 /**
@@ -373,6 +379,7 @@ export async function loadSchedulerInboxState(options: {
   const dependencyNodes = new Map<string, DependencyTaskNode>();
   const duplicateIds = new Set<string>();
   const pendingTasks: LoadedInboxTask[] = [];
+  const allTasks: LoadedInboxTask[] = [];
   for (const agentName of options.enabledAgents) {
     let loaded: LoadedInboxTask[];
     try {
@@ -382,6 +389,7 @@ export async function loadSchedulerInboxState(options: {
       continue;
     }
     for (const task of loaded) {
+      allTasks.push(task);
       if (dependencyNodes.has(task.id) || duplicateIds.has(task.id)) {
         // Collision: this id now spans more than one visible file. Remove any
         // previously-inserted node so resolution is never first/last-writer-wins.
@@ -395,7 +403,7 @@ export async function loadSchedulerInboxState(options: {
       }
     }
   }
-  return { dependencyNodes, pendingTasks, duplicateIds };
+  return { dependencyNodes, pendingTasks, duplicateIds, allTasks };
 }
 
 function toNode(task: LoadedInboxTask): DependencyTaskNode {

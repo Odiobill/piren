@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  102 passed (102)
-Tests       1526 passed (1526)
+Test Files  103 passed (103)
+Tests       1544 passed (1544)
 SMOKE PASSED
 ```
 
@@ -220,6 +220,7 @@ Implemented CLI:
 - `piren scheduler` (opt-in loop: refreshes heartbeats, plans claims, executes at most one claimed item per tick, sleeps until SIGINT/SIGTERM)
 - `piren scheduler --once` (one live tick: refresh, plan, claim, execute at most one item, stop)
 - `piren scheduler --dry-run` (LLM-free, claim-free: preview proposed claims for one tick)
+- `piren scheduler --report` (read-only operator report: dependency cycles, invalid/exhausted retry metadata, and claimed-task manual-triage items for the locally enabled agent set; never claims, spawns, writes, or calls an LLM; never labels a claimed task ambiguous)
 - `piren service <install|remove|start|stop|restart|status> <gateway|telegram|discord|scheduler>`
 - `piren agent <add|remove|clone|list> [name]` (manages team/<agent>/ identity AND local allowed_agents; remove prompts before deleting the vault dir, `--yes` skips; clone copies a source agent verbatim)
 - `piren package <list|explain|doctor> [--agent <agent>]` (read-only vault-scoped package manifest CLI; list effective packages, explain provenance, doctor compares vault intent against local config and Node resolvability; no package installation or mutation, per ADR-0032)

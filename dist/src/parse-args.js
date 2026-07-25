@@ -43,6 +43,7 @@ export function parseArgs(argv) {
     let help = false;
     let dryRun = false;
     let once = false;
+    let report = false;
     let port;
     let host;
     let token;
@@ -117,6 +118,9 @@ export function parseArgs(argv) {
         else if (arg === "--once") {
             once = true;
         }
+        else if (arg === "--report") {
+            report = true;
+        }
         else if (portValue !== undefined) {
             port = Number(portValue);
         }
@@ -182,6 +186,7 @@ export function parseArgs(argv) {
         serviceMethod,
         dryRun,
         once,
+        report,
         positionals,
     };
 }
