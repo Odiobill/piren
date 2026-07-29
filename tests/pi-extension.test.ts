@@ -46,6 +46,28 @@ function fakePi() {
 }
 
 describe("Pi extension", () => {
+  it("boots with defaults when the agent config is missing or malformed (extension contract pin)", async () => {
+    // Missing file: extension boot tolerates it as null/default.
+    await rm(join(agentDir, "config.yml"));
+    const piMissing = fakePi();
+    await extension(piMissing as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+    expect(piMissing.tools.vault_read).toBeDefined();
+
+    // Malformed YAML: same tolerance.
+    await writeFile(join(agentDir, "config.yml"), "model:\n  id: [unclosed\n");
+    const piMalformed = fakePi();
+    await extension(piMalformed as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+    expect(piMalformed.tools.vault_read).toBeDefined();
+  });
+
   it("registers the selected device, vault tools, send_to_agent, session summaries, and piren_status", async () => {
     const pi = fakePi();
     await extension(pi as any, {

@@ -62,6 +62,20 @@ describe("Pi command resolver", () => {
 });
 
 describe("piren run command construction", () => {
+  it("rejects command construction when the agent config file is missing (run-path contract pin)", async () => {
+    await rm(join(agentDir, "config.yml"));
+    await expect(
+      buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects command construction when the agent config is malformed YAML (run-path contract pin)", async () => {
+    await writeFile(join(agentDir, "config.yml"), "model:\n  id: [unclosed\n");
+    await expect(
+      buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi }),
+    ).rejects.toThrow();
+  });
+
   it("builds a Pi command from compact agent-local model config", async () => {
     const command = await buildPiRunCommand({ configPath, env: {}, extraArgs: [], extensionPath: "./src/pi-extension.ts", piCommandResolver: localPi });
 

@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
-import { parse as parseYaml } from "yaml";
+import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { delimiter, dirname, join } from "node:path";
 import { loadPirenContext } from "./bootstrap.js";
+import { readAgentConfigFileRaw } from "./agent-config.js";
 import { resolvePackages, defaultPackageResolver } from "./packages.js";
 const thisDir = dirname(fileURLToPath(import.meta.url));
 // Resolve the Pi extension relative to this module's location so it works
@@ -44,12 +44,12 @@ function formatPiModels(models) {
     const formatted = models.map((model) => formatPiModel(model)).filter((model) => Boolean(model));
     return formatted.length > 0 ? formatted.join(",") : undefined;
 }
+// Run-path contract (preserved): read-file and YAML-parse failures propagate
+// out of the raw adapter and reject buildPiRunCommand; only a successfully
+// parsed non-mapping YAML value is tolerated as no config.
 async function readAgentRunConfig(configPath) {
-    const content = await readFile(configPath, "utf8");
-    const parsed = parseYaml(content);
-    if (!parsed || typeof parsed !== "object")
-        return {};
-    return parsed;
+    const parsed = await readAgentConfigFileRaw(configPath);
+    return parsed ?? {};
 }
 async function executableExists(path) {
     try {

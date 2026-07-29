@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  103 passed (103)
-Tests       1549 passed (1549)
+Test Files  105 passed (105)
+Tests       1569 passed (1569)
 SMOKE PASSED
 ```
 

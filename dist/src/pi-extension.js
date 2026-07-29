@@ -1,10 +1,10 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
-import { parse as parseYaml } from "yaml";
 import { loadPirenContext } from "./bootstrap.js";
+import { readAgentConfigFileBestEffort } from "./agent-config.js";
 import { createVaultTools } from "./vault-tools.js";
 import { writeSessionSummary } from "./session.js";
 import { buildPirenStatusReport, formatPirenStatusReport } from "./status.js";
@@ -103,16 +103,11 @@ async function pollIntervalMs(context, env) {
         if (Number.isFinite(parsed) && parsed > 0)
             return parsed;
     }
-    try {
-        const parsed = parseYaml(await readFile(context.paths.config, "utf8"));
-        if (parsed && typeof parsed === "object" && "poll_interval_active_seconds" in parsed) {
-            const seconds = Number(parsed.poll_interval_active_seconds);
-            if (Number.isFinite(seconds) && seconds > 0)
-                return seconds * 1000;
-        }
-    }
-    catch {
-        // Fall back to the default interval when agent-local config is unavailable or malformed.
+    const parsed = await readAgentConfigFileBestEffort(context.paths.config);
+    if (parsed && "poll_interval_active_seconds" in parsed) {
+        const seconds = Number(parsed.poll_interval_active_seconds);
+        if (Number.isFinite(seconds) && seconds > 0)
+            return seconds * 1000;
     }
     return 60_000;
 }
@@ -144,20 +139,9 @@ function scriptCronTimeoutMs(env) {
     }
     return 60_000;
 }
-// Best-effort read of the agent-local config.yml. Returns null when missing or
-// malformed; auto-nudge defaults to off in that case (see resolveAutoNudgeConfig).
-async function readAgentConfig(configPath) {
-    try {
-        const parsed = parseYaml(await readFile(configPath, "utf8"));
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            return parsed;
-        }
-    }
-    catch {
-        // Missing or malformed agent config is a no-op for auto-nudge wiring.
-    }
-    return null;
-}
+// Agent-local config is read once per process via the shared best-effort
+// adapter (src/agent-config.ts): missing or malformed config yields null and
+// consumers fall back to defaults (auto-nudge off, per-turn injection, ...).
 // Extract the user-facing text from a Pi message event payload, tolerating
 // both string and TextContent[] content shapes. Returns null for unknown shapes,
 // non-user roles, or empty text.
@@ -406,7 +390,7 @@ export default async function pirenExtension(pi, testOptions = {}) {
     // for user message_end events and emits an advisory ctx.ui.notify when a
     // correction is detected. It never writes to the vault on its own; the
     // agent decides which visible artifact to capture, if any.
-    const agentConfigRaw = await readAgentConfig(context.paths.config);
+    const agentConfigRaw = await readAgentConfigFileBestEffort(context.paths.config);
     const autoNudge = resolveAutoNudgeConfig({
         env: env,
         config: agentConfigRaw,
