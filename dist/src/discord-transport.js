@@ -120,8 +120,15 @@ export class DiscordTransport {
         // MESSAGE_CREATE event shape Piren consumes, so allowing all threads under
         // an allowlisted guild would bypass the configured channel boundary.
         if (message.thread_id) {
+            // Legacy modeled shape: an explicit thread_id property.
             if (!this.allowedThreadIds.has(message.thread_id))
                 return;
+        }
+        else if (this.allowedThreadIds.has(message.channel_id)) {
+            // Real Discord Gateway shape: a message sent inside a thread carries the
+            // thread's own id in channel_id and has no thread_id property. An id in
+            // allowed_thread_ids authorizes exactly that thread; it never widens
+            // allowed_channel_ids because the two sets are checked independently.
         }
         else if (!this.allowedChannelIds.has(message.channel_id)) {
             return;

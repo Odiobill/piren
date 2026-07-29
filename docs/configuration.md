@@ -166,7 +166,7 @@ discord:
   default_agent: piren
 ```
 
-Discord thread access is fail-closed: messages with `thread_id` are accepted only when that exact thread id appears in `allowed_thread_ids`.
+Discord thread access is fail-closed: a message sent inside a thread is accepted only when that exact thread id appears in `allowed_thread_ids`. A real Discord Gateway `MESSAGE_CREATE` inside a thread carries the thread's own id in `channel_id` with no `thread_id` property; both shapes are recognized, and `allowed_thread_ids` never widens `allowed_channel_ids`.
 
 Gateway token can be passed through `--token`, `PIREN_TOKEN`, or `~/.config/piren/gateway-token`.
 

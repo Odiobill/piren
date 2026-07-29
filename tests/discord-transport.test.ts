@@ -118,6 +118,50 @@ describe("DiscordTransport", () => {
     expect(clients).toHaveLength(1);
   });
 
+  it("routes a real gateway thread MESSAGE_CREATE shape (thread id in channel_id, no thread_id) when explicitly allowlisted", async () => {
+    const { transport, replies, clients } = buildTransport({ allowedThreadIds: ["333"] });
+
+    // Real Discord Gateway shape: a message sent inside a thread carries the
+    // thread's own id in channel_id and has no thread_id property at all.
+    await transport.handleMessage({ guild_id: "111", channel_id: "333", content: "hello from a thread" });
+
+    expect(replies).toEqual([{ channelId: "333", text: "pong" }]);
+    expect(clients).toHaveLength(1);
+  });
+
+  it("keeps a stable per-thread conversation key for the real thread payload shape", async () => {
+    const { transport, replies, clients } = buildTransport({ allowedThreadIds: ["333"] });
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "333", content: "/agent thor" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "333", content: "/whoami" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "333", content: "ping" });
+
+    expect(replies.map((r) => r.text)).toEqual([
+      "Active Piren agent for this channel: thor",
+      "Active Piren agent: thor",
+      "pong",
+    ]);
+    expect(clients).toHaveLength(1);
+  });
+
+  it("rejects the real thread payload shape when the thread id is not explicitly allowlisted", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "333", content: "hello from a thread" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("does not let allowed_thread_ids widen ordinary channel access", async () => {
+    const { transport, replies, clients } = buildTransport({ allowedThreadIds: ["333"] });
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "888", content: "/agents" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
   it("rejects an agent that is not in the runnable set", async () => {
     const { transport, replies } = buildTransport();
     await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/agent ghost" });

@@ -96,7 +96,7 @@ Set `feedback.enabled: false` to disable every feedback call for that transport,
 
 Messaging transports use platform bot tokens plus local allowlists. They do not use the HTTP Bearer token gate.
 
-For Discord, `allowed_guild_ids` are server ids. `allowed_channel_ids` are channel ids. Threaded messages require explicit `allowed_thread_ids`; without a matching thread id, Piren ignores the message even when the guild and parent channel appear configured. This keeps thread access fail-closed because Discord gateway message payloads are not a reliable source of parent-channel authorization context.
+For Discord, `allowed_guild_ids` are server ids. `allowed_channel_ids` are channel ids. Threaded messages require explicit `allowed_thread_ids`; without a matching thread id, Piren ignores the message even when the guild and parent channel appear configured. This keeps thread access fail-closed because Discord gateway message payloads are not a reliable source of parent-channel authorization context. A real gateway `MESSAGE_CREATE` sent inside a thread carries the thread's own id in `channel_id` with no `thread_id` property; that shape is accepted only when the `channel_id` value matches `allowed_thread_ids`.
 
 ## Doctor checks
 
