@@ -131,14 +131,6 @@ function checkPackages(packages, resolver) {
     return { id: "packages", status: "ok", message: `All ${packages.length} declared package(s) installed: ${packages.join(", ")}.` };
 }
 /**
- * Validate Telegram transport config for `piren doctor`.
- *
- * Returns null when no telegram config is declared at all, so a normal doctor
- * run never depends on Telegram being configured. When a telegram block is
- * present, it warns on a missing bot_token or empty allowed_chat_ids, and on a
- * default_agent that is not in the runnable set.
- */
-/**
  * Validate an agent-local `context_injection` block for `piren doctor`.
  *
  * Assesses the agent config mapping only — doctor never consults the
@@ -158,6 +150,14 @@ export function checkContextInjectionConfig(config, id = "context-injection") {
     }
     return { id, status: "ok", message: `context_injection.mode: ${resolved.mode}.` };
 }
+/**
+ * Validate Telegram transport config for `piren doctor`.
+ *
+ * Returns null when no telegram config is declared at all, so a normal doctor
+ * run never depends on Telegram being configured. When a telegram block is
+ * present, it warns on a missing bot_token or empty allowed_chat_ids, and on a
+ * default_agent that is not in the runnable set.
+ */
 export function checkTelegramConfig(config, runnableAgents = []) {
     if (config === undefined)
         return null;

@@ -29,14 +29,6 @@ export interface PiRuntimeCheck {
 }
 export type PiRuntimeChecker = (env?: NodeJS.ProcessEnv | Record<string, string | undefined>) => Promise<PiRuntimeCheck>;
 /**
- * Validate Telegram transport config for `piren doctor`.
- *
- * Returns null when no telegram config is declared at all, so a normal doctor
- * run never depends on Telegram being configured. When a telegram block is
- * present, it warns on a missing bot_token or empty allowed_chat_ids, and on a
- * default_agent that is not in the runnable set.
- */
-/**
  * Validate an agent-local `context_injection` block for `piren doctor`.
  *
  * Assesses the agent config mapping only — doctor never consults the
@@ -46,6 +38,14 @@ export type PiRuntimeChecker = (env?: NodeJS.ProcessEnv | Record<string, string 
  * present-but-invalid block or mode warns with the resolver's exact reason.
  */
 export declare function checkContextInjectionConfig(config: Record<string, unknown> | null, id?: string): DoctorCheck | null;
+/**
+ * Validate Telegram transport config for `piren doctor`.
+ *
+ * Returns null when no telegram config is declared at all, so a normal doctor
+ * run never depends on Telegram being configured. When a telegram block is
+ * present, it warns on a missing bot_token or empty allowed_chat_ids, and on a
+ * default_agent that is not in the runnable set.
+ */
 export declare function checkTelegramConfig(config: TelegramLocalConfig | undefined, runnableAgents?: string[]): DoctorCheck | null;
 /**
  * Validate Discord transport config for `piren doctor`.
