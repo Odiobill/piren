@@ -1,4 +1,5 @@
 import type { PirenContext } from "./bootstrap.js";
+import type { ContextInjectionMode } from "./context-injection.js";
 export type PirenWriteMode = "authoritative-vault" | "local-outbox";
 export type PirenCacheReadMode = "available-if-degraded" | "unavailable";
 export interface PirenStatusReport {
@@ -18,6 +19,7 @@ export interface PirenStatusReport {
     cacheFiles: string[];
     toolNames: string[];
     skillCount: number;
+    contextInjection?: ContextInjectionMode;
     degradedReason?: string;
 }
 export interface BuildPirenStatusReportOptions {
@@ -27,6 +29,7 @@ export interface BuildPirenStatusReportOptions {
     localCacheDir: string;
     skillCount?: number;
     packages?: string[];
+    contextInjection?: ContextInjectionMode;
 }
 export declare function buildPirenStatusReport(options: BuildPirenStatusReportOptions): Promise<PirenStatusReport>;
 export declare function formatPirenStatusReport(report: PirenStatusReport): string;

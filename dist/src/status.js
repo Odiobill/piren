@@ -69,6 +69,9 @@ export async function buildPirenStatusReport(options) {
         toolNames,
         skillCount,
     };
+    if (options.contextInjection !== undefined) {
+        base.contextInjection = options.contextInjection;
+    }
     if (availability.available) {
         return {
             ...base,
@@ -108,6 +111,9 @@ export function formatPirenStatusReport(report) {
         `registered_tools: ${report.toolNames.length ? report.toolNames.join(", ") : "<none>"}`,
         `skills_loaded: ${report.skillCount}`,
     ];
+    if (report.contextInjection !== undefined) {
+        lines.push(`context_injection: ${report.contextInjection}`);
+    }
     if (report.degradedReason) {
         lines.push(`degraded_reason: ${report.degradedReason}`);
     }

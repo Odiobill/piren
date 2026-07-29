@@ -1,6 +1,7 @@
 import { access, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { PirenContext } from "./bootstrap.js";
+import type { ContextInjectionMode } from "./context-injection.js";
 
 export type PirenWriteMode = "authoritative-vault" | "local-outbox";
 export type PirenCacheReadMode = "available-if-degraded" | "unavailable";
@@ -22,6 +23,7 @@ export interface PirenStatusReport {
   cacheFiles: string[];
   toolNames: string[];
   skillCount: number;
+  contextInjection?: ContextInjectionMode;
   degradedReason?: string;
 }
 
@@ -32,6 +34,7 @@ export interface BuildPirenStatusReportOptions {
   localCacheDir: string;
   skillCount?: number;
   packages?: string[];
+  contextInjection?: ContextInjectionMode;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -106,6 +109,9 @@ export async function buildPirenStatusReport(options: BuildPirenStatusReportOpti
     toolNames,
     skillCount,
   };
+  if (options.contextInjection !== undefined) {
+    (base as { contextInjection?: ContextInjectionMode }).contextInjection = options.contextInjection;
+  }
 
   if (availability.available) {
     return {
@@ -149,6 +155,10 @@ export function formatPirenStatusReport(report: PirenStatusReport): string {
     `registered_tools: ${report.toolNames.length ? report.toolNames.join(", ") : "<none>"}`,
     `skills_loaded: ${report.skillCount}`,
   ];
+
+  if (report.contextInjection !== undefined) {
+    lines.push(`context_injection: ${report.contextInjection}`);
+  }
 
   if (report.degradedReason) {
     lines.push(`degraded_reason: ${report.degradedReason}`);

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { loadPirenContext } from "./bootstrap.js";
 import { readAgentConfigFileBestEffort } from "./agent-config.js";
+import { resolveContextInjectionMode, shouldInjectContext } from "./context-injection.js";
 import { createVaultTools } from "./vault-tools.js";
 import { writeSessionSummary } from "./session.js";
 import { buildPirenStatusReport, formatPirenStatusReport } from "./status.js";
@@ -391,6 +392,20 @@ export default async function pirenExtension(pi, testOptions = {}) {
     // correction is detected. It never writes to the vault on its own; the
     // agent decides which visible artifact to capture, if any.
     const agentConfigRaw = await readAgentConfigFileBestEffort(context.paths.config);
+    // Context-injection runtime preference (design slice C2). Resolved once per
+    // Pi process from the same agent-config read; PIREN_CONTEXT_INJECTION can
+    // override for one-process measurement. Warnings surface through the
+    // existing session_start UI path below.
+    const contextInjection = resolveContextInjectionMode({
+        env: env,
+        config: agentConfigRaw,
+    });
+    // Instance-local once-per-session flag. Pi replaces extension instances on
+    // /new, /resume, /fork, and reload, so a fresh closure starts false; the
+    // session_start handler below also resets it for in-process re-arms. False
+    // initial value is fail-useful: a session that never fires session_start
+    // still injects exactly once on its first prompt.
+    let contextInjectedThisSession = false;
     const autoNudge = resolveAutoNudgeConfig({
         env: env,
         config: agentConfigRaw,
@@ -1148,11 +1163,16 @@ export default async function pirenExtension(pi, testOptions = {}) {
                 localOutboxDir: outboxDir,
                 localCacheDir: cacheDir,
                 skillCount: skills.length,
+                contextInjection: contextInjection.mode,
             });
             ctx.ui.notify(formatPirenStatusReport(report), "info");
         },
     });
     pi.on("session_start", async (_event, ctx) => {
+        contextInjectedThisSession = false;
+        for (const warning of contextInjection.warnings) {
+            ctx.ui.notify(warning, "warning");
+        }
         ctx.ui.notify(`Piren loaded: ${context.agentName} at ${context.agentDir}; vault_root=${context.vaultRoot}; device=${device.deviceId}`, "info");
         if (!isWorkerMode(env))
             return;
@@ -1224,17 +1244,23 @@ export default async function pirenExtension(pi, testOptions = {}) {
         }, await pollIntervalMs(context, env));
         cronInterval.unref?.();
     });
-    pi.on("before_agent_start", async () => ({
-        message: {
-            customType: "piren-context",
-            content: contextPrompt(context, skills),
-            display: `Piren context loaded for ${context.agentName}`,
-            details: {
-                agentName: context.agentName,
-                agentDir: context.agentDir,
-                vaultRoot: context.vaultRoot,
+    pi.on("before_agent_start", async () => {
+        if (!shouldInjectContext({ mode: contextInjection.mode, sessionStartedSinceLastInjection: !contextInjectedThisSession })) {
+            return {};
+        }
+        contextInjectedThisSession = true;
+        return {
+            message: {
+                customType: "piren-context",
+                content: contextPrompt(context, skills),
+                display: `Piren context loaded for ${context.agentName}`,
+                details: {
+                    agentName: context.agentName,
+                    agentDir: context.agentDir,
+                    vaultRoot: context.vaultRoot,
+                },
             },
-        },
-    }));
+        };
+    });
 }
 //# sourceMappingURL=pi-extension.js.map

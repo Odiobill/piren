@@ -1115,3 +1115,115 @@ describe("Pi extension OKF conformance tool (ADR-0022)", () => {
     expect(content).toContain("Nothing to promote");
   });
 });
+
+describe("context injection mode (C2)", () => {
+  async function boot(options?: { agentConfig?: string; env?: Record<string, string> }) {
+    if (options?.agentConfig !== undefined) {
+      await writeFile(join(agentDir, "config.yml"), options.agentConfig);
+    }
+    const pi = fakePi();
+    const notifications: Array<{ message: string; level: string }> = [];
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local", ...options?.env },
+      configPath: join(root, "missing-config.yml"),
+    });
+    const beforeAgentStart = () => pi.events.before_agent_start?.[0]?.();
+    const fireSessionStart = async (reason: string) => {
+      await pi.events.session_start?.[0]?.({ reason }, { ui: { notify(message: string, level: string) { notifications.push({ message, level }); } } });
+    };
+    return { pi, beforeAgentStart, fireSessionStart, notifications };
+  }
+
+  function injected(result: unknown): boolean {
+    return (result as { message?: { customType?: string } } | undefined)?.message?.customType === "piren-context";
+  }
+
+  it("default (no context_injection key) keeps byte-for-byte current behavior: injects on every prompt", async () => {
+    const { beforeAgentStart } = await boot();
+    const first = await beforeAgentStart();
+    const second = await beforeAgentStart();
+    expect(injected(first)).toBe(true);
+    expect(injected(second)).toBe(true);
+    const message = (first as { message: { customType: string; content: string; display: string } }).message;
+    expect(message.customType).toBe("piren-context");
+    expect(message.display).toBe("Piren context loaded for thor");
+    expect(message.content).toContain("# Piren Context");
+  });
+
+  it("explicit per_turn injects on every prompt", async () => {
+    const { beforeAgentStart } = await boot({ agentConfig: "context_injection:\n  mode: per_turn\n" });
+    expect(injected(await beforeAgentStart())).toBe(true);
+    expect(injected(await beforeAgentStart())).toBe(true);
+  });
+
+  it("session_start_only injects on the first prompt and not on later prompts", async () => {
+    const { beforeAgentStart } = await boot({ agentConfig: "context_injection:\n  mode: session_start_only\n" });
+    expect(injected(await beforeAgentStart())).toBe(true);
+    expect(injected(await beforeAgentStart())).toBe(false);
+    expect(injected(await beforeAgentStart())).toBe(false);
+  });
+
+  it("session_start_only re-arms exactly one injection after each session_start reason", async () => {
+    const { beforeAgentStart, fireSessionStart } = await boot({ agentConfig: "context_injection:\n  mode: session_start_only\n" });
+    expect(injected(await beforeAgentStart())).toBe(true);
+    expect(injected(await beforeAgentStart())).toBe(false);
+    for (const reason of ["startup", "reload", "new", "resume", "fork"]) {
+      await fireSessionStart(reason);
+      expect(injected(await beforeAgentStart())).toBe(true);
+      expect(injected(await beforeAgentStart())).toBe(false);
+    }
+  });
+
+  it("session_start_only still injects once when no session_start ever fires (fail-useful)", async () => {
+    const { beforeAgentStart } = await boot({ agentConfig: "context_injection:\n  mode: session_start_only\n" });
+    // No fireSessionStart call at all.
+    expect(injected(await beforeAgentStart())).toBe(true);
+    expect(injected(await beforeAgentStart())).toBe(false);
+  });
+
+  it("invalid config mode falls back to per_turn with a visible warning", async () => {
+    const { beforeAgentStart, fireSessionStart, notifications } = await boot({ agentConfig: "context_injection:\n  mode: session_start\n" });
+    expect(injected(await beforeAgentStart())).toBe(true);
+    expect(injected(await beforeAgentStart())).toBe(true);
+    await fireSessionStart("startup");
+    expect(notifications.some((n) => n.level === "warning" && n.message.includes("session_start"))).toBe(true);
+  });
+
+  it("invalid PIREN_CONTEXT_INJECTION falls back to the config value with a visible warning", async () => {
+    const { beforeAgentStart, fireSessionStart, notifications } = await boot({
+      agentConfig: "context_injection:\n  mode: session_start_only\n",
+      env: { PIREN_CONTEXT_INJECTION: "bogus" },
+    });
+    // Falls back to config value: session_start_only behavior.
+    expect(injected(await beforeAgentStart())).toBe(true);
+    expect(injected(await beforeAgentStart())).toBe(false);
+    await fireSessionStart("startup");
+    expect(notifications.some((n) => n.level === "warning" && n.message.includes("PIREN_CONTEXT_INJECTION"))).toBe(true);
+  });
+
+  it("valid PIREN_CONTEXT_INJECTION override wins over the config value", async () => {
+    const { beforeAgentStart } = await boot({
+      agentConfig: "context_injection:\n  mode: per_turn\n",
+      env: { PIREN_CONTEXT_INJECTION: "session_start_only" },
+    });
+    expect(injected(await beforeAgentStart())).toBe(true);
+    expect(injected(await beforeAgentStart())).toBe(false);
+  });
+
+  it("piren_status reports the resolved context injection mode", async () => {
+    const booted = await boot({ agentConfig: "context_injection:\n  mode: session_start_only\n" });
+    await booted.pi.commands.piren_status.handler([], {
+      ui: { notify(message: string, level: string) { booted.notifications.push({ message, level }); } },
+    });
+    expect(booted.notifications[0]?.message).toContain("context_injection: session_start_only");
+  });
+
+  it("piren_status reports per_turn by default", async () => {
+    const booted = await boot();
+    await booted.pi.commands.piren_status.handler([], {
+      ui: { notify(message: string, level: string) { booted.notifications.push({ message, level }); } },
+    });
+    expect(booted.notifications[0]?.message).toContain("context_injection: per_turn");
+  });
+});
