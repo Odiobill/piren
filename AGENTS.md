@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  105 passed (105)
-Tests       1579 passed (1579)
+Test Files  107 passed (107)
+Tests       1596 passed (1596)
 SMOKE PASSED
 ```
 
@@ -272,6 +272,12 @@ Vault skills (ADR-0014 + ADR-0017, implemented):
 - `skill_list()` returns the same compact catalog. `skill_read(name)` returns the selected full skill body and rejects unknown names with a clear error. Agent-specific overrides are resolved at startup by the loader, so the tools use the same precedence as the prompt.
 - `piren_status` reports `skills_loaded: <count>`.
 - Tests: `tests/skills.test.ts` (10 tests), `tests/pi-extension.test.ts` (lazy context catalog, `skill_list`, `skill_read`, and status count).
+
+Context-injection runtime preference (design slices C1-C3, implemented; C4 live validation/default-flip pending):
+- `src/agent-config.ts` is the shared `team/<agent>/config.yml` parsing boundary: `readAgentConfigFileRaw` propagates read/parse errors (run-path contract: `buildPiRunCommand` rejects missing/malformed config) and `readAgentConfigFileBestEffort` catches to `null` (extension contract). `src/run.ts` and `src/pi-extension.ts` both use it; no third parser remains.
+- `src/context-injection.ts` is the pure resolver: `context_injection.mode` enum (`per_turn` default, `session_start_only`), `PIREN_CONTEXT_INJECTION` one-process override precedence, deterministic warnings, `shouldInjectContext`. Never reads files/YAML.
+- The extension resolves the mode once per process; `before_agent_start` keeps `per_turn` byte-for-byte, while `session_start_only` injects the persistent visible `piren-context` message once per session (instance-local flag + `session_start` reset, fail-useful without `session_start`). `piren_status` reports `context_injection: <mode>`.
+- `piren doctor` warns on a present-but-invalid `context_injection` block via pure `checkContextInjectionConfig` (agent config only, never the env override; missing/malformed config and missing block stay quiet). Tests: `tests/agent-config.test.ts`, `tests/context-injection.test.ts`, `tests/doctor-context-injection.test.ts`, `tests/context-injection-docs.test.ts`, plus extension event-order pins in `tests/pi-extension.test.ts`.
 
 Pi package extensibility (ADR-0013, implemented):
 - `src/packages.ts` exports `resolvePackages(packages, resolver)` (pure core: takes a list of package names and an injected resolver, returns resolved entry points plus missing packages) and `defaultPackageResolver(name)` (production resolver using `require.resolve`). The resolver is injected so tests use a fake without a live node_modules tree. Declaration order is preserved; missing packages are collected rather than crashing resolution.

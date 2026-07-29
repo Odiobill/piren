@@ -8,6 +8,8 @@ import { resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver } from "./packages.js";
 import { checkVaultConformance, createRealVaultDirReader } from "./okf.js";
 import { parseGroupConfigs, resolveAgentGroups } from "./agent-groups.js";
+import { readAgentConfigFileBestEffort } from "./agent-config.js";
+import { resolveContextInjectionMode } from "./context-injection.js";
 const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "piren", "config.yml");
 async function pathExists(path) {
     try {
@@ -136,6 +138,26 @@ function checkPackages(packages, resolver) {
  * present, it warns on a missing bot_token or empty allowed_chat_ids, and on a
  * default_agent that is not in the runnable set.
  */
+/**
+ * Validate an agent-local `context_injection` block for `piren doctor`.
+ *
+ * Assesses the agent config mapping only — doctor never consults the
+ * PIREN_CONTEXT_INJECTION environment override. Missing/malformed config
+ * (null) and a missing block stay quiet (null); malformed agent-config
+ * surfacing is a separate pre-existing gap and is not broadened here. A
+ * present-but-invalid block or mode warns with the resolver's exact reason.
+ */
+export function checkContextInjectionConfig(config, id = "context-injection") {
+    if (config === null)
+        return null;
+    if (!("context_injection" in config))
+        return null;
+    const resolved = resolveContextInjectionMode({ env: {}, config });
+    if (resolved.warnings.length > 0) {
+        return { id, status: "warn", message: resolved.warnings.join(" ") };
+    }
+    return { id, status: "ok", message: `context_injection.mode: ${resolved.mode}.` };
+}
 export function checkTelegramConfig(config, runnableAgents = []) {
     if (config === undefined)
         return null;
@@ -611,6 +633,9 @@ export async function doctorPiren(options = {}) {
             for (const agent of enabledAgents) {
                 const agentDir = resolve(vaultRoot, "team", agent);
                 checks.push(await checkRequiredPaths(`agent-files:${agent}`, agentDir, ["SOUL.md", "MEMORY.md", "config.yml", "inbox", "outbox", "logs", "sessions"]));
+                const contextInjectionCheck = checkContextInjectionConfig(await readAgentConfigFileBestEffort(join(agentDir, "config.yml")), `context-injection:${agent}`);
+                if (contextInjectionCheck)
+                    checks.push(contextInjectionCheck);
             }
         }
         catch (error) {
@@ -654,6 +679,9 @@ export async function doctorPiren(options = {}) {
         if (skillConflictCheck)
             checks.push(skillConflictCheck);
         checks.push(await checkRequiredPaths("agent-files", agentDir, ["SOUL.md", "MEMORY.md", "config.yml", "inbox", "outbox", "logs", "sessions"]));
+        const contextInjectionCheck = checkContextInjectionConfig(await readAgentConfigFileBestEffort(join(agentDir, "config.yml")));
+        if (contextInjectionCheck)
+            checks.push(contextInjectionCheck);
         const staleCheck = await checkStaleAllowed(allowedAgents, vaultRoot);
         if (staleCheck)
             checks.push(staleCheck);

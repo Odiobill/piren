@@ -36,6 +36,16 @@ export type PiRuntimeChecker = (env?: NodeJS.ProcessEnv | Record<string, string 
  * present, it warns on a missing bot_token or empty allowed_chat_ids, and on a
  * default_agent that is not in the runnable set.
  */
+/**
+ * Validate an agent-local `context_injection` block for `piren doctor`.
+ *
+ * Assesses the agent config mapping only — doctor never consults the
+ * PIREN_CONTEXT_INJECTION environment override. Missing/malformed config
+ * (null) and a missing block stay quiet (null); malformed agent-config
+ * surfacing is a separate pre-existing gap and is not broadened here. A
+ * present-but-invalid block or mode warns with the resolver's exact reason.
+ */
+export declare function checkContextInjectionConfig(config: Record<string, unknown> | null, id?: string): DoctorCheck | null;
 export declare function checkTelegramConfig(config: TelegramLocalConfig | undefined, runnableAgents?: string[]): DoctorCheck | null;
 /**
  * Validate Discord transport config for `piren doctor`.

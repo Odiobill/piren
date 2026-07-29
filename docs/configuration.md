@@ -110,6 +110,23 @@ self_improvement:
 
 `auto_nudge` emits an advisory notification when a steward correction is detected. `review_loop` runs an opt-in child Pi prompt after the configured turn interval to decide whether a visible vault artifact should be updated. Both features avoid hidden memory stores and never write outside the vault.
 
+Context injection is configured per agent:
+
+```yaml
+context_injection:
+  mode: per_turn            # default; inject the Piren context on every prompt
+  # mode: session_start_only # inject once per session instead
+```
+
+The Piren context (agent identity, steward directives, SOUL.md, tool catalog, skills catalog) is injected as a visible `piren-context` message that persists in the session transcript.
+With the default `per_turn`, it is injected on every prompt and each copy accumulates in the transcript.
+With `session_start_only`, it is injected only on the first prompt after session startup, `/new`, `/resume`, `/fork`, or reload, and not on later prompts in that session; directive or SOUL.md edits take effect after the next session restart or resume.
+The injected content and message shape are identical in both modes — only the timing changes. There is no Web UI setting for this preference; it lives only in `team/<agent>/config.yml`.
+
+An absent `context_injection` block means `per_turn` with no warning. An unknown mode or a non-map block falls back to `per_turn` with a visible startup warning, and `piren doctor` reports a `context-injection` warning for the affected agent (doctor assesses agent config only, never the environment override). `piren_status` reports the resolved mode as `context_injection: <mode>`.
+
+For one-process measurement, `PIREN_CONTEXT_INJECTION=per_turn|session_start_only` overrides the agent-local value; an invalid override value falls back to the configured value with a warning.
+
 For non-interactive provisioning, `setup --apply` can write both Pi-native auth and the agent-local model preference:
 
 ```bash
@@ -184,6 +201,7 @@ Common overrides:
 - `PIREN_TOKEN`: gateway Bearer token.
 - `PIREN_CRON_STALE_MS`: cron active-device staleness threshold.
 - `PIREN_AUTO_NUDGE`: override `self_improvement.auto_nudge` (`1/true/on` or `0/false/off`).
+- `PIREN_CONTEXT_INJECTION`: override `context_injection.mode` for one process (`per_turn` or `session_start_only`).
 - `PIREN_REVIEW_LOOP`: override `self_improvement.review_loop.enabled` (`1/true/on` or `0/false/off`).
 - `PIREN_REVIEW_INTERVAL_TURNS`: override review loop turn interval.
 - `PIREN_REVIEW_RECENT_MESSAGES`: override how many recent user/assistant messages the review prompt sees.
