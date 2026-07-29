@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveFeedback, DEFAULT_FEEDBACK, type TransportFeedbackConfig } from "../src/transport-feedback.js";
+import { resolveFeedback, DEFAULT_FEEDBACK, TELEGRAM_DEFAULT_FEEDBACK, type TransportFeedbackConfig } from "../src/transport-feedback.js";
 
 describe("resolveFeedback (transport feedback config normalization)", () => {
   it("returns defaults when no feedback block is configured", () => {
@@ -57,5 +57,28 @@ describe("resolveFeedback (transport feedback config normalization)", () => {
   it("empty reaction_on_receive string keeps the default rather than sending nothing", () => {
     const result = resolveFeedback({ reaction_on_receive: "" });
     expect(result.reactionOnReceive).toBe("👀");
+  });
+
+  it("Telegram defaults differ from the shared defaults: completion 👍 instead of ✅", () => {
+    const result = resolveFeedback(undefined, TELEGRAM_DEFAULT_FEEDBACK);
+    expect(result).toEqual(TELEGRAM_DEFAULT_FEEDBACK);
+    expect(result.reactionOnReceive).toBe("👀");
+    expect(result.reactionOnComplete).toBe("👍");
+    expect(result.typingWhileWorking).toBe(true);
+    // The shared default (Discord path) is unchanged.
+    expect(DEFAULT_FEEDBACK.reactionOnComplete).toBe("✅");
+  });
+
+  it("Telegram defaults apply to a bare feedback block too", () => {
+    const result = resolveFeedback({}, TELEGRAM_DEFAULT_FEEDBACK);
+    expect(result.reactionOnComplete).toBe("👍");
+  });
+
+  it("explicit reaction_on_complete passes through unchanged under Telegram defaults", () => {
+    // ✅ remains a permitted operator override (best-effort; no validation).
+    const result = resolveFeedback({ reaction_on_complete: "✅" }, TELEGRAM_DEFAULT_FEEDBACK);
+    expect(result.reactionOnComplete).toBe("✅");
+    const custom = resolveFeedback({ reaction_on_complete: "🎉" }, TELEGRAM_DEFAULT_FEEDBACK);
+    expect(custom.reactionOnComplete).toBe("🎉");
   });
 });

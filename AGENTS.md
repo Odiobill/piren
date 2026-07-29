@@ -155,7 +155,7 @@ Current baseline:
 
 ```text
 Test Files  107 passed (107)
-Tests       1596 passed (1596)
+Tests       1599 passed (1599)
 SMOKE PASSED
 ```
 
@@ -191,7 +191,7 @@ Gateway HTTP/SSE surface (Phase 3, `src/gateway-http.ts` + `src/gateway-bridge.t
 Telegram transport surface (Phase 3 bullet 9 first slice, `src/transport-session-manager.ts` + `src/telegram-transport.ts`):
 
 - `TransportSessionManager` owns one `PiRpcClient` lifecycle per transport conversation and active runnable Piren agent. `getSession(transport, conversationId, agent?)` starts or reuses the session; `switchAgent(...)` enforces runnable-agent policy and swaps the client; `abort(...)`, `closeIdleSessions(...)`, and `closeAll()` manage lifecycle.
-- `TelegramTransport` authorizes Telegram `chat.id` against local `telegram.allowed_chat_ids`, exposes `/start`, `/agents`, `/agent <name>`, `/whoami`, and `/abort`, and forwards plain text prompts to the active chat session's `PiRpcClient.promptAndWait()`. Long assistant responses are split into multiple messages via `chunkTelegramMessage` (`TELEGRAM_MESSAGE_LIMIT = 4000`) so each fits Telegram's sendMessage length limit. ADR-0025 transport feedback is implemented: default-on receipt reaction, typing action, and completion reaction, with every feedback call best-effort so failures never abort the response.
+- `TelegramTransport` authorizes Telegram `chat.id` against local `telegram.allowed_chat_ids`, exposes `/start`, `/agents`, `/agent <name>`, `/whoami`, and `/abort`, and forwards plain text prompts to the active chat session's `PiRpcClient.promptAndWait()`. Long assistant responses are split into multiple messages via `chunkTelegramMessage` (`TELEGRAM_MESSAGE_LIMIT = 4000`) so each fits Telegram's sendMessage length limit. ADR-0025 transport feedback is implemented: default-on receipt reaction, typing action, and completion reaction, with every feedback call best-effort so failures never abort the response. The default completion reaction is transport-specific (`TELEGRAM_DEFAULT_FEEDBACK` in `src/transport-feedback.ts`): Telegram defaults to `👍` because `✅` is not a Telegram-valid reaction emoji (REACTION_INVALID); Discord keeps `✅`. Explicit `reaction_on_complete` overrides pass through unchanged and are used best-effort without platform validation.
 - `TelegramBotApiHttpClient` is a minimal Telegram Bot API adapter using long polling (`getUpdates`), `sendMessage`, `sendChatAction`, and best-effort `setMessageReaction`. `runTelegramPolling` advances the getUpdates offset to `update_id + 1` and calls `onError` (or rethrows) on recoverable failures. `piren telegram` reads `telegram.bot_token`, `telegram.allowed_chat_ids`, optional `telegram.feedback`, and optional `telegram.default_agent` from `~/.config/piren/config.yml`, then routes chats to the local runnable-agent set. HTTP bearer auth is not used for Telegram.
 - `piren doctor` reports a `telegram` check (status warn/ok) only when a `telegram:` block is present in local config, via the pure `checkTelegramConfig(config, runnableAgents)` exported from `src/doctor.ts`. An installation without Telegram config produces no telegram check, so normal doctor never depends on Telegram being configured.
 

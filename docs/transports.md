@@ -19,7 +19,7 @@ telegram:
     - 123456789
   feedback:
     reaction_on_receive: "👀"
-    reaction_on_complete: "✅"
+    reaction_on_complete: "👍"
     typing_while_working: true
   default_agent: piren
 ```
@@ -86,9 +86,12 @@ The `feedback` block is optional and default-on for both Telegram and Discord. M
 feedback:
   enabled: true
   reaction_on_receive: "👀"
-  reaction_on_complete: "✅"
+  reaction_on_complete: "👍"   # Telegram default
+  # reaction_on_complete: "✅" # Discord default
   typing_while_working: true
 ```
+
+The default completion reaction is transport-specific: Telegram defaults to `👍` because `✅` is not a Telegram-valid reaction emoji, while Discord defaults to `✅`. Custom reaction emoji availability is platform- and chat-dependent (for example, Telegram restricts which emoji bots may use as reactions), so an explicitly configured emoji is passed through unchanged and used best-effort — Piren does not validate it against the platform.
 
 Set `feedback.enabled: false` to disable every feedback call for that transport, or override individual fields. Feedback failures are swallowed so platform reaction or typing problems never prevent Piren from sending the assistant response.
 

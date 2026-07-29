@@ -1,7 +1,7 @@
 import { extractAssistantText, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { TransportSessionManager, type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
-import { resolveFeedback, type TransportFeedback, type TransportFeedbackConfig } from "./transport-feedback.js";
+import { resolveFeedback, TELEGRAM_DEFAULT_FEEDBACK, type TransportFeedback, type TransportFeedbackConfig } from "./transport-feedback.js";
 
 export interface TelegramMessage {
   message_id?: number;
@@ -124,7 +124,10 @@ export class TelegramTransport<TClient extends TelegramPromptClient> {
     this.runnableAgents = [...options.runnableAgents];
     this.defaultAgent = options.defaultAgent ?? this.runnableAgents[0] ?? "";
     this.api = options.api;
-    this.feedback = resolveFeedback(options.feedback);
+    // Telegram gets its own defaults: the shared ✅ completion reaction is
+    // not a Telegram-valid reaction emoji, so Telegram defaults to 👍.
+    // Explicit operator overrides still pass through unchanged.
+    this.feedback = resolveFeedback(options.feedback, TELEGRAM_DEFAULT_FEEDBACK);
     this.sessions = new TransportSessionManager<TClient>({
       runnableAgents: this.runnableAgents,
       defaultAgent: this.defaultAgent,

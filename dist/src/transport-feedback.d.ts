@@ -27,8 +27,18 @@ export interface TransportFeedback {
  */
 export declare const DEFAULT_FEEDBACK: TransportFeedback;
 /**
- * Normalize a raw feedback config block into a resolved object. Missing or
- * empty values fall back to defaults so a bare or absent `feedback:` block
- * enables all feedback. `enabled: false` disables everything at once.
+ * Telegram default feedback. Identical to the shared defaults except the
+ * completion reaction: ✅ is not a Telegram-valid reaction emoji (the Bot
+ * API rejects it with REACTION_INVALID), so Telegram defaults to 👍.
+ * Operators can still explicitly override with any emoji; feedback calls are
+ * best-effort and Piren does not validate platform emoji availability.
  */
-export declare function resolveFeedback(config: TransportFeedbackConfig | undefined): TransportFeedback;
+export declare const TELEGRAM_DEFAULT_FEEDBACK: TransportFeedback;
+/**
+ * Normalize a raw feedback config block into a resolved object. Missing or
+ * empty values fall back to the given `defaults` (shared defaults unless a
+ * transport passes its own) so a bare or absent `feedback:` block enables all
+ * feedback. `enabled: false` disables everything at once. Explicitly
+ * configured values always pass through unchanged.
+ */
+export declare function resolveFeedback(config: TransportFeedbackConfig | undefined, defaults?: TransportFeedback): TransportFeedback;

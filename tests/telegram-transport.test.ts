@@ -122,8 +122,9 @@ describe("TelegramTransport", () => {
     expect(reactions.some((r) => r.messageId === 555 && r.emoji === "👀")).toBe(true);
     // Typing indicator sent during the turn.
     expect(chatActions.some((a) => a.action === "typing")).toBe(true);
-    // Completion reaction swapped in after the turn.
-    expect(reactions.some((r) => r.messageId === 555 && r.emoji === "✅")).toBe(true);
+    // Completion reaction swapped in after the turn. Telegram's default
+    // completion reaction is 👍 (✅ is not a Telegram-valid reaction emoji).
+    expect(reactions.some((r) => r.messageId === 555 && r.emoji === "👍")).toBe(true);
     // The prompt still reached the agent.
     expect(clients[0]?.prompts).toEqual(["ping"]);
   });

@@ -1,6 +1,6 @@
 import { extractAssistantText } from "./gateway-rpc.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
-import { resolveFeedback } from "./transport-feedback.js";
+import { resolveFeedback, TELEGRAM_DEFAULT_FEEDBACK } from "./transport-feedback.js";
 export class TelegramBotApiHttpClient {
     botToken;
     fetchImpl;
@@ -80,7 +80,10 @@ export class TelegramTransport {
         this.runnableAgents = [...options.runnableAgents];
         this.defaultAgent = options.defaultAgent ?? this.runnableAgents[0] ?? "";
         this.api = options.api;
-        this.feedback = resolveFeedback(options.feedback);
+        // Telegram gets its own defaults: the shared ✅ completion reaction is
+        // not a Telegram-valid reaction emoji, so Telegram defaults to 👍.
+        // Explicit operator overrides still pass through unchanged.
+        this.feedback = resolveFeedback(options.feedback, TELEGRAM_DEFAULT_FEEDBACK);
         this.sessions = new TransportSessionManager({
             runnableAgents: this.runnableAgents,
             defaultAgent: this.defaultAgent,
