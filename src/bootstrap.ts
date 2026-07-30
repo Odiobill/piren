@@ -47,6 +47,25 @@ export interface SchedulerLocalConfig {
   device_id?: string;
 }
 
+/**
+ * Opt-in steward alert mirror configuration (ADR-0039 E1). Lives in
+ * ~/.config/piren/config.yml under `alert_mirror:`. Destination IDs only;
+ * bot tokens are reused from the existing telegram/discord blocks and never
+ * enter the vault. Absent or `enabled: false` means fully inert.
+ */
+export interface AlertMirrorLocalConfig {
+  /** Master opt-in gate. Absent/false -> mirroring disabled. */
+  enabled?: boolean;
+  /** Inclusive severity floor: low < normal < high < urgent. Default low. */
+  min_severity?: "low" | "normal" | "high" | "urgent";
+  /** Include the alert body in the outbound notification. Default false. */
+  include_body?: boolean;
+  /** Telegram destination; token reused from telegram.bot_token. */
+  telegram?: { chat_id?: number | string };
+  /** Discord destination; token reused from discord.bot_token. */
+  discord?: { channel_id?: string };
+}
+
 export interface LocalPirenConfig {
   agent_dir?: string;
   vault_root?: string;
@@ -56,6 +75,7 @@ export interface LocalPirenConfig {
   packages?: string[];
   telegram?: TelegramLocalConfig;
   discord?: DiscordLocalConfig;
+  alert_mirror?: AlertMirrorLocalConfig;
   services?: ServicesLocalConfig;
   scheduler?: SchedulerLocalConfig;
   provider?: string;
