@@ -38,16 +38,6 @@ export type PiRuntimeChecker = (env?: NodeJS.ProcessEnv | Record<string, string 
  * present-but-invalid block or mode warns with the resolver's exact reason.
  */
 export declare function checkContextInjectionConfig(config: Record<string, unknown> | null, id?: string): DoctorCheck | null;
-/**
- * Validate the opt-in steward alert mirror config (ADR-0039 E1, M2).
- *
- * Returns null when no `alert_mirror` block is declared at all, so a normal
- * doctor run never depends on the mirror being configured. A present but
- * disabled block reports ok (declared local intent stays inspectable without
- * warning). Enabled blocks reuse the M1 resolver; all messages are
- * deterministic and never echo tokens or destination IDs. Warnings stay
- * `warn`, never `fail`.
- */
 export declare function checkAlertMirrorConfig(config: LocalPirenConfig): DoctorCheck | null;
 /**
  * Validate Telegram transport config for `piren doctor`.

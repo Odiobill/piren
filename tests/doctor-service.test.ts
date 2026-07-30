@@ -59,8 +59,10 @@ describe("checkServiceConfig", () => {
     expect(warnResult).not.toBeNull();
     expect(warnResult!.status).toBe("warn");
     expect(warnResult!.message).toContain("scheduler");
-    // Wording must not call the scheduler a "transport".
-    expect(warnResult!.message).not.toMatch(/transport/i);
+    // Prose wording must not call the scheduler a "transport"; the only
+    // "transport" occurrence is the actual config key services.transports.scheduler
+    // (kept for backward compatibility).
+    expect(warnResult!.message.replace(/services\.transports\.\S+/g, "")).not.toMatch(/transport/i);
     expect(warnResult!.message).toMatch(/service target|service/i);
 
     const okResult = checkServiceConfig({ transports: { scheduler: { installed: true, running: true } } });

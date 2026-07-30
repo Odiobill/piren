@@ -4,13 +4,42 @@ import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml } from "yaml";
 import { defaultPiCommandResolver } from "./run.js";
-import { type BootstrapOptions, type LocalPirenConfig, type TelegramLocalConfig, type DiscordLocalConfig, type ServicesLocalConfig, resolveAgentDir } from "./bootstrap.js";
+import { type BootstrapOptions, type LocalPirenConfig, type TelegramLocalConfig, type DiscordLocalConfig, type ServicesLocalConfig, type AlertMirrorLocalConfig, resolveAgentDir } from "./bootstrap.js";
 import { resolvePackages, defaultPackageResolver, type PackageEntryResolver } from "./packages.js";
 import { checkVaultConformance, createRealVaultDirReader, type VaultConformanceResult, type VaultDirReader } from "./okf.js";
 import { parseGroupConfigs, resolveAgentGroups } from "./agent-groups.js";
 import { readAgentConfigFileBestEffort } from "./agent-config.js";
 import { resolveContextInjectionMode } from "./context-injection.js";
-import { resolveAlertMirrorConfig } from "./alert-mirror.js";
+import { resolveAlertMirrorConfig, type ResolvedAlertMirrorConfig } from "./alert-mirror.js";
+
+/**
+ * Fixed non-action authority boundaries for WARN guidance (ADR-0039 E2-S2).
+ * Each states what is local-only / not inferable / read-only; none instructs a
+ * mutation and none is an action. Applied only to WARN outcomes of the five
+ * local-config checks; OK messages stay byte-for-byte unchanged.
+ */
+const AUTHORITY_TRANSPORT = "transport credentials and routing live only in local config and are not inferable from the vault.";
+const AUTHORITY_MIRROR = "mirror destinations and credentials live only in local config and are not inferable from the vault.";
+const AUTHORITY_SERVICES = "service supervision is machine-local and doctor is read-only.";
+const AUTHORITY_CONTEXT_INJECTION = "a valid context_injection.mode is not inferred from a malformed declaration; the documented default applies.";
+
+const LOCAL_CONFIG_PATH = "~/.config/piren/config.yml";
+
+/**
+ * Compose a WARN message as `<condition> Authority: <boundary> Next: <one
+ * inspection action>.` The next step is exactly one inspection action (a named
+ * key/block in a named local config path); never a mutation or second action.
+ */
+/**
+ * Compose a WARN message as `<condition>. Authority: <boundary> Next: <one
+ * inspection action>.` The next step is exactly one inspection action (a named
+ * key/block in a named local config path); never a mutation or second action.
+ * Conditions that already end with a period keep it; others are terminated.
+ */
+function withWarnGuidance(condition: string, authority: string, next: string): string {
+  const separator = condition.endsWith(".") ? " " : ". ";
+  return `${condition}${separator}Authority: ${authority} Next: ${next}`;
+}
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -184,7 +213,10 @@ export function checkContextInjectionConfig(
   if (!("context_injection" in config)) return null;
   const resolved = resolveContextInjectionMode({ env: {}, config });
   if (resolved.warnings.length > 0) {
-    return { id, status: "warn", message: resolved.warnings.join(" ") };
+    const block = config["context_injection"];
+    const isMap = typeof block === "object" && block !== null && !Array.isArray(block);
+    const nextKey = isMap ? "context_injection.mode" : "context_injection";
+    return { id, status: "warn", message: withWarnGuidance(resolved.warnings.join(" "), AUTHORITY_CONTEXT_INJECTION, `inspect ${nextKey} in team/<agent>/config.yml.`) };
   }
   return { id, status: "ok", message: `context_injection.mode: ${resolved.mode}.` };
 }
@@ -199,6 +231,22 @@ export function checkContextInjectionConfig(
  * deterministic and never echo tokens or destination IDs. Warnings stay
  * `warn`, never `fail`.
  */
+/**
+ * Deterministic next-inspect target for an alert-mirror WARN (ADR-0039 E2-S2):
+ * the specific alert_mirror key when determinable, otherwise the whole block.
+ * Names keys only; never a destination ID, token, or Configure instruction.
+ */
+function alertMirrorNextTarget(block: AlertMirrorLocalConfig, resolved: ResolvedAlertMirrorConfig): string {
+  if (!resolved.enabled) return "alert_mirror.min_severity";
+  if (block.telegram?.chat_id !== undefined && !resolved.destinations.some((d) => d.kind === "telegram")) {
+    return "alert_mirror.telegram.chat_id";
+  }
+  if (block.discord?.channel_id !== undefined && !resolved.destinations.some((d) => d.kind === "discord")) {
+    return "alert_mirror.discord.channel_id";
+  }
+  return "the alert_mirror block";
+}
+
 export function checkAlertMirrorConfig(config: LocalPirenConfig): DoctorCheck | null {
   const block = config.alert_mirror;
   if (block === undefined) return null;
@@ -206,18 +254,19 @@ export function checkAlertMirrorConfig(config: LocalPirenConfig): DoctorCheck | 
     return { id: "alert-mirror", status: "ok", message: "alert_mirror is configured but disabled (enabled is not true)." };
   }
   const resolved = resolveAlertMirrorConfig(config);
+  const next = `inspect ${alertMirrorNextTarget(block, resolved)} in ${LOCAL_CONFIG_PATH}.`;
   if (!resolved.enabled) {
-    // Fail-closed resolver case (for example invalid min_severity).
-    return { id: "alert-mirror", status: "warn", message: resolved.warnings.join(" ") };
+    // Fail-closed resolver case (invalid min_severity).
+    return { id: "alert-mirror", status: "warn", message: withWarnGuidance(resolved.warnings.join(" "), AUTHORITY_MIRROR, next) };
   }
   if (resolved.destinations.length === 0) {
-    const detail = resolved.warnings.length > 0
-      ? resolved.warnings.join(" ")
-      : "Configure alert_mirror.telegram.chat_id or alert_mirror.discord.channel_id with the matching existing bot token.";
-    return { id: "alert-mirror", status: "warn", message: `alert_mirror is enabled but has no usable mirror destination. ${detail}` };
+    const condition = resolved.warnings.length > 0
+      ? `alert_mirror is enabled but has no usable mirror destination. ${resolved.warnings.join(" ")}`
+      : "alert_mirror is enabled but has no usable mirror destination.";
+    return { id: "alert-mirror", status: "warn", message: withWarnGuidance(condition, AUTHORITY_MIRROR, next) };
   }
   if (resolved.warnings.length > 0) {
-    return { id: "alert-mirror", status: "warn", message: resolved.warnings.join(" ") };
+    return { id: "alert-mirror", status: "warn", message: withWarnGuidance(resolved.warnings.join(" "), AUTHORITY_MIRROR, next) };
   }
   return { id: "alert-mirror", status: "ok", message: `alert_mirror enabled with ${resolved.destinations.length} configured mirror destination(s).` };
 }
@@ -242,14 +291,14 @@ export function checkTelegramConfig(
   const chatIds = Array.isArray(config.allowed_chat_ids) ? config.allowed_chat_ids : [];
 
   if (!hasToken) {
-    return { id: "telegram", status: "warn", message: "telegram config is present but telegram.bot_token is missing or empty." };
+    return { id: "telegram", status: "warn", message: withWarnGuidance("telegram config is present but telegram.bot_token is missing or empty.", AUTHORITY_TRANSPORT, `inspect telegram.bot_token in ${LOCAL_CONFIG_PATH}.`) };
   }
   if (chatIds.length === 0) {
-    return { id: "telegram", status: "warn", message: "telegram.bot_token is set but telegram.allowed_chat_ids is empty. No chats are authorized." };
+    return { id: "telegram", status: "warn", message: withWarnGuidance("telegram.bot_token is set but telegram.allowed_chat_ids is empty. No chats are authorized.", AUTHORITY_TRANSPORT, `inspect telegram.allowed_chat_ids in ${LOCAL_CONFIG_PATH}.`) };
   }
   if (config.default_agent !== undefined && config.default_agent.trim() !== "") {
     if (runnableAgents.length > 0 && !runnableAgents.includes(config.default_agent)) {
-      return { id: "telegram", status: "warn", message: `telegram.default_agent '${config.default_agent}' is not in the runnable agent set (${runnableAgents.join(", ")}).` };
+      return { id: "telegram", status: "warn", message: withWarnGuidance(`telegram.default_agent '${config.default_agent}' is not in the runnable agent set (${runnableAgents.join(", ")}).`, AUTHORITY_TRANSPORT, `inspect telegram.default_agent in ${LOCAL_CONFIG_PATH}.`) };
     }
   }
   return { id: "telegram", status: "ok", message: `Telegram configured with ${chatIds.length} allowlisted chat(s).` };
@@ -283,17 +332,17 @@ export function checkDiscordConfig(
   const channelIds = Array.isArray(config.allowed_channel_ids) ? config.allowed_channel_ids : [];
 
   if (!hasToken) {
-    return { id: "discord", status: "warn", message: "discord config is present but discord.bot_token is missing or empty." };
+    return { id: "discord", status: "warn", message: withWarnGuidance("discord config is present but discord.bot_token is missing or empty.", AUTHORITY_TRANSPORT, `inspect discord.bot_token in ${LOCAL_CONFIG_PATH}.`) };
   }
   if (guildIds.length === 0) {
-    return { id: "discord", status: "warn", message: "discord.bot_token is set but discord.allowed_guild_ids is empty. No guilds are authorized." };
+    return { id: "discord", status: "warn", message: withWarnGuidance("discord.bot_token is set but discord.allowed_guild_ids is empty. No guilds are authorized.", AUTHORITY_TRANSPORT, `inspect discord.allowed_guild_ids in ${LOCAL_CONFIG_PATH}.`) };
   }
   if (channelIds.length === 0) {
-    return { id: "discord", status: "warn", message: "discord.bot_token is set but discord.allowed_channel_ids is empty. No channels are authorized." };
+    return { id: "discord", status: "warn", message: withWarnGuidance("discord.bot_token is set but discord.allowed_channel_ids is empty. No channels are authorized.", AUTHORITY_TRANSPORT, `inspect discord.allowed_channel_ids in ${LOCAL_CONFIG_PATH}.`) };
   }
   if (config.default_agent !== undefined && config.default_agent.trim() !== "") {
     if (runnableAgents.length > 0 && !runnableAgents.includes(config.default_agent)) {
-      return { id: "discord", status: "warn", message: `discord.default_agent '${config.default_agent}' is not in the runnable agent set (${runnableAgents.join(", ")}).` };
+      return { id: "discord", status: "warn", message: withWarnGuidance(`discord.default_agent '${config.default_agent}' is not in the runnable agent set (${runnableAgents.join(", ")}).`, AUTHORITY_TRANSPORT, `inspect discord.default_agent in ${LOCAL_CONFIG_PATH}.`) };
     }
   }
   return { id: "discord", status: "ok", message: `Discord configured with ${guildIds.length} guild(s) and ${channelIds.length} channel(s) allowlisted.` };
@@ -348,14 +397,22 @@ export function checkServiceConfig(config: ServiceConfig | undefined): DoctorChe
     return {
       id: "services",
       status: "warn",
-      message: `Declared service target(s) not installed as a service: ${notInstalled.join(", ")}. Run \`piren service install <target>\`.`,
+      message: withWarnGuidance(
+        `Declared service target(s) not installed as a service: ${notInstalled.join(", ")}.`,
+        AUTHORITY_SERVICES,
+        `inspect services.transports.${notInstalled[0]!} in ${LOCAL_CONFIG_PATH}.`,
+      ),
     };
   }
   if (notRunning.length > 0) {
     return {
       id: "services",
       status: "warn",
-      message: `Installed service target(s) reported as not running: ${notRunning.join(", ")}. Run \`piren service start <target>\`.`,
+      message: withWarnGuidance(
+        `Installed service target(s) reported as not running: ${notRunning.join(", ")}.`,
+        AUTHORITY_SERVICES,
+        `inspect services.transports.${notRunning[0]!} in ${LOCAL_CONFIG_PATH}.`,
+      ),
     };
   }
   return {

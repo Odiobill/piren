@@ -41,8 +41,9 @@ describe("checkAlertMirrorConfig", () => {
     const check = checkAlertMirrorConfig({ alert_mirror: { enabled: true } });
     expect(check?.status).toBe("warn");
     expect(check?.message).toContain("no usable mirror destination");
-    expect(check?.message).toContain("alert_mirror.telegram.chat_id");
-    expect(check?.message).toContain("alert_mirror.discord.channel_id");
+    // ADR-0039 E2-S2: one inspection Next step, no Configure instruction.
+    expect(check?.message).toContain("inspect the alert_mirror block");
+    expect(check?.message).not.toContain("Configure");
   });
 
   it("warns when the telegram destination lacks telegram.bot_token, without leaking the id", () => {
