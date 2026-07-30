@@ -25,6 +25,10 @@ export interface SchedulerReportFinding {
     agentName: string;
     path: string;
     reason: string;
+    /** Non-action authority boundary statement (ADR-0039 E2-S1). */
+    authority: string;
+    /** Exactly one inspection action (ADR-0039 E2-S1). */
+    nextStep: string;
 }
 /** Input to the pure classifier: pre-loaded inbox state plus the tick clock. */
 export interface SchedulerReportClassifyInput {

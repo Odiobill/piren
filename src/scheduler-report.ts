@@ -31,6 +31,27 @@ export interface SchedulerReportFinding {
   agentName: string;
   path: string;
   reason: string;
+  /** Non-action authority boundary statement (ADR-0039 E2-S1). */
+  authority: string;
+  /** Exactly one inspection action (ADR-0039 E2-S1). */
+  nextStep: string;
+}
+
+/**
+ * Deterministic, non-action authority boundaries per category (ADR-0039 E2-S1).
+ * Each states what Piren cannot infer or will not change; none instructs a
+ * mutation and none is an action.
+ */
+const AUTHORITY_TRIAGE =
+  "Piren cannot tell from vault state whether the claim is active, interrupted, or an ambiguous failure (no ambiguity classification is persisted).";
+const AUTHORITY_RETRY_INVALID =
+  "Piren will not infer invalid retry policy or retry_state; task remains unclaimable while metadata is invalid.";
+const AUTHORITY_RETRY_EXHAUSTED = "Piren will not automatically requeue exhausted attempts.";
+const AUTHORITY_CYCLE = "Piren leaves affected tasks fail-closed rather than infer a dependency repair.";
+
+/** The sole next-step action for every finding: one read-only view of the task file. */
+function nextStepFor(path: string): string {
+  return `piren task show ${path}`;
 }
 
 /** Input to the pure classifier: pre-loaded inbox state plus the tick clock. */
@@ -83,14 +104,29 @@ export function classifySchedulerReportFindings(input: SchedulerReportClassifyIn
   for (const task of input.pendingTasks) {
     const verdict = evaluateTaskDependencyEligibility(task, input.dependencyNodes, input.duplicateIds);
     if (!verdict.eligible && verdict.reason !== undefined && verdict.reason.startsWith("dependency cycle:")) {
-      findings.push({ category: "cycle", agentName: task.agentName, path: task.path, reason: verdict.reason });
+      findings.push({
+        category: "cycle",
+        agentName: task.agentName,
+        path: task.path,
+        reason: verdict.reason,
+        authority: AUTHORITY_CYCLE,
+        nextStep: nextStepFor(task.path),
+      });
     }
   }
 
   for (const task of input.allTasks) {
     const retryReason = classifyRetryMetadata(task);
     if (retryReason !== undefined) {
-      findings.push({ category: "retry", agentName: task.agentName, path: task.path, reason: retryReason });
+      const authority = retryReason.startsWith("retry attempts exhausted") ? AUTHORITY_RETRY_EXHAUSTED : AUTHORITY_RETRY_INVALID;
+      findings.push({
+        category: "retry",
+        agentName: task.agentName,
+        path: task.path,
+        reason: retryReason,
+        authority,
+        nextStep: nextStepFor(task.path),
+      });
     }
     if (task.claimedBy !== undefined) {
       findings.push({
@@ -100,6 +136,8 @@ export function classifySchedulerReportFindings(input: SchedulerReportClassifyIn
         reason:
           `claimed by ${task.claimedBy}; requires manual triage: may be active, interrupted, or ambiguous` +
           " — vault state alone cannot tell",
+        authority: AUTHORITY_TRIAGE,
+        nextStep: nextStepFor(task.path),
       });
     }
   }
@@ -125,6 +163,9 @@ const CATEGORY_TAG: Record<SchedulerReportCategory, string> = {
   retry: "[RETRY]",
   triage: "[TRIAGE]",
 };
+
+/** Indent aligning authority/next continuation lines under the finding path. */
+const CONTINUATION_INDENT = " ".repeat(4 /*indent*/ + 8 /*tag field*/ + 1 /*space*/);
 
 /**
  * Format the operator report. Pure and deterministic: agents appear in
@@ -154,6 +195,10 @@ export function formatSchedulerReport(enabledAgents: string[], findings: Schedul
     } else {
       for (const finding of agentFindings) {
         lines.push(`    ${CATEGORY_TAG[finding.category].padEnd(8)} ${finding.path} - ${finding.reason}`);
+        // ADR-0039 E2-S1: non-action authority boundary, then exactly one
+        // inspection action, as aligned continuation lines.
+        lines.push(`${CONTINUATION_INDENT}authority: ${finding.authority}`);
+        lines.push(`${CONTINUATION_INDENT}next: ${finding.nextStep}`);
       }
     }
   }

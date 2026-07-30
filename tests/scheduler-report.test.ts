@@ -275,9 +275,25 @@ describe("formatSchedulerReport", () => {
         agentName: "thor",
         path: "team/thor/inbox/t.claimed.heimdall.md",
         reason: "claimed by heimdall; requires manual triage: may be active, interrupted, or ambiguous — vault state alone cannot tell",
+        authority: "Piren cannot tell from vault state whether the claim is active, interrupted, or an ambiguous failure (no ambiguity classification is persisted).",
+        nextStep: "piren task show team/thor/inbox/t.claimed.heimdall.md",
       },
-      { category: "retry", agentName: "thor", path: "team/thor/inbox/r.md", reason: "retry attempts exhausted (2/2)" },
-      { category: "cycle", agentName: "nora", path: "team/nora/inbox/a.md", reason: "dependency cycle: a -> b -> a" },
+      {
+        category: "retry",
+        agentName: "thor",
+        path: "team/thor/inbox/r.md",
+        reason: "retry attempts exhausted (2/2)",
+        authority: "Piren will not automatically requeue exhausted attempts.",
+        nextStep: "piren task show team/thor/inbox/r.md",
+      },
+      {
+        category: "cycle",
+        agentName: "nora",
+        path: "team/nora/inbox/a.md",
+        reason: "dependency cycle: a -> b -> a",
+        authority: "Piren leaves affected tasks fail-closed rather than infer a dependency repair.",
+        nextStep: "piren task show team/nora/inbox/a.md",
+      },
     ];
 
     const output = formatSchedulerReport(["thor", "nora", "zai"], findings);
@@ -390,5 +406,170 @@ describe("schedulerReport (orchestration)", () => {
     // Read-only guarantee: the vault tree is byte-for-byte unchanged.
     expect(after).toEqual(before);
     expect(await readFile(claimedPath, "utf8")).toBe(claimedContent);
+  });
+});
+
+describe("E2-S1 authority and next continuations", () => {
+  function classifyOne(allTasks: LoadedInboxTask[], pendingTasks: LoadedInboxTask[] = []): SchedulerReportFinding[] {
+    return classifySchedulerReportFindings({
+      pendingTasks,
+      allTasks,
+      dependencyNodes: new Map(),
+      duplicateIds: new Set(),
+      now: NOW,
+    });
+  }
+
+  it("sets the triage authority and a single read-command next step", () => {
+    const claimed = task({
+      id: "20260725T120000000Z-do-work",
+      path: "team/thor/inbox/20260725T120000000Z-do-work.claimed.heimdall.md",
+      claimedBy: "heimdall",
+    });
+    const [finding] = classifyOne([claimed]);
+    expect(finding?.category).toBe("triage");
+    expect(finding?.authority).toBe(
+      "Piren cannot tell from vault state whether the claim is active, interrupted, or an ambiguous failure (no ambiguity classification is persisted).",
+    );
+    expect(finding?.nextStep).toBe("piren task show team/thor/inbox/20260725T120000000Z-do-work.claimed.heimdall.md");
+  });
+
+  it("sets the retry-invalid authority for a bad policy", () => {
+    const invalid = task({
+      id: "20260725T120000000Z-bad-retry",
+      path: "team/thor/inbox/20260725T120000000Z-bad-retry.md",
+      frontmatter: {
+        id: "20260725T120000000Z-bad-retry",
+        status: "pending",
+        retry: { safe_to_retry: false, max_attempts: 2, backoff_seconds: 60 },
+      },
+    });
+    const [finding] = classifyOne([invalid]);
+    expect(finding?.category).toBe("retry");
+    expect(finding?.authority).toBe(
+      "Piren will not infer invalid retry policy or retry_state; task remains unclaimable while metadata is invalid.",
+    );
+    expect(finding?.nextStep).toBe("piren task show team/thor/inbox/20260725T120000000Z-bad-retry.md");
+  });
+
+  it("sets the retry-exhausted authority", () => {
+    const exhausted = task({
+      id: "20260725T120000000Z-exhausted",
+      path: "team/thor/inbox/20260725T120000000Z-exhausted.claimed.heimdall.md",
+      claimedBy: "heimdall",
+      frontmatter: {
+        id: "20260725T120000000Z-exhausted",
+        status: "pending",
+        retry: { safe_to_retry: true, max_attempts: 2, backoff_seconds: 60 },
+        retry_state: {
+          attempts: 2,
+          last_attempt_at: "2026-07-25T11:00:00.000Z",
+          next_eligible_at: "2026-07-25T11:01:00.000Z",
+          last_failure: "launch_failure",
+        },
+      },
+    });
+    const retry = classifyOne([exhausted]).find((f) => f.category === "retry");
+    expect(retry?.authority).toBe("Piren will not automatically requeue exhausted attempts.");
+    expect(retry?.nextStep).toBe("piren task show team/thor/inbox/20260725T120000000Z-exhausted.claimed.heimdall.md");
+  });
+
+  it("sets the cycle authority and a path-specific next step", () => {
+    const idA = "20260725T120000000Z-cycle-a";
+    const idB = "20260725T120000000Z-cycle-b";
+    const a = task({ id: idA, path: `team/thor/inbox/${idA}.md`, dependsOn: [idB] });
+    const b = task({ id: idB, path: `team/thor/inbox/${idB}.md`, dependsOn: [idA] });
+    const nodes = new Map([
+      [idA, { id: idA, status: "pending" as const, dependsOn: [idB], path: a.path }],
+      [idB, { id: idB, status: "pending" as const, dependsOn: [idA], path: b.path }],
+    ]);
+    const findings = classifySchedulerReportFindings({
+      pendingTasks: [a, b],
+      allTasks: [a, b],
+      dependencyNodes: nodes,
+      duplicateIds: new Set(),
+      now: NOW,
+    });
+    const cycle = findings.find((f) => f.category === "cycle");
+    expect(cycle?.authority).toBe("Piren leaves affected tasks fail-closed rather than infer a dependency repair.");
+    expect(cycle?.nextStep).toBe(`piren task show ${cycle?.path}`);
+  });
+
+  it("renders the reason, authority, and next continuation lines per finding (exact)", () => {
+    const findings: SchedulerReportFinding[] = [
+      {
+        category: "triage",
+        agentName: "sam",
+        path: "team/sam/inbox/x.claimed.thor.md",
+        reason: "claimed by thor; requires manual triage: may be active, interrupted, or ambiguous — vault state alone cannot tell",
+        authority: "Piren cannot tell from vault state whether the claim is active, interrupted, or an ambiguous failure (no ambiguity classification is persisted).",
+        nextStep: "piren task show team/sam/inbox/x.claimed.thor.md",
+      },
+      {
+        category: "retry",
+        agentName: "sam",
+        path: "team/sam/inbox/r.md",
+        reason: "retry attempts exhausted (2/2)",
+        authority: "Piren will not automatically requeue exhausted attempts.",
+        nextStep: "piren task show team/sam/inbox/r.md",
+      },
+      {
+        category: "cycle",
+        agentName: "sam",
+        path: "team/sam/inbox/c.md",
+        reason: "dependency cycle: c -> d -> c",
+        authority: "Piren leaves affected tasks fail-closed rather than infer a dependency repair.",
+        nextStep: "piren task show team/sam/inbox/c.md",
+      },
+    ];
+    const output = formatSchedulerReport(["sam"], findings);
+    // Three-part rendering: reason line, then aligned authority line, then aligned next line.
+    expect(output).toContain(
+      "    [TRIAGE] team/sam/inbox/x.claimed.thor.md - claimed by thor; requires manual triage: may be active, interrupted, or ambiguous — vault state alone cannot tell\n" +
+        "             authority: Piren cannot tell from vault state whether the claim is active, interrupted, or an ambiguous failure (no ambiguity classification is persisted).\n" +
+        "             next: piren task show team/sam/inbox/x.claimed.thor.md",
+    );
+    expect(output).toContain(
+      "    [RETRY]  team/sam/inbox/r.md - retry attempts exhausted (2/2)\n" +
+        "             authority: Piren will not automatically requeue exhausted attempts.\n" +
+        "             next: piren task show team/sam/inbox/r.md",
+    );
+    expect(output).toContain(
+      "    [CYCLE]  team/sam/inbox/c.md - dependency cycle: c -> d -> c\n" +
+        "             authority: Piren leaves affected tasks fail-closed rather than infer a dependency repair.\n" +
+        "             next: piren task show team/sam/inbox/c.md",
+    );
+  });
+
+  it("never classifies a claimed task and keeps next lines one-action and mutation-free", () => {
+    const claimed = task({
+      id: "20260725T120000000Z-do-work",
+      path: "team/thor/inbox/20260725T120000000Z-do-work.claimed.heimdall.md",
+      claimedBy: "heimdall",
+    });
+    const output = formatSchedulerReport(["thor"], classifyOne([claimed]));
+    // No classification of a specific claimed task as ambiguous/failed/dead/rerunnable.
+    expect(output).not.toMatch(/is an ambiguous failure/);
+    expect(output).not.toMatch(/failed task/);
+    expect(output).not.toMatch(/dead|safe to rerun|auto-recover/);
+    // Every "next:" line is exactly one read command and contains no mutation verb.
+    const nextLines = output.split("\n").filter((l) => l.includes("next:"));
+    expect(nextLines.length).toBeGreaterThan(0);
+    for (const line of nextLines) {
+      expect(line).toMatch(/^\s+next: piren task show \S+$/);
+      expect(line).not.toMatch(/, then| and |; |remove|delete|reset|requeue|complete|cancel|claim |mv |rm /i);
+    }
+  });
+
+  it("empty report has no authority/next lines and the existing footer unchanged", () => {
+    const output = formatSchedulerReport(["sam"], []);
+    expect(output).not.toContain("authority:");
+    expect(output).not.toContain("next:");
+    // Existing footer byte-for-byte (two lines).
+    expect(output).toContain(
+      "This report is read-only: it does not claim, spawn, write, or call any LLM.\n" +
+        "A claimed task requires manual triage: it may be active, interrupted, or ambiguous; vault state alone cannot tell (no ambiguity classification is persisted).\n",
+    );
+    expect(output).toContain("0 findings (0 cycle, 0 retry, 0 manual-triage)");
   });
 });

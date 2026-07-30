@@ -127,7 +127,7 @@ Triage workflow for a claimed task `team/<agent>/inbox/<task>.claimed.<device>.m
 
 `piren scheduler --report` prints a read-only diagnostic for the locally enabled agent set (`allowed_agents` minus `excluded_agents`, same scope as `--dry-run`). It reads only the vault and local config: it never claims, spawns, refreshes heartbeats, writes files, or calls an LLM, and it persists nothing.
 
-It surfaces exactly four actionable conditions, grouped per agent in deterministic order:
+It surfaces exactly four actionable conditions, grouped per agent in deterministic order. Each finding renders three aligned parts: the condition/evidence (reason), a non-action `authority:` boundary stating what Piren cannot infer or will not change, and exactly one inspection `next:` action (`piren task show <path>`). The authority text is never an instruction and never prescribes a mutation; the triage/dependency/retry references stay in this document, not in the displayed next line.
 
 - `[CYCLE]` — dependency cycles involving pending tasks, with the exact evaluator reason.
 - `[RETRY]` — invalid `retry` policy or malformed `retry_state` (exact parser reasons), and exhausted retry attempts (`retry attempts exhausted (n/m)`). Unexpired backoff and other blocked-work reasons stay `--dry-run` diagnostics.
@@ -140,6 +140,8 @@ SCHEDULER REPORT
 
   agent: sam
     [TRIAGE] team/sam/inbox/20260725T120000000Z-stuck.claimed.thor.md - claimed by thor; requires manual triage: may be active, interrupted, or ambiguous — vault state alone cannot tell
+             authority: Piren cannot tell from vault state whether the claim is active, interrupted, or an ambiguous failure (no ambiguity classification is persisted).
+             next: piren task show team/sam/inbox/20260725T120000000Z-stuck.claimed.thor.md
   agent: nora
     (no findings)
 
@@ -148,6 +150,8 @@ SCHEDULER REPORT
 This report is read-only: it does not claim, spawn, write, or call any LLM.
 A claimed task requires manual triage: it may be active, interrupted, or ambiguous; vault state alone cannot tell (no ambiguity classification is persisted).
 ```
+
+The `authority:` line for each category is fixed and non-action: triage states the vault-state uncertainty; invalid retry metadata states Piren will not infer it (the task stays unclaimable); exhausted attempts state Piren will not automatically requeue them; and cycles state Piren leaves affected tasks fail-closed rather than infer a dependency repair. The `next:` line is always the single read command `piren task show <path>`; follow the relevant section below for the governing procedure. An empty report (no findings) prints no `authority:`/`next:` lines and the same footer.
 
 ## Local scheduler config
 
