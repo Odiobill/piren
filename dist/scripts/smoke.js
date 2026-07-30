@@ -199,6 +199,58 @@ async function main() {
             throw new Error("flag_steward alert did not contain expected content");
         }
         console.log("flag_steward steward-inbox/alerts: ok");
+        // ADR-0039 E1 M3 opt-in steward-alert mirror: a configured local
+        // alert_mirror block mirrors an already-written alert through an injected
+        // fake sender (no network). The alert file stays durable and the advisory
+        // line uses normalized outcomes only.
+        const mirrorConfigPath = join(fixture.root, "mirror-config.yml");
+        await writeFile(mirrorConfigPath, "telegram:\n  bot_token: smoke-tg-token\n" +
+            "alert_mirror:\n  enabled: true\n  telegram:\n    chat_id: 424242\n");
+        const mirroredSends = [];
+        const mirrorPi = fakePi();
+        await extension(mirrorPi, {
+            cliAgentDir: fixture.agentDir,
+            env,
+            configPath: mirrorConfigPath,
+            alertMirrorSenders: {
+                telegram: async (id, text) => {
+                    mirroredSends.push({ id, text });
+                },
+            },
+        });
+        const mirrored = await mirrorPi.tools.flag_steward.execute("smoke-flag-steward-mirror", {
+            title: "Mirrored smoke alert",
+            body: "mirror-smoke-body-secret",
+            severity: "high",
+        });
+        if (mirrored.isError)
+            throw new Error(`alert-mirror flag_steward smoke failed: ${mirrored.content[0].text}`);
+        const mirroredText = mirrored.content[0].text;
+        if (!mirroredText.includes("Created steward alert steward-inbox/alerts/") || !mirroredText.includes("mirror: telegram sent")) {
+            throw new Error(`alert-mirror advisory missing: ${mirroredText}`);
+        }
+        if (mirroredText.includes("424242") || mirroredText.includes("smoke-tg-token") || mirroredText.includes("mirror-smoke-body-secret")) {
+            throw new Error("alert-mirror advisory leaked an id, token, or body");
+        }
+        if (mirroredSends.length !== 1 || mirroredSends[0]?.id !== "424242") {
+            throw new Error("alert-mirror fake sender was not called exactly once with the configured destination");
+        }
+        if (!mirroredSends[0]?.text.startsWith("[high] Mirrored smoke alert\nsteward-inbox/alerts/") || mirroredSends[0]?.text.includes("mirror-smoke-body-secret")) {
+            throw new Error("alert-mirror payload was not the default minimal two-line text");
+        }
+        const mirroredAlertContent = await readFile(join(fixture.vault, mirrored.details.path), "utf8");
+        if (!mirroredAlertContent.includes("# Mirrored smoke alert") || !mirroredAlertContent.includes("mirror-smoke-body-secret")) {
+            throw new Error("alert-mirror durable alert file missing expected content");
+        }
+        const mirrorStatusNotifications = [];
+        await mirrorPi.commands.piren_status.handler([], { ui: { notify: (m) => mirrorStatusNotifications.push(m) } });
+        if (!mirrorStatusNotifications[0]?.includes("alert_mirror: enabled (1 destinations)")) {
+            throw new Error(`alert_mirror status surface failed: ${mirrorStatusNotifications[0]}`);
+        }
+        if (mirrorStatusNotifications[0]?.includes("424242") || mirrorStatusNotifications[0]?.includes("smoke-tg-token")) {
+            throw new Error("alert_mirror status leaked an id or token");
+        }
+        console.log("alert-mirror opt-in mirror + status surface: ok");
         // Phase 4 knowledge lifecycle tools: project_status, project_append_log,
         // and decision_record. Agents leave durable artifacts after non-trivial work.
         await mkdir(join(fixture.vault, "Projects", "Piren", "decisions"), { recursive: true });

@@ -48,6 +48,12 @@ export interface AlertMirrorState {
 }
 export declare function createAlertMirrorState(): AlertMirrorState;
 /**
+ * Formats the advisory `mirror: ...` line for the `flag_steward` tool result.
+ * Uses destination kind and normalized outcome labels only; never includes
+ * destination IDs, tokens, raw exception text, or alert body content.
+ */
+export declare function formatAlertMirrorDeliveries(deliveries: AlertMirrorDelivery[]): string;
+/**
  * Pure local-config resolution. Deterministic and fail closed: absent or
  * disabled config yields an inert result with no warnings; a configured
  * destination without its matching existing bot token is skipped with a

@@ -185,6 +185,30 @@ discord:
 
 Discord thread access is fail-closed: a message sent inside a thread is accepted only when that exact thread id appears in `allowed_thread_ids`. A real Discord Gateway `MESSAGE_CREATE` inside a thread carries the thread's own id in `channel_id` with no `thread_id` property; both shapes are recognized, and `allowed_thread_ids` never widens `allowed_channel_ids`.
 
+### Steward alert mirror (opt-in)
+
+`flag_steward` always writes the authoritative alert file under `steward-inbox/alerts/` first. Optionally, Piren can then send a minimal best-effort advisory notification to configured Telegram and/or Discord destinations:
+
+```yaml
+alert_mirror:
+  enabled: true                 # absent or false -> fully inert (default)
+  min_severity: high            # optional; low < normal < high < urgent; inclusive floor, default low
+  include_body: false           # optional; default false
+  telegram:
+    chat_id: 123456789          # destination only; token reused from telegram.bot_token
+  discord:
+    channel_id: "1234567890"    # destination only; token reused from discord.bot_token
+```
+
+- Disabled by default. Nothing is sent unless `enabled: true` and at least one destination has both an id and its matching existing bot token.
+- The vault alert file remains the only authoritative record. Delivery is best-effort and never guaranteed: there is no retry, queue, or durable delivery state, and a delivery failure never changes the alert.
+- Default payload is two lines: `[severity] title` and the vault-relative alert path. The alert body is omitted unless `include_body: true` — enable that only if alert bodies may leave the vault for your destinations.
+- `min_severity` is an inclusive floor: alerts at or above it are mirrored.
+- An alert flagged with `notify: false` is never mirrored.
+- A fixed process-local 5-second per-destination rate limit drops (never queues) bursts; the window starts only after a successful send.
+- Destination ids stay local-only and do not interact with inbound allowlists; no inbound authorization is widened. There is no Web UI configuration for the mirror.
+- `piren doctor` validates the block when present (disabled/ok, invalid severity, missing tokens, no usable destination). `piren_status` reports only `alert_mirror: disabled` or `alert_mirror: enabled (<n> destinations)` — never ids, tokens, or delivery state.
+
 Gateway token can be passed through `--token`, `PIREN_TOKEN`, or `~/.config/piren/gateway-token`.
 
 ## Environment variables

@@ -12,6 +12,14 @@ import { buildPirenStatusReport, formatPirenStatusReport } from "./status.js";
 import { registerDevice } from "./devices.js";
 import { createInboxTask, claimInboxTask, listInboxTasks, updateInboxTaskStatus } from "./inbox.js";
 import { createStewardAlert } from "./alerts.js";
+import {
+  createAlertMirrorState,
+  formatAlertMirrorDeliveries,
+  mirrorStewardAlert,
+  resolveAlertMirrorConfig,
+  type AlertMirrorSenders,
+} from "./alert-mirror.js";
+import { createAlertMirrorSenders } from "./alert-mirror-senders.js";
 import { loadVaultSkills, formatSkillCatalogForContext, type VaultSkill } from "./skills.js";
 import { resolveAgentGroups } from "./agent-groups.js";
 import {
@@ -409,7 +417,16 @@ function contextPrompt(context: PirenContext, skills: VaultSkill[] = []): string
   return lines.join("\n");
 }
 
-export default async function pirenExtension(pi: ExtensionAPI, testOptions: BootstrapOptions = {}) {
+export interface PirenExtensionTestOptions extends BootstrapOptions {
+  /**
+   * Narrow test-only seam (ADR-0039 E1 M3): inject fake alert-mirror senders
+   * so extension and smoke tests never touch the network. Production leaves
+   * this undefined and the real HTTP adapters are constructed instead.
+   */
+  alertMirrorSenders?: AlertMirrorSenders;
+}
+
+export default async function pirenExtension(pi: ExtensionAPI, testOptions: PirenExtensionTestOptions = {}) {
   pi.registerFlag?.("agent-dir", {
     description: "Piren agent directory, e.g. /mnt/nas/Documents/vault/team/piren",
     type: "string",
@@ -443,6 +460,16 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
     hostname: deviceHostname(env),
   });
   const tools = createVaultTools({ vaultRoot: context.vaultRoot, localOutboxDir: outboxDir, localCacheDir: cacheDir });
+
+  // ADR-0039 E1 M3 opt-in steward-alert mirror. Resolved once per extension
+  // process from local config; one process-local dedupe/rate-limit state.
+  // Production constructs the real Telegram/Discord HTTP sender adapters;
+  // tests inject fakes through the narrow alertMirrorSenders seam. Mirroring
+  // is advisory only: it runs after the authoritative alert write and can
+  // never fail alert creation.
+  const alertMirror = resolveAlertMirrorConfig(context.config);
+  const alertMirrorState = createAlertMirrorState();
+  const alertMirrorSenders = testOptions.alertMirrorSenders ?? createAlertMirrorSenders(context.config);
 
   // Load vault skills (ADR-0014) at extension startup. Shared skills come from
   // vault/skills/; agent-specific skills come from team/<agent>/skills/ and
@@ -674,12 +701,12 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
   pi.registerTool({
     name: "flag_steward",
     label: "Flag Steward",
-    description: "Create one authoritative Markdown alert file under steward-inbox/alerts/ for steward attention. Optional gateway notification is represented by alert metadata only.",
+    description: "Create one authoritative Markdown alert file under steward-inbox/alerts/ for steward attention. When the local alert_mirror config is enabled, a minimal best-effort advisory mirror (severity, title, vault-relative path) is sent to the configured Telegram/Discord destination only after the alert file is written; delivery is never guaranteed and never affects the alert.",
     parameters: Type.Object({
       title: Type.String({ description: "Alert title" }),
       body: Type.String({ description: "Alert body/details" }),
       severity: Type.Optional(Type.String({ description: "Alert severity: low, normal, high, or urgent" })),
-      notify: Type.Optional(Type.Boolean({ description: "Whether gateways should notify the steward when available" })),
+      notify: Type.Optional(Type.Boolean({ description: "Whether this alert may be mirrored to configured local alert_mirror destinations after the durable write (default true)" })),
     }),
     async execute(_toolCallId, params) {
       try {
@@ -699,7 +726,31 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
         if (params.severity !== undefined) alertOptions.severity = params.severity as "low" | "normal" | "high" | "urgent";
         if (params.notify !== undefined) alertOptions.notify = params.notify;
         const result = await createStewardAlert(alertOptions);
-        return textResult(`Created steward alert ${result.path}`, result);
+        let mirrorLine: string | undefined;
+        try {
+          const deliveries = await mirrorStewardAlert({
+            alertId: result.alertId,
+            severity: result.severity,
+            title: params.title,
+            path: result.path,
+            body: params.body,
+            notify: result.notify,
+            config: alertMirror,
+            senders: alertMirrorSenders,
+            state: alertMirrorState,
+          });
+          if (deliveries.length > 0) {
+            mirrorLine = formatAlertMirrorDeliveries(deliveries);
+          }
+        } catch {
+          // Advisory only: an unexpected mirror failure after the durable
+          // write must never fail flag_steward or change the alert.
+          mirrorLine = "mirror: failed";
+        }
+        const summary = mirrorLine === undefined
+          ? `Created steward alert ${result.path}`
+          : `Created steward alert ${result.path}\n${mirrorLine}`;
+        return textResult(summary, result);
       } catch (error) {
         return errorResult(error);
       }
@@ -1277,6 +1328,7 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
         localCacheDir: cacheDir,
         skillCount: skills.length,
         contextInjection: contextInjection.mode,
+        alertMirror: { enabled: alertMirror.enabled, destinations: alertMirror.destinations.length },
       });
       ctx.ui.notify(formatPirenStatusReport(report), "info");
     },
@@ -1285,6 +1337,9 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Boot
   pi.on("session_start", async (_event, ctx) => {
     contextInjectedThisSession = false;
     for (const warning of contextInjection.warnings) {
+      ctx.ui.notify(warning, "warning");
+    }
+    for (const warning of alertMirror.warnings) {
       ctx.ui.notify(warning, "warning");
     }
     ctx.ui.notify(`Piren loaded: ${context.agentName} at ${context.agentDir}; vault_root=${context.vaultRoot}; device=${device.deviceId}`, "info");

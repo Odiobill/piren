@@ -3,6 +3,7 @@ import {
   ALERT_MIRROR_RATE_LIMIT_MS,
   buildAlertNotificationText,
   createAlertMirrorState,
+  formatAlertMirrorDeliveries,
   mirrorStewardAlert,
   resolveAlertMirrorConfig,
   type AlertMirrorSenders,
@@ -472,5 +473,33 @@ describe("mirrorStewardAlert", () => {
     const t0 = new Date("2026-07-30T12:00:00.000Z");
     const first = await mirrorStewardAlert(baseInput({ alertId: "a1", senders, state, now: () => t0 }));
     expect(first.every((d) => d.outcome === "sent")).toBe(true);
+  });
+});
+
+describe("formatAlertMirrorDeliveries", () => {
+  it("formats sent and failed outcomes from destination kind only", () => {
+    const line = formatAlertMirrorDeliveries([
+      { destination: { kind: "telegram", id: "secret-chat-id" }, outcome: "sent" },
+      { destination: { kind: "discord", id: "secret-channel-id" }, outcome: "failed", reason: "sender rejected" },
+    ]);
+    expect(line).toBe("mirror: telegram sent; discord failed");
+    expect(line).not.toContain("secret-chat-id");
+    expect(line).not.toContain("secret-channel-id");
+  });
+
+  it("formats skipped outcomes with normalized labels", () => {
+    const line = formatAlertMirrorDeliveries([
+      { destination: { kind: "telegram", id: "1" }, outcome: "skipped-rate-limited", reason: "within per-destination rate limit" },
+      { destination: { kind: "discord", id: "2" }, outcome: "skipped-duplicate", reason: "alert already mirrored in this process" },
+    ]);
+    expect(line).toBe("mirror: telegram skipped (rate limited); discord skipped (duplicate)");
+  });
+
+  it("formats skipped-no-sender", () => {
+    expect(
+      formatAlertMirrorDeliveries([
+        { destination: { kind: "telegram", id: "1" }, outcome: "skipped-no-sender", reason: "no telegram sender configured" },
+      ]),
+    ).toBe("mirror: telegram skipped (no sender)");
   });
 });

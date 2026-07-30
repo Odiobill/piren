@@ -72,6 +72,9 @@ export async function buildPirenStatusReport(options) {
     if (options.contextInjection !== undefined) {
         base.contextInjection = options.contextInjection;
     }
+    if (options.alertMirror !== undefined) {
+        base.alertMirror = options.alertMirror;
+    }
     if (availability.available) {
         return {
             ...base,
@@ -113,6 +116,11 @@ export function formatPirenStatusReport(report) {
     ];
     if (report.contextInjection !== undefined) {
         lines.push(`context_injection: ${report.contextInjection}`);
+    }
+    if (report.alertMirror !== undefined) {
+        lines.push(report.alertMirror.enabled
+            ? `alert_mirror: enabled (${report.alertMirror.destinations} destinations)`
+            : "alert_mirror: disabled");
     }
     if (report.degradedReason) {
         lines.push(`degraded_reason: ${report.degradedReason}`);

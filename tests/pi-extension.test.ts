@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import extension from "../src/pi-extension.js";
+import type { AlertMirrorSenders } from "../src/alert-mirror.js";
 
 let root: string;
 let agentDir: string;
@@ -1225,5 +1226,193 @@ describe("context injection mode (C2)", () => {
       ui: { notify(message: string, level: string) { booted.notifications.push({ message, level }); } },
     });
     expect(booted.notifications[0]?.message).toContain("context_injection: per_turn");
+  });
+});
+
+describe("Pi extension alert mirror (ADR-0039 E1 M3)", () => {
+  const env = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" };
+
+  async function bootWithConfig(localConfig: string, alertMirrorSenders?: AlertMirrorSenders) {
+    const configPath = join(root, "local-config.yml");
+    await writeFile(configPath, localConfig);
+    const pi = fakePi();
+    const options: Record<string, unknown> = { cliAgentDir: agentDir, env, configPath };
+    if (alertMirrorSenders !== undefined) options.alertMirrorSenders = alertMirrorSenders;
+    await extension(pi as any, options);
+    return pi;
+  }
+
+  const ENABLED_TWO_DEST =
+    "telegram:\n  bot_token: tg-secret-token\n" +
+    "discord:\n  bot_token: dc-secret-token\n" +
+    "alert_mirror:\n  enabled: true\n  telegram:\n    chat_id: 424242\n  discord:\n    channel_id: \"dc-dest-1\"\n";
+
+  it("mirrors a configured alert only after the alert file exists, with a safe advisory and no body by default", async () => {
+    const vault = join(root, "vault");
+    const sent: Array<{ id: string; text: string; fileExistedAtSend: boolean }> = [];
+    const senders = {
+      telegram: async (id: string, text: string) => {
+        const path = text.split("\n")[1] ?? "";
+        let fileExistedAtSend = false;
+        try {
+          await readFile(join(vault, path), "utf8");
+          fileExistedAtSend = true;
+        } catch {
+          fileExistedAtSend = false;
+        }
+        sent.push({ id, text, fileExistedAtSend });
+      },
+      discord: async (id: string, text: string) => {
+        sent.push({ id, text, fileExistedAtSend: true });
+      },
+    };
+    const pi = await bootWithConfig(ENABLED_TWO_DEST, senders);
+    const result = await pi.tools.flag_steward.execute("m3-1", { title: "Mirror me", body: "body-secret-content" });
+
+    expect(result.isError).toBeUndefined();
+    const text: string = result.content[0].text;
+    expect(text).toContain("Created steward alert steward-inbox/alerts/");
+    expect(text).toContain("mirror: telegram sent; discord sent");
+    expect(text).not.toContain("424242");
+    expect(text).not.toContain("dc-dest-1");
+    expect(text).not.toContain("tg-secret-token");
+    expect(text).not.toContain("dc-secret-token");
+    expect(text).not.toContain("body-secret-content");
+    expect(JSON.stringify(result.details)).not.toContain("424242");
+    expect(JSON.stringify(result.details)).not.toContain("dc-dest-1");
+
+    expect(sent).toHaveLength(2);
+    const telegram = sent.find((s) => s.id === "424242");
+    expect(telegram).toBeDefined();
+    expect(telegram?.fileExistedAtSend).toBe(true);
+    expect(telegram?.text.startsWith("[normal] Mirror me\nsteward-inbox/alerts/")).toBe(true);
+    expect(telegram?.text).not.toContain("body-secret-content");
+
+    const alertPath = (text.split("\n")[0] ?? "").replace("Created steward alert ", "");
+    const alertFile = await readFile(join(vault, alertPath), "utf8");
+    expect(alertFile).toContain("body-secret-content");
+  });
+
+  it("writes the alert but sends nothing and adds no advisory when notify is false", async () => {
+    let calls = 0;
+    const senders = {
+      telegram: async () => {
+        calls += 1;
+      },
+      discord: async () => {
+        calls += 1;
+      },
+    };
+    const pi = await bootWithConfig(ENABLED_TWO_DEST, senders);
+    const result = await pi.tools.flag_steward.execute("m3-2", { title: "Quiet", body: "b", notify: false });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("Created steward alert steward-inbox/alerts/");
+    expect(result.content[0].text).not.toContain("mirror:");
+    expect(calls).toBe(0);
+    const alertPath = result.content[0].text.split("\n")[0].replace("Created steward alert ", "");
+    const alertFile = await readFile(join(root, "vault", alertPath), "utf8");
+    expect(alertFile).toContain("notify: false");
+  });
+
+  it("keeps the durable alert and tool success when a sender rejects, reporting only a normalized failure", async () => {
+    const senders = {
+      telegram: async () => {
+        throw new Error("raw telegram failure with token tg-secret-token");
+      },
+      discord: async () => undefined,
+    };
+    const pi = await bootWithConfig(ENABLED_TWO_DEST, senders);
+    const result = await pi.tools.flag_steward.execute("m3-3", { title: "Partial", body: "b" });
+    expect(result.isError).toBeUndefined();
+    const text: string = result.content[0].text;
+    expect(text).toContain("Created steward alert steward-inbox/alerts/");
+    expect(text).toContain("mirror: telegram failed; discord sent");
+    expect(text).not.toContain("raw telegram failure");
+    expect(text).not.toContain("tg-secret-token");
+    const alertPath = (text.split("\n")[0] ?? "").replace("Created steward alert ", "");
+    await readFile(join(root, "vault", alertPath), "utf8");
+  });
+
+  it("chunks include_body logical text in the production adapters and reports one destination-level outcome", async () => {
+    const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fakeFetch = (async (url: unknown, init?: { body?: unknown }) => {
+      captured.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: {} }) } as never;
+    }) as typeof fetch;
+    const { createAlertMirrorSenders } = await import("../src/alert-mirror-senders.js");
+    const senders = createAlertMirrorSenders(
+      { telegram: { bot_token: "tg-secret-token" } },
+      fakeFetch,
+    );
+    const config =
+      "telegram:\n  bot_token: tg-secret-token\n" +
+      "alert_mirror:\n  enabled: true\n  include_body: true\n  telegram:\n    chat_id: 424242\n";
+    const pi = await bootWithConfig(config, senders);
+    const body = "line of body text\n".repeat(400);
+    const result = await pi.tools.flag_steward.execute("m3-4", { title: "Chunky", body });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("mirror: telegram sent");
+    expect(result.content[0].text.match(/telegram/g)).toHaveLength(1);
+    expect(captured.length).toBeGreaterThan(1);
+    for (const post of captured) {
+      expect(String(post.body.text).length).toBeLessThanOrEqual(4000);
+    }
+    const logical = captured.map((p) => String(p.body.text)).join("");
+    expect(logical.startsWith("[normal] Chunky\nsteward-inbox/alerts/")).toBe(true);
+    expect(logical.endsWith(body)).toBe(true);
+    expect(logical).toContain("\n\n" + body);
+  });
+
+  it("surfaces an unexpected mirror exception as a bare 'mirror: failed' while keeping the durable alert", async () => {
+    const senders = {
+      get telegram(): (chatId: string, text: string) => Promise<void> {
+        throw new Error("unexpected internal mirror bug");
+      },
+    };
+    const pi = await bootWithConfig(ENABLED_TWO_DEST, senders);
+    const result = await pi.tools.flag_steward.execute("m3-5", { title: "Boom", body: "b" });
+    expect(result.isError).toBeUndefined();
+    const text: string = result.content[0].text;
+    expect(text).toContain("Created steward alert steward-inbox/alerts/");
+    expect(text).toContain("mirror: failed");
+    expect(text).not.toContain("unexpected internal mirror bug");
+  });
+
+  it("reports the exact static alert_mirror status surface for disabled and enabled configs", async () => {
+    const notifications: string[] = [];
+    const piDisabled = await bootWithConfig("allowed_agents:\n  - thor\n");
+    await piDisabled.commands.piren_status.handler([], { ui: { notify: (m: string) => notifications.push(m) } });
+    expect(notifications[0]).toContain("alert_mirror: disabled");
+    expect(notifications[0]).not.toContain("tg-secret-token");
+
+    notifications.length = 0;
+    const piEnabled = await bootWithConfig(ENABLED_TWO_DEST, {});
+    await piEnabled.commands.piren_status.handler([], { ui: { notify: (m: string) => notifications.push(m) } });
+    expect(notifications[0]).toContain("alert_mirror: enabled (2 destinations)");
+    expect(notifications[0]).not.toContain("424242");
+    expect(notifications[0]).not.toContain("dc-dest-1");
+    expect(notifications[0]).not.toContain("tg-secret-token");
+    expect(notifications[0]).not.toContain("dc-secret-token");
+  });
+
+  it("adds no advisory line when mirroring is disabled or below the severity floor", async () => {
+    let calls = 0;
+    const senders = {
+      telegram: async () => {
+        calls += 1;
+      },
+    };
+    const disabled = await bootWithConfig("allowed_agents:\n  - thor\n", senders);
+    const r1 = await disabled.tools.flag_steward.execute("m3-6", { title: "No mirror", body: "b" });
+    expect(r1.content[0].text).not.toContain("mirror:");
+
+    const floor =
+      "telegram:\n  bot_token: tg-secret-token\n" +
+      "alert_mirror:\n  enabled: true\n  min_severity: urgent\n  telegram:\n    chat_id: 424242\n";
+    const floored = await bootWithConfig(floor, senders);
+    const r2 = await floored.tools.flag_steward.execute("m3-7", { title: "Low sev", body: "b", severity: "normal" });
+    expect(r2.content[0].text).not.toContain("mirror:");
+    expect(calls).toBe(0);
   });
 });

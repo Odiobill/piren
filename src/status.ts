@@ -6,6 +6,15 @@ import type { ContextInjectionMode } from "./context-injection.js";
 export type PirenWriteMode = "authoritative-vault" | "local-outbox";
 export type PirenCacheReadMode = "available-if-degraded" | "unavailable";
 
+/**
+ * Static, non-sensitive alert-mirror status summary (ADR-0039 E1, M3).
+ * Never carries destination kinds/IDs, tokens, errors, or delivery state.
+ */
+export interface AlertMirrorStatusSummary {
+  enabled: boolean;
+  destinations: number;
+}
+
 export interface PirenStatusReport {
   agentName: string;
   agentDir: string;
@@ -24,6 +33,7 @@ export interface PirenStatusReport {
   toolNames: string[];
   skillCount: number;
   contextInjection?: ContextInjectionMode;
+  alertMirror?: AlertMirrorStatusSummary;
   degradedReason?: string;
 }
 
@@ -35,6 +45,7 @@ export interface BuildPirenStatusReportOptions {
   skillCount?: number;
   packages?: string[];
   contextInjection?: ContextInjectionMode;
+  alertMirror?: AlertMirrorStatusSummary;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -112,6 +123,9 @@ export async function buildPirenStatusReport(options: BuildPirenStatusReportOpti
   if (options.contextInjection !== undefined) {
     (base as { contextInjection?: ContextInjectionMode }).contextInjection = options.contextInjection;
   }
+  if (options.alertMirror !== undefined) {
+    (base as { alertMirror?: AlertMirrorStatusSummary }).alertMirror = options.alertMirror;
+  }
 
   if (availability.available) {
     return {
@@ -158,6 +172,14 @@ export function formatPirenStatusReport(report: PirenStatusReport): string {
 
   if (report.contextInjection !== undefined) {
     lines.push(`context_injection: ${report.contextInjection}`);
+  }
+
+  if (report.alertMirror !== undefined) {
+    lines.push(
+      report.alertMirror.enabled
+        ? `alert_mirror: enabled (${report.alertMirror.destinations} destinations)`
+        : "alert_mirror: disabled",
+    );
   }
 
   if (report.degradedReason) {

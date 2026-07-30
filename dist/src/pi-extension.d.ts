@@ -1,4 +1,5 @@
 import { type BootstrapOptions } from "./bootstrap.js";
+import { type AlertMirrorSenders } from "./alert-mirror.js";
 interface ExtensionAPI {
     registerFlag?: (name: string, options: {
         description?: string;
@@ -31,5 +32,13 @@ interface ExtensionAPI {
         stderr?: string;
     }>;
 }
-export default function pirenExtension(pi: ExtensionAPI, testOptions?: BootstrapOptions): Promise<void>;
+export interface PirenExtensionTestOptions extends BootstrapOptions {
+    /**
+     * Narrow test-only seam (ADR-0039 E1 M3): inject fake alert-mirror senders
+     * so extension and smoke tests never touch the network. Production leaves
+     * this undefined and the real HTTP adapters are constructed instead.
+     */
+    alertMirrorSenders?: AlertMirrorSenders;
+}
+export default function pirenExtension(pi: ExtensionAPI, testOptions?: PirenExtensionTestOptions): Promise<void>;
 export {};

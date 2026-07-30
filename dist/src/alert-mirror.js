@@ -20,6 +20,21 @@ const ALERT_SEVERITIES = new Set(["low", "normal", "high", "urgent"]);
 export function createAlertMirrorState() {
     return { seenAlertIds: new Set(), lastSentAt: new Map() };
 }
+const OUTCOME_LABELS = {
+    sent: "sent",
+    failed: "failed",
+    "skipped-rate-limited": "skipped (rate limited)",
+    "skipped-duplicate": "skipped (duplicate)",
+    "skipped-no-sender": "skipped (no sender)",
+};
+/**
+ * Formats the advisory `mirror: ...` line for the `flag_steward` tool result.
+ * Uses destination kind and normalized outcome labels only; never includes
+ * destination IDs, tokens, raw exception text, or alert body content.
+ */
+export function formatAlertMirrorDeliveries(deliveries) {
+    return "mirror: " + deliveries.map((d) => `${d.destination.kind} ${OUTCOME_LABELS[d.outcome]}`).join("; ");
+}
 function disabledMirror(warnings = []) {
     return { enabled: false, minSeverity: "low", includeBody: false, destinations: [], warnings };
 }

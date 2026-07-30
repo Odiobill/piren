@@ -103,3 +103,55 @@ describe("Piren status report", () => {
     expect(report.degradedReason).toMatch(/missing Piren vault markers/);
   });
 });
+
+describe("Piren status alert_mirror surface", () => {
+  it("reports alert_mirror: disabled for a disabled resolved config", async () => {
+    const context = await loadPirenContext({ cliAgentDir: agentDir, env: {}, configPath: join(root, "missing-config.yml") });
+    const report = await buildPirenStatusReport({
+      context,
+      toolNames: ["vault_read"],
+      localOutboxDir: join(root, "local-outbox"),
+      localCacheDir: join(root, "local-cache"),
+      alertMirror: { enabled: false, destinations: 0 },
+    });
+    expect(formatPirenStatusReport(report)).toContain("alert_mirror: disabled");
+  });
+
+  it("reports only the destination count for an enabled config", async () => {
+    const context = await loadPirenContext({ cliAgentDir: agentDir, env: {}, configPath: join(root, "missing-config.yml") });
+    const report = await buildPirenStatusReport({
+      context,
+      toolNames: ["vault_read"],
+      localOutboxDir: join(root, "local-outbox"),
+      localCacheDir: join(root, "local-cache"),
+      alertMirror: { enabled: true, destinations: 2 },
+    });
+    const output = formatPirenStatusReport(report);
+    expect(output).toContain("alert_mirror: enabled (2 destinations)");
+    expect(output).not.toContain("telegram");
+    expect(output).not.toContain("discord");
+  });
+
+  it("reports enabled (0 destinations) when enabled without usable destinations", async () => {
+    const context = await loadPirenContext({ cliAgentDir: agentDir, env: {}, configPath: join(root, "missing-config.yml") });
+    const report = await buildPirenStatusReport({
+      context,
+      toolNames: ["vault_read"],
+      localOutboxDir: join(root, "local-outbox"),
+      localCacheDir: join(root, "local-cache"),
+      alertMirror: { enabled: true, destinations: 0 },
+    });
+    expect(formatPirenStatusReport(report)).toContain("alert_mirror: enabled (0 destinations)");
+  });
+
+  it("omits the line when no alertMirror summary is supplied", async () => {
+    const context = await loadPirenContext({ cliAgentDir: agentDir, env: {}, configPath: join(root, "missing-config.yml") });
+    const report = await buildPirenStatusReport({
+      context,
+      toolNames: ["vault_read"],
+      localOutboxDir: join(root, "local-outbox"),
+      localCacheDir: join(root, "local-cache"),
+    });
+    expect(formatPirenStatusReport(report)).not.toContain("alert_mirror:");
+  });
+});
