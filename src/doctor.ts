@@ -10,6 +10,7 @@ import { checkVaultConformance, createRealVaultDirReader, type VaultConformanceR
 import { parseGroupConfigs, resolveAgentGroups } from "./agent-groups.js";
 import { readAgentConfigFileBestEffort } from "./agent-config.js";
 import { resolveContextInjectionMode } from "./context-injection.js";
+import { resolveAlertMirrorConfig } from "./alert-mirror.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -186,6 +187,39 @@ export function checkContextInjectionConfig(
     return { id, status: "warn", message: resolved.warnings.join(" ") };
   }
   return { id, status: "ok", message: `context_injection.mode: ${resolved.mode}.` };
+}
+
+/**
+ * Validate the opt-in steward alert mirror config (ADR-0039 E1, M2).
+ *
+ * Returns null when no `alert_mirror` block is declared at all, so a normal
+ * doctor run never depends on the mirror being configured. A present but
+ * disabled block reports ok (declared local intent stays inspectable without
+ * warning). Enabled blocks reuse the M1 resolver; all messages are
+ * deterministic and never echo tokens or destination IDs. Warnings stay
+ * `warn`, never `fail`.
+ */
+export function checkAlertMirrorConfig(config: LocalPirenConfig): DoctorCheck | null {
+  const block = config.alert_mirror;
+  if (block === undefined) return null;
+  if (block.enabled !== true) {
+    return { id: "alert-mirror", status: "ok", message: "alert_mirror is configured but disabled (enabled is not true)." };
+  }
+  const resolved = resolveAlertMirrorConfig(config);
+  if (!resolved.enabled) {
+    // Fail-closed resolver case (for example invalid min_severity).
+    return { id: "alert-mirror", status: "warn", message: resolved.warnings.join(" ") };
+  }
+  if (resolved.destinations.length === 0) {
+    const detail = resolved.warnings.length > 0
+      ? resolved.warnings.join(" ")
+      : "Configure alert_mirror.telegram.chat_id or alert_mirror.discord.channel_id with the matching existing bot token.";
+    return { id: "alert-mirror", status: "warn", message: `alert_mirror is enabled but has no usable mirror destination. ${detail}` };
+  }
+  if (resolved.warnings.length > 0) {
+    return { id: "alert-mirror", status: "warn", message: resolved.warnings.join(" ") };
+  }
+  return { id: "alert-mirror", status: "ok", message: `alert_mirror enabled with ${resolved.destinations.length} configured mirror destination(s).` };
 }
 
 /**
@@ -669,6 +703,9 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
 
   const discordCheck = checkDiscordConfig(config.discord, allowedAgents);
   if (discordCheck) checks.push(discordCheck);
+
+  const alertMirrorCheck = checkAlertMirrorConfig(config);
+  if (alertMirrorCheck) checks.push(alertMirrorCheck);
 
   const serviceCheck = checkServiceConfig(config.services);
   if (serviceCheck) checks.push(serviceCheck);

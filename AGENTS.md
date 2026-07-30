@@ -154,8 +154,8 @@ npm run clean-install:check
 Current baseline:
 
 ```text
-Test Files  108 passed (108)
-Tests       1626 passed (1626)
+Test Files  109 passed (109)
+Tests       1638 passed (1638)
 SMOKE PASSED
 ```
 
@@ -334,11 +334,12 @@ Device-local scheduler service MVP (ADR-0029, O7 S2-S6, implemented):
 - Scheduler is off by default, respects local `allowed_agents`/`excluded_agents`, uses claim-first semantics, executes at most one item per tick, has no automatic cross-agent fallback, no hidden state, no gateway/Web UI controls, and no interactive polling.
 - Tests: `tests/scheduler.test.ts` (12 tests), `tests/scheduler-executor.test.ts` (22 tests), `tests/scheduler-cron-executor.test.ts` (23 tests), `tests/scheduler-once.test.ts` (20 tests), `tests/scheduler-loop.test.ts` (28 tests), `tests/scheduler-cli.test.ts` (5 tests), `tests/cli-scheduler.test.ts` (5 tests), `tests/cli-service.test.ts` (3 tests). Service lifecycle tests extended for scheduler in `tests/service-lifecycle.test.ts` (+12 → 50), `tests/service-status-yaml.test.ts` (+1 → 6), `tests/doctor-service.test.ts` (+2 → 9). Smoke covers all four scheduler layers.
 
-Steward alert mirror core (ADR-0039 E1, M1 implemented; M2 doctor/local-config surface and M3 extension wiring pending):
+Steward alert mirror core (ADR-0039 E1, M1 + M2 implemented; M3 extension wiring pending):
 - `src/alert-mirror.ts` is the pure, injected core for the opt-in best-effort mirror of already-written `steward-inbox/alerts/<id>.md` alerts, callable directly from tests with no Pi auth, filesystem, or network. It exports `ALERT_MIRROR_RATE_LIMIT_MS` (fixed 5s per-destination minimum send interval; process-local, drop-not-queue, timestamp updated only after a successful send; not configurable in E1), `AlertMirrorDestination`, `ResolvedAlertMirrorConfig`, `AlertMirrorSenders`, `AlertMirrorDelivery`/`AlertMirrorOutcome`, `AlertMirrorState` + `createAlertMirrorState()`, `resolveAlertMirrorConfig` (deterministic fail-closed resolution of the local `alert_mirror:` block: absent/disabled is inert with no warnings; destinations require a valid ID and the matching existing `telegram.bot_token`/`discord.bot_token`, otherwise skipped with a deterministic non-secret warning; invalid `min_severity` disables mirroring with a warning; inclusive floor `low < normal < high < urgent`, default `low`), `buildAlertNotificationText` (default three-facts-in-two-lines payload `[severity] title` + vault-relative path; body appended only when `include_body: true`; no platform chunking in the core — chunking lives in the M3 sender adapters), and `mirrorStewardAlert` (never throws; `notify: false`/disabled/below-floor are no-op `[]` with no state mutation; process-local dedupe via `seenAlertIds`; kind-qualified rate-limit keys `kind:id`; missing sender -> `skipped-no-sender`; sender rejection -> normalized `failed` with no raw exception text; per-destination independence).
 - `LocalPirenConfig` gained `alert_mirror?: AlertMirrorLocalConfig` (`enabled`, `min_severity`, `include_body`, `telegram.chat_id`, `discord.channel_id`). Destination IDs and tokens stay in `~/.config/piren/config.yml` only; no inbound-allowlist interaction.
-- No doctor check, CLI, extension wiring, `flag_steward`/`piren_status` changes, or outbound HTTP in M1 (that is M2/M3).
-- Tests: `tests/alert-mirror.test.ts` (27 tests).
+- M2: `checkAlertMirrorConfig(config)` in `src/doctor.ts` is a pure opt-in check reusing the M1 resolver: absent block -> `null` (normal doctor unchanged); present-but-disabled -> `ok` (declared intent inspectable); invalid `min_severity` -> `warn`; enabled with no usable destination (none configured or matching bot token missing/empty) -> actionable non-secret `warn`; enabled with usable destination(s) but resolver warnings -> `warn`; otherwise `ok` with a count-only message (never kinds/IDs/tokens). Wired once in `doctorPiren` alongside the telegram/discord local transport checks so both flows (single-agent and multi-agent vault) observe it. All alert-mirror findings stay `warn`, never `fail`.
+- No CLI, extension wiring, `flag_steward`/`piren_status` changes, or outbound HTTP in M1/M2 (that is M3).
+- Tests: `tests/alert-mirror.test.ts` (27 tests), `tests/doctor-alert-mirror.test.ts` (12 tests: pure check cases + doctorPiren wiring pins for both flows).
 
 Vault-scoped package manifest CLI (ADR-0032, Slice F, implemented):
 - `src/package-manifest.ts` is the pure core, callable directly from tests without Pi auth or a real vault. It exports `parsePackageManifest` (parse YAML package manifest strings), `mergeEffectivePackages` (merge shared + groups + agent manifests deterministically), `diagnosePackages` (compare effective packages against local config `packages` and an injected `packageInstalled` resolver), and formatting helpers `formatPackageList`, `formatPackageExplain`, and `formatPackageDoctor`. Exported types: `PackageManifest`, `PackageSource`, `EffectivePackage`, `PackageState`, `DiagnosedPackage`.
