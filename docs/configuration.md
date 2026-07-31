@@ -121,7 +121,7 @@ context_injection:
 The Piren context (agent identity, steward directives, SOUL.md, tool catalog, skills catalog) is injected as a visible `piren-context` message that persists in the session transcript.
 With the default `per_turn`, it is injected on every prompt and each copy accumulates in the transcript.
 With `session_start_only`, it is injected only on the first prompt after session startup, `/new`, `/resume`, `/fork`, or reload, and not on later prompts in that session; directive or SOUL.md edits take effect after the next session restart or resume.
-The injected content and message shape are identical in both modes — only the timing changes. There is no Web UI setting for this preference; it lives only in `team/<agent>/config.yml`.
+The injected content and message shape are identical in both modes — only the timing changes. `session_start_only` bounds only the repeated Piren-context copies; the ordinary conversation history of the session still accumulates normally. The default remains `per_turn`; controlled measurements for any future default change are not complete. There is no Web UI setting for this preference; it lives only in `team/<agent>/config.yml`.
 
 An absent `context_injection` block means `per_turn` with no warning. An unknown mode or a non-map block falls back to `per_turn` with a visible startup warning, and `piren doctor` reports a `context-injection` warning for the affected agent (doctor assesses agent config only, never the environment override). `piren_status` reports the resolved mode as `context_injection: <mode>`.
 
@@ -166,6 +166,13 @@ telegram:
     - 123456789
   default_agent: piren
 ```
+
+Telegram operator notes:
+
+- The bot token stays in this machine-local file, never in the vault. A private chat or group is enabled only by adding its explicit chat id to `allowed_chat_ids`.
+- BotFather Privacy Mode caveat: while Privacy Mode is enabled (the BotFather default), a bot in a group receives commands, mentions, and replies rather than ordinary group messages. An operator who wants ordinary group-message routing must explicitly disable it in BotFather. Either way, `allowed_chat_ids` remains the final inbound gate.
+- In a forum (topics) group, each topic is an isolated live conversation: replies and typing stay in the originating topic and every command is topic-scoped. This is routing only — it adds no configuration and does not widen authorization beyond the chat id.
+- `/new` starts a fresh Pi session for the current live conversation and keeps its active agent; `/compact` invokes Pi's native manual compaction for it. Neither accepts arguments or custom instructions, neither creates a session when none is active, and there is no transport `/resume`: no conversation-to-session mapping survives a transport-process restart.
 
 Discord:
 

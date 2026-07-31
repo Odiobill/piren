@@ -37,8 +37,22 @@ Commands:
 - `/agent <name>`: switch active Piren agent for this chat.
 - `/whoami`: show active agent.
 - `/abort`: abort the active Pi turn for this chat.
+- `/new`: start a fresh Pi session for this chat, keeping the active Piren agent.
+- `/compact`: compact this chat's Pi session through Pi's native manual compaction.
 
 Plain text messages are forwarded to the active agent. Long assistant replies are split to fit Telegram message limits. By default, Piren acknowledges incoming prompts with a receipt reaction, sends a typing indicator while the agent works, and swaps to a completion reaction when the turn finishes. Set `feedback.enabled: false` to disable all transport feedback.
+
+### Forum topics
+
+A Telegram forum (topics) message carries a numeric `message_thread_id` identifying its topic. Piren treats each topic as a separate live transport conversation: every topic gets its own Pi session and active agent, and replies and typing indicators go back to the originating topic through the same `message_thread_id`. Every command — agent selection, `/whoami`, `/abort`, `/new`, and `/compact` — is scoped to the topic it was sent in, so one topic's controls never affect another topic in the same forum.
+
+Authorization is unchanged: `telegram.allowed_chat_ids` remains the only gate. Allowing a forum's chat id permits its topics; there is no topic allowlist and no user allowlist. A chat whose messages carry no `message_thread_id` behaves exactly as before.
+
+### Group delivery and BotFather Privacy Mode
+
+BotFather Privacy Mode is a Telegram platform delivery setting, not Piren authorization. While it is enabled (the BotFather default), a bot in a group receives only commands, mentions, and replies to its own messages — not ordinary group messages. If Piren answers `/start` in a group but stays silent on ordinary messages, Privacy Mode is the likely cause. An operator who wants ordinary group-message routing must explicitly disable Privacy Mode in BotFather for the bot. Changing it alters what Telegram delivers to the bot; Piren's `allowed_chat_ids` allowlist remains the final inbound gate either way.
+
+A Telegram private chat or group is enabled only by its explicit chat id in the machine-local `telegram.allowed_chat_ids`. Bot tokens stay in local configuration, never in the vault.
 
 ## Discord
 
@@ -75,8 +89,23 @@ Commands mirror Telegram:
 - `/agent <name>`
 - `/whoami`
 - `/abort`
+- `/new`
+- `/compact`
 
 Discord uses a platform-mandated WebSocket client connection to Discord's gateway. This does not add a WebSocket server to Piren's web UI. Feedback uses Discord REST: `POST /channels/{id}/typing` and `PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`. Reaction failures are best-effort and never abort the assistant response.
+
+Discord direct messages, native Discord application commands, and interactive `piren discord configure` onboarding are accepted future work (ADR-0040) and are not available in the current build.
+
+## Session controls
+
+`/new` and `/compact` are conversation-scoped controls over Pi's native session operations:
+
+- `/new` starts a fresh Pi session for the current live conversation only, keeping its active Piren agent. If a Pi extension cancels the switch, Piren reports the cancellation and the current session is left unchanged.
+- `/compact` asks Pi to compact the current live conversation's session through Pi's native manual compaction. It does not change automatic compaction policy.
+- Neither command accepts arguments or custom instructions; an argument-bearing form such as `/compact focus on code` is treated as an unknown command.
+- When no live session exists for the conversation, Piren replies that there is no active session and does not create one. Failures return a generic acknowledgement; internal error details, local paths, token figures, and transcript contents are never sent to the conversation.
+
+Intentional boundary: there is no transport `/resume`, no exposure of session file paths or transcripts, and no persistent mapping between a platform conversation and a Pi session across a transport-process restart. After a restart, the next ordinary message simply starts a fresh session.
 
 ## Transport feedback
 
