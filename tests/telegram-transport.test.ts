@@ -484,3 +484,28 @@ describe("TelegramTransport session controls /new and /compact (T2b)", () => {
     }
   });
 });
+
+describe("TelegramTransport exact-only session control parsing (T2b review pin)", () => {
+  it("treats argument-bearing /new and /compact forms as unknown commands and never invokes the controls", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    // No session exists: the argument forms must not create one.
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/new extra" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, message_thread_id: 42, text: "/compact focus on code" } });
+
+    expect(messages).toEqual([
+      { chatId: 111, text: "Unknown Piren command. Use /agents, /agent <name>, /whoami, /abort, /new, or /compact." },
+      { chatId: 111, text: "Unknown Piren command. Use /agents, /agent <name>, /whoami, /abort, /new, or /compact.", threadId: 42 },
+    ]);
+    expect(clients).toHaveLength(0);
+
+    // With an active session, the argument forms still must not reach the controls.
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "ping" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/new extra" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/compact focus on code" } });
+    expect(clients[0]?.newSessionCalls).toBe(0);
+    expect(clients[0]?.compactCalls).toBe(0);
+  });
+});

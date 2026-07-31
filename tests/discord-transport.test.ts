@@ -397,3 +397,27 @@ describe("DiscordTransport session controls /new and /compact (T2b)", () => {
     }
   });
 });
+
+describe("DiscordTransport exact-only session control parsing (T2b review pin)", () => {
+  it("treats argument-bearing /new and /compact forms as unknown commands and never invokes the controls", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    // No session exists: the argument forms must not create one. The
+    // mention-prefixed argument form takes the same unknown-command path.
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/new extra" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "<@123456> /compact focus on code" });
+
+    expect(replies.map((r) => r.text)).toEqual([
+      "Unknown Piren command. Use /agents, /agent <name>, /whoami, /abort, /new, or /compact.",
+      "Unknown Piren command. Use /agents, /agent <name>, /whoami, /abort, /new, or /compact.",
+    ]);
+    expect(clients).toHaveLength(0);
+
+    // With an active session, the argument forms still must not reach the controls.
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "ping" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/new extra" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/compact focus on code" });
+    expect(clients[0]?.newSessionCalls).toBe(0);
+    expect(clients[0]?.compactCalls).toBe(0);
+  });
+});
