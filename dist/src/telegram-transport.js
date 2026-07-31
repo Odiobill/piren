@@ -8,20 +8,20 @@ export class TelegramBotApiHttpClient {
         this.botToken = botToken;
         this.fetchImpl = fetchImpl;
     }
-    async sendMessage(chatId, text) {
-        const response = await this.fetchJson("sendMessage", {
-            chat_id: chatId,
-            text,
-        });
+    async sendMessage(chatId, text, messageThreadId) {
+        const body = { chat_id: chatId, text };
+        if (messageThreadId !== undefined)
+            body.message_thread_id = messageThreadId;
+        const response = await this.fetchJson("sendMessage", body);
         if (!response.ok) {
             throw new Error(response.description || "Telegram sendMessage failed");
         }
     }
-    async sendChatAction(chatId, action) {
-        const response = await this.fetchJson("sendChatAction", {
-            chat_id: chatId,
-            action,
-        });
+    async sendChatAction(chatId, action, messageThreadId) {
+        const body = { chat_id: chatId, action };
+        if (messageThreadId !== undefined)
+            body.message_thread_id = messageThreadId;
+        const response = await this.fetchJson("sendChatAction", body);
         if (!response.ok) {
             throw new Error(response.description || "Telegram sendChatAction failed");
         }
@@ -58,6 +58,23 @@ export class TelegramBotApiHttpClient {
         });
         return (await response.json());
     }
+}
+/**
+ * Resolve the internal routing key for a Telegram conversation.
+ *
+ * A non-topic chat retains its current chat-level key byte-for-byte
+ * (`String(chatId)`). A forum topic message (Telegram supplies
+ * `message_thread_id`) gets a deterministic distinct key built from
+ * `chat_id` plus the topic id, so topics never share a transport session
+ * with the plain chat or with each other.
+ *
+ * This key is internal session routing only. It is never an authorization
+ * decision: access control remains exactly `telegram.allowed_chat_ids`.
+ */
+export function resolveTelegramConversationKey(chatId, messageThreadId) {
+    if (messageThreadId === undefined)
+        return String(chatId);
+    return `${chatId}:topic:${messageThreadId}`;
 }
 /**
  * Minimal Telegram transport over the shared Pi RPC client.

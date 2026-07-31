@@ -8,15 +8,22 @@ export interface TelegramMessage {
         id?: number | string;
     };
     text?: string;
+    /** Optional forum-topic identifier supplied by Telegram for topic messages. */
+    message_thread_id?: number;
 }
 export interface TelegramUpdate {
     update_id?: number;
     message?: TelegramMessage;
 }
 export interface TelegramBotApi {
-    sendMessage(chatId: number | string, text: string): Promise<void>;
+    /**
+     * Send a text message. When `messageThreadId` (a Telegram forum topic id)
+     * is supplied, the request includes `message_thread_id` so the reply lands
+     * in the originating topic; otherwise the request body is unchanged.
+     */
+    sendMessage(chatId: number | string, text: string, messageThreadId?: number): Promise<void>;
     /** Best-effort typing indicator. Telegram's chat action expires after ~5s. */
-    sendChatAction(chatId: number | string, action: string): Promise<void>;
+    sendChatAction(chatId: number | string, action: string, messageThreadId?: number): Promise<void>;
     /**
      * Best-effort emoji reaction on a message. Must not throw on failure:
      * reactions are advisory feedback and must never abort a turn.
@@ -30,8 +37,8 @@ export declare class TelegramBotApiHttpClient implements TelegramPollingApi {
     private readonly botToken;
     private readonly fetchImpl;
     constructor(botToken: string, fetchImpl?: typeof fetch);
-    sendMessage(chatId: number | string, text: string): Promise<void>;
-    sendChatAction(chatId: number | string, action: string): Promise<void>;
+    sendMessage(chatId: number | string, text: string, messageThreadId?: number): Promise<void>;
+    sendChatAction(chatId: number | string, action: string, messageThreadId?: number): Promise<void>;
     /**
      * Best-effort: a failed reaction (permissions, emoji not allowed, etc.)
      * resolves silently rather than rejecting. Feedback must never abort a turn.
@@ -43,6 +50,19 @@ export declare class TelegramBotApiHttpClient implements TelegramPollingApi {
 export interface TelegramPromptClient extends TransportRpcClient {
     promptAndWait(message: string): Promise<RpcEvent[]>;
 }
+/**
+ * Resolve the internal routing key for a Telegram conversation.
+ *
+ * A non-topic chat retains its current chat-level key byte-for-byte
+ * (`String(chatId)`). A forum topic message (Telegram supplies
+ * `message_thread_id`) gets a deterministic distinct key built from
+ * `chat_id` plus the topic id, so topics never share a transport session
+ * with the plain chat or with each other.
+ *
+ * This key is internal session routing only. It is never an authorization
+ * decision: access control remains exactly `telegram.allowed_chat_ids`.
+ */
+export declare function resolveTelegramConversationKey(chatId: number | string, messageThreadId?: number): string;
 export interface TelegramTransportOptions<TClient extends TelegramPromptClient> {
     transportName?: string | undefined;
     allowedChatIds: Array<number | string>;

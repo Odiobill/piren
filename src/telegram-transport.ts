@@ -7,6 +7,8 @@ export interface TelegramMessage {
   message_id?: number;
   chat?: { id?: number | string };
   text?: string;
+  /** Optional forum-topic identifier supplied by Telegram for topic messages. */
+  message_thread_id?: number;
 }
 
 export interface TelegramUpdate {
@@ -15,9 +17,14 @@ export interface TelegramUpdate {
 }
 
 export interface TelegramBotApi {
-  sendMessage(chatId: number | string, text: string): Promise<void>;
+  /**
+   * Send a text message. When `messageThreadId` (a Telegram forum topic id)
+   * is supplied, the request includes `message_thread_id` so the reply lands
+   * in the originating topic; otherwise the request body is unchanged.
+   */
+  sendMessage(chatId: number | string, text: string, messageThreadId?: number): Promise<void>;
   /** Best-effort typing indicator. Telegram's chat action expires after ~5s. */
-  sendChatAction(chatId: number | string, action: string): Promise<void>;
+  sendChatAction(chatId: number | string, action: string, messageThreadId?: number): Promise<void>;
   /**
    * Best-effort emoji reaction on a message. Must not throw on failure:
    * reactions are advisory feedback and must never abort a turn.
@@ -32,21 +39,19 @@ export interface TelegramPollingApi extends TelegramBotApi {
 export class TelegramBotApiHttpClient implements TelegramPollingApi {
   constructor(private readonly botToken: string, private readonly fetchImpl: typeof fetch = fetch) {}
 
-  async sendMessage(chatId: number | string, text: string): Promise<void> {
-    const response = await this.fetchJson("sendMessage", {
-      chat_id: chatId,
-      text,
-    });
+  async sendMessage(chatId: number | string, text: string, messageThreadId?: number): Promise<void> {
+    const body: Record<string, unknown> = { chat_id: chatId, text };
+    if (messageThreadId !== undefined) body.message_thread_id = messageThreadId;
+    const response = await this.fetchJson("sendMessage", body);
     if (!response.ok) {
       throw new Error(response.description || "Telegram sendMessage failed");
     }
   }
 
-  async sendChatAction(chatId: number | string, action: string): Promise<void> {
-    const response = await this.fetchJson("sendChatAction", {
-      chat_id: chatId,
-      action,
-    });
+  async sendChatAction(chatId: number | string, action: string, messageThreadId?: number): Promise<void> {
+    const body: Record<string, unknown> = { chat_id: chatId, action };
+    if (messageThreadId !== undefined) body.message_thread_id = messageThreadId;
+    const response = await this.fetchJson("sendChatAction", body);
     if (!response.ok) {
       throw new Error(response.description || "Telegram sendChatAction failed");
     }
@@ -89,6 +94,23 @@ export class TelegramBotApiHttpClient implements TelegramPollingApi {
 
 export interface TelegramPromptClient extends TransportRpcClient {
   promptAndWait(message: string): Promise<RpcEvent[]>;
+}
+
+/**
+ * Resolve the internal routing key for a Telegram conversation.
+ *
+ * A non-topic chat retains its current chat-level key byte-for-byte
+ * (`String(chatId)`). A forum topic message (Telegram supplies
+ * `message_thread_id`) gets a deterministic distinct key built from
+ * `chat_id` plus the topic id, so topics never share a transport session
+ * with the plain chat or with each other.
+ *
+ * This key is internal session routing only. It is never an authorization
+ * decision: access control remains exactly `telegram.allowed_chat_ids`.
+ */
+export function resolveTelegramConversationKey(chatId: number | string, messageThreadId?: number): string {
+  if (messageThreadId === undefined) return String(chatId);
+  return `${chatId}:topic:${messageThreadId}`;
 }
 
 export interface TelegramTransportOptions<TClient extends TelegramPromptClient> {

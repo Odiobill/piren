@@ -37,6 +37,19 @@ describe("TelegramBotApiHttpClient", () => {
     expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ chat_id: 987654, text: "hello" });
   });
 
+  it("sendMessage includes message_thread_id only when a topic context is supplied", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new TelegramBotApiHttpClient("123456:ABC", fakeFetchOk(true, calls));
+    await client.sendMessage(987654, "topic hello", 42);
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ chat_id: 987654, text: "topic hello", message_thread_id: 42 });
+
+    await client.sendMessage(987654, "plain hello");
+    const plainBody = JSON.parse(calls[1]?.body ?? "{}");
+    expect(plainBody).toEqual({ chat_id: 987654, text: "plain hello" });
+    // Byte-for-byte equivalent to the pre-topic shape: no thread field at all.
+    expect("message_thread_id" in plainBody).toBe(false);
+  });
+
   it("sendMessage throws with the Telegram description when ok=false", async () => {
     const fakeFetch = async (): Promise<Response> =>
       new Response(JSON.stringify({ ok: false, description: "chat not found" }), { status: 200 });
@@ -84,6 +97,18 @@ describe("TelegramBotApiHttpClient", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://api.telegram.org/bot123456:ABC/sendChatAction");
     expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ chat_id: 987654, action: "typing" });
+  });
+
+  it("sendChatAction includes message_thread_id only when a topic context is supplied", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new TelegramBotApiHttpClient("123456:ABC", fakeFetchOk(true, calls));
+    await client.sendChatAction(987654, "typing", 42);
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ chat_id: 987654, action: "typing", message_thread_id: 42 });
+
+    await client.sendChatAction(987654, "typing");
+    const plainBody = JSON.parse(calls[1]?.body ?? "{}");
+    expect(plainBody).toEqual({ chat_id: 987654, action: "typing" });
+    expect("message_thread_id" in plainBody).toBe(false);
   });
 
   it("setMessageReaction posts the emoji as reaction", async () => {

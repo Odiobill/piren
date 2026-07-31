@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TelegramTransport } from "../src/telegram-transport.js";
+import { resolveTelegramConversationKey, TelegramTransport } from "../src/telegram-transport.js";
 import type { RpcEvent } from "../src/gateway-rpc.js";
 
 class FakeTelegramClient {
@@ -26,6 +26,29 @@ function noopApi(sendMessage?: (c: number | string, t: string) => void | Promise
     async setMessageReaction() {},
   };
 }
+
+describe("resolveTelegramConversationKey", () => {
+  it("retains the current non-topic conversation ID byte-for-byte", () => {
+    expect(resolveTelegramConversationKey(111)).toBe("111");
+    expect(resolveTelegramConversationKey("111")).toBe("111");
+    expect(resolveTelegramConversationKey(-1001234567890)).toBe("-1001234567890");
+    // An explicit undefined thread id is the non-topic shape.
+    expect(resolveTelegramConversationKey(111, undefined)).toBe("111");
+  });
+
+  it("produces a deterministic collision-safe distinct ID for a topic", () => {
+    const topic = resolveTelegramConversationKey(111, 42);
+    // Deterministic, pinned format.
+    expect(topic).toBe("111:topic:42");
+    expect(resolveTelegramConversationKey(111, 42)).toBe(topic);
+    // Distinct from the plain chat-level key.
+    expect(topic).not.toBe(String(111));
+    // Distinct between topics in the same chat.
+    expect(topic).not.toBe(resolveTelegramConversationKey(111, 43));
+    // Distinct for the same topic id in a different chat.
+    expect(topic).not.toBe(resolveTelegramConversationKey(222, 42));
+  });
+});
 
 describe("TelegramTransport", () => {
   it("authorizes chat ids, exposes runnable agents, switches active agent, and forwards prompts", async () => {
