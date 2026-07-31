@@ -164,47 +164,52 @@ export class TelegramTransport<TClient extends TelegramPromptClient> {
     if (chatId === undefined || typeof text !== "string" || text.trim() === "") return;
     if (!this.allowedChatIds.has(String(chatId))) return;
 
+    // Forum topics are distinct conversations (T1): the topic-scoped key is
+    // internal routing only; authorization stays the allowed_chat_ids check above.
+    const messageThreadId = update.message?.message_thread_id;
+    const conversationId = resolveTelegramConversationKey(chatId, messageThreadId);
+
     const trimmed = text.trim();
     if (trimmed === "/start") {
-      await this.api.sendMessage(chatId, "Piren Telegram transport ready. Use /agents, /agent <name>, /whoami, /abort, or send a prompt.");
+      await this.api.sendMessage(chatId, "Piren Telegram transport ready. Use /agents, /agent <name>, /whoami, /abort, or send a prompt.", messageThreadId);
       return;
     }
     if (trimmed === "/agents") {
-      const active = this.sessions.getActiveAgent(this.transportName, String(chatId)) ?? this.defaultAgent;
-      await this.api.sendMessage(chatId, `Runnable Piren agents: ${this.runnableAgents.join(", ")}\nActive agent: ${active}`);
+      const active = this.sessions.getActiveAgent(this.transportName, conversationId) ?? this.defaultAgent;
+      await this.api.sendMessage(chatId, `Runnable Piren agents: ${this.runnableAgents.join(", ")}\nActive agent: ${active}`, messageThreadId);
       return;
     }
     if (trimmed === "/whoami") {
-      const active = this.sessions.getActiveAgent(this.transportName, String(chatId)) ?? this.defaultAgent;
-      await this.api.sendMessage(chatId, `Active Piren agent: ${active}`);
+      const active = this.sessions.getActiveAgent(this.transportName, conversationId) ?? this.defaultAgent;
+      await this.api.sendMessage(chatId, `Active Piren agent: ${active}`, messageThreadId);
       return;
     }
     if (trimmed === "/abort") {
-      const aborted = await this.sessions.abort(this.transportName, String(chatId));
-      await this.api.sendMessage(chatId, aborted ? "Abort sent to active Piren session." : "No active Piren session for this chat.");
+      const aborted = await this.sessions.abort(this.transportName, conversationId);
+      await this.api.sendMessage(chatId, aborted ? "Abort sent to active Piren session." : "No active Piren session for this chat.", messageThreadId);
       return;
     }
     if (trimmed.startsWith("/agent")) {
-      await this.handleAgentCommand(chatId, trimmed);
+      await this.handleAgentCommand(chatId, trimmed, conversationId, messageThreadId);
       return;
     }
     if (trimmed.startsWith("/")) {
-      await this.api.sendMessage(chatId, "Unknown Piren command. Use /agents, /agent <name>, /whoami, or /abort.");
+      await this.api.sendMessage(chatId, "Unknown Piren command. Use /agents, /agent <name>, /whoami, or /abort.", messageThreadId);
       return;
     }
 
     const messageId = update.message?.message_id;
-    await this.sendPromptFeedbackStart(chatId, messageId);
-    const session = await this.sessions.getSession(this.transportName, String(chatId));
+    await this.sendPromptFeedbackStart(chatId, messageId, messageThreadId);
+    const session = await this.sessions.getSession(this.transportName, conversationId);
     const events = await session.client.promptAndWait(trimmed);
     await this.sendPromptFeedbackComplete(chatId, messageId);
     const response = extractAssistantText(events).trim();
     if (response === "") {
-      await this.api.sendMessage(chatId, "(no assistant text returned)");
+      await this.api.sendMessage(chatId, "(no assistant text returned)", messageThreadId);
       return;
     }
     for (const chunk of chunkTelegramMessage(response)) {
-      await this.api.sendMessage(chatId, chunk);
+      await this.api.sendMessage(chatId, chunk, messageThreadId);
     }
   }
 
@@ -212,7 +217,7 @@ export class TelegramTransport<TClient extends TelegramPromptClient> {
     await this.sessions.closeAll();
   }
 
-  private async sendPromptFeedbackStart(chatId: number | string, messageId: number | undefined): Promise<void> {
+  private async sendPromptFeedbackStart(chatId: number | string, messageId: number | undefined, messageThreadId?: number): Promise<void> {
     if (!this.feedback.enabled) return;
     if (messageId !== undefined && this.feedback.reactionOnReceive !== "") {
       try {
@@ -223,7 +228,7 @@ export class TelegramTransport<TClient extends TelegramPromptClient> {
     }
     if (this.feedback.typingWhileWorking) {
       try {
-        await this.api.sendChatAction(chatId, "typing");
+        await this.api.sendChatAction(chatId, "typing", messageThreadId);
       } catch {
         // Best-effort feedback must never abort a turn.
       }
@@ -241,19 +246,19 @@ export class TelegramTransport<TClient extends TelegramPromptClient> {
     }
   }
 
-  private async handleAgentCommand(chatId: number | string, text: string): Promise<void> {
+  private async handleAgentCommand(chatId: number | string, text: string, conversationId: string, messageThreadId?: number): Promise<void> {
     const parts = text.split(/\s+/).filter(Boolean);
     const agent = parts[1];
     if (!agent) {
-      await this.api.sendMessage(chatId, "Usage: /agent <name>");
+      await this.api.sendMessage(chatId, "Usage: /agent <name>", messageThreadId);
       return;
     }
     if (!this.runnableAgents.includes(agent)) {
-      await this.api.sendMessage(chatId, `Agent '${agent}' is not in the runnable set. Use /agents to list available agents.`);
+      await this.api.sendMessage(chatId, `Agent '${agent}' is not in the runnable set. Use /agents to list available agents.`, messageThreadId);
       return;
     }
-    await this.sessions.switchAgent(this.transportName, String(chatId), agent);
-    await this.api.sendMessage(chatId, `Active Piren agent for this chat: ${agent}`);
+    await this.sessions.switchAgent(this.transportName, conversationId, agent);
+    await this.api.sendMessage(chatId, `Active Piren agent for this chat: ${agent}`, messageThreadId);
   }
 }
 
