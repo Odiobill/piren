@@ -142,7 +142,7 @@ export class DiscordTransport {
         if (trimmed === "")
             return;
         if (trimmed === "/start") {
-            await this.api.createMessage(channelId, "Piren Discord transport ready. Use /agents, /agent <name>, /whoami, /abort, or send a prompt.");
+            await this.api.createMessage(channelId, "Piren Discord transport ready. Use /agents, /agent <name>, /whoami, /abort, /new, /compact, or send a prompt.");
             return;
         }
         if (trimmed === "/agents") {
@@ -164,8 +164,16 @@ export class DiscordTransport {
             await this.handleAgentCommand(channelId, conversation, trimmed);
             return;
         }
+        if (trimmed === "/new") {
+            await this.handleNewSessionCommand(channelId, conversation);
+            return;
+        }
+        if (trimmed === "/compact") {
+            await this.handleCompactCommand(channelId, conversation);
+            return;
+        }
         if (trimmed.startsWith("/")) {
-            await this.api.createMessage(channelId, "Unknown Piren command. Use /agents, /agent <name>, /whoami, or /abort.");
+            await this.api.createMessage(channelId, "Unknown Piren command. Use /agents, /agent <name>, /whoami, /abort, /new, or /compact.");
             return;
         }
         await this.sendPromptFeedbackStart(channelId, message.id);
@@ -217,6 +225,44 @@ export class DiscordTransport {
         catch {
             // Best-effort feedback must never abort sending the response.
         }
+    }
+    /**
+     * `/new`: start a fresh Pi session for this conversation through Pi's
+     * native control. Never creates a session; failures are acknowledged
+     * generically so raw RPC error text, paths, and transcripts never leak
+     * into the channel.
+     */
+    async handleNewSessionCommand(channelId, conversation) {
+        let text;
+        try {
+            const outcome = await this.sessions.newSession(this.transportName, conversation);
+            text =
+                outcome.status === "no-active-session"
+                    ? "No active Piren session for this channel."
+                    : outcome.status === "cancelled"
+                        ? "New Piren session cancelled; the current session is unchanged."
+                        : "Started a new Piren session for this channel.";
+        }
+        catch {
+            text = "Failed to start a new Piren session for this channel.";
+        }
+        await this.api.createMessage(channelId, text);
+    }
+    /**
+     * `/compact`: request Pi's native manual compaction for this conversation.
+     * Same safety contract as `/new`: no session creation, no token/usage or
+     * transcript details, generic failure acknowledgement.
+     */
+    async handleCompactCommand(channelId, conversation) {
+        let text;
+        try {
+            const outcome = await this.sessions.compact(this.transportName, conversation);
+            text = outcome.status === "no-active-session" ? "No active Piren session for this channel." : "Compaction complete for this channel's Piren session.";
+        }
+        catch {
+            text = "Failed to compact this channel's Piren session.";
+        }
+        await this.api.createMessage(channelId, text);
     }
     async handleAgentCommand(channelId, conversation, text) {
         const parts = text.split(/\s+/).filter(Boolean);

@@ -4,11 +4,23 @@ import type { RpcEvent } from "../src/gateway-rpc.js";
 
 class FakeDiscordClient {
   prompts: string[] = [];
+  newSessionCalls = 0;
+  compactCalls = 0;
+  newSessionResult: { cancelled: boolean } = { cancelled: false };
+  failNextControl: string | null = null;
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
   async abort(): Promise<void> {}
-  async newSession(): Promise<{ cancelled: boolean }> { return { cancelled: false }; }
-  async compact(): Promise<{ tokensBefore: number | null; estimatedTokensAfter: number | null }> { return { tokensBefore: null, estimatedTokensAfter: null }; }
+  async newSession(): Promise<{ cancelled: boolean }> {
+    this.newSessionCalls++;
+    if (this.failNextControl !== null) throw new Error(this.failNextControl);
+    return this.newSessionResult;
+  }
+  async compact(): Promise<{ tokensBefore: number | null; estimatedTokensAfter: number | null }> {
+    this.compactCalls++;
+    if (this.failNextControl !== null) throw new Error(this.failNextControl);
+    return { tokensBefore: 150000, estimatedTokensAfter: 32000 };
+  }
   async promptAndWait(message: string): Promise<RpcEvent[]> {
     this.prompts.push(message);
     return [
@@ -265,5 +277,123 @@ describe("DiscordTransport", () => {
     await transport.handleMessage({ guild_id: "111", channel_id: "222", id: "555", content: "ping" });
 
     expect(replies).toEqual(["pong"]);
+  });
+});
+
+describe("DiscordTransport session controls /new and /compact (T2b)", () => {
+  it("reports no active session for /new and /compact without creating a client", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/new" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/compact" });
+
+    expect(replies.map((r) => r.text)).toEqual([
+      "No active Piren session for this channel.",
+      "No active Piren session for this channel.",
+    ]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("starts a new session on /new and preserves the active agent and client", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "ping" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/agent thor" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/new" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/whoami" });
+
+    expect(replies.map((r) => r.text)).toEqual([
+      "pong",
+      "Active Piren agent for this channel: thor",
+      "Started a new Piren session for this channel.",
+      "Active Piren agent: thor",
+    ]);
+    // Native operation on the live client: no extra client was created.
+    expect(clients).toHaveLength(2);
+    expect(clients[1]?.newSessionCalls).toBe(1);
+    expect(clients[0]?.newSessionCalls).toBe(0);
+  });
+
+  it("reports a Pi-cancelled new session distinctly", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "ping" });
+    clients[0]!.newSessionResult = { cancelled: true };
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/new" });
+
+    expect(replies[replies.length - 1]?.text).toBe("New Piren session cancelled; the current session is unchanged.");
+  });
+
+  it("compacts the active session on /compact without token or transcript details", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "ping" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/compact" });
+
+    expect(clients[0]?.compactCalls).toBe(1);
+    const ack = replies[replies.length - 1]?.text ?? "";
+    expect(ack).toBe("Compaction complete for this channel's Piren session.");
+    expect(ack).not.toContain("150000");
+    expect(ack).not.toContain("32000");
+  });
+
+  it("returns a generic failure acknowledgement without raw error text", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "ping" });
+    clients[0]!.failNextControl = "pi rpc exploded: /home/user/secret/token";
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/new" });
+    clients[0]!.failNextControl = "pi rpc exploded: /home/user/secret/token";
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/compact" });
+
+    expect(replies[replies.length - 2]?.text).toBe("Failed to start a new Piren session for this channel.");
+    expect(replies[replies.length - 1]?.text).toBe("Failed to compact this channel's Piren session.");
+    for (const reply of replies) {
+      expect(reply.text).not.toContain("exploded");
+      expect(reply.text).not.toContain("secret");
+    }
+  });
+
+  it("dispatches /new only to the current thread conversation (real gateway thread shape)", async () => {
+    const { transport, replies, clients } = buildTransport({ allowedThreadIds: ["333"] });
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "ping" });
+    // Real Discord Gateway shape: thread message with thread id in channel_id.
+    await transport.handleMessage({ guild_id: "111", channel_id: "333", content: "ping" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "333", content: "/new" });
+
+    expect(clients).toHaveLength(2);
+    expect(clients[0]?.newSessionCalls).toBe(0);
+    expect(clients[1]?.newSessionCalls).toBe(1);
+    expect(replies[replies.length - 1]).toEqual({ channelId: "333", text: "Started a new Piren session for this channel." });
+  });
+
+  it("handles a mention-prefixed /new like a plain command", async () => {
+    const { transport, replies } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "<@123456> /new" });
+
+    expect(replies.map((r) => r.text)).toEqual(["No active Piren session for this channel."]);
+  });
+
+  it("stays silent for /new in an unallowlisted channel", async () => {
+    const { transport, replies, clients } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "888", content: "/new" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("lists /new and /compact in the /start and unknown-command help text", async () => {
+    const { transport, replies } = buildTransport();
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/start" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/bogus" });
+
+    for (const reply of replies) {
+      expect(reply.text).toContain("/new");
+      expect(reply.text).toContain("/compact");
+    }
   });
 });

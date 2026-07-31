@@ -171,7 +171,7 @@ export class TelegramTransport<TClient extends TelegramPromptClient> {
 
     const trimmed = text.trim();
     if (trimmed === "/start") {
-      await this.api.sendMessage(chatId, "Piren Telegram transport ready. Use /agents, /agent <name>, /whoami, /abort, or send a prompt.", messageThreadId);
+      await this.api.sendMessage(chatId, "Piren Telegram transport ready. Use /agents, /agent <name>, /whoami, /abort, /new, /compact, or send a prompt.", messageThreadId);
       return;
     }
     if (trimmed === "/agents") {
@@ -193,8 +193,16 @@ export class TelegramTransport<TClient extends TelegramPromptClient> {
       await this.handleAgentCommand(chatId, trimmed, conversationId, messageThreadId);
       return;
     }
+    if (trimmed === "/new") {
+      await this.handleNewSessionCommand(chatId, conversationId, messageThreadId);
+      return;
+    }
+    if (trimmed === "/compact") {
+      await this.handleCompactCommand(chatId, conversationId, messageThreadId);
+      return;
+    }
     if (trimmed.startsWith("/")) {
-      await this.api.sendMessage(chatId, "Unknown Piren command. Use /agents, /agent <name>, /whoami, or /abort.", messageThreadId);
+      await this.api.sendMessage(chatId, "Unknown Piren command. Use /agents, /agent <name>, /whoami, /abort, /new, or /compact.", messageThreadId);
       return;
     }
 
@@ -244,6 +252,44 @@ export class TelegramTransport<TClient extends TelegramPromptClient> {
     } catch {
       // Best-effort feedback must never abort sending the response.
     }
+  }
+
+  /**
+   * `/new`: start a fresh Pi session for this conversation through Pi's
+   * native control. Never creates a session; failures are acknowledged
+   * generically so raw RPC error text, paths, and transcripts never leak
+   * into the chat.
+   */
+  private async handleNewSessionCommand(chatId: number | string, conversationId: string, messageThreadId?: number): Promise<void> {
+    let text: string;
+    try {
+      const outcome = await this.sessions.newSession(this.transportName, conversationId);
+      text =
+        outcome.status === "no-active-session"
+          ? "No active Piren session for this chat."
+          : outcome.status === "cancelled"
+            ? "New Piren session cancelled; the current session is unchanged."
+            : "Started a new Piren session for this chat.";
+    } catch {
+      text = "Failed to start a new Piren session for this chat.";
+    }
+    await this.api.sendMessage(chatId, text, messageThreadId);
+  }
+
+  /**
+   * `/compact`: request Pi's native manual compaction for this conversation.
+   * Same safety contract as `/new`: no session creation, no token/usage or
+   * transcript details, generic failure acknowledgement.
+   */
+  private async handleCompactCommand(chatId: number | string, conversationId: string, messageThreadId?: number): Promise<void> {
+    let text: string;
+    try {
+      const outcome = await this.sessions.compact(this.transportName, conversationId);
+      text = outcome.status === "no-active-session" ? "No active Piren session for this chat." : "Compaction complete for this chat's Piren session.";
+    } catch {
+      text = "Failed to compact this chat's Piren session.";
+    }
+    await this.api.sendMessage(chatId, text, messageThreadId);
   }
 
   private async handleAgentCommand(chatId: number | string, text: string, conversationId: string, messageThreadId?: number): Promise<void> {

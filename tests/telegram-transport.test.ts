@@ -5,11 +5,23 @@ import type { RpcEvent } from "../src/gateway-rpc.js";
 class FakeTelegramClient {
   prompts: string[] = [];
   aborts = 0;
+  newSessionCalls = 0;
+  compactCalls = 0;
+  newSessionResult: { cancelled: boolean } = { cancelled: false };
+  failNextControl: string | null = null;
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
   async abort(): Promise<void> { this.aborts++; }
-  async newSession(): Promise<{ cancelled: boolean }> { return { cancelled: false }; }
-  async compact(): Promise<{ tokensBefore: number | null; estimatedTokensAfter: number | null }> { return { tokensBefore: null, estimatedTokensAfter: null }; }
+  async newSession(): Promise<{ cancelled: boolean }> {
+    this.newSessionCalls++;
+    if (this.failNextControl !== null) throw new Error(this.failNextControl);
+    return this.newSessionResult;
+  }
+  async compact(): Promise<{ tokensBefore: number | null; estimatedTokensAfter: number | null }> {
+    this.compactCalls++;
+    if (this.failNextControl !== null) throw new Error(this.failNextControl);
+    return { tokensBefore: 150000, estimatedTokensAfter: 32000 };
+  }
   async promptAndWait(message: string): Promise<RpcEvent[]> {
     this.prompts.push(message);
     return [
@@ -28,6 +40,43 @@ function noopApi(sendMessage?: (c: number | string, t: string) => void | Promise
     async sendChatAction() {},
     async setMessageReaction() {},
   };
+}
+
+interface RecordedTelegramMessage { chatId: number | string; text: string; threadId?: number }
+interface RecordedTelegramChatAction { chatId: number | string; action: string; threadId?: number }
+
+function recordingApi(record: {
+  messages?: RecordedTelegramMessage[];
+  chatActions?: RecordedTelegramChatAction[];
+  reactions?: Array<{ chatId: number | string; messageId: number; emoji: string }>;
+}) {
+  return {
+    async sendMessage(chatId: number | string, text: string, messageThreadId?: number) {
+      record.messages?.push(messageThreadId === undefined ? { chatId, text } : { chatId, text, threadId: messageThreadId });
+    },
+    async sendChatAction(chatId: number | string, action: string, messageThreadId?: number) {
+      record.chatActions?.push(messageThreadId === undefined ? { chatId, action } : { chatId, action, threadId: messageThreadId });
+    },
+    async setMessageReaction(chatId: number | string, messageId: number, emoji: string) {
+      record.reactions?.push({ chatId, messageId, emoji });
+    },
+  };
+}
+
+function makeTransport(clients: FakeTelegramClient[], api: ReturnType<typeof recordingApi>) {
+  return new TelegramTransport<FakeTelegramClient>({
+    transportName: "telegram",
+    allowedChatIds: [111],
+    runnableAgents: ["piren", "thor"],
+    defaultAgent: "piren",
+    targetBuilder: async (agent) => ({ command: "fake", args: [agent], cwd: process.cwd(), env: process.env }),
+    clientFactory: () => {
+      const client = new FakeTelegramClient();
+      clients.push(client);
+      return client;
+    },
+    api,
+  });
 }
 
 describe("resolveTelegramConversationKey", () => {
@@ -205,46 +254,9 @@ describe("TelegramTransport", () => {
 });
 
 describe("TelegramTransport forum topics (T1b)", () => {
-  interface RecordedMessage { chatId: number | string; text: string; threadId?: number }
-  interface RecordedChatAction { chatId: number | string; action: string; threadId?: number }
-
-  function recordingApi(record: {
-    messages?: RecordedMessage[];
-    chatActions?: RecordedChatAction[];
-    reactions?: Array<{ chatId: number | string; messageId: number; emoji: string }>;
-  }) {
-    return {
-      async sendMessage(chatId: number | string, text: string, messageThreadId?: number) {
-        record.messages?.push(messageThreadId === undefined ? { chatId, text } : { chatId, text, threadId: messageThreadId });
-      },
-      async sendChatAction(chatId: number | string, action: string, messageThreadId?: number) {
-        record.chatActions?.push(messageThreadId === undefined ? { chatId, action } : { chatId, action, threadId: messageThreadId });
-      },
-      async setMessageReaction(chatId: number | string, messageId: number, emoji: string) {
-        record.reactions?.push({ chatId, messageId, emoji });
-      },
-    };
-  }
-
-  function makeTransport(clients: FakeTelegramClient[], api: ReturnType<typeof recordingApi>) {
-    return new TelegramTransport<FakeTelegramClient>({
-      transportName: "telegram",
-      allowedChatIds: [111],
-      runnableAgents: ["piren", "thor"],
-      defaultAgent: "piren",
-      targetBuilder: async (agent) => ({ command: "fake", args: [agent], cwd: process.cwd(), env: process.env }),
-      clientFactory: () => {
-        const client = new FakeTelegramClient();
-        clients.push(client);
-        return client;
-      },
-      api,
-    });
-  }
-
   it("gives two topics in one allowlisted forum chat separate sessions and reuses each topic's client", async () => {
     const clients: FakeTelegramClient[] = [];
-    const messages: RecordedMessage[] = [];
+    const messages: RecordedTelegramMessage[] = [];
     const transport = makeTransport(clients, recordingApi({ messages }));
 
     await transport.handleUpdate({ message: { chat: { id: 111 }, message_thread_id: 42, text: "one" } });
@@ -266,7 +278,7 @@ describe("TelegramTransport forum topics (T1b)", () => {
 
   it("scopes /agent, /whoami, and /abort to the topic", async () => {
     const clients: FakeTelegramClient[] = [];
-    const messages: RecordedMessage[] = [];
+    const messages: RecordedTelegramMessage[] = [];
     const transport = makeTransport(clients, recordingApi({ messages }));
 
     // Create a session in both topics first.
@@ -299,8 +311,8 @@ describe("TelegramTransport forum topics (T1b)", () => {
 
   it("carries the topic id on /start, /agents, unknown-command replies, and typing feedback", async () => {
     const clients: FakeTelegramClient[] = [];
-    const messages: RecordedMessage[] = [];
-    const chatActions: RecordedChatAction[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const chatActions: RecordedTelegramChatAction[] = [];
     const reactions: Array<{ chatId: number | string; messageId: number; emoji: string }> = [];
     const transport = makeTransport(clients, recordingApi({ messages, chatActions, reactions }));
 
@@ -323,8 +335,8 @@ describe("TelegramTransport forum topics (T1b)", () => {
 
   it("keeps a non-topic chat byte-for-byte on the chat-level key and stays silent for an unallowlisted forum chat", async () => {
     const clients: FakeTelegramClient[] = [];
-    const messages: RecordedMessage[] = [];
-    const chatActions: RecordedChatAction[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const chatActions: RecordedTelegramChatAction[] = [];
     const transport = makeTransport(clients, recordingApi({ messages, chatActions }));
 
     // Unallowlisted forum chat: silent, no session.
@@ -346,5 +358,129 @@ describe("TelegramTransport forum topics (T1b)", () => {
       "pong",
       "pong",
     ]);
+  });
+});
+
+describe("TelegramTransport session controls /new and /compact (T2b)", () => {
+  it("reports no active session for /new and /compact without creating a client", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/new" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, message_thread_id: 42, text: "/compact" } });
+
+    expect(messages).toEqual([
+      { chatId: 111, text: "No active Piren session for this chat." },
+      { chatId: 111, text: "No active Piren session for this chat.", threadId: 42 },
+    ]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("starts a new session on /new and preserves the active agent and client", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "ping" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/agent thor" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/new" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/whoami" } });
+
+    expect(messages.map((m) => m.text)).toEqual([
+      "pong",
+      "Active Piren agent for this chat: thor",
+      "Started a new Piren session for this chat.",
+      "Active Piren agent: thor",
+    ]);
+    // Native operation on the live client: no extra client was created.
+    expect(clients).toHaveLength(2);
+    expect(clients[1]?.newSessionCalls).toBe(1);
+    expect(clients[0]?.newSessionCalls).toBe(0);
+  });
+
+  it("reports a Pi-cancelled new session distinctly", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "ping" } });
+    clients[0]!.newSessionResult = { cancelled: true };
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/new" } });
+
+    expect(messages[messages.length - 1]?.text).toBe("New Piren session cancelled; the current session is unchanged.");
+  });
+
+  it("compacts the active session on /compact without token or transcript details", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "ping" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/compact" } });
+
+    expect(clients[0]?.compactCalls).toBe(1);
+    const ack = messages[messages.length - 1]?.text ?? "";
+    expect(ack).toBe("Compaction complete for this chat's Piren session.");
+    expect(ack).not.toContain("150000");
+    expect(ack).not.toContain("32000");
+  });
+
+  it("returns a generic failure acknowledgement without raw error text", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "ping" } });
+    clients[0]!.failNextControl = "pi rpc exploded: /home/user/secret/token";
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/new" } });
+    clients[0]!.failNextControl = "pi rpc exploded: /home/user/secret/token";
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/compact" } });
+
+    expect(messages[messages.length - 2]?.text).toBe("Failed to start a new Piren session for this chat.");
+    expect(messages[messages.length - 1]?.text).toBe("Failed to compact this chat's Piren session.");
+    for (const message of messages) {
+      expect(message.text).not.toContain("exploded");
+      expect(message.text).not.toContain("secret");
+    }
+  });
+
+  it("scopes /new and its acknowledgement to the originating forum topic", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    await transport.handleUpdate({ message: { chat: { id: 111 }, message_thread_id: 42, text: "ping" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, message_thread_id: 43, text: "ping" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, message_thread_id: 42, text: "/new" } });
+
+    expect(clients[0]?.newSessionCalls).toBe(1);
+    expect(clients[1]?.newSessionCalls).toBe(0);
+    expect(messages[messages.length - 1]).toEqual({ chatId: 111, text: "Started a new Piren session for this chat.", threadId: 42 });
+  });
+
+  it("stays silent for /new in an unallowlisted chat", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    await transport.handleUpdate({ message: { chat: { id: 999 }, text: "/new" } });
+
+    expect(messages).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("lists /new and /compact in the /start and unknown-command help text", async () => {
+    const clients: FakeTelegramClient[] = [];
+    const messages: RecordedTelegramMessage[] = [];
+    const transport = makeTransport(clients, recordingApi({ messages }));
+
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/start" } });
+    await transport.handleUpdate({ message: { chat: { id: 111 }, text: "/bogus" } });
+
+    for (const message of messages) {
+      expect(message.text).toContain("/new");
+      expect(message.text).toContain("/compact");
+    }
   });
 });

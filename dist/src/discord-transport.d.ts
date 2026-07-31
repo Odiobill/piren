@@ -74,6 +74,19 @@ export declare class DiscordTransport<TClient extends DiscordPromptClient> {
     close(): Promise<void>;
     private sendPromptFeedbackStart;
     private sendPromptFeedbackComplete;
+    /**
+     * `/new`: start a fresh Pi session for this conversation through Pi's
+     * native control. Never creates a session; failures are acknowledged
+     * generically so raw RPC error text, paths, and transcripts never leak
+     * into the channel.
+     */
+    private handleNewSessionCommand;
+    /**
+     * `/compact`: request Pi's native manual compaction for this conversation.
+     * Same safety contract as `/new`: no session creation, no token/usage or
+     * transcript details, generic failure acknowledgement.
+     */
+    private handleCompactCommand;
     private handleAgentCommand;
 }
 /**
