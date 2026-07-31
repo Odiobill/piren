@@ -62,3 +62,69 @@ describe("PiRpcClient session resume and abort commands", () => {
     }
   });
 });
+
+function fakePiTargetWithEnv(extra: Record<string, string>): RpcSpawnTarget {
+  return {
+    command: process.execPath,
+    args: [fakePiScript],
+    cwd: process.cwd(),
+    env: { ...process.env, ...extra },
+  };
+}
+
+describe("PiRpcClient native session controls (T2a)", () => {
+  it("newSession sends new_session and resolves cancelled=false on success", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    try {
+      await client.start();
+      const result = await client.newSession();
+      expect(result).toEqual({ cancelled: false });
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("newSession exposes Pi's documented cancelled result", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_NEW_SESSION_CANCEL: "1" }));
+    try {
+      await client.start();
+      const result = await client.newSession();
+      expect(result).toEqual({ cancelled: true });
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("newSession rejects a failed RPC response", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_NEW_SESSION_FAIL: "1" }));
+    try {
+      await client.start();
+      await expect(client.newSession()).rejects.toThrow("new_session rejected by fake");
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("compact returns a minimal token contract without summary/transcript data", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    try {
+      await client.start();
+      const result = await client.compact();
+      expect(result).toEqual({ tokensBefore: 150000, estimatedTokensAfter: 32000 });
+      // Raw summary/transcript data is never surfaced to transport callers.
+      expect("summary" in result).toBe(false);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("compact rejects a failed RPC response", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_COMPACT_FAIL: "1" }));
+    try {
+      await client.start();
+      await expect(client.compact()).rejects.toThrow("compact rejected by fake");
+    } finally {
+      await client.stop();
+    }
+  });
+});

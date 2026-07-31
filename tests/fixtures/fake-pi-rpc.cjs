@@ -132,6 +132,28 @@ function handle(cmd) {
     emit({ type: "response", command: "switch_session", success: true, id: cmd.id, data: { cancelled } });
     return;
   }
+  if (cmd.type === "new_session") {
+    if (process.env.FAKE_PI_NEW_SESSION_FAIL === "1") {
+      emit({ type: "response", command: "new_session", success: false, id: cmd.id, error: "new_session rejected by fake" });
+      return;
+    }
+    emit({ type: "response", command: "new_session", success: true, id: cmd.id, data: { cancelled: process.env.FAKE_PI_NEW_SESSION_CANCEL === "1" } });
+    return;
+  }
+  if (cmd.type === "compact") {
+    if (process.env.FAKE_PI_COMPACT_FAIL === "1") {
+      emit({ type: "response", command: "compact", success: false, id: cmd.id, error: "compact rejected by fake" });
+      return;
+    }
+    emit({
+      type: "response",
+      command: "compact",
+      success: true,
+      id: cmd.id,
+      data: { summary: "fake summary", firstKeptEntryId: "entry-1", tokensBefore: 150000, estimatedTokensAfter: 32000 },
+    });
+    return;
+  }
   emit({ type: "response", command: String(cmd.type), success: true, id: cmd.id });
 }
 

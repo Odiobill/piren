@@ -108,6 +108,26 @@ export interface RpcSessionSwitch {
   cancelled: boolean;
 }
 
+/**
+ * Response to `new_session`. `cancelled` is true when a Pi extension
+ * (`session_before_switch`) declined the fresh session. No session paths or
+ * transcript data are exposed; parent-session tracking is not supported.
+ */
+export interface RpcNewSession {
+  cancelled: boolean;
+}
+
+/**
+ * Minimal result of a manual `compact`. Deliberately excludes Pi's raw
+ * summary, kept-entry ids, and usage details: transport callers only need a
+ * concise acknowledgement, never transcript content. Token figures are null
+ * when Pi omits them (for example with custom compaction handlers).
+ */
+export interface RpcCompaction {
+  tokensBefore: number | null;
+  estimatedTokensAfter: number | null;
+}
+
 type RpcEventListener = (event: RpcEvent) => void;
 
 interface PendingRequest {
@@ -422,6 +442,39 @@ export class PiRpcClient {
     }
     const data = response.data as { cancelled?: unknown } | undefined;
     return { cancelled: data?.cancelled === true };
+  }
+
+  /**
+   * Start a fresh Pi session in this same RPC process, keeping the active
+   * Piren agent and transport conversation. Returns whether a Pi extension
+   * cancelled the switch. This is Pi's native control: no process restart,
+   * no model prompt, and no parent-session tracking.
+   */
+  async newSession(): Promise<RpcNewSession> {
+    const response = await this.send({ type: "new_session" });
+    if (!response.success) {
+      throw new Error(response.error || "new_session failed");
+    }
+    const data = response.data as { cancelled?: unknown } | undefined;
+    return { cancelled: data?.cancelled === true };
+  }
+
+  /**
+   * Request Pi's native manual compaction of the current session. This does
+   * not synthesize a model prompt and does not change automatic-compaction
+   * policy. The returned contract is minimal on purpose: raw summary and
+   * transcript data stay inside Pi.
+   */
+  async compact(): Promise<RpcCompaction> {
+    const response = await this.send({ type: "compact" });
+    if (!response.success) {
+      throw new Error(response.error || "compact failed");
+    }
+    const data = response.data as { tokensBefore?: unknown; estimatedTokensAfter?: unknown } | undefined;
+    return {
+      tokensBefore: typeof data?.tokensBefore === "number" ? data.tokensBefore : null,
+      estimatedTokensAfter: typeof data?.estimatedTokensAfter === "number" ? data.estimatedTokensAfter : null,
+    };
   }
 
   /**

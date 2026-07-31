@@ -8,6 +8,8 @@ class FakeDiscordClient {
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
   async abort(): Promise<void> {}
+  async newSession(): Promise<{ cancelled: boolean }> { return { cancelled: false }; }
+  async compact(): Promise<{ tokensBefore: number | null; estimatedTokensAfter: number | null }> { return { tokensBefore: null, estimatedTokensAfter: null }; }
   async promptAndWait(message: string): Promise<RpcEvent[]> {
     this.prompts.push(message);
     return [

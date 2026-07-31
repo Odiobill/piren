@@ -8,6 +8,8 @@ class FakeTelegramClient {
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
   async abort(): Promise<void> { this.aborts++; }
+  async newSession(): Promise<{ cancelled: boolean }> { return { cancelled: false }; }
+  async compact(): Promise<{ tokensBefore: number | null; estimatedTokensAfter: number | null }> { return { tokensBefore: null, estimatedTokensAfter: null }; }
   async promptAndWait(message: string): Promise<RpcEvent[]> {
     this.prompts.push(message);
     return [
@@ -92,6 +94,8 @@ describe("TelegramTransport", () => {
       async start(): Promise<void> {}
       async stop(): Promise<void> {}
       async abort(): Promise<void> {}
+      async newSession(): Promise<{ cancelled: boolean }> { return { cancelled: false }; }
+      async compact(): Promise<{ tokensBefore: number | null; estimatedTokensAfter: number | null }> { return { tokensBefore: null, estimatedTokensAfter: null }; }
       async promptAndWait(_message: string): Promise<RpcEvent[]> {
         return [
           { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: longText.trim() } },

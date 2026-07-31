@@ -99,6 +99,24 @@ export interface RpcMessages {
 export interface RpcSessionSwitch {
     cancelled: boolean;
 }
+/**
+ * Response to `new_session`. `cancelled` is true when a Pi extension
+ * (`session_before_switch`) declined the fresh session. No session paths or
+ * transcript data are exposed; parent-session tracking is not supported.
+ */
+export interface RpcNewSession {
+    cancelled: boolean;
+}
+/**
+ * Minimal result of a manual `compact`. Deliberately excludes Pi's raw
+ * summary, kept-entry ids, and usage details: transport callers only need a
+ * concise acknowledgement, never transcript content. Token figures are null
+ * when Pi omits them (for example with custom compaction handlers).
+ */
+export interface RpcCompaction {
+    tokensBefore: number | null;
+    estimatedTokensAfter: number | null;
+}
 type RpcEventListener = (event: RpcEvent) => void;
 /**
  * Concatenate assistant text deltas from a stream of RPC events.
@@ -219,6 +237,20 @@ export declare class PiRpcClient {
      * session.
      */
     switchSession(sessionPath: string): Promise<RpcSessionSwitch>;
+    /**
+     * Start a fresh Pi session in this same RPC process, keeping the active
+     * Piren agent and transport conversation. Returns whether a Pi extension
+     * cancelled the switch. This is Pi's native control: no process restart,
+     * no model prompt, and no parent-session tracking.
+     */
+    newSession(): Promise<RpcNewSession>;
+    /**
+     * Request Pi's native manual compaction of the current session. This does
+     * not synthesize a model prompt and does not change automatic-compaction
+     * policy. The returned contract is minimal on purpose: raw summary and
+     * transcript data stay inside Pi.
+     */
+    compact(): Promise<RpcCompaction>;
     /**
      * Send a prompt and wait for the turn to finish, returning every event
      * streamed until `agent_end`. The prompt is async: the client subscribes for

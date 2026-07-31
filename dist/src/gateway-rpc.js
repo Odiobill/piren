@@ -287,6 +287,37 @@ export class PiRpcClient {
         return { cancelled: data?.cancelled === true };
     }
     /**
+     * Start a fresh Pi session in this same RPC process, keeping the active
+     * Piren agent and transport conversation. Returns whether a Pi extension
+     * cancelled the switch. This is Pi's native control: no process restart,
+     * no model prompt, and no parent-session tracking.
+     */
+    async newSession() {
+        const response = await this.send({ type: "new_session" });
+        if (!response.success) {
+            throw new Error(response.error || "new_session failed");
+        }
+        const data = response.data;
+        return { cancelled: data?.cancelled === true };
+    }
+    /**
+     * Request Pi's native manual compaction of the current session. This does
+     * not synthesize a model prompt and does not change automatic-compaction
+     * policy. The returned contract is minimal on purpose: raw summary and
+     * transcript data stay inside Pi.
+     */
+    async compact() {
+        const response = await this.send({ type: "compact" });
+        if (!response.success) {
+            throw new Error(response.error || "compact failed");
+        }
+        const data = response.data;
+        return {
+            tokensBefore: typeof data?.tokensBefore === "number" ? data.tokensBefore : null,
+            estimatedTokensAfter: typeof data?.estimatedTokensAfter === "number" ? data.estimatedTokensAfter : null,
+        };
+    }
+    /**
      * Send a prompt and wait for the turn to finish, returning every event
      * streamed until `agent_end`. The prompt is async: the client subscribes for
      * events before sending so the first streaming events are never missed, and

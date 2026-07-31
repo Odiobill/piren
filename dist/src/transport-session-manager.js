@@ -90,6 +90,33 @@ export class TransportSessionManager {
     getActiveAgent(transport, conversationId) {
         return this.sessions.get(sessionKey(transport, conversationId))?.agent ?? null;
     }
+    /**
+     * Start a fresh Pi session for an existing conversation through Pi's
+     * native `new_session` control. Never creates a client when none is
+     * active; the active agent and RPC client identity are preserved (no
+     * process restart or swap). RPC errors reject.
+     */
+    async newSession(transport, conversationId) {
+        const session = this.sessions.get(sessionKey(transport, conversationId));
+        if (!session)
+            return { status: "no-active-session" };
+        const result = await session.client.newSession();
+        session.lastUsedAt = this.now();
+        return result.cancelled ? { status: "cancelled" } : { status: "completed" };
+    }
+    /**
+     * Manually compact an existing conversation's Pi session through Pi's
+     * native `compact` control. Never creates a client when none is active and
+     * does not change automatic-compaction policy. RPC errors reject.
+     */
+    async compact(transport, conversationId) {
+        const session = this.sessions.get(sessionKey(transport, conversationId));
+        if (!session)
+            return { status: "no-active-session" };
+        const result = await session.client.compact();
+        session.lastUsedAt = this.now();
+        return { status: "completed", tokensBefore: result.tokensBefore, estimatedTokensAfter: result.estimatedTokensAfter };
+    }
     async closeIdleSessions(maxIdleMs) {
         const cutoff = this.now() - maxIdleMs;
         let closed = 0;
