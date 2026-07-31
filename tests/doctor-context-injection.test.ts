@@ -127,3 +127,42 @@ describe("piren doctor context-injection wiring", () => {
     expect(report.checks.find((check) => check.id === "context-injection:thor")).toBeUndefined();
   });
 });
+
+describe("E2-S2 context-injection exact guidance wiring", () => {
+  const EXPECTED_MESSAGE =
+    "Unknown context_injection.mode 'session_start' in agent config (expected per_turn | session_start_only); falling back to per_turn. " +
+    "Authority: a valid context_injection.mode is not inferred from a malformed declaration; the documented default applies. " +
+    "Next: inspect context_injection.mode in team/<agent>/config.yml.";
+
+  it("selected-agent flow carries the exact Authority + single Next guidance", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    await writeFile(join(root, "team", "thor", "config.yml"), "context_injection:\n  mode: session_start\n");
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + root + "\nallowed_agents:\n  - thor\n");
+
+    const report = await doctorPiren({ cliAgent: "thor", env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    const matches = report.checks.filter((check) => check.id === "context-injection");
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toEqual({ id: "context-injection", status: "warn", message: EXPECTED_MESSAGE });
+  });
+
+  it("all-agent flow carries the exact Authority + single Next guidance under context-injection:<agent>", async () => {
+    await initVault({ vaultRoot: root, agentName: "thor" });
+    await initVault({ vaultRoot: root, agentName: "heimdall", force: true });
+    await writeFile(join(root, "team", "thor", "config.yml"), "context_injection:\n  mode: session_start\n");
+    await writeFile(join(root, "team", "heimdall", "config.yml"), "context_injection:\n  mode: session_start_only\n");
+    const configPath = join(root, "config.yml");
+    await writeFile(configPath, "vault_root: " + root + "\nallowed_agents:\n  - thor\n  - heimdall\n");
+
+    const report = await doctorPiren({ env: {}, configPath, piRuntimeChecker: localPiRuntime });
+
+    const matches = report.checks.filter((check) => check.id === "context-injection:thor");
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toEqual({ id: "context-injection:thor", status: "warn", message: EXPECTED_MESSAGE });
+    // The healthy agent reports ok under its own id, not warn.
+    expect(report.checks).toEqual(expect.arrayContaining([
+      { id: "context-injection:heimdall", status: "ok", message: "context_injection.mode: session_start_only." },
+    ]));
+  });
+});

@@ -140,24 +140,38 @@ describe("E2-S2 alert-mirror WARN guidance", () => {
     expect(message).not.toContain("Configure");
   });
 
-  it("telegram destination missing its bot token, without the destination ID", () => {
+  it("telegram destination missing its bot token targets telegram.bot_token, without the destination ID", () => {
     const message = expectMessage(
       checkAlertMirrorConfig({ alert_mirror: { enabled: true, telegram: { chat_id: 424242 } } }),
       "alert_mirror is enabled but has no usable mirror destination. " +
         "alert_mirror: telegram destination configured but telegram.bot_token is missing; destination skipped. " +
-        `${MIRROR_AUTHORITY} Next: inspect alert_mirror.telegram.chat_id in ~/.config/piren/config.yml.`,
+        `${MIRROR_AUTHORITY} Next: inspect telegram.bot_token in ~/.config/piren/config.yml.`,
     );
     expect(message).not.toContain("424242");
   });
 
-  it("usable telegram with skipped discord, without secrets or IDs", () => {
+  it("both destinations missing tokens targets telegram.bot_token deterministically (telegram-first)", () => {
+    const message = expectMessage(
+      checkAlertMirrorConfig({
+        alert_mirror: { enabled: true, telegram: { chat_id: 424242 }, discord: { channel_id: "dc-dest-1" } },
+      }),
+      "alert_mirror is enabled but has no usable mirror destination. " +
+        "alert_mirror: telegram destination configured but telegram.bot_token is missing; destination skipped " +
+        "alert_mirror: discord destination configured but discord.bot_token is missing; destination skipped. " +
+        `${MIRROR_AUTHORITY} Next: inspect telegram.bot_token in ~/.config/piren/config.yml.`,
+    );
+    expect(message).not.toContain("424242");
+    expect(message).not.toContain("dc-dest-1");
+  });
+
+  it("usable telegram with skipped discord targets discord.bot_token, without secrets or IDs", () => {
     const message = expectMessage(
       checkAlertMirrorConfig({
         alert_mirror: { enabled: true, telegram: { chat_id: 1 }, discord: { channel_id: "dc-dest-1" } },
         telegram: { bot_token: "tg-secret-token" },
       }),
       "alert_mirror: discord destination configured but discord.bot_token is missing; destination skipped. " +
-        `${MIRROR_AUTHORITY} Next: inspect alert_mirror.discord.channel_id in ~/.config/piren/config.yml.`,
+        `${MIRROR_AUTHORITY} Next: inspect discord.bot_token in ~/.config/piren/config.yml.`,
     );
     expect(message).not.toContain("dc-dest-1");
     expect(message).not.toContain("tg-secret-token");

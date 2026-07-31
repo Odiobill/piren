@@ -23,11 +23,6 @@ const AUTHORITY_SERVICES = "service supervision is machine-local and doctor is r
 const AUTHORITY_CONTEXT_INJECTION = "a valid context_injection.mode is not inferred from a malformed declaration; the documented default applies.";
 const LOCAL_CONFIG_PATH = "~/.config/piren/config.yml";
 /**
- * Compose a WARN message as `<condition> Authority: <boundary> Next: <one
- * inspection action>.` The next step is exactly one inspection action (a named
- * key/block in a named local config path); never a mutation or second action.
- */
-/**
  * Compose a WARN message as `<condition>. Authority: <boundary> Next: <one
  * inspection action>.` The next step is exactly one inspection action (a named
  * key/block in a named local config path); never a mutation or second action.
@@ -192,17 +187,21 @@ export function checkContextInjectionConfig(config, id = "context-injection") {
  */
 /**
  * Deterministic next-inspect target for an alert-mirror WARN (ADR-0039 E2-S2):
- * the specific alert_mirror key when determinable, otherwise the whole block.
- * Names keys only; never a destination ID, token, or Configure instruction.
+ * the reported cause's key. An invalid severity points at
+ * `alert_mirror.min_severity`; a configured destination that failed to resolve
+ * is missing its matching bot token, so the target is `telegram.bot_token` or
+ * `discord.bot_token` (Telegram-first when both are missing); with no
+ * configured destination the target is the whole `alert_mirror` block. Names
+ * keys only; never a destination ID, token value, or Configure instruction.
  */
 function alertMirrorNextTarget(block, resolved) {
     if (!resolved.enabled)
         return "alert_mirror.min_severity";
     if (block.telegram?.chat_id !== undefined && !resolved.destinations.some((d) => d.kind === "telegram")) {
-        return "alert_mirror.telegram.chat_id";
+        return "telegram.bot_token";
     }
     if (block.discord?.channel_id !== undefined && !resolved.destinations.some((d) => d.kind === "discord")) {
-        return "alert_mirror.discord.channel_id";
+        return "discord.bot_token";
     }
     return "the alert_mirror block";
 }
