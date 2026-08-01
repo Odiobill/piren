@@ -26,6 +26,14 @@ export interface DiscordMessage {
 }
 /** Discord channel type for a one-to-one direct message. Group DMs are type 3. */
 export declare const DISCORD_CHANNEL_TYPE_DM = 1;
+/**
+ * Gateway intent mask declared at Identify: GUILDS (1 << 0) |
+ * GUILD_MESSAGES (1 << 9) | DIRECT_MESSAGES (1 << 12) |
+ * MESSAGE_CONTENT (1 << 15) = 37377. DIRECT_MESSAGES is required for the
+ * gateway to dispatch the DM MESSAGE_CREATE events ADR-0040 D1 authorizes;
+ * it is not a privileged intent and needs no Developer Portal toggle.
+ */
+export declare const DISCORD_GATEWAY_INTENTS = 37377;
 /** Channel metadata used only for fail-closed DM authorization (ADR-0040 D1). */
 export interface DiscordChannelMetadata {
     id?: string;

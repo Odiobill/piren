@@ -10,7 +10,7 @@ import { buildAgentConfigYaml, readPiDefaultModel, runWizard } from "./wizard.js
 import { ReadlinePrompt } from "./prompt.js";
 import { GatewayServer } from "./gateway-http.js";
 import { TelegramBotApiHttpClient, TelegramTransport, runTelegramPolling } from "./telegram-transport.js";
-import { DiscordBotApiHttpClient, DiscordTransport, runDiscordGateway, createNativeDiscordGatewaySocket } from "./discord-transport.js";
+import { DiscordBotApiHttpClient, DiscordTransport, runDiscordGateway, createNativeDiscordGatewaySocket, DISCORD_GATEWAY_INTENTS } from "./discord-transport.js";
 import { runTransportConfigure } from "./transport-configure.js";
 import { PiRpcClient } from "./gateway-rpc.js";
 import { askAgent } from "./ask.js";
@@ -264,14 +264,13 @@ try {
             feedback: discordConfig?.feedback,
         });
         const gatewayUrl = "https://gateway.discord.gg/?v=10&encoding=json";
-        // Intents: GUILDS (1) | GUILD_MESSAGES (512) | MESSAGE_CONTENT (32768) = 33281
-        const DISCORD_INTENTS = 33281;
+        // GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT (D1: DM dispatch).
         const dmScope = allowedDmUserIds.length > 0 ? ` and ${allowedDmUserIds.length} allowlisted DM user(s)` : "";
         console.log(`Piren Discord transport running for ${allowedChannelIds.length} allowlisted channel(s)${dmScope}.`);
         const gateway = runDiscordGateway({
             botToken: botToken.trim(),
             applicationId: discordConfig?.application_id ?? "",
-            intents: DISCORD_INTENTS,
+            intents: DISCORD_GATEWAY_INTENTS,
             transport,
             socketFactory: () => createNativeDiscordGatewaySocket(gatewayUrl),
             onReady: () => console.log("Discord gateway ready."),

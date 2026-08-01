@@ -206,3 +206,39 @@ describe("runDiscordGateway", () => {
     expect(replies).toEqual(["pong"]);
   });
 });
+
+describe("Discord gateway intents (D1 review fix)", () => {
+  it("declares DIRECT_MESSAGES alongside the existing guild intents", async () => {
+    const { DISCORD_GATEWAY_INTENTS } = await import("../src/discord-transport.js");
+    const GUILDS = 1 << 0;
+    const GUILD_MESSAGES = 1 << 9;
+    const DIRECT_MESSAGES = 1 << 12;
+    const MESSAGE_CONTENT = 1 << 15;
+    expect(DISCORD_GATEWAY_INTENTS & GUILDS).toBe(GUILDS);
+    expect(DISCORD_GATEWAY_INTENTS & GUILD_MESSAGES).toBe(GUILD_MESSAGES);
+    expect(DISCORD_GATEWAY_INTENTS & DIRECT_MESSAGES).toBe(DIRECT_MESSAGES);
+    expect(DISCORD_GATEWAY_INTENTS & MESSAGE_CONTENT).toBe(MESSAGE_CONTENT);
+    expect(DISCORD_GATEWAY_INTENTS).toBe(37377);
+  });
+
+  it("sends the full intent mask in the Identify payload", async () => {
+    const { DISCORD_GATEWAY_INTENTS } = await import("../src/discord-transport.js");
+    const { transport } = buildTransport();
+    const socket = new FakeGatewaySocket();
+    const gateway = runDiscordGateway({
+      botToken: "TOK",
+      applicationId: "1",
+      intents: DISCORD_GATEWAY_INTENTS,
+      transport,
+      socketFactory: () => Promise.resolve(socket),
+      heartbeatIntervalMs: 60_000,
+    });
+    await Promise.resolve();
+    socket.triggerOpen();
+    socket.emit(opPayload(10, { d: { heartbeat_interval: 60_000 } }));
+    await gateway.identified();
+    await gateway.close();
+    const identify = socket.sent.map((raw) => JSON.parse(raw) as { op: number; d?: { intents?: number } }).find((p) => p.op === 2);
+    expect(identify?.d?.intents).toBe(37377);
+  });
+});
