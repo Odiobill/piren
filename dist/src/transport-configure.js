@@ -22,7 +22,7 @@
  * WizardPrompt and TransportConfigureIo so tests drive it with fakes. The
  * production fs adapter performs an atomic temp-file + rename write.
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -174,20 +174,50 @@ export function renderRedactedPreview(kind, mergedBlock) {
     const redactedBlock = { ...mergedBlock, bot_token: redactSecret(token) };
     return stringifyYaml({ [kind]: redactedBlock }).trim();
 }
+/** Owner-only mode for the local config file, which contains bot tokens. */
+export const LOCAL_CONFIG_FILE_MODE = 0o600;
+/**
+ * Resolve the mode a replacement config file must carry. Existing owner-only
+ * (or stricter) modes — no group/other bits, no owner execute — are
+ * preserved; anything weaker becomes 0600.
+ */
+export function resolveLocalConfigFileMode(existingMode) {
+    if (existingMode !== undefined) {
+        const bits = existingMode & 0o777;
+        const noGroupOrOther = (bits & 0o077) === 0;
+        const noOwnerExecute = (bits & 0o100) === 0;
+        if (noGroupOrOther && noOwnerExecute)
+            return bits;
+    }
+    return LOCAL_CONFIG_FILE_MODE;
+}
 export function createNodeTransportConfigureIo() {
     return {
         async readConfig(path) {
             try {
                 return await readFile(path, "utf8");
             }
-            catch {
-                return null;
+            catch (error) {
+                if (error.code === "ENOENT")
+                    return null;
+                throw error;
             }
         },
         async writeConfigAtomic(path, content) {
             await mkdir(dirname(path), { recursive: true });
+            let existingMode;
+            try {
+                existingMode = (await stat(path)).mode;
+            }
+            catch {
+                existingMode = undefined;
+            }
+            const mode = resolveLocalConfigFileMode(existingMode);
             const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-            await writeFile(tmp, content, "utf8");
+            await writeFile(tmp, content, { encoding: "utf8", mode: LOCAL_CONFIG_FILE_MODE });
+            // writeFile's mode applies only at creation and is umask-masked; chmod
+            // pins the exact target mode before the rename lands it on the config.
+            await chmod(tmp, mode);
             await rename(tmp, path);
         },
     };

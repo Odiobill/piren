@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { mkdtemp, mkdir, rm, stat, writeFile, chmod } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   redactSecret,
   parseTelegramChatIds,
@@ -8,6 +11,7 @@ import {
   mergeTransportIntoConfig,
   renderRedactedPreview,
   runTransportConfigure,
+  createNodeTransportConfigureIo,
   type TransportConfigureIo,
 } from "../src/transport-configure.js";
 import type { WizardPrompt } from "../src/prompt.js";
@@ -659,5 +663,94 @@ describe("runTransportConfigure: discord", () => {
     expect(allMessages).not.toContain("dm");
     expect(allMessages).not.toContain("direct message");
     expect(allMessages).not.toContain("user id");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Read-error handling (runner must fail closed on non-ENOENT read failures)
+// ---------------------------------------------------------------------------
+
+describe("runTransportConfigure: read failures", () => {
+  it("fails before prompting or writing when readConfig rejects with a non-ENOENT error", async () => {
+    const { prompt, calls } = fakePrompt({});
+    const writes: Array<{ path: string; content: string }> = [];
+    const io: TransportConfigureIo = {
+      async readConfig() {
+        const error = new Error("Permission denied") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      },
+      async writeConfigAtomic(path: string, content: string) {
+        writes.push({ path, content });
+      },
+    };
+
+    await expect(
+      runTransportConfigure(prompt, "telegram", {
+        configPath: "/cfg",
+        runnableAgents: RUNNABLE,
+        io,
+        log: () => {},
+      }),
+    ).rejects.toThrow(/permission denied/i);
+    expect(calls.secret).toHaveLength(0);
+    expect(calls.text).toHaveLength(0);
+    expect(calls.confirm).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Production IO adapter (real fs): file-mode protection + read semantics
+// ---------------------------------------------------------------------------
+
+describe("createNodeTransportConfigureIo (real fs)", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-transport-configure-io-"));
+  });
+
+  afterEach(async () => rm(root, { recursive: true, force: true }));
+
+  it("returns null only when the config is absent (ENOENT)", async () => {
+    const io = createNodeTransportConfigureIo();
+    await expect(io.readConfig(join(root, "missing.yml"))).resolves.toBeNull();
+  });
+
+  it("propagates non-ENOENT read errors", async () => {
+    const io = createNodeTransportConfigureIo();
+    // A directory at the config path makes readFile fail with EISDIR.
+    const dirPath = join(root, "config.yml");
+    await mkdir(dirPath);
+    await expect(io.readConfig(dirPath)).rejects.toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")("creates the config owner-only (0600) on POSIX", async () => {
+    const io = createNodeTransportConfigureIo();
+    const path = join(root, "sub", "config.yml");
+    await io.writeConfigAtomic(path, "vault_root: /v\n");
+    const mode = (await stat(path)).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === "win32")("strengthens a weaker existing config mode to 0600", async () => {
+    const io = createNodeTransportConfigureIo();
+    const path = join(root, "config.yml");
+    await writeFile(path, "old: true\n", { mode: 0o644 });
+    await chmod(path, 0o644);
+    await io.writeConfigAtomic(path, "new: true\n");
+    const mode = (await stat(path)).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === "win32")("never weakens an existing owner-only config mode", async () => {
+    const io = createNodeTransportConfigureIo();
+    const path = join(root, "config.yml");
+    await writeFile(path, "old: true\n", { mode: 0o400 });
+    await chmod(path, 0o400);
+    await io.writeConfigAtomic(path, "new: true\n");
+    const mode = (await stat(path)).mode & 0o777;
+    expect(mode).toBe(0o400);
   });
 });

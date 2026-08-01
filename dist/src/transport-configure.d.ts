@@ -114,11 +114,28 @@ export declare function mergeTransportIntoConfig(existingYaml: string, kind: Con
  */
 export declare function renderRedactedPreview(kind: ConfigureTransportKind, mergedBlock: Record<string, unknown>): string;
 export interface TransportConfigureIo {
-    /** Returns the config file content, or null when the file is missing/unreadable. */
+    /**
+     * Returns the config file content, or null ONLY when the file is absent
+     * (ENOENT). Any other read failure (permissions, EISDIR, I/O) propagates
+     * so the configure flow fails closed before prompting or writing.
+     */
     readConfig(path: string): Promise<string | null>;
-    /** Atomically replace the config file (temp file + rename). */
+    /**
+     * Atomically replace the config file (temp file + rename). The file holds
+     * bot tokens, so the replacement is always owner-only: a fresh file is
+     * created 0600, a weaker existing mode is strengthened to 0600, and an
+     * existing owner-only (or stricter) mode is preserved.
+     */
     writeConfigAtomic(path: string, content: string): Promise<void>;
 }
+/** Owner-only mode for the local config file, which contains bot tokens. */
+export declare const LOCAL_CONFIG_FILE_MODE = 384;
+/**
+ * Resolve the mode a replacement config file must carry. Existing owner-only
+ * (or stricter) modes — no group/other bits, no owner execute — are
+ * preserved; anything weaker becomes 0600.
+ */
+export declare function resolveLocalConfigFileMode(existingMode: number | undefined): number;
 export declare function createNodeTransportConfigureIo(): TransportConfigureIo;
 export interface TransportConfigureDeps {
     configPath?: string;
