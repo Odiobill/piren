@@ -11,6 +11,7 @@ import { ReadlinePrompt } from "./prompt.js";
 import { GatewayServer } from "./gateway-http.js";
 import { TelegramBotApiHttpClient, TelegramTransport, runTelegramPolling } from "./telegram-transport.js";
 import { DiscordBotApiHttpClient, DiscordTransport, runDiscordGateway, createNativeDiscordGatewaySocket } from "./discord-transport.js";
+import { runTransportConfigure, type ConfigureTransportKind } from "./transport-configure.js";
 import { PiRpcClient } from "./gateway-rpc.js";
 import { askAgent } from "./ask.js";
 import { cleanPiren, formatCleanReport } from "./clean.js";
@@ -157,6 +158,25 @@ function resolvePublicDir(): string {
   return join(thisDir, "..", "public");
 }
 
+// Guided local transport onboarding (ADR-0040). Resolves the local runnable
+// agent set, then drives the interactive configure flow with the real
+// readline prompt. Never launches a daemon, installs a service, or contacts
+// a platform. Explicit exit at the end: the readline interface can keep the
+// event loop alive (same unsettled-top-level-await concern as the wizard).
+async function runTransportConfigureCommand(kind: ConfigureTransportKind): Promise<never> {
+  const agentsReport = await listPirenAgents(bootstrapOptions(parsed));
+  const prompter = new ReadlinePrompt();
+  try {
+    await runTransportConfigure(prompter, kind, {
+      runnableAgents: agentsReport.runnableAgents,
+      log: (m) => console.log(m),
+    });
+  } finally {
+    prompter.close();
+  }
+  process.exit(0);
+}
+
 const argv = process.argv.slice(2);
 const parsed = parseArgs(argv);
 const { agentDir, agentName, command, force, yes, vaultRoot, piArgs, port, host, token, positionals } = parsed;
@@ -260,6 +280,12 @@ try {
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
   } else if (command === "telegram") {
+    if (positionals[0] === "configure") {
+      await runTransportConfigureCommand("telegram");
+    } else if (positionals[0] !== undefined) {
+      console.error("Usage: piren telegram [configure]");
+      process.exit(2);
+    }
     const opts = bootstrapOptions(parsed);
     const context = await loadPirenContext(opts);
     const agentsReport = await listPirenAgents(opts);
@@ -304,6 +330,12 @@ try {
       onError: (error) => console.error(error.message),
     });
   } else if (command === "discord") {
+    if (positionals[0] === "configure") {
+      await runTransportConfigureCommand("discord");
+    } else if (positionals[0] !== undefined) {
+      console.error("Usage: piren discord [configure]");
+      process.exit(2);
+    }
     const opts = bootstrapOptions(parsed);
     const context = await loadPirenContext(opts);
     const agentsReport = await listPirenAgents(opts);

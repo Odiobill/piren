@@ -214,8 +214,8 @@ Implemented CLI:
 - `piren chat` (alias for run)
 - `piren worker`
 - `piren gateway` (alias `piren web`)
-- `piren telegram`
-- `piren discord`
+- `piren telegram` (`piren telegram configure` runs the guided local onboarding flow: secret token input, explicit chat IDs, feedback preferences with platform-correct reaction defaults, runnable-set default agent, redacted preview + confirmation, atomic local-only write, no daemon/service/platform contact)
+- `piren discord` (`piren discord configure` is the same guided flow with distinct guild/channel/thread ID fields; Discord DMs remain uncollected)
 - `piren ask "message"`
 - `piren scheduler` (opt-in loop: refreshes heartbeats, plans claims, executes at most one claimed item per tick, sleeps until SIGINT/SIGTERM)
 - `piren scheduler --once` (one live tick: refresh, plan, claim, execute at most one item, stop)

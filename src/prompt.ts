@@ -4,6 +4,13 @@
  * Thin, injectable adapter. The wizard runner takes a `WizardPrompt` interface
  * so tests drive it with a fake prompter and the real readline implementation
  * is only used by the CLI.
+ *
+ * Lines are buffered through a persistent `line` listener instead of
+ * sequential `rl.question()` calls: when stdin is piped, a whole script of
+ * answers can arrive in a single chunk, and `rl.question()` would drop every
+ * line after the first (its one-shot listener is only attached while a
+ * question is pending). Buffering keeps interactive TTY behavior identical
+ * while making scripted/non-TTY input work.
  */
 
 import { createInterface, type Interface } from "node:readline/promises";
@@ -24,14 +31,47 @@ export interface WizardPrompt {
 
 export class ReadlinePrompt implements WizardPrompt {
   private rl: Interface;
+  private buffer: string[] = [];
+  private waiters: Array<(line: string) => void> = [];
+  private open = true;
 
   constructor(rl?: Interface) {
     this.rl = rl ?? createInterface({ input, output, terminal: false });
+    this.rl.on("line", (line) => {
+      const waiter = this.waiters.shift();
+      if (waiter) {
+        waiter(line);
+      } else {
+        this.buffer.push(line);
+      }
+    });
+    this.rl.on("close", () => {
+      this.open = false;
+    });
+  }
+
+  /** Write the prompt text and resolve with the next buffered (or future) line. */
+  private nextLine(promptText: string): Promise<string> {
+    // Once stdin ends, readline closes the interface and prompt() would
+    // throw; buffered lines must remain answerable after close.
+    if (this.open) {
+      try {
+        this.rl.setPrompt(promptText);
+        this.rl.prompt();
+      } catch {
+        this.open = false;
+      }
+    }
+    const buffered = this.buffer.shift();
+    if (buffered !== undefined) return Promise.resolve(buffered);
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
   }
 
   async text(message: string, defaultValue?: string): Promise<string> {
     const hint = defaultValue !== undefined && defaultValue !== "" ? ` [${defaultValue}]` : "";
-    const answer = (await this.rl.question(`${message}${hint}: `)).trim();
+    const answer = (await this.nextLine(`${message}${hint}: `)).trim();
     if (answer === "" && defaultValue !== undefined) return defaultValue;
     return answer;
   }
@@ -41,13 +81,13 @@ export class ReadlinePrompt implements WizardPrompt {
     // readline module. For a CLI wizard, echoing the key on the local terminal
     // is acceptable; Pi's own `pi` login also reads from stdin. We do NOT log
     // the key anywhere else.
-    const answer = (await this.rl.question(`${message}: `)).trim();
+    const answer = (await this.nextLine(`${message}: `)).trim();
     return answer;
   }
 
   async confirm(message: string, defaultValue?: boolean): Promise<boolean> {
     const hint = defaultValue === true ? " [Y/n]" : defaultValue === false ? " [y/N]" : " [y/n]";
-    const answer = (await this.rl.question(`${message}${hint}: `)).trim().toLowerCase();
+    const answer = (await this.nextLine(`${message}${hint}: `)).trim().toLowerCase();
     if (answer === "" && defaultValue !== undefined) return defaultValue;
     return answer === "y" || answer === "yes";
   }
@@ -59,19 +99,19 @@ export class ReadlinePrompt implements WizardPrompt {
       lines.push(`${index + 1}. ${option}${marker}`);
     });
     while (true) {
-      const answer = (await this.rl.question(lines.join("\n") + "\nEnter number: ")).trim();
+      const answer = (await this.nextLine(lines.join("\n") + "\nEnter number: ")).trim();
       if (answer === "" && defaultIndex !== undefined) return defaultIndex;
       const num = Number(answer);
       if (Number.isInteger(num) && num >= 1 && num <= options.length) {
         return num - 1;
       }
-      await this.rl.question(`Invalid choice '${answer}'. Press Enter to retry.\n`);
+      await this.nextLine(`Invalid choice '${answer}'. Press Enter to retry.\n`);
     }
   }
 
   async list(message: string, defaults?: string[]): Promise<string[]> {
     const hint = defaults && defaults.length > 0 ? ` [${defaults.join(", ")}]` : "";
-    const answer = (await this.rl.question(`${message}${hint}: `)).trim();
+    const answer = (await this.nextLine(`${message}${hint}: `)).trim();
     if (answer === "" && defaults) return defaults;
     return answer
       .split(",")

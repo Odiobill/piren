@@ -69,11 +69,15 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
   },
   {
     command: "telegram",
-    short: "Start the Telegram transport (requires telegram config block).",
+    short: "Start the Telegram transport, or interactively configure it in local config (configure).",
+    flags: ["configure"],
+    example: "piren telegram configure",
   },
   {
     command: "discord",
-    short: "Start the Discord transport (requires discord config block).",
+    short: "Start the Discord transport, or interactively configure it in local config (configure).",
+    flags: ["configure"],
+    example: "piren discord configure",
   },
   {
     command: "ask",

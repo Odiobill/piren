@@ -157,7 +157,7 @@ Piren loads its core extension first, then each resolved package as an additiona
 
 ## Transport config
 
-Telegram:
+Telegram (`piren telegram configure` authors this block interactively):
 
 ```yaml
 telegram:
@@ -174,7 +174,7 @@ Telegram operator notes:
 - In a forum (topics) group, each topic is an isolated live conversation: replies and typing stay in the originating topic and every command is topic-scoped. This is routing only — it adds no configuration and does not widen authorization beyond the chat id.
 - `/new` starts a fresh Pi session for the current live conversation and keeps its active agent; `/compact` invokes Pi's native manual compaction for it. Neither accepts arguments or custom instructions, neither creates a session when none is active, and there is no transport `/resume`: no conversation-to-session mapping survives a transport-process restart.
 
-Discord:
+Discord (`piren discord configure` authors this block interactively):
 
 ```yaml
 discord:
