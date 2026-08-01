@@ -14,9 +14,11 @@
  * installing/starting a service, or contacting either platform.
  *
  * Unrelated top-level keys and unprompted transport fields (for example
- * discord.application_id / install_url) are preserved on re-runs. Discord DM
- * authorization (allowed_dm_user_ids) is intentionally NOT collected in this
- * slice; it remains accepted deferred ADR-0040 work.
+ * discord.application_id / install_url) are preserved on re-runs. The
+ * Discord flow optionally collects explicit one-to-one DM user IDs
+ * (allowed_dm_user_ids, ADR-0040 D1/D2); blank on a fresh config omits the
+ * key so every DM stays denied, and the scope stays machine-local and
+ * fail-closed.
  *
  * The pure helpers are unit-tested directly; the runner takes an injected
  * WizardPrompt and TransportConfigureIo so tests drive it with fakes. The

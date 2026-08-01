@@ -79,3 +79,12 @@ describe("guided transport configuration docs", () => {
     expect(CONFIGURATION).toContain("piren discord configure");
   });
 });
+
+describe("transport-configure source doc accuracy", () => {
+  it("module documentation does not claim DM config collection is deferred", () => {
+    const SOURCE = read("src/transport-configure.ts");
+    expect(SOURCE).not.toMatch(/NOT collected in this slice/i);
+    expect(SOURCE).not.toMatch(/deferred ADR-0040 work/i);
+    expect(SOURCE).toMatch(/one-to-one DM user/i);
+  });
+});
