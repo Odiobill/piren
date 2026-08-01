@@ -169,3 +169,47 @@ describe("parseInteractionCommand", () => {
     expect(parseInteractionCommand({ type: 2, data: { name: "agent", options: [{ name: "name", type: 3, value: "  " }] } }).ok).toBe(false);
   });
 });
+
+describe("parseInteractionCommand malformed-shape hardening (D3 review fix)", () => {
+  it("never throws on malformed options containers", () => {
+    expect(parseInteractionCommand({ type: 2, data: { name: "agent", options: {} as never } })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: { name: "agent", options: [null] as never } })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: { name: "agent", options: ["name"] as never } })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: { name: "agent", options: [42] as never } })).toEqual({ ok: false });
+  });
+
+  it("never throws on malformed data containers", () => {
+    expect(parseInteractionCommand({ type: 2, data: null as never })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: [] as never })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: "agent" as never })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: { name: 42 as never } })).toEqual({ ok: false });
+  });
+
+  it("requires /agent to carry exactly one option", () => {
+    expect(
+      parseInteractionCommand({
+        type: 2,
+        data: {
+          name: "agent",
+          options: [
+            { name: "name", type: 3, value: "thor" },
+            { name: "extra", type: 3, value: "x" },
+          ],
+        },
+      }),
+    ).toEqual({ ok: false });
+  });
+
+  it("requires the /agent option type to be the Discord STRING constant", () => {
+    expect(parseInteractionCommand({ type: 2, data: { name: "agent", options: [{ name: "name", type: 4, value: "thor" }] } })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: { name: "agent", options: [{ name: "name", value: "thor" }] } })).toEqual({ ok: false });
+  });
+
+  it("rejects nonempty or malformed options on the other four commands", () => {
+    expect(parseInteractionCommand({ type: 2, data: { name: "start", options: [{ name: "x", type: 3, value: "y" }] } })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: { name: "start", options: {} as never } })).toEqual({ ok: false });
+    expect(parseInteractionCommand({ type: 2, data: { name: "whoami", options: [null] as never } })).toEqual({ ok: false });
+    // Absent or empty-array options stay valid.
+    expect(parseInteractionCommand({ type: 2, data: { name: "start", options: [] } })).toEqual({ ok: true, command: "start", arg: undefined });
+  });
+});

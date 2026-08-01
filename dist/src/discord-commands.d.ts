@@ -94,6 +94,8 @@ export interface DiscordInteractionPayload {
     type?: number;
     guild_id?: string;
     channel_id?: string;
+    /** Unknown direct-shape marker: any presence on a non-guild payload fails closed. */
+    thread_id?: unknown;
     data?: {
         name?: string;
         options?: Array<{
@@ -116,7 +118,8 @@ export interface DiscordInteractionPayload {
 /**
  * Translate only the five defined application commands into command
  * semantics. Everything else — wrong interaction type, unknown names,
- * missing data, malformed /agent options — fails closed. Arbitrary
- * interaction data is never treated as a prompt.
+ * missing or malformed data/options containers, malformed /agent options —
+ * fails closed without throwing, no matter how malformed the raw gateway
+ * payload is. Arbitrary interaction data is never treated as a prompt.
  */
 export declare function parseInteractionCommand(interaction: DiscordInteractionPayload): InteractionCommandParse;

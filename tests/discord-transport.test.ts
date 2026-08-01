@@ -780,3 +780,18 @@ describe("DiscordTransport native application commands (ADR-0040 D3)", () => {
     expect(getChannelCalls).toEqual([]);
   });
 });
+
+describe("DiscordTransport interaction shape hardening (D3 review fix)", () => {
+  it("rejects a non-guild interaction carrying any thread_id before identity, lookup, callback, or session", async () => {
+    const { transport, interactionCallbacks, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    const base = { id: "int-1", token: "t", type: 2, channel_id: "555", data: { name: "start" }, user: { id: "user-1" } };
+    await transport.handleInteraction({ ...base, thread_id: "777" });
+    await transport.handleInteraction({ ...base, thread_id: "" });
+    await transport.handleInteraction({ ...base, thread_id: null as never });
+
+    expect(getChannelCalls).toEqual([]);
+    expect(interactionCallbacks).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+});

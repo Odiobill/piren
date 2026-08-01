@@ -451,6 +451,11 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
       if (typeof sender?.id !== "string" || sender.id.trim() === "") return;
       conversation = `${interaction.guild_id}:${interaction.channel_id}`;
     } else {
+      // D1 direct-shape parity: a non-guild interaction carrying ANY
+      // thread_id field (empty, null, or malformed presence included) is an
+      // unknown direct shape, rejected before identity work, metadata
+      // lookup, callback, or session — same guard as the D1 message path.
+      if (interaction.thread_id !== undefined) return;
       // D1 DM path: sender allowlist first (no lookup for unlisted users),
       // then the verified one-to-one DM channel check.
       if (this.allowedDmUserIds.size === 0) return;

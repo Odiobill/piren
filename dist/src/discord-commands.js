@@ -97,25 +97,45 @@ export async function maybeRegisterApplicationCommands(api, applicationId) {
     return registerApplicationCommands(api, applicationId.trim());
 }
 const KNOWN_COMMANDS = ["start", "agents", "agent", "whoami", "abort"];
+function isPlainRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 /**
  * Translate only the five defined application commands into command
  * semantics. Everything else — wrong interaction type, unknown names,
- * missing data, malformed /agent options — fails closed. Arbitrary
- * interaction data is never treated as a prompt.
+ * missing or malformed data/options containers, malformed /agent options —
+ * fails closed without throwing, no matter how malformed the raw gateway
+ * payload is. Arbitrary interaction data is never treated as a prompt.
  */
 export function parseInteractionCommand(interaction) {
     if (interaction.type !== DISCORD_INTERACTION_TYPE_APPLICATION_COMMAND)
         return { ok: false };
-    const name = interaction.data?.name;
-    if (name === undefined || !KNOWN_COMMANDS.includes(name))
+    const data = interaction.data;
+    if (!isPlainRecord(data))
         return { ok: false };
+    const name = data.name;
+    if (typeof name !== "string" || !KNOWN_COMMANDS.includes(name))
+        return { ok: false };
+    const options = data.options;
     if (name === "agent") {
-        const option = interaction.data?.options?.find((entry) => entry.name === "name");
-        const value = option?.value;
-        if (typeof value !== "string" || value.trim() === "")
+        // Exactly one option: named 'name', Discord STRING type, nonblank string
+        // value. Anything else — extra options, wrong type, malformed entries —
+        // fails closed.
+        if (!Array.isArray(options) || options.length !== 1)
             return { ok: false };
-        return { ok: true, command: "agent", arg: value.trim() };
+        const option = options[0];
+        if (!isPlainRecord(option))
+            return { ok: false };
+        if (option.name !== "name" || option.type !== DISCORD_OPTION_TYPE_STRING)
+            return { ok: false };
+        if (typeof option.value !== "string" || option.value.trim() === "")
+            return { ok: false };
+        return { ok: true, command: "agent", arg: option.value.trim() };
     }
+    // The other four commands accept no options; any nonempty or malformed
+    // options container fails closed.
+    if (options !== undefined && (!Array.isArray(options) || options.length > 0))
+        return { ok: false };
     return { ok: true, command: name, arg: undefined };
 }
 //# sourceMappingURL=discord-commands.js.map
