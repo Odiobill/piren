@@ -30,16 +30,23 @@ class FakeDiscordClient {
   }
 }
 
-function buildTransport(options?: { allowedThreadIds?: string[]; feedback?: { enabled?: boolean } }) {
+function buildTransport(options?: {
+  allowedThreadIds?: string[];
+  feedback?: { enabled?: boolean };
+  allowedDmUserIds?: string[];
+  channelLookup?: { type?: number | string } | "throw";
+}) {
   const replies: Array<{ channelId: string; text: string }> = [];
   const clients: FakeDiscordClient[] = [];
   const typing: string[] = [];
   const reactions: Array<{ channelId: string; messageId: string; emoji: string }> = [];
+  const getChannelCalls: string[] = [];
   const transport = new DiscordTransport<FakeDiscordClient>({
     transportName: "discord",
     allowedGuildIds: ["111"],
     allowedChannelIds: ["222"],
     allowedThreadIds: options?.allowedThreadIds,
+    allowedDmUserIds: options?.allowedDmUserIds,
     runnableAgents: ["piren", "thor"],
     defaultAgent: "piren",
     feedback: options?.feedback,
@@ -59,9 +66,16 @@ function buildTransport(options?: { allowedThreadIds?: string[]; feedback?: { en
       async addReaction(channelId, messageId, emoji) {
         reactions.push({ channelId, messageId, emoji });
       },
+      async getChannel(channelId) {
+        getChannelCalls.push(channelId);
+        const lookup = options?.channelLookup ?? { type: 1 };
+        if (lookup === "throw") throw new Error("Discord getChannel failed (HTTP 403)");
+        // Deliberately cast: tests use this to inject malformed metadata.
+        return (lookup.type === undefined ? { id: channelId } : { id: channelId, type: lookup.type }) as { id: string; type?: number };
+      },
     },
   });
-  return { transport, replies, clients, typing, reactions };
+  return { transport, replies, clients, typing, reactions, getChannelCalls };
 }
 
 describe("DiscordTransport", () => {
@@ -224,6 +238,7 @@ describe("DiscordTransport", () => {
       async createMessage(_channelId, text) { replies.push(text); },
       async sendTyping() {},
       async addReaction() {},
+      async getChannel(channelId) { return { id: channelId, type: 1 }; },
     },
     });
 
@@ -271,6 +286,7 @@ describe("DiscordTransport", () => {
         async createMessage(_channelId, text) { replies.push(text); },
         async sendTyping() { throw new Error("typing failed"); },
         async addReaction() { throw new Error("reaction failed"); },
+        async getChannel(channelId) { return { id: channelId, type: 1 }; },
       },
     });
 
@@ -419,5 +435,163 @@ describe("DiscordTransport exact-only session control parsing (T2b review pin)",
     await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/compact focus on code" });
     expect(clients[0]?.newSessionCalls).toBe(0);
     expect(clients[0]?.compactCalls).toBe(0);
+  });
+});
+
+describe("DiscordTransport direct messages (ADR-0040 D1)", () => {
+  it("accepts an allowlisted one-to-one DM and replies on the DM channel", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+
+    expect(getChannelCalls).toEqual(["555"]);
+    expect(replies).toEqual([{ channelId: "555", text: "pong" }]);
+    expect(clients).toHaveLength(1);
+    expect(clients[0]?.prompts).toEqual(["ping"]);
+  });
+
+  it("handles DM commands like /start on the DM channel", async () => {
+    const { transport, replies, clients } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "/start" });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.channelId).toBe("555");
+    expect(replies[0]?.text).toContain("Piren Discord transport ready");
+    expect(clients).toHaveLength(0);
+  });
+
+  it("uses a collision-safe dm: conversation key isolated from the guild conversation with the same channel id", async () => {
+    const { transport, replies } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    // Same numeric channel id (222) as the allowlisted guild channel: the DM
+    // conversation key (dm:222) must not collide with the guild key (111:222).
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/whoami" });
+    await transport.handleMessage({ channel_id: "222", author: { id: "user-1" }, content: "/agent thor" });
+    await transport.handleMessage({ channel_id: "222", author: { id: "user-1" }, content: "/whoami" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/whoami" });
+
+    expect(replies.map((r) => r.text)).toEqual([
+      "Active Piren agent: piren",
+      "Active Piren agent for this channel: thor",
+      "Active Piren agent: thor",
+      "Active Piren agent: piren",
+    ]);
+  });
+
+  it("stays silent for an unlisted DM sender without a channel lookup", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-9" }, content: "ping" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+    expect(getChannelCalls).toEqual([]);
+  });
+
+  it("stays silent when the DM sender id is missing or empty, without a channel lookup", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleMessage({ channel_id: "555", content: "ping" });
+    await transport.handleMessage({ channel_id: "555", author: {}, content: "ping" });
+    await transport.handleMessage({ channel_id: "555", author: { id: "  " }, content: "ping" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+    expect(getChannelCalls).toEqual([]);
+  });
+
+  it("stays silent for DMs when no allowed_dm_user_ids is configured, without a channel lookup", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport();
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+    expect(getChannelCalls).toEqual([]);
+  });
+
+  it("rejects a group DM (channel type 3) after the lookup", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({
+      allowedDmUserIds: ["user-1"],
+      channelLookup: { type: 3 },
+    });
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+
+    expect(getChannelCalls).toEqual(["555"]);
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("rejects unknown or non-DM channel types", async () => {
+    const { transport, replies, clients } = buildTransport({
+      allowedDmUserIds: ["user-1"],
+      channelLookup: { type: 0 },
+    });
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("rejects silently when the channel metadata lookup fails", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({
+      allowedDmUserIds: ["user-1"],
+      channelLookup: "throw",
+    });
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+
+    expect(getChannelCalls).toEqual(["555"]);
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("rejects malformed channel metadata (missing or non-numeric type)", async () => {
+    const missing = buildTransport({ allowedDmUserIds: ["user-1"], channelLookup: {} });
+    await missing.transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+    expect(missing.replies).toEqual([]);
+    expect(missing.clients).toHaveLength(0);
+
+    const stringTyped = buildTransport({ allowedDmUserIds: ["user-1"], channelLookup: { type: "1" } });
+    await stringTyped.transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+    expect(stringTyped.replies).toEqual([]);
+    expect(stringTyped.clients).toHaveLength(0);
+  });
+
+  it("ignores bot-authored messages even from an allowlisted DM user", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-1", bot: true }, content: "ping" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+    expect(getChannelCalls).toEqual([]);
+  });
+
+  it("never triggers the DM channel metadata lookup for guild traffic", async () => {
+    const { transport, replies, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "ping" });
+
+    expect(replies).toEqual([{ channelId: "222", text: "pong" }]);
+    expect(getChannelCalls).toEqual([]);
+  });
+
+  it("an allowlisted DM user id never widens guild, channel, or thread access", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    // Non-allowlisted guild, non-allowlisted channel, and non-allowlisted
+    // thread shapes from the allowlisted DM user must stay silent — and must
+    // never trigger the DM metadata lookup because they carry a guild_id.
+    await transport.handleMessage({ guild_id: "999", channel_id: "222", author: { id: "user-1" }, content: "ping" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "888", author: { id: "user-1" }, content: "ping" });
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", thread_id: "999", author: { id: "user-1" }, content: "ping" });
+
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+    expect(getChannelCalls).toEqual([]);
   });
 });

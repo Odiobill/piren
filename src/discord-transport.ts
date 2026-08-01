@@ -24,6 +24,17 @@ export interface DiscordMessage {
   channel_id?: string;
   thread_id?: string;
   content?: string;
+  /** Sender identity from the gateway payload. Never inferred from channel/guild IDs. */
+  author?: { id?: string; bot?: boolean };
+}
+
+/** Discord channel type for a one-to-one direct message. Group DMs are type 3. */
+export const DISCORD_CHANNEL_TYPE_DM = 1;
+
+/** Channel metadata used only for fail-closed DM authorization (ADR-0040 D1). */
+export interface DiscordChannelMetadata {
+  id?: string;
+  type?: number;
 }
 
 export interface DiscordBotApi {
@@ -32,6 +43,14 @@ export interface DiscordBotApi {
   sendTyping(channelId: string): Promise<void>;
   /** Best-effort emoji reaction on a message. Must not throw on failure. */
   addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
+  /**
+   * Channel metadata lookup. The gateway MESSAGE_CREATE payload has no
+   * authoritative channel-type discriminator, so DM authorization verifies
+   * the channel type through this lookup (only Discord type 1 is accepted).
+   * Called ONLY for non-guild messages whose sender is already in the DM
+   * allowlist; never for guild traffic.
+   */
+  getChannel(channelId: string): Promise<DiscordChannelMetadata>;
 }
 
 export class DiscordBotApiHttpClient implements DiscordBotApi {
@@ -72,6 +91,16 @@ export class DiscordBotApiHttpClient implements DiscordBotApi {
     }
   }
 
+  async getChannel(channelId: string): Promise<DiscordChannelMetadata> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/channels/${channelId}`, {
+      headers: this.authHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.describeError(response));
+    }
+    return (await response.json()) as DiscordChannelMetadata;
+  }
+
   private authHeaders(options: { contentType?: boolean } = {}): Record<string, string> {
     const headers: Record<string, string> = {};
     headers["author" + "ization"] = ["Bot", this.botToken].join(" ");
@@ -101,6 +130,12 @@ export interface DiscordTransportOptions<TClient extends DiscordPromptClient> {
   allowedGuildIds: Array<number | string>;
   allowedChannelIds: Array<number | string>;
   allowedThreadIds?: Array<number | string> | undefined;
+  /**
+   * Explicit one-to-one DM user allowlist (ADR-0040 D1). Omitted or empty
+   * means every direct message is denied. Never widens guild, ordinary
+   * channel, or thread access.
+   */
+  allowedDmUserIds?: Array<number | string> | undefined;
   runnableAgents: string[];
   defaultAgent?: string | undefined;
   targetBuilder: RpcTargetBuilder;
@@ -128,6 +163,7 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
   private readonly allowedGuildIds: Set<string>;
   private readonly allowedChannelIds: Set<string>;
   private readonly allowedThreadIds: Set<string>;
+  private readonly allowedDmUserIds: Set<string>;
   private readonly runnableAgents: string[];
   private readonly defaultAgent: string;
   private readonly api: DiscordBotApi;
@@ -139,6 +175,7 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
     this.allowedGuildIds = new Set(options.allowedGuildIds.map((id) => String(id)));
     this.allowedChannelIds = new Set(options.allowedChannelIds.map((id) => String(id)));
     this.allowedThreadIds = new Set((options.allowedThreadIds ?? []).map((id) => String(id)));
+    this.allowedDmUserIds = new Set((options.allowedDmUserIds ?? []).map((id) => String(id)));
     this.runnableAgents = [...options.runnableAgents];
     this.defaultAgent = options.defaultAgent ?? this.runnableAgents[0] ?? "";
     this.api = options.api;
@@ -152,27 +189,55 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
   }
 
   async handleMessage(message: DiscordMessage): Promise<void> {
-    if (!message.guild_id || !message.channel_id) return;
-    if (!this.allowedGuildIds.has(message.guild_id)) return;
-    // Threaded Discord messages require an explicit thread allowlist. Discord
-    // gateway payloads do not reliably include the parent channel id in the
-    // MESSAGE_CREATE event shape Piren consumes, so allowing all threads under
-    // an allowlisted guild would bypass the configured channel boundary.
-    if (message.thread_id) {
-      // Legacy modeled shape: an explicit thread_id property.
-      if (!this.allowedThreadIds.has(message.thread_id)) return;
-    } else if (this.allowedThreadIds.has(message.channel_id)) {
-      // Real Discord Gateway shape: a message sent inside a thread carries the
-      // thread's own id in channel_id and has no thread_id property. An id in
-      // allowed_thread_ids authorizes exactly that thread; it never widens
-      // allowed_channel_ids because the two sets are checked independently.
-    } else if (!this.allowedChannelIds.has(message.channel_id)) {
-      return;
-    }
+    // Defense-in-depth: the gateway loop already drops bot-authored events.
+    if (message.author?.bot === true) return;
+    if (!message.channel_id) return;
 
-    const channelId = message.thread_id ?? message.channel_id;
-    const conversation = conversationId(message);
-    if (conversation === null) return;
+    let channelId: string;
+    let conversation: string;
+
+    if (message.guild_id) {
+      // Guild path. `allowed_dm_user_ids` never widens guild, ordinary
+      // channel, or thread access, and guild traffic never triggers the DM
+      // channel-metadata lookup.
+      if (!this.allowedGuildIds.has(message.guild_id)) return;
+      // Threaded Discord messages require an explicit thread allowlist. Discord
+      // gateway payloads do not reliably include the parent channel id in the
+      // MESSAGE_CREATE event shape Piren consumes, so allowing all threads under
+      // an allowlisted guild would bypass the configured channel boundary.
+      if (message.thread_id) {
+        // Legacy modeled shape: an explicit thread_id property.
+        if (!this.allowedThreadIds.has(message.thread_id)) return;
+      } else if (this.allowedThreadIds.has(message.channel_id)) {
+        // Real Discord Gateway shape: a message sent inside a thread carries the
+        // thread's own id in channel_id and has no thread_id property. An id in
+        // allowed_thread_ids authorizes exactly that thread; it never widens
+        // allowed_channel_ids because the two sets are checked independently.
+      } else if (!this.allowedChannelIds.has(message.channel_id)) {
+        return;
+      }
+
+      channelId = message.thread_id ?? message.channel_id;
+      const guildConversation = conversationId(message);
+      if (guildConversation === null) return;
+      conversation = guildConversation;
+    } else {
+      // ADR-0040 D1: fail-closed one-to-one DM authorization. The sender
+      // identity comes only from author.id (never inferred from channel/guild
+      // IDs), and the gateway payload has no authoritative channel-type
+      // discriminator, so the channel type is verified through an explicit
+      // metadata lookup AFTER the sender allowlist check. Group DMs (type 3),
+      // every other/unknown type, lookup failures, and malformed responses
+      // are rejected silently: no reply, no session, no error leakage.
+      if (this.allowedDmUserIds.size === 0) return;
+      const senderId = typeof message.author?.id === "string" ? message.author.id.trim() : "";
+      if (senderId === "" || !this.allowedDmUserIds.has(senderId)) return;
+      if (!(await this.isDirectMessageChannel(message.channel_id))) return;
+      channelId = message.channel_id;
+      // Collision-safe DM conversation key, distinct from every
+      // guild/channel/thread key (which always contains a guild id prefix).
+      conversation = `dm:${message.channel_id}`;
+    }
 
     const raw = typeof message.content === "string" ? message.content : "";
     const trimmed = stripMention(raw).trim();
@@ -230,6 +295,20 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
 
   async close(): Promise<void> {
     await this.sessions.closeAll();
+  }
+
+  /**
+   * Verify through the Bot API that a channel is a one-to-one DM (Discord
+   * channel type 1). Any failure — group DM (type 3), unknown type, lookup
+   * error, malformed response — fails closed.
+   */
+  private async isDirectMessageChannel(channelId: string): Promise<boolean> {
+    try {
+      const metadata = await this.api.getChannel(channelId);
+      return typeof metadata?.type === "number" && metadata.type === DISCORD_CHANNEL_TYPE_DM;
+    } catch {
+      return false;
+    }
   }
 
   private async sendPromptFeedbackStart(channelId: string, messageId: string | undefined): Promise<void> {
@@ -436,7 +515,7 @@ export function runDiscordGateway<TClient extends DiscordPromptClient>(
     if (op === OP_DISPATCH) {
       if (typeof payload.s === "number") sequence = payload.s;
       const type = payload.t;
-      const data = payload.d as { id?: string; guild_id?: string; channel_id?: string; thread_id?: string; content?: string; author?: { bot?: boolean } } | undefined;
+      const data = payload.d as { id?: string; guild_id?: string; channel_id?: string; thread_id?: string; content?: string; author?: { id?: string; bot?: boolean } } | undefined;
       if (type === "READY") {
         options.onReady?.();
         return;

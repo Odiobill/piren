@@ -233,10 +233,13 @@ try {
         const allowedGuildIds = discordConfig?.allowed_guild_ids ?? [];
         const allowedChannelIds = discordConfig?.allowed_channel_ids ?? [];
         const allowedThreadIds = discordConfig?.allowed_thread_ids ?? [];
+        const allowedDmUserIds = discordConfig?.allowed_dm_user_ids ?? [];
         if (typeof botToken !== "string" || botToken.trim() === "") {
             throw new Error("Missing discord.bot_token in ~/.config/piren/config.yml");
         }
-        if (allowedGuildIds.length === 0 || allowedChannelIds.length === 0) {
+        // ADR-0040 D1: an explicit DM allowlist is a complete authorization
+        // scope on its own; without one, guild+channel remain required.
+        if ((allowedGuildIds.length === 0 || allowedChannelIds.length === 0) && allowedDmUserIds.length === 0) {
             throw new Error("Missing discord.allowed_guild_ids and/or discord.allowed_channel_ids in ~/.config/piren/config.yml");
         }
         const defaultAgent = discordConfig?.default_agent ?? context.agentName;
@@ -252,6 +255,7 @@ try {
             allowedGuildIds,
             allowedChannelIds,
             allowedThreadIds: allowedThreadIds.length > 0 ? allowedThreadIds : undefined,
+            allowedDmUserIds,
             runnableAgents: agentsReport.runnableAgents,
             defaultAgent,
             targetBuilder,
@@ -262,7 +266,8 @@ try {
         const gatewayUrl = "https://gateway.discord.gg/?v=10&encoding=json";
         // Intents: GUILDS (1) | GUILD_MESSAGES (512) | MESSAGE_CONTENT (32768) = 33281
         const DISCORD_INTENTS = 33281;
-        console.log(`Piren Discord transport running for ${allowedChannelIds.length} allowlisted channel(s).`);
+        const dmScope = allowedDmUserIds.length > 0 ? ` and ${allowedDmUserIds.length} allowlisted DM user(s)` : "";
+        console.log(`Piren Discord transport running for ${allowedChannelIds.length} allowlisted channel(s)${dmScope}.`);
         const gateway = runDiscordGateway({
             botToken: botToken.trim(),
             applicationId: discordConfig?.application_id ?? "",

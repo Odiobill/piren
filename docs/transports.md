@@ -24,7 +24,7 @@ Each guided flow:
 
 Portal settings are prerequisites, not authorization: Piren's local allowlists remain the final inbound-access gate either way.
 
-**Discord Developer Portal.** Create or select the application and its bot; the token goes only in local configuration. Enable the **Message Content** privileged intent, which ordinary-message routing requires. Install the bot to your server with the `bot` scope and only the permissions Piren needs: view channels, send messages, add reactions, and send messages in threads. Enable **Developer Mode** in the Discord client to copy IDs, and copy the **server** ID into `allowed_guild_ids`, ordinary-channel IDs into `allowed_channel_ids`, and explicit thread IDs into `allowed_thread_ids`. A user ID is not a server ID: putting a user ID in `allowed_guild_ids` authorizes nothing and is a common setup mistake. Discord direct messages remain unsupported in this build; the configure flow does not collect them.
+**Discord Developer Portal.** Create or select the application and its bot; the token goes only in local configuration. Enable the **Message Content** privileged intent, which ordinary-message routing requires. Install the bot to your server with the `bot` scope and only the permissions Piren needs: view channels, send messages, add reactions, and send messages in threads. Enable **Developer Mode** in the Discord client to copy IDs, and copy the **server** ID into `allowed_guild_ids`, ordinary-channel IDs into `allowed_channel_ids`, and explicit thread IDs into `allowed_thread_ids`. A user ID is not a server ID: putting a user ID in `allowed_guild_ids` authorizes nothing and is a common setup mistake. One-to-one direct messages are a separate fail-closed scope (`allowed_dm_user_ids`, see Access control); the configure flow does not collect them.
 
 **Telegram BotFather.** Create or select the bot with BotFather and keep the token only in local configuration. Each accepted private chat or group needs its explicit numeric chat ID in `allowed_chat_ids` (group IDs are negative). Bot Privacy Mode is a platform delivery setting, not Piren authorization — see "Group delivery and BotFather Privacy Mode" below.
 
@@ -100,6 +100,10 @@ discord:
     - "222"
   allowed_thread_ids:
     - "333"
+  # Optional: enable one-to-one DMs only from these explicit user IDs.
+  # Omitted = every DM denied. Group DMs are always rejected.
+  # allowed_dm_user_ids:
+  #   - "444"
   feedback:
     reaction_on_receive: "👀"
     reaction_on_complete: "✅"
@@ -125,7 +129,7 @@ Commands mirror Telegram:
 
 Discord uses a platform-mandated WebSocket client connection to Discord's gateway. This does not add a WebSocket server to Piren's web UI. Feedback uses Discord REST: `POST /channels/{id}/typing` and `PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`. Reaction failures are best-effort and never abort the assistant response.
 
-Discord direct messages and native Discord application commands remain accepted future work (ADR-0040) and are not available in the current build. Guided local configuration is available: see "Guided local configuration" above.
+Native Discord application commands remain accepted future work (ADR-0040) and are not available in the current build. One-to-one Discord direct messages are supported fail-closed through `allowed_dm_user_ids` (see Access control); the guided configure flow does not collect them yet.
 
 ## Session controls
 
@@ -160,6 +164,8 @@ Set `feedback.enabled: false` to disable every feedback call for that transport,
 Messaging transports use platform bot tokens plus local allowlists. They do not use the HTTP Bearer token gate.
 
 For Discord, `allowed_guild_ids` are server ids. `allowed_channel_ids` are channel ids. Threaded messages require explicit `allowed_thread_ids`; without a matching thread id, Piren ignores the message even when the guild and parent channel appear configured. This keeps thread access fail-closed because Discord gateway message payloads are not a reliable source of parent-channel authorization context. A real gateway `MESSAGE_CREATE` sent inside a thread carries the thread's own id in `channel_id` with no `thread_id` property; that shape is accepted only when the `channel_id` value matches `allowed_thread_ids`.
+
+One-to-one direct messages are authorized separately and fail-closed by `allowed_dm_user_ids`: a non-guild message is accepted only when its sender user id (`author.id`) is explicitly listed AND a Bot API channel-metadata lookup confirms the channel is a one-to-one DM (Discord channel type 1). Group DMs (type 3), unknown channel types, lookup failures, missing sender ids, and unlisted senders are rejected silently — no reply, no session, no error detail. When `allowed_dm_user_ids` is omitted, every DM is denied. The DM allowlist never widens guild, ordinary-channel, or thread access, and guild traffic never triggers the metadata lookup. DM conversations use a collision-safe `dm:`-prefixed conversation key, distinct from every guild/channel/thread key.
 
 ## Doctor checks
 

@@ -84,3 +84,39 @@ describe("DiscordBotApiHttpClient", () => {
     await expect(client.addReaction("123", "456", "👀")).resolves.toBeUndefined();
   });
 });
+
+describe("DiscordBotApiHttpClient.getChannel (ADR-0040 D1)", () => {
+  it("GETs the channel metadata URL with Bot auth and returns the parsed body", async () => {
+    const calls: CapturedRequest[] = [];
+    const fakeFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const headers: Record<string, string> = {};
+      if (init?.headers) {
+        for (const [key, value] of Object.entries(init.headers as Record<string, string>)) headers[key] = value;
+      }
+      calls.push({ url: String(input), method: init?.method ?? "GET", headers, body: "" });
+      return new Response(JSON.stringify({ id: "123456789", type: 1 }), { status: 200 });
+    };
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetch);
+
+    const metadata = await client.getChannel("123456789");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://discord.com/api/v10/channels/123456789");
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.headers["authorization"]).toBe("Bot BOT-TOKEN");
+    expect(metadata).toEqual({ id: "123456789", type: 1 });
+  });
+
+  it("throws on a non-2xx response", async () => {
+    const fakeFetch = async (): Promise<Response> =>
+      new Response(JSON.stringify({ message: "Missing Access", code: 50001 }), { status: 403 });
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetch);
+    await expect(client.getChannel("123")).rejects.toThrow();
+  });
+
+  it("rejects on a malformed (non-JSON) response body", async () => {
+    const fakeFetch = async (): Promise<Response> => new Response("not json", { status: 200 });
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetch);
+    await expect(client.getChannel("123")).rejects.toThrow();
+  });
+});

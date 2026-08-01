@@ -187,6 +187,10 @@ discord:
     - "222"
   allowed_thread_ids:
     - "333"
+  # Optional: enable one-to-one DMs only from these explicit user IDs
+  # (fail-closed when omitted; group DMs are always rejected).
+  # allowed_dm_user_ids:
+  #   - "444"
   default_agent: piren
 ```
 

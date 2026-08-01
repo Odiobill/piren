@@ -14,6 +14,8 @@ export const DISCORD_MESSAGE_LIMIT = 2000;
 export function chunkDiscordMessage(text, limit = DISCORD_MESSAGE_LIMIT) {
     return chunkTelegramMessage(text, limit);
 }
+/** Discord channel type for a one-to-one direct message. Group DMs are type 3. */
+export const DISCORD_CHANNEL_TYPE_DM = 1;
 export class DiscordBotApiHttpClient {
     botToken;
     fetchImpl;
@@ -49,6 +51,15 @@ export class DiscordBotApiHttpClient {
         if (!response.ok) {
             return; // best-effort
         }
+    }
+    async getChannel(channelId) {
+        const response = await this.fetchImpl(`https://discord.com/api/v10/channels/${channelId}`, {
+            headers: this.authHeaders(),
+        });
+        if (!response.ok) {
+            throw new Error(await this.describeError(response));
+        }
+        return (await response.json());
     }
     authHeaders(options = {}) {
         const headers = {};
@@ -89,6 +100,7 @@ export class DiscordTransport {
     allowedGuildIds;
     allowedChannelIds;
     allowedThreadIds;
+    allowedDmUserIds;
     runnableAgents;
     defaultAgent;
     api;
@@ -99,6 +111,7 @@ export class DiscordTransport {
         this.allowedGuildIds = new Set(options.allowedGuildIds.map((id) => String(id)));
         this.allowedChannelIds = new Set(options.allowedChannelIds.map((id) => String(id)));
         this.allowedThreadIds = new Set((options.allowedThreadIds ?? []).map((id) => String(id)));
+        this.allowedDmUserIds = new Set((options.allowedDmUserIds ?? []).map((id) => String(id)));
         this.runnableAgents = [...options.runnableAgents];
         this.defaultAgent = options.defaultAgent ?? this.runnableAgents[0] ?? "";
         this.api = options.api;
@@ -111,32 +124,63 @@ export class DiscordTransport {
         });
     }
     async handleMessage(message) {
-        if (!message.guild_id || !message.channel_id)
+        // Defense-in-depth: the gateway loop already drops bot-authored events.
+        if (message.author?.bot === true)
             return;
-        if (!this.allowedGuildIds.has(message.guild_id))
+        if (!message.channel_id)
             return;
-        // Threaded Discord messages require an explicit thread allowlist. Discord
-        // gateway payloads do not reliably include the parent channel id in the
-        // MESSAGE_CREATE event shape Piren consumes, so allowing all threads under
-        // an allowlisted guild would bypass the configured channel boundary.
-        if (message.thread_id) {
-            // Legacy modeled shape: an explicit thread_id property.
-            if (!this.allowedThreadIds.has(message.thread_id))
+        let channelId;
+        let conversation;
+        if (message.guild_id) {
+            // Guild path. `allowed_dm_user_ids` never widens guild, ordinary
+            // channel, or thread access, and guild traffic never triggers the DM
+            // channel-metadata lookup.
+            if (!this.allowedGuildIds.has(message.guild_id))
                 return;
+            // Threaded Discord messages require an explicit thread allowlist. Discord
+            // gateway payloads do not reliably include the parent channel id in the
+            // MESSAGE_CREATE event shape Piren consumes, so allowing all threads under
+            // an allowlisted guild would bypass the configured channel boundary.
+            if (message.thread_id) {
+                // Legacy modeled shape: an explicit thread_id property.
+                if (!this.allowedThreadIds.has(message.thread_id))
+                    return;
+            }
+            else if (this.allowedThreadIds.has(message.channel_id)) {
+                // Real Discord Gateway shape: a message sent inside a thread carries the
+                // thread's own id in channel_id and has no thread_id property. An id in
+                // allowed_thread_ids authorizes exactly that thread; it never widens
+                // allowed_channel_ids because the two sets are checked independently.
+            }
+            else if (!this.allowedChannelIds.has(message.channel_id)) {
+                return;
+            }
+            channelId = message.thread_id ?? message.channel_id;
+            const guildConversation = conversationId(message);
+            if (guildConversation === null)
+                return;
+            conversation = guildConversation;
         }
-        else if (this.allowedThreadIds.has(message.channel_id)) {
-            // Real Discord Gateway shape: a message sent inside a thread carries the
-            // thread's own id in channel_id and has no thread_id property. An id in
-            // allowed_thread_ids authorizes exactly that thread; it never widens
-            // allowed_channel_ids because the two sets are checked independently.
+        else {
+            // ADR-0040 D1: fail-closed one-to-one DM authorization. The sender
+            // identity comes only from author.id (never inferred from channel/guild
+            // IDs), and the gateway payload has no authoritative channel-type
+            // discriminator, so the channel type is verified through an explicit
+            // metadata lookup AFTER the sender allowlist check. Group DMs (type 3),
+            // every other/unknown type, lookup failures, and malformed responses
+            // are rejected silently: no reply, no session, no error leakage.
+            if (this.allowedDmUserIds.size === 0)
+                return;
+            const senderId = typeof message.author?.id === "string" ? message.author.id.trim() : "";
+            if (senderId === "" || !this.allowedDmUserIds.has(senderId))
+                return;
+            if (!(await this.isDirectMessageChannel(message.channel_id)))
+                return;
+            channelId = message.channel_id;
+            // Collision-safe DM conversation key, distinct from every
+            // guild/channel/thread key (which always contains a guild id prefix).
+            conversation = `dm:${message.channel_id}`;
         }
-        else if (!this.allowedChannelIds.has(message.channel_id)) {
-            return;
-        }
-        const channelId = message.thread_id ?? message.channel_id;
-        const conversation = conversationId(message);
-        if (conversation === null)
-            return;
         const raw = typeof message.content === "string" ? message.content : "";
         const trimmed = stripMention(raw).trim();
         if (trimmed === "")
@@ -191,6 +235,20 @@ export class DiscordTransport {
     }
     async close() {
         await this.sessions.closeAll();
+    }
+    /**
+     * Verify through the Bot API that a channel is a one-to-one DM (Discord
+     * channel type 1). Any failure — group DM (type 3), unknown type, lookup
+     * error, malformed response — fails closed.
+     */
+    async isDirectMessageChannel(channelId) {
+        try {
+            const metadata = await this.api.getChannel(channelId);
+            return typeof metadata?.type === "number" && metadata.type === DISCORD_CHANNEL_TYPE_DM;
+        }
+        catch {
+            return false;
+        }
     }
     async sendPromptFeedbackStart(channelId, messageId) {
         if (!this.feedback.enabled)

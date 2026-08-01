@@ -18,6 +18,18 @@ export interface DiscordMessage {
     channel_id?: string;
     thread_id?: string;
     content?: string;
+    /** Sender identity from the gateway payload. Never inferred from channel/guild IDs. */
+    author?: {
+        id?: string;
+        bot?: boolean;
+    };
+}
+/** Discord channel type for a one-to-one direct message. Group DMs are type 3. */
+export declare const DISCORD_CHANNEL_TYPE_DM = 1;
+/** Channel metadata used only for fail-closed DM authorization (ADR-0040 D1). */
+export interface DiscordChannelMetadata {
+    id?: string;
+    type?: number;
 }
 export interface DiscordBotApi {
     createMessage(channelId: string, text: string): Promise<void>;
@@ -25,6 +37,14 @@ export interface DiscordBotApi {
     sendTyping(channelId: string): Promise<void>;
     /** Best-effort emoji reaction on a message. Must not throw on failure. */
     addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
+    /**
+     * Channel metadata lookup. The gateway MESSAGE_CREATE payload has no
+     * authoritative channel-type discriminator, so DM authorization verifies
+     * the channel type through this lookup (only Discord type 1 is accepted).
+     * Called ONLY for non-guild messages whose sender is already in the DM
+     * allowlist; never for guild traffic.
+     */
+    getChannel(channelId: string): Promise<DiscordChannelMetadata>;
 }
 export declare class DiscordBotApiHttpClient implements DiscordBotApi {
     private readonly botToken;
@@ -33,6 +53,7 @@ export declare class DiscordBotApiHttpClient implements DiscordBotApi {
     createMessage(channelId: string, text: string): Promise<void>;
     sendTyping(channelId: string): Promise<void>;
     addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
+    getChannel(channelId: string): Promise<DiscordChannelMetadata>;
     private authHeaders;
     private describeError;
 }
@@ -44,6 +65,12 @@ export interface DiscordTransportOptions<TClient extends DiscordPromptClient> {
     allowedGuildIds: Array<number | string>;
     allowedChannelIds: Array<number | string>;
     allowedThreadIds?: Array<number | string> | undefined;
+    /**
+     * Explicit one-to-one DM user allowlist (ADR-0040 D1). Omitted or empty
+     * means every direct message is denied. Never widens guild, ordinary
+     * channel, or thread access.
+     */
+    allowedDmUserIds?: Array<number | string> | undefined;
     runnableAgents: string[];
     defaultAgent?: string | undefined;
     targetBuilder: RpcTargetBuilder;
@@ -64,6 +91,7 @@ export declare class DiscordTransport<TClient extends DiscordPromptClient> {
     private readonly allowedGuildIds;
     private readonly allowedChannelIds;
     private readonly allowedThreadIds;
+    private readonly allowedDmUserIds;
     private readonly runnableAgents;
     private readonly defaultAgent;
     private readonly api;
@@ -72,6 +100,12 @@ export declare class DiscordTransport<TClient extends DiscordPromptClient> {
     constructor(options: DiscordTransportOptions<TClient>);
     handleMessage(message: DiscordMessage): Promise<void>;
     close(): Promise<void>;
+    /**
+     * Verify through the Bot API that a channel is a one-to-one DM (Discord
+     * channel type 1). Any failure — group DM (type 3), unknown type, lookup
+     * error, malformed response — fails closed.
+     */
+    private isDirectMessageChannel;
     private sendPromptFeedbackStart;
     private sendPromptFeedbackComplete;
     /**

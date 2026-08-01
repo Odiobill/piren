@@ -19,6 +19,8 @@ export interface DiscordLocalConfig {
     allowed_guild_ids?: Array<number | string>;
     allowed_channel_ids?: Array<number | string>;
     allowed_thread_ids?: Array<number | string>;
+    /** Explicit one-to-one DM user allowlist (ADR-0040). Omitted/empty = all DMs denied. */
+    allowed_dm_user_ids?: Array<number | string>;
     feedback?: TransportFeedbackConfig;
     default_agent?: string;
 }

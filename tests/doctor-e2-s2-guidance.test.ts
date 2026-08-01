@@ -279,3 +279,46 @@ describe("E2-S2 guidance is one-action and mutation-free across all shapes", () 
     }
   });
 });
+
+describe("discord DM-aware config checks (ADR-0040 D1)", () => {
+  it("a valid explicit DM-only configuration is ok, not reported as missing guild/channel authorization", () => {
+    const check = checkDiscordConfig({ bot_token: "T", allowed_dm_user_ids: ["42", "43"] });
+    expect(check?.status).toBe("ok");
+    expect(check?.message).toBe("Discord configured with 2 allowlisted DM user(s).");
+  });
+
+  it("a mixed guild/channel/DM configuration reports all scopes", () => {
+    const check = checkDiscordConfig({
+      bot_token: "T",
+      allowed_guild_ids: ["1"],
+      allowed_channel_ids: ["2", "3"],
+      allowed_dm_user_ids: ["42"],
+    });
+    expect(check?.status).toBe("ok");
+    expect(check?.message).toBe("Discord configured with 1 guild(s) and 2 channel(s) plus 1 DM user(s) allowlisted.");
+  });
+
+  it("an empty allowed_dm_user_ids list keeps the legacy fail-closed guild warning", () => {
+    expectMessage(
+      checkDiscordConfig({ bot_token: "T", allowed_dm_user_ids: [] }),
+      "discord.bot_token is set but discord.allowed_guild_ids is empty. No guilds are authorized. " +
+        `${TRANSPORT_AUTHORITY} Next: inspect discord.allowed_guild_ids in ~/.config/piren/config.yml.`,
+    );
+  });
+
+  it("a config declaring only allowed_dm_user_ids still requires the bot token", () => {
+    expectMessage(
+      checkDiscordConfig({ allowed_dm_user_ids: ["42"] }),
+      "discord config is present but discord.bot_token is missing or empty. " +
+        `${TRANSPORT_AUTHORITY} Next: inspect discord.bot_token in ~/.config/piren/config.yml.`,
+    );
+  });
+
+  it("a DM configuration with an unrunnable default_agent still warns", () => {
+    expectMessage(
+      checkDiscordConfig({ bot_token: "T", allowed_dm_user_ids: ["42"], default_agent: "ghost" }, ["thor"]),
+      "discord.default_agent 'ghost' is not in the runnable agent set (thor). " +
+        `${TRANSPORT_AUTHORITY} Next: inspect discord.default_agent in ~/.config/piren/config.yml.`,
+    );
+  });
+});

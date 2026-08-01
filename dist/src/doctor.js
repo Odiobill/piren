@@ -273,6 +273,7 @@ export function checkDiscordConfig(config, runnableAgents = []) {
         "allowed_guild_ids" in config ||
         "allowed_channel_ids" in config ||
         "allowed_thread_ids" in config ||
+        "allowed_dm_user_ids" in config ||
         "default_agent" in config ||
         "application_id" in config ||
         "install_url" in config;
@@ -281,19 +282,29 @@ export function checkDiscordConfig(config, runnableAgents = []) {
     const hasToken = typeof config.bot_token === "string" && config.bot_token.trim() !== "";
     const guildIds = Array.isArray(config.allowed_guild_ids) ? config.allowed_guild_ids : [];
     const channelIds = Array.isArray(config.allowed_channel_ids) ? config.allowed_channel_ids : [];
+    const dmUserIds = Array.isArray(config.allowed_dm_user_ids) ? config.allowed_dm_user_ids : [];
     if (!hasToken) {
         return { id: "discord", status: "warn", message: withWarnGuidance("discord config is present but discord.bot_token is missing or empty.", AUTHORITY_TRANSPORT, `inspect discord.bot_token in ${LOCAL_CONFIG_PATH}.`) };
     }
-    if (guildIds.length === 0) {
+    // ADR-0040 D1: an explicit DM allowlist is a complete authorization scope
+    // on its own. The guild/channel emptiness warnings apply only when no DM
+    // allowlist is configured, so legacy fail-closed guidance is unchanged.
+    if (dmUserIds.length === 0 && guildIds.length === 0) {
         return { id: "discord", status: "warn", message: withWarnGuidance("discord.bot_token is set but discord.allowed_guild_ids is empty. No guilds are authorized.", AUTHORITY_TRANSPORT, `inspect discord.allowed_guild_ids in ${LOCAL_CONFIG_PATH}.`) };
     }
-    if (channelIds.length === 0) {
+    if (dmUserIds.length === 0 && channelIds.length === 0) {
         return { id: "discord", status: "warn", message: withWarnGuidance("discord.bot_token is set but discord.allowed_channel_ids is empty. No channels are authorized.", AUTHORITY_TRANSPORT, `inspect discord.allowed_channel_ids in ${LOCAL_CONFIG_PATH}.`) };
     }
     if (config.default_agent !== undefined && config.default_agent.trim() !== "") {
         if (runnableAgents.length > 0 && !runnableAgents.includes(config.default_agent)) {
             return { id: "discord", status: "warn", message: withWarnGuidance(`discord.default_agent '${config.default_agent}' is not in the runnable agent set (${runnableAgents.join(", ")}).`, AUTHORITY_TRANSPORT, `inspect discord.default_agent in ${LOCAL_CONFIG_PATH}.`) };
         }
+    }
+    if (dmUserIds.length > 0) {
+        if (guildIds.length === 0 && channelIds.length === 0) {
+            return { id: "discord", status: "ok", message: `Discord configured with ${dmUserIds.length} allowlisted DM user(s).` };
+        }
+        return { id: "discord", status: "ok", message: `Discord configured with ${guildIds.length} guild(s) and ${channelIds.length} channel(s) plus ${dmUserIds.length} DM user(s) allowlisted.` };
     }
     return { id: "discord", status: "ok", message: `Discord configured with ${guildIds.length} guild(s) and ${channelIds.length} channel(s) allowlisted.` };
 }

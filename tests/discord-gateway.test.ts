@@ -19,12 +19,13 @@ class FakeDiscordClient {
   }
 }
 
-function buildTransport() {
+function buildTransport(options?: { allowedDmUserIds?: string[] }) {
   const replies: string[] = [];
   const transport = new DiscordTransport<FakeDiscordClient>({
     transportName: "discord",
     allowedGuildIds: ["111"],
     allowedChannelIds: ["222"],
+    allowedDmUserIds: options?.allowedDmUserIds,
     runnableAgents: ["piren"],
     defaultAgent: "piren",
     targetBuilder: async () => ({ command: "fake", args: [], cwd: process.cwd(), env: process.env }),
@@ -33,6 +34,7 @@ function buildTransport() {
       async createMessage(_channelId, text) { replies.push(text); },
       async sendTyping() {},
       async addReaction() {},
+      async getChannel(channelId) { return { id: channelId, type: 1 }; },
     },
   });
   return { transport, replies };
@@ -180,5 +182,27 @@ describe("runDiscordGateway", () => {
     await gateway.idle();
     await gateway.close();
     expect(replies).toEqual([]);
+  });
+
+  it("normalizes a direct-message MESSAGE_CREATE author id through to the transport (ADR-0040 D1)", async () => {
+    const { transport, replies } = buildTransport({ allowedDmUserIds: ["user-1"] });
+    const socket = new FakeGatewaySocket();
+    const gateway = runDiscordGateway({
+      botToken: "TOK",
+      applicationId: "1",
+      intents: 1,
+      transport,
+      socketFactory: () => Promise.resolve(socket),
+      heartbeatIntervalMs: 60_000,
+    });
+    await Promise.resolve();
+    socket.triggerOpen();
+    socket.emit(opPayload(10, { d: { heartbeat_interval: 60_000 } }));
+    await gateway.identified();
+    // No guild_id: a one-to-one DM from an allowlisted user.
+    socket.emit(opPayload(0, { t: "MESSAGE_CREATE", s: 8, d: { channel_id: "555", content: "ping", author: { id: "user-1" } } }));
+    await gateway.idle();
+    await gateway.close();
+    expect(replies).toEqual(["pong"]);
   });
 });

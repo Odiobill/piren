@@ -63,9 +63,12 @@ describe("transport operator docs (0.1.6)", () => {
   it("keeps the ADR-0040 present/future split unambiguous", () => {
     expect(TRANSPORTS).toContain("accepted future work (ADR-0040)");
     expect(TRANSPORTS).toContain("not available in the current build");
-    // Deferred identifiers must not appear as shipped operator surface.
-    expect(TRANSPORTS).not.toContain("allowed_dm_user_ids");
-    expect(CONFIGURATION).not.toContain("allowed_dm_user_ids");
+    // D1 shipped fail-closed one-to-one DM authorization: the DM allowlist
+    // is now documented operator surface, and native Discord application
+    // commands are the remaining deferred ADR-0040 work.
+    expect(TRANSPORTS).toMatch(/Native Discord application commands remain accepted future work/);
+    expect(TRANSPORTS).toContain("allowed_dm_user_ids");
+    expect(CONFIGURATION).toContain("allowed_dm_user_ids");
   });
 
   it("keeps per_turn the documented context-injection default with the history caveat", () => {
