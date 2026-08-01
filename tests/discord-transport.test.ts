@@ -34,7 +34,7 @@ function buildTransport(options?: {
   allowedThreadIds?: string[];
   feedback?: { enabled?: boolean };
   allowedDmUserIds?: string[];
-  channelLookup?: { type?: number | string } | "throw";
+  channelLookup?: { id?: string | number; type?: number | string } | "throw";
 }) {
   const replies: Array<{ channelId: string; text: string }> = [];
   const clients: FakeDiscordClient[] = [];
@@ -70,8 +70,11 @@ function buildTransport(options?: {
         getChannelCalls.push(channelId);
         const lookup = options?.channelLookup ?? { type: 1 };
         if (lookup === "throw") throw new Error("Discord getChannel failed (HTTP 403)");
-        // Deliberately cast: tests use this to inject malformed metadata.
-        return (lookup.type === undefined ? { id: channelId } : { id: channelId, type: lookup.type }) as { id: string; type?: number };
+        // Deliberately cast: tests use this to inject malformed or mismatched
+        // metadata (wrong/missing/non-string id, missing/non-numeric type).
+        const metadata: Record<string, unknown> = { id: lookup.id ?? channelId };
+        if (lookup.type !== undefined) metadata.type = lookup.type;
+        return metadata as { id: string; type?: number };
       },
     },
   });
@@ -593,5 +596,52 @@ describe("DiscordTransport direct messages (ADR-0040 D1)", () => {
     expect(replies).toEqual([]);
     expect(clients).toHaveLength(0);
     expect(getChannelCalls).toEqual([]);
+  });
+});
+
+describe("DiscordTransport DM hardening (D1 review fixes)", () => {
+  it("rejects DM metadata whose id does not match the requested channel", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({
+      allowedDmUserIds: ["user-1"],
+      channelLookup: { id: "999", type: 1 },
+    });
+
+    await transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+
+    expect(getChannelCalls).toEqual(["555"]);
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("rejects DM metadata with a missing or non-string id", async () => {
+    const missing = buildTransport({ allowedDmUserIds: ["user-1"], channelLookup: { id: "", type: 1 } });
+    await missing.transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+    expect(missing.replies).toEqual([]);
+    expect(missing.clients).toHaveLength(0);
+
+    const numeric = buildTransport({ allowedDmUserIds: ["user-1"], channelLookup: { id: 555, type: 1 } });
+    await numeric.transport.handleMessage({ channel_id: "555", author: { id: "user-1" }, content: "ping" });
+    expect(numeric.replies).toEqual([]);
+    expect(numeric.clients).toHaveLength(0);
+  });
+
+  it("rejects a malformed guild-shaped event (guild_id: '') before any lookup, reply, or session", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleMessage({ guild_id: "", channel_id: "555", author: { id: "user-1" }, content: "ping" });
+
+    expect(getChannelCalls).toEqual([]);
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+  });
+
+  it("rejects a non-guild message carrying thread_id as an unknown direct shape before any lookup, reply, or session", async () => {
+    const { transport, replies, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleMessage({ channel_id: "555", thread_id: "777", author: { id: "user-1" }, content: "ping" });
+
+    expect(getChannelCalls).toEqual([]);
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
   });
 });

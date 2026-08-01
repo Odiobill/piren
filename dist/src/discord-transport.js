@@ -131,9 +131,12 @@ export class DiscordTransport {
             return;
         let channelId;
         let conversation;
-        if (message.guild_id) {
-            // Guild path. `allowed_dm_user_ids` never widens guild, ordinary
-            // channel, or thread access, and guild traffic never triggers the DM
+        if (message.guild_id !== undefined) {
+            // Guild path. Only an actually absent guild field may enter the DM
+            // path; a malformed empty-string guild_id fails the allowlist here and
+            // is rejected before any metadata lookup, reply, or session.
+            // `allowed_dm_user_ids` never widens guild, ordinary channel, or
+            // thread access, and guild traffic never triggers the DM
             // channel-metadata lookup.
             if (!this.allowedGuildIds.has(message.guild_id))
                 return;
@@ -162,13 +165,18 @@ export class DiscordTransport {
             conversation = guildConversation;
         }
         else {
-            // ADR-0040 D1: fail-closed one-to-one DM authorization. The sender
-            // identity comes only from author.id (never inferred from channel/guild
-            // IDs), and the gateway payload has no authoritative channel-type
-            // discriminator, so the channel type is verified through an explicit
-            // metadata lookup AFTER the sender allowlist check. Group DMs (type 3),
-            // every other/unknown type, lookup failures, and malformed responses
-            // are rejected silently: no reply, no session, no error leakage.
+            // ADR-0040 D1: fail-closed one-to-one DM authorization. A non-guild
+            // message carrying any thread_id field is an unknown direct shape and
+            // is rejected before any identity work or lookup.
+            if (message.thread_id !== undefined)
+                return;
+            // The sender identity comes only from author.id (never inferred from
+            // channel/guild IDs), and the gateway payload has no authoritative
+            // channel-type discriminator, so the channel type is verified through
+            // an explicit metadata lookup AFTER the sender allowlist check. Group
+            // DMs (type 3), every other/unknown type, metadata not bound to the
+            // requested channel, lookup failures, and malformed responses are
+            // rejected silently: no reply, no session, no error leakage.
             if (this.allowedDmUserIds.size === 0)
                 return;
             const senderId = typeof message.author?.id === "string" ? message.author.id.trim() : "";
@@ -244,7 +252,11 @@ export class DiscordTransport {
     async isDirectMessageChannel(channelId) {
         try {
             const metadata = await this.api.getChannel(channelId);
-            return typeof metadata?.type === "number" && metadata.type === DISCORD_CHANNEL_TYPE_DM;
+            // The metadata must be bound to the requested channel: a non-empty
+            // string id exactly equal to channelId, and type exactly DM (1).
+            if (typeof metadata?.id !== "string" || metadata.id === "" || metadata.id !== channelId)
+                return false;
+            return typeof metadata.type === "number" && metadata.type === DISCORD_CHANNEL_TYPE_DM;
         }
         catch {
             return false;
