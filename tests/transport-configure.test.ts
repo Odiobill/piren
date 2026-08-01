@@ -174,6 +174,15 @@ describe("parseDiscordSnowflakes", () => {
   it("treats 'none' as an explicit clear for optional lists", () => {
     expect(parseDiscordSnowflakes("none", "allowed_thread_ids", "thread", { optional: true })).toEqual({ ok: true, ids: [] });
   });
+
+  it("uses user-ID guidance for the DM user field instead of the guild 'not a user ID' hint", () => {
+    const result = parseDiscordSnowflakes("abc", "allowed_dm_user_ids", "user", { optional: true, userIdsExpected: true });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("allowed_dm_user_ids");
+      expect(result.error).not.toMatch(/not a user id/i);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -207,13 +216,28 @@ describe("buildDiscordConfigBlock", () => {
       guildIds: ["111111111111111111"],
       channelIds: ["222222222222222222"],
       threadIds: ["333333333333333333"],
+      dmUserIds: ["444444444444444444"],
       feedback: { enabled: true, reaction_on_receive: "👀", reaction_on_complete: "✅", typing_while_working: false },
       defaultAgent: "piren",
     });
     expect(block.allowed_guild_ids).toEqual(["111111111111111111"]);
     expect(block.allowed_channel_ids).toEqual(["222222222222222222"]);
     expect(block.allowed_thread_ids).toEqual(["333333333333333333"]);
+    expect(block.allowed_dm_user_ids).toEqual(["444444444444444444"]);
     expect(block.feedback?.typing_while_working).toBe(false);
+  });
+
+  it("omits allowed_dm_user_ids entirely when no DM users are configured", () => {
+    const block = buildDiscordConfigBlock({
+      botToken: "discord-token",
+      guildIds: ["111111111111111111"],
+      channelIds: ["222222222222222222"],
+      threadIds: [],
+      dmUserIds: [],
+      feedback: { enabled: false },
+      defaultAgent: "piren",
+    });
+    expect("allowed_dm_user_ids" in block).toBe(false);
   });
 
   it("omits allowed_thread_ids entirely when no threads are configured", () => {
@@ -222,6 +246,7 @@ describe("buildDiscordConfigBlock", () => {
       guildIds: ["111111111111111111"],
       channelIds: ["222222222222222222"],
       threadIds: [],
+      dmUserIds: [],
       feedback: { enabled: false },
       defaultAgent: "piren",
     });
@@ -541,13 +566,14 @@ describe("runTransportConfigure: telegram", () => {
 });
 
 describe("runTransportConfigure: discord", () => {
-  it("guides a fresh configuration with typed guild/channel/thread ids", async () => {
+  it("guides a fresh configuration with typed guild/channel/thread ids and an optional DM user allowlist", async () => {
     const { prompt } = fakePrompt({
       secretAnswers: ["discord-token"],
       textAnswers: [
         "111111111111111111",
         "222222222222222222",
         "333333333333333333",
+        "444444444444444444, 555555555555555555",
         undefined,
         undefined,
       ],
@@ -568,15 +594,171 @@ describe("runTransportConfigure: discord", () => {
     expect(content).toContain('"111111111111111111"');
     expect(content).toContain('"222222222222222222"');
     expect(content).toContain('"333333333333333333"');
+    expect(content).toContain("allowed_dm_user_ids:");
+    expect(content).toContain('"444444444444444444"');
+    expect(content).toContain('"555555555555555555"');
     expect(content).toContain("default_agent: kimi");
     expect(content).toContain("reaction_on_complete: ✅");
     expect(result.validation?.status).toBe("ok");
   });
 
+  it("asks for DM user IDs after thread IDs and before feedback, making the user-ID scope clear", async () => {
+    const { prompt, calls } = fakePrompt({
+      secretAnswers: ["discord-token"],
+      textAnswers: ["111111111111111111", "222222222222222222", "", ""],
+      confirmAnswers: [true, true, true],
+      selectAnswers: [0],
+    });
+    const { io } = fakeIo(null as unknown as string);
+
+    await runTransportConfigure(prompt, "discord", {
+      configPath: "/cfg",
+      runnableAgents: RUNNABLE,
+      io,
+      log: () => {},
+    });
+
+    expect(calls.text).toHaveLength(6);
+    const dmPrompt = calls.text[3]!.message.toLowerCase();
+    expect(dmPrompt).toContain("user");
+    expect(dmPrompt).toMatch(/dm|direct message/);
+    expect(dmPrompt).toMatch(/one-to-one/);
+    // The prompt must steer away from guild/channel IDs.
+    expect(dmPrompt).toMatch(/not a (server|guild|channel)/);
+  });
+
+  it("blank DM input omits allowed_dm_user_ids entirely (all DMs stay denied)", async () => {
+    const { prompt } = fakePrompt({
+      secretAnswers: ["discord-token"],
+      textAnswers: ["111111111111111111", "222222222222222222", "", "", undefined, undefined],
+      confirmAnswers: [true, true, true],
+      selectAnswers: [0],
+    });
+    const { io, writes } = fakeIo(null as unknown as string);
+
+    await runTransportConfigure(prompt, "discord", {
+      configPath: "/cfg",
+      runnableAgents: RUNNABLE,
+      io,
+      log: () => {},
+    });
+
+    expect(writes[0]!.content).not.toContain("allowed_dm_user_ids");
+    expect(writes[0]!.content).not.toContain("allowed_thread_ids");
+  });
+
+  it("'none' clears a previously configured DM allowlist", async () => {
+    const existing = [
+      "discord:",
+      '  bot_token: "old"',
+      '  allowed_guild_ids:',
+      '    - "111111111111111111"',
+      '  allowed_channel_ids:',
+      '    - "222222222222222222"',
+      '  allowed_dm_user_ids:',
+      '    - "444444444444444444"',
+      "",
+    ].join("\n");
+    const { prompt } = fakePrompt({
+      confirmAnswers: [true, true, true, true],
+      textAnswers: [undefined, undefined, "", "none", undefined, undefined],
+      selectAnswers: [0],
+    });
+    const { io, writes } = fakeIo(existing);
+
+    await runTransportConfigure(prompt, "discord", {
+      configPath: "/cfg",
+      runnableAgents: RUNNABLE,
+      io,
+      log: () => {},
+    });
+
+    expect(writes[0]!.content).not.toContain("allowed_dm_user_ids");
+    expect(writes[0]!.content).not.toContain("444444444444444444");
+  });
+
+  it("keeps a previously configured DM allowlist on a blank re-run answer", async () => {
+    const existing = [
+      "discord:",
+      '  bot_token: "old"',
+      '  allowed_guild_ids:',
+      '    - "111111111111111111"',
+      '  allowed_channel_ids:',
+      '    - "222222222222222222"',
+      '  allowed_dm_user_ids:',
+      '    - "444444444444444444"',
+      "",
+    ].join("\n");
+    const { prompt, calls } = fakePrompt({
+      confirmAnswers: [true, true, true, true],
+      textAnswers: [undefined, undefined, undefined, undefined, undefined, undefined],
+      selectAnswers: [0],
+    });
+    const { io, writes } = fakeIo(existing);
+
+    await runTransportConfigure(prompt, "discord", {
+      configPath: "/cfg",
+      runnableAgents: RUNNABLE,
+      io,
+      log: () => {},
+    });
+
+    expect(calls.text[3]!.defaultValue).toBe("444444444444444444");
+    expect(writes[0]!.content).toContain("allowed_dm_user_ids:");
+    expect(writes[0]!.content).toContain('"444444444444444444"');
+  });
+
+  it("rejects malformed DM user IDs with user-ID guidance (not the guild 'not a user ID' hint)", async () => {
+    const { prompt, calls } = fakePrompt({
+      secretAnswers: ["discord-token"],
+      textAnswers: ["111111111111111111", "222222222222222222", "", "not-digits", "444444444444444444"],
+      confirmAnswers: [true, true, true],
+      selectAnswers: [0],
+    });
+    const { io, writes } = fakeIo(null as unknown as string);
+    const logs: string[] = [];
+
+    await runTransportConfigure(prompt, "discord", {
+      configPath: "/cfg",
+      runnableAgents: RUNNABLE,
+      io,
+      log: (m) => logs.push(m),
+    });
+
+    expect(calls.text.filter((c) => c.message.toLowerCase().includes("user"))).toHaveLength(2);
+    const dmError = logs.find((m) => m.includes("allowed_dm_user_ids"));
+    expect(dmError).toBeDefined();
+    expect(dmError).not.toMatch(/not a user id/i);
+    expect(writes[0]!.content).toContain('"444444444444444444"');
+  });
+
+  it("still redacts the token when a DM allowlist is configured", async () => {
+    const { prompt } = fakePrompt({
+      secretAnswers: ["dm-secret-token-xyz"],
+      textAnswers: ["111111111111111111", "222222222222222222", "", "444444444444444444"],
+      confirmAnswers: [true, true, true],
+      selectAnswers: [0],
+    });
+    const { io } = fakeIo(null as unknown as string);
+    const logs: string[] = [];
+
+    await runTransportConfigure(prompt, "discord", {
+      configPath: "/cfg",
+      runnableAgents: RUNNABLE,
+      io,
+      log: (m) => logs.push(m),
+    });
+
+    const all = logs.join("\n");
+    expect(all).not.toContain("dm-secret-token-xyz");
+    expect(all).toContain("<redacted:");
+    expect(all).toContain("444444444444444444");
+  });
+
   it("omits thread ids when left blank on a fresh config", async () => {
     const { prompt } = fakePrompt({
       secretAnswers: ["discord-token"],
-      textAnswers: ["111111111111111111", "222222222222222222", "", undefined, undefined],
+      textAnswers: ["111111111111111111", "222222222222222222", "", "", undefined, undefined],
       confirmAnswers: [true, true, true],
       selectAnswers: [0],
     });
@@ -606,7 +788,7 @@ describe("runTransportConfigure: discord", () => {
     ].join("\n");
     const { prompt } = fakePrompt({
       confirmAnswers: [true, true, true, true],
-      textAnswers: [undefined, undefined, "none", undefined, undefined],
+      textAnswers: [undefined, undefined, "none", "", undefined, undefined],
       selectAnswers: [0],
     });
     const { io, writes } = fakeIo(existing);
@@ -625,7 +807,7 @@ describe("runTransportConfigure: discord", () => {
   it("rejects a user-id-shaped mistake guidance on guild ids", async () => {
     const { prompt, calls } = fakePrompt({
       secretAnswers: ["discord-token"],
-      textAnswers: ["not-digits", "111111111111111111", "222222222222222222", ""],
+      textAnswers: ["not-digits", "111111111111111111", "222222222222222222", "", ""],
       confirmAnswers: [true, true, true],
       selectAnswers: [0],
     });
@@ -643,26 +825,27 @@ describe("runTransportConfigure: discord", () => {
     expect(logs.join("\n")).toMatch(/not a user id/i);
   });
 
-  it("never asks for Discord DM user ids in this slice", async () => {
+  it("never implies broad DM access, discovery, or group-DM support in its prompts", async () => {
     const { prompt, calls } = fakePrompt({
       secretAnswers: ["discord-token"],
-      textAnswers: ["111111111111111111", "222222222222222222", ""],
+      textAnswers: ["111111111111111111", "222222222222222222", "", ""],
       confirmAnswers: [true, true, true],
       selectAnswers: [0],
     });
     const { io } = fakeIo(null as unknown as string);
+    const logs: string[] = [];
 
     await runTransportConfigure(prompt, "discord", {
       configPath: "/cfg",
       runnableAgents: RUNNABLE,
       io,
-      log: () => {},
+      log: (m) => logs.push(m),
     });
 
-    const allMessages = [...calls.text.map((c) => c.message), ...calls.confirm.map((c) => c.message)].join("\n").toLowerCase();
-    expect(allMessages).not.toContain("dm");
-    expect(allMessages).not.toContain("direct message");
-    expect(allMessages).not.toContain("user id");
+    const everything = [...calls.text.map((c) => c.message), ...calls.confirm.map((c) => c.message), ...logs].join("\n").toLowerCase();
+    expect(everything).not.toContain("group dm");
+    expect(everything).not.toMatch(/discover|automatic/);
+    expect(everything).not.toMatch(/all dms|any dm/);
   });
 });
 

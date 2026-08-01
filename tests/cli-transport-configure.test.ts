@@ -134,6 +134,7 @@ describe("piren discord configure (CLI dispatch)", () => {
       "111111111111111111", // guild ids
       "222222222222222222", // channel ids
       "", // thread ids (none)
+      "444444444444444444", // optional one-to-one DM user ids
       "", // feedback enabled (default yes)
       "", // receipt emoji (default)
       "", // completion emoji (default)
@@ -150,6 +151,8 @@ describe("piren discord configure (CLI dispatch)", () => {
     expect(written).toContain('"111111111111111111"');
     expect(written).toContain('"222222222222222222"');
     expect(written).not.toContain("allowed_thread_ids");
+    expect(written).toContain("allowed_dm_user_ids:");
+    expect(written).toContain('"444444444444444444"');
     // Unprompted discord fields and unrelated blocks survive.
     expect(written).toContain('application_id: "999888777111222333"');
     expect(written).toContain("install_url: https://discord.com/oauth2/authorize?client_id=999888777111222333");

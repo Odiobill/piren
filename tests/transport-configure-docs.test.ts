@@ -65,6 +65,15 @@ describe("guided transport configuration docs", () => {
     expect(TRANSPORTS).not.toMatch(/configure[^\n]*not available in the current build/i);
   });
 
+  it("documents the guided Discord configure DM collection as an optional explicit one-to-one user allowlist", () => {
+    // D2: the guided flow may collect allowed_dm_user_ids. Docs must not
+    // claim it cannot, and must keep the fail-closed one-to-one framing.
+    expect(TRANSPORTS).not.toMatch(/configure[^\n]*does not collect/i);
+    expect(TRANSPORTS).toMatch(/one-to-one DM user/);
+    expect(TRANSPORTS).toMatch(/omitted[^\n]*(denied|deny)|every DM is denied/i);
+    expect(TRANSPORTS).not.toMatch(/group DM(s)? (are )?supported/i);
+  });
+
   it("points the configuration reference at the guided commands", () => {
     expect(CONFIGURATION).toContain("piren telegram configure");
     expect(CONFIGURATION).toContain("piren discord configure");

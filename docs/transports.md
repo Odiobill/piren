@@ -15,7 +15,7 @@ The reusable session manager owns one `PiRpcClient` per transport conversation a
 Each guided flow:
 
 - operates only on `~/.config/piren/config.yml` — the bot token and allowlist IDs stay machine-local and are never written to the vault;
-- collects the bot token as secret input, explicit platform identifiers (Telegram integer chat IDs; Discord server/guild, ordinary-channel, and optional thread IDs), feedback preferences with platform-correct reaction defaults, and a default agent chosen only from the local runnable-agent set;
+- collects the bot token as secret input, explicit platform identifiers (Telegram integer chat IDs; Discord server/guild, ordinary-channel, optional thread IDs, and an optional explicit one-to-one DM user allowlist), feedback preferences with platform-correct reaction defaults, and a default agent chosen only from the local runnable-agent set;
 - shows a redacted preview — the token is displayed only as `<redacted: N chars>`, never its contents — and requires explicit confirmation before an atomic write; declining the confirmation leaves the config unchanged;
 - preserves unrelated top-level keys and unprompted transport fields (such as `discord.application_id` and `discord.install_url`) on a re-run;
 - validates the resulting configuration without starting a daemon or installing/starting a service, and it does not contact either platform. Service lifecycle remains separate and explicit (`piren service install telegram` / `piren service install discord`; see [service management](service-management.md)).
@@ -24,7 +24,7 @@ Each guided flow:
 
 Portal settings are prerequisites, not authorization: Piren's local allowlists remain the final inbound-access gate either way.
 
-**Discord Developer Portal.** Create or select the application and its bot; the token goes only in local configuration. Enable the **Message Content** privileged intent, which ordinary-message routing requires. Install the bot to your server with the `bot` scope and only the permissions Piren needs: view channels, send messages, add reactions, and send messages in threads. Enable **Developer Mode** in the Discord client to copy IDs, and copy the **server** ID into `allowed_guild_ids`, ordinary-channel IDs into `allowed_channel_ids`, and explicit thread IDs into `allowed_thread_ids`. A user ID is not a server ID: putting a user ID in `allowed_guild_ids` authorizes nothing and is a common setup mistake. One-to-one direct messages are a separate fail-closed scope (`allowed_dm_user_ids`, see Access control); the configure flow does not collect them. Piren declares the `DIRECT_MESSAGES` gateway intent automatically; it is not a privileged intent and needs no portal toggle.
+**Discord Developer Portal.** Create or select the application and its bot; the token goes only in local configuration. Enable the **Message Content** privileged intent, which ordinary-message routing requires. Install the bot to your server with the `bot` scope and only the permissions Piren needs: view channels, send messages, add reactions, and send messages in threads. Enable **Developer Mode** in the Discord client to copy IDs, and copy the **server** ID into `allowed_guild_ids`, ordinary-channel IDs into `allowed_channel_ids`, and explicit thread IDs into `allowed_thread_ids`. A user ID is not a server ID: putting a user ID in `allowed_guild_ids` authorizes nothing and is a common setup mistake. One-to-one direct messages are a separate fail-closed scope (`allowed_dm_user_ids`, see Access control); the configure flow can optionally collect them as an explicit one-to-one DM user allowlist. Piren declares the `DIRECT_MESSAGES` gateway intent automatically; it is not a privileged intent and needs no portal toggle.
 
 **Telegram BotFather.** Create or select the bot with BotFather and keep the token only in local configuration. Each accepted private chat or group needs its explicit numeric chat ID in `allowed_chat_ids` (group IDs are negative). Bot Privacy Mode is a platform delivery setting, not Piren authorization — see "Group delivery and BotFather Privacy Mode" below.
 
@@ -129,7 +129,7 @@ Commands mirror Telegram:
 
 Discord uses a platform-mandated WebSocket client connection to Discord's gateway. This does not add a WebSocket server to Piren's web UI. Feedback uses Discord REST: `POST /channels/{id}/typing` and `PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`. Reaction failures are best-effort and never abort the assistant response.
 
-Native Discord application commands remain accepted future work (ADR-0040) and are not available in the current build. One-to-one Discord direct messages are supported fail-closed through `allowed_dm_user_ids` (see Access control); the guided configure flow does not collect them yet.
+Native Discord application commands remain accepted future work (ADR-0040) and are not available in the current build. One-to-one Discord direct messages are supported fail-closed through `allowed_dm_user_ids` (see Access control); the guided configure flow can optionally collect that explicit one-to-one DM user allowlist, and blank input leaves every DM denied.
 
 ## Session controls
 

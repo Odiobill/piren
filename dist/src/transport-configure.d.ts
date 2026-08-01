@@ -62,6 +62,7 @@ export declare function parseTelegramChatIds(input: string): IdParseResult;
  */
 export declare function parseDiscordSnowflakes(input: string, field: string, noun: string, options?: {
     optional?: boolean;
+    userIdsExpected?: boolean;
 }): SnowflakeParseResult;
 export interface TelegramConfigBlock {
     bot_token: string;
@@ -81,6 +82,7 @@ export interface DiscordConfigBlock {
     allowed_guild_ids: string[];
     allowed_channel_ids: string[];
     allowed_thread_ids?: string[];
+    allowed_dm_user_ids?: string[];
     feedback: TransportFeedbackConfig;
     default_agent: string;
 }
@@ -89,6 +91,7 @@ export interface DiscordConfigureInput {
     guildIds: string[];
     channelIds: string[];
     threadIds: string[];
+    dmUserIds: string[];
     feedback: TransportFeedbackConfig;
     defaultAgent: string;
 }

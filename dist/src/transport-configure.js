@@ -92,9 +92,13 @@ export function parseDiscordSnowflakes(input, field, noun, options = {}) {
             return { ok: false, error: `Empty entry in ${field}. Separate IDs with commas.` };
         }
         if (!/^\d{15,22}$/.test(part)) {
+            // For guild/channel/thread fields the classic mistake is entering a
+            // user ID; for the DM user field a user ID is exactly right, so the
+            // hint would be contradictory.
+            const hint = options.userIdsExpected === true ? "." : ", not a user ID or name.";
             return {
                 ok: false,
-                error: `Invalid entry '${part}' in ${field}: expected a Discord ${noun} ID (15-22 digits, copied with Developer Mode), not a user ID or name.`,
+                error: `Invalid entry '${part}' in ${field}: expected a Discord ${noun} ID (15-22 digits, copied with Developer Mode)${hint}`,
             };
         }
         if (!ids.includes(part))
@@ -120,6 +124,9 @@ export function buildDiscordConfigBlock(input) {
     };
     if (input.threadIds.length > 0) {
         block.allowed_thread_ids = input.threadIds;
+    }
+    if (input.dmUserIds.length > 0) {
+        block.allowed_dm_user_ids = input.dmUserIds;
     }
     return block;
 }
@@ -296,6 +303,7 @@ export async function runTransportConfigure(prompt, kind, deps) {
     let guildIds = [];
     let channelIds = [];
     let threadIds = [];
+    let dmUserIds = [];
     if (kind === "telegram") {
         chatIds = await promptValidatedIds(prompt, log, "Allowed chat IDs (comma-separated integers; group IDs are negative)", asIdList(existingBlock.allowed_chat_ids).join(", "), parseTelegramChatIds);
     }
@@ -303,6 +311,11 @@ export async function runTransportConfigure(prompt, kind, deps) {
         guildIds = await promptValidatedIds(prompt, log, "Server (guild) IDs (comma-separated snowflakes; enable Discord Developer Mode to copy them)", asIdList(existingBlock.allowed_guild_ids).join(", "), (raw) => parseDiscordSnowflakes(raw, "allowed_guild_ids", "server (guild)"));
         channelIds = await promptValidatedIds(prompt, log, "Channel IDs (comma-separated snowflakes)", asIdList(existingBlock.allowed_channel_ids).join(", "), (raw) => parseDiscordSnowflakes(raw, "allowed_channel_ids", "channel"));
         threadIds = await promptValidatedIds(prompt, log, "Thread IDs (comma-separated snowflakes; blank to keep current, 'none' to clear)", asIdList(existingBlock.allowed_thread_ids).join(", "), (raw) => parseDiscordSnowflakes(raw, "allowed_thread_ids", "thread", { optional: true }));
+        // ADR-0040 D2: optional one-to-one DM sender allowlist. Blank keeps the
+        // current value (none configured = every DM stays denied); 'none'
+        // clears. These are user IDs — never guild/channel IDs.
+        log("Optional: authorize one-to-one direct messages from explicit Discord user IDs. With none configured, every DM is denied.");
+        dmUserIds = await promptValidatedIds(prompt, log, "One-to-one DM user IDs (comma-separated user snowflakes, not a server or channel ID; blank to keep current, 'none' to clear)", asIdList(existingBlock.allowed_dm_user_ids).join(", "), (raw) => parseDiscordSnowflakes(raw, "allowed_dm_user_ids", "user", { optional: true, userIdsExpected: true }));
     }
     // --- Feedback preferences (platform-correct reaction defaults) ---
     const existingFeedback = asRecord(existingBlock.feedback);
@@ -332,11 +345,16 @@ export async function runTransportConfigure(prompt, kind, deps) {
     // --- Build, merge, preview, confirm ---
     const managedBlock = kind === "telegram"
         ? { ...buildTelegramConfigBlock({ botToken, chatIds, feedback, defaultAgent }) }
-        : { ...buildDiscordConfigBlock({ botToken, guildIds, channelIds, threadIds, feedback, defaultAgent }) };
+        : { ...buildDiscordConfigBlock({ botToken, guildIds, channelIds, threadIds, dmUserIds, feedback, defaultAgent }) };
     if (kind === "discord" && threadIds.length === 0) {
         // Explicit deletion marker so 'none' clears a previously configured
         // thread allowlist instead of silently preserving it.
         managedBlock.allowed_thread_ids = undefined;
+    }
+    if (kind === "discord" && dmUserIds.length === 0) {
+        // Same deletion marker for the DM user allowlist: blank/'none' must omit
+        // the key (absent means every DM denied), never serialize []/null.
+        managedBlock.allowed_dm_user_ids = undefined;
     }
     const mergedYaml = mergeTransportIntoConfig(existingText ?? "", kind, managedBlock);
     const mergedBlock = mergeTransportBlock(existingBlock, managedBlock);
