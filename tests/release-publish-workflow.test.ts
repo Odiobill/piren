@@ -370,7 +370,7 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 });
 
 describe("ADR-0033: release artifact and public-surface guards", () => {
-  it("package version is the prepared 0.1.6 ADR-0040 release candidate", () => {
+  it("package version is the published 0.1.6 ADR-0040 release", () => {
     const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
     expect(pkg.version).toBe("0.1.6");
   });

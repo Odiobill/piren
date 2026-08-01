@@ -14,10 +14,10 @@ import { readVersion } from "../src/version.js";
  * OIDC workflow with a SLSA provenance attestation, and
  * `@odiobill/piren@0.1.5` (ADR-0038 scheduler safety) was published through
  * the same protected tag-only OIDC workflow from immutable tag `v0.1.5`.
- * The 0.1.6 ADR-0040 transport release is prepared but is not yet tagged or
- * published; its candidate metadata must not claim publication early. These
- * guards keep package metadata, version, and changelog truthful across the
- * manual-bootstrap 0.1.3, OIDC-published 0.1.4/0.1.5, and 0.1.6 preparation.
+ * `@odiobill/piren@0.1.6` (ADR-0040 transport maturity) was published through
+ * the same protected tag-only OIDC workflow from immutable tag `v0.1.6`.
+ * These guards keep package metadata, version, and changelog truthful across
+ * the manual-bootstrap 0.1.3 and OIDC-published 0.1.4 through 0.1.6 releases.
  */
 
 const repoRoot = process.cwd();
@@ -26,13 +26,13 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("scoped @odiobill/piren registry releases (0.1.6 preparation, 0.1.5/0.1.4 OIDC, 0.1.3 bootstrap)", () => {
+describe("scoped @odiobill/piren registry releases (0.1.6/0.1.5/0.1.4 OIDC, 0.1.3 bootstrap)", () => {
   it("package.json name is the scoped @odiobill/piren identity", () => {
     const pkg = JSON.parse(read("package.json")) as { name: string };
     expect(pkg.name).toBe("@odiobill/piren");
   });
 
-  it("package.json version is the prepared 0.1.6 release candidate", () => {
+  it("package.json version is the published 0.1.6 release", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
     expect(pkg.version).toBe("0.1.6");
   });
@@ -73,7 +73,7 @@ describe("scoped @odiobill/piren registry releases (0.1.6 preparation, 0.1.5/0.1
     expect(lock.packages?.[""]?.version).toBe("0.1.6");
   });
 
-  it("CHANGELOG has a dated [0.1.6] candidate entry without a premature publication claim", () => {
+  it("CHANGELOG has a dated [0.1.6] entry recording OIDC publication with provenance", () => {
     const cl = read("CHANGELOG.md");
     const start = cl.indexOf("## [0.1.6]");
     const end = cl.indexOf("## [0.1.5]");
@@ -83,8 +83,11 @@ describe("scoped @odiobill/piren registry releases (0.1.6 preparation, 0.1.5/0.1
     expect(section).toMatch(/## \[0\.1\.6\] - 2026-08-01/);
     expect(section).toMatch(/ADR-0040/);
     expect(section).toMatch(/D4|three-host/i);
-    expect(section).toMatch(/not yet tagged or published|prepared release candidate/i);
-    expect(section).not.toMatch(/published to npm `latest`|OIDC publication complete/i);
+    expect(section).toMatch(/published/i);
+    expect(section).toMatch(/npm `latest`/);
+    expect(section).toMatch(/OIDC/);
+    expect(section).toMatch(/provenance/i);
+    expect(section).not.toMatch(/not yet tagged or published|prepared release candidate|unreleased/i);
   });
 
   it("CHANGELOG has dated published [0.1.4] and [0.1.3] entries", () => {

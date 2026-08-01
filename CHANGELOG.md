@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.6] - 2026-08-01
 
-ADR-0040 transport maturity release candidate. Prepared for the protected tag-only OIDC workflow; **not yet tagged or published**.
+ADR-0040 transport maturity. Published as `@odiobill/piren@0.1.6` to npm `latest` through the protected tag-only OIDC trusted-publishing workflow from immutable tag `v0.1.6` (`66af990`); registry metadata carries a SLSA provenance attestation (`npm publish --provenance`, `https://slsa.dev/provenance/v1`).
 
 ### Added
 
