@@ -231,12 +231,20 @@ export async function runTransportConfigure(prompt, kind, deps) {
     const existingText = await io.readConfig(configPath);
     let existingRoot = {};
     if (existingText !== null && existingText.trim() !== "") {
+        // Fail closed: silently replacing an unparseable or non-mapping config
+        // after confirmation would destroy unrelated local configuration.
+        let parsed;
         try {
-            existingRoot = asRecord(parseYaml(existingText)) ?? {};
+            parsed = parseYaml(existingText);
         }
-        catch {
-            existingRoot = {};
+        catch (error) {
+            throw new Error(`Existing config at ${configPath} is not parseable YAML (${error instanceof Error ? error.message : String(error)}). Fix or back it up manually. No changes were written.`);
         }
+        const record = asRecord(parsed);
+        if (record === undefined) {
+            throw new Error(`Existing config at ${configPath} is not parseable as a YAML mapping. Fix or back it up manually. No changes were written.`);
+        }
+        existingRoot = record;
     }
     const existingBlock = asRecord(existingRoot[kind]) ?? {};
     // --- Bot token (secret input; keep-existing on re-run) ---

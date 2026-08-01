@@ -503,6 +503,37 @@ describe("runTransportConfigure: telegram", () => {
     expect(calls.secret).toHaveLength(0);
     expect(writes).toHaveLength(0);
   });
+
+  it("refuses to run against an unparseable existing config instead of clobbering it", async () => {
+    const { prompt, calls } = fakePrompt({});
+    const { io, writes } = fakeIo("{{{ not yaml");
+
+    await expect(
+      runTransportConfigure(prompt, "telegram", {
+        configPath: "/cfg",
+        runnableAgents: RUNNABLE,
+        io,
+        log: () => {},
+      }),
+    ).rejects.toThrow(/not parseable|could not be parsed/i);
+    expect(calls.secret).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("refuses when the existing config is not a YAML mapping", async () => {
+    const { prompt } = fakePrompt({});
+    const { io, writes } = fakeIo("- just\n- a\n- list\n");
+
+    await expect(
+      runTransportConfigure(prompt, "discord", {
+        configPath: "/cfg",
+        runnableAgents: RUNNABLE,
+        io,
+        log: () => {},
+      }),
+    ).rejects.toThrow(/not parseable|could not be parsed/i);
+    expect(writes).toHaveLength(0);
+  });
 });
 
 describe("runTransportConfigure: discord", () => {
