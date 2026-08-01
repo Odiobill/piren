@@ -120,3 +120,72 @@ describe("DiscordBotApiHttpClient.getChannel (ADR-0040 D1)", () => {
     await expect(client.getChannel("123")).rejects.toThrow();
   });
 });
+
+describe("DiscordBotApiHttpClient application commands (ADR-0040 D3)", () => {
+  it("listApplicationCommands GETs the application commands URL with Bot auth", async () => {
+    const calls: CapturedRequest[] = [];
+    const fakeFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const headers: Record<string, string> = {};
+      if (init?.headers) {
+        for (const [key, value] of Object.entries(init.headers as Record<string, string>)) headers[key] = value;
+      }
+      calls.push({ url: String(input), method: init?.method ?? "GET", headers, body: "" });
+      return new Response(JSON.stringify([{ id: "cmd-1", name: "start" }]), { status: 200 });
+    };
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetch);
+    const commands = await client.listApplicationCommands("app-1");
+    expect(calls[0]?.url).toBe("https://discord.com/api/v10/applications/app-1/commands");
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.headers["authorization"]).toBe("Bot BOT-TOKEN");
+    expect(commands).toEqual([{ id: "cmd-1", name: "start" }]);
+  });
+
+  it("createApplicationCommand POSTs the spec with Bot auth", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetchOk(calls, 201));
+    const spec = { name: "start", description: "Readiness and help", type: 1 as const };
+    await client.createApplicationCommand("app-1", spec);
+    expect(calls[0]?.url).toBe("https://discord.com/api/v10/applications/app-1/commands");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.headers["authorization"]).toBe("Bot BOT-TOKEN");
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual(spec);
+  });
+
+  it("updateApplicationCommand PATCHes the per-command URL with Bot auth", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetchOk(calls, 200));
+    const spec = { name: "agents", description: "List runnable agents", type: 1 as const };
+    await client.updateApplicationCommand("app-1", "cmd-7", spec);
+    expect(calls[0]?.url).toBe("https://discord.com/api/v10/applications/app-1/commands/cmd-7");
+    expect(calls[0]?.method).toBe("PATCH");
+    expect(calls[0]?.headers["authorization"]).toBe("Bot BOT-TOKEN");
+  });
+});
+
+describe("DiscordBotApiHttpClient.respondToInteraction (ADR-0040 D3)", () => {
+  it("POSTs a channel-message callback WITHOUT Bot auth and without logging the token", async () => {
+    const calls: CapturedRequest[] = [];
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetchOk(calls, 200));
+    await client.respondToInteraction("interaction-1", "interaction-token-abc", "pong");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://discord.com/api/v10/interactions/interaction-1/interaction-token-abc/callback");
+    expect(calls[0]?.method).toBe("POST");
+    // Interaction callbacks authenticate via the token in the URL, never the
+    // Bot header.
+    expect(calls[0]?.headers["authorization"]).toBeUndefined();
+    expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({ type: 4, data: { content: "pong" } });
+  });
+
+  it("never includes the interaction token in failure errors", async () => {
+    const fakeFetch = async (): Promise<Response> => new Response("plain failure", { status: 403 });
+    const client = new DiscordBotApiHttpClient("BOT-TOKEN", fakeFetch);
+    try {
+      await client.respondToInteraction("interaction-1", "super-secret-interaction-token", "pong");
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain("super-secret-interaction-token");
+      expect(message).not.toContain("interaction-1");
+    }
+  });
+});

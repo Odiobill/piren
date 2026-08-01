@@ -24,7 +24,7 @@ Each guided flow:
 
 Portal settings are prerequisites, not authorization: Piren's local allowlists remain the final inbound-access gate either way.
 
-**Discord Developer Portal.** Create or select the application and its bot; the token goes only in local configuration. Enable the **Message Content** privileged intent, which ordinary-message routing requires. Install the bot to your server with the `bot` scope and only the permissions Piren needs: view channels, send messages, add reactions, and send messages in threads. Enable **Developer Mode** in the Discord client to copy IDs, and copy the **server** ID into `allowed_guild_ids`, ordinary-channel IDs into `allowed_channel_ids`, and explicit thread IDs into `allowed_thread_ids`. A user ID is not a server ID: putting a user ID in `allowed_guild_ids` authorizes nothing and is a common setup mistake. One-to-one direct messages are a separate fail-closed scope (`allowed_dm_user_ids`, see Access control); the configure flow can optionally collect them as an explicit one-to-one DM user allowlist. Piren declares the `DIRECT_MESSAGES` gateway intent automatically; it is not a privileged intent and needs no portal toggle.
+**Discord Developer Portal.** Create or select the application and its bot; the token goes only in local configuration. Enable the **Message Content** privileged intent, which ordinary-message routing requires. Install the bot to your server with the `bot` scope — plus the `applications.commands` scope when you want native slash commands — and only the permissions Piren needs: view channels, send messages, add reactions, and send messages in threads. Enable **Developer Mode** in the Discord client to copy IDs, and copy the **server** ID into `allowed_guild_ids`, ordinary-channel IDs into `allowed_channel_ids`, and explicit thread IDs into `allowed_thread_ids`. A user ID is not a server ID: putting a user ID in `allowed_guild_ids` authorizes nothing and is a common setup mistake. One-to-one direct messages are a separate fail-closed scope (`allowed_dm_user_ids`, see Access control); the configure flow can optionally collect them as an explicit one-to-one DM user allowlist. Piren declares the `DIRECT_MESSAGES` gateway intent automatically; it is not a privileged intent and needs no portal toggle.
 
 **Telegram BotFather.** Create or select the bot with BotFather and keep the token only in local configuration. Each accepted private chat or group needs its explicit numeric chat ID in `allowed_chat_ids` (group IDs are negative). Bot Privacy Mode is a platform delivery setting, not Piren authorization — see "Group delivery and BotFather Privacy Mode" below.
 
@@ -129,7 +129,15 @@ Commands mirror Telegram:
 
 Discord uses a platform-mandated WebSocket client connection to Discord's gateway. This does not add a WebSocket server to Piren's web UI. Feedback uses Discord REST: `POST /channels/{id}/typing` and `PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`. Reaction failures are best-effort and never abort the assistant response.
 
-Native Discord application commands remain accepted future work (ADR-0040) and are not available in the current build. One-to-one Discord direct messages are supported fail-closed through `allowed_dm_user_ids` (see Access control); the guided configure flow can optionally collect that explicit one-to-one DM user allowlist, and blank input leaves every DM denied.
+ADR-0040 is fully implemented in this build: one-to-one Discord direct messages are supported fail-closed through `allowed_dm_user_ids` (see Access control), the guided configure flow can optionally collect that explicit one-to-one DM user allowlist, and native application commands are available (see Native application commands). Blank DM input leaves every DM denied.
+
+## Native application commands
+
+When `discord.application_id` is configured, `piren discord` registers five native slash commands at startup — `/start`, `/agents`, `/agent <name>` (required string option), `/whoami`, and `/abort` — through Discord's global application-commands REST endpoints. Registration is narrow and non-destructive: each of the five commands is created or updated by name, and unrelated application commands are never deleted or overwritten. When `application_id` is absent, no registration call is made and the transport runs text commands only; when registration fails, Piren logs a non-secret warning and keeps running with the legacy text-command path.
+
+Native commands traverse the exact same fail-closed authorization as ordinary messages — guild plus ordinary-channel or explicit-thread rules, and the D1 DM rules — before any response, and `/agents` data is exposed only after authorization. Authorized commands answer through Discord's interaction callback mechanism, not an ordinary channel message. Interaction data is never treated as a prompt; unknown or malformed interactions are ignored silently. The mention-prefixed text commands keep working unchanged.
+
+Portal scopes are prerequisites only: local allowlists remain the final authorization authority for both text and native commands.
 
 ## Session controls
 

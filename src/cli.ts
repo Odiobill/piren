@@ -12,6 +12,7 @@ import { GatewayServer } from "./gateway-http.js";
 import { TelegramBotApiHttpClient, TelegramTransport, runTelegramPolling } from "./telegram-transport.js";
 import { DiscordBotApiHttpClient, DiscordTransport, runDiscordGateway, createNativeDiscordGatewaySocket, DISCORD_GATEWAY_INTENTS } from "./discord-transport.js";
 import { runTransportConfigure, type ConfigureTransportKind } from "./transport-configure.js";
+import { maybeRegisterApplicationCommands } from "./discord-commands.js";
 import { PiRpcClient } from "./gateway-rpc.js";
 import { askAgent } from "./ask.js";
 import { cleanPiren, formatCleanReport } from "./clean.js";
@@ -362,6 +363,20 @@ try {
       return { command: agentCommand.command, args: agentCommand.args, cwd: agentCommand.cwd, env: agentCommand.env };
     };
     const api = new DiscordBotApiHttpClient(botToken.trim());
+    const applicationId = typeof discordConfig?.application_id === "string" ? discordConfig.application_id.trim() : "";
+    // ADR-0040 D3: register the five native application commands when an
+    // application_id is configured. Registration failure degrades to the
+    // legacy text-command path with a non-secret warning; a missing
+    // application id keeps the legacy text transport with no registration
+    // call.
+    try {
+      const registration = await maybeRegisterApplicationCommands(api, applicationId);
+      if (registration !== null) {
+        console.log(`Discord native commands registered (${registration.created.length} created, ${registration.updated.length} updated).`);
+      }
+    } catch (error) {
+      console.error(`Discord native command registration failed: ${error instanceof Error ? error.message : String(error)}. Text commands remain available.`);
+    }
     const transport = new DiscordTransport<PiRpcClient>({
       allowedGuildIds,
       allowedChannelIds,
@@ -380,7 +395,7 @@ try {
     console.log(`Piren Discord transport running for ${allowedChannelIds.length} allowlisted channel(s)${dmScope}.`);
     const gateway = runDiscordGateway({
       botToken: botToken.trim(),
-      applicationId: discordConfig?.application_id ?? "",
+      applicationId: applicationId,
       intents: DISCORD_GATEWAY_INTENTS,
       transport,
       socketFactory: () => createNativeDiscordGatewaySocket(gatewayUrl),

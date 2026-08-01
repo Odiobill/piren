@@ -60,13 +60,16 @@ describe("transport operator docs (0.1.6)", () => {
     expect(CONFIGURATION).toMatch(/never in the vault/);
   });
 
-  it("keeps the ADR-0040 present/future split unambiguous", () => {
-    expect(TRANSPORTS).toContain("accepted future work (ADR-0040)");
-    expect(TRANSPORTS).toContain("not available in the current build");
-    // D1 shipped fail-closed one-to-one DM authorization: the DM allowlist
-    // is now documented operator surface, and native Discord application
-    // commands are the remaining deferred ADR-0040 work.
-    expect(TRANSPORTS).toMatch(/Native Discord application commands remain accepted future work/);
+  it("documents ADR-0040 as implemented, with native commands authorized fail-closed", () => {
+    // D1-D3 shipped: nothing in ADR-0040 remains deferred. Docs must state
+    // the applications.commands scope prerequisite, the non-destructive
+    // registration strategy, the interaction-callback response path, and
+    // that local allowlists remain the final authority.
+    expect(TRANSPORTS).not.toMatch(/application commands remain accepted future work/i);
+    expect(TRANSPORTS).toContain("applications.commands");
+    expect(TRANSPORTS).toMatch(/never deleted or overwritten/i);
+    expect(TRANSPORTS).toMatch(/interaction callback/i);
+    expect(TRANSPORTS).toMatch(/local allowlists remain the final/i);
     expect(TRANSPORTS).toContain("allowed_dm_user_ids");
     expect(CONFIGURATION).toContain("allowed_dm_user_ids");
   });

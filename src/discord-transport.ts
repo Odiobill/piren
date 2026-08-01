@@ -3,6 +3,13 @@ import { extractAssistantText, type RpcEvent, type RpcSpawnTarget } from "./gate
 import { TransportSessionManager, type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import { resolveFeedback, type TransportFeedback, type TransportFeedbackConfig } from "./transport-feedback.js";
+import {
+  DISCORD_INTERACTION_CALLBACK_CHANNEL_MESSAGE,
+  parseInteractionCommand,
+  type DiscordCommandSpec,
+  type DiscordInteractionPayload,
+  type RegisteredCommandRef,
+} from "./discord-commands.js";
 
 /**
  * Discord's message hard limit per message (documented as 2000).
@@ -60,6 +67,13 @@ export interface DiscordBotApi {
    * allowlist; never for guild traffic.
    */
   getChannel(channelId: string): Promise<DiscordChannelMetadata>;
+  /**
+   * Respond to an application-command interaction through Discord's
+   * interaction callback mechanism. The interaction token authenticates the
+   * callback via the URL — no Bot authorization header — and must never be
+   * logged or included in errors.
+   */
+  respondToInteraction(interactionId: string, interactionToken: string, content: string): Promise<void>;
 }
 
 export class DiscordBotApiHttpClient implements DiscordBotApi {
@@ -108,6 +122,53 @@ export class DiscordBotApiHttpClient implements DiscordBotApi {
       throw new Error(await this.describeError(response));
     }
     return (await response.json()) as DiscordChannelMetadata;
+  }
+
+  async listApplicationCommands(applicationId: string): Promise<RegisteredCommandRef[]> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/applications/${applicationId}/commands`, {
+      headers: this.authHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.describeError(response));
+    }
+    return (await response.json()) as RegisteredCommandRef[];
+  }
+
+  async createApplicationCommand(applicationId: string, spec: DiscordCommandSpec): Promise<void> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/applications/${applicationId}/commands`, {
+      method: "POST",
+      headers: this.authHeaders({ contentType: true }),
+      body: JSON.stringify(spec),
+    });
+    if (!response.ok) {
+      throw new Error(await this.describeError(response));
+    }
+  }
+
+  async updateApplicationCommand(applicationId: string, commandId: string, spec: DiscordCommandSpec): Promise<void> {
+    const response = await this.fetchImpl(`https://discord.com/api/v10/applications/${applicationId}/commands/${commandId}`, {
+      method: "PATCH",
+      headers: this.authHeaders({ contentType: true }),
+      body: JSON.stringify(spec),
+    });
+    if (!response.ok) {
+      throw new Error(await this.describeError(response));
+    }
+  }
+
+  async respondToInteraction(interactionId: string, interactionToken: string, content: string): Promise<void> {
+    // Interaction callbacks authenticate via the interaction token in the
+    // URL — deliberately NO Bot authorization header.
+    const response = await this.fetchImpl(`https://discord.com/api/v10/interactions/${interactionId}/${interactionToken}/callback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: DISCORD_INTERACTION_CALLBACK_CHANNEL_MESSAGE, data: { content } }),
+    });
+    if (!response.ok) {
+      // Never include the URL or response body here: the URL carries the
+      // interaction token.
+      throw new Error(`Discord interaction callback failed (HTTP ${response.status})`);
+    }
   }
 
   private authHeaders(options: { contentType?: boolean } = {}): Record<string, string> {
@@ -260,26 +321,24 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
     if (trimmed === "") return;
 
     if (trimmed === "/start") {
-      await this.api.createMessage(channelId, "Piren Discord transport ready. Use /agents, /agent <name>, /whoami, /abort, /new, /compact, or send a prompt.");
+      await this.api.createMessage(channelId, await this.executeCommand("start", undefined, conversation));
       return;
     }
     if (trimmed === "/agents") {
-      const active = this.sessions.getActiveAgent(this.transportName, conversation) ?? this.defaultAgent;
-      await this.api.createMessage(channelId, `Runnable Piren agents: ${this.runnableAgents.join(", ")}\nActive agent: ${active}`);
+      await this.api.createMessage(channelId, await this.executeCommand("agents", undefined, conversation));
       return;
     }
     if (trimmed === "/whoami") {
-      const active = this.sessions.getActiveAgent(this.transportName, conversation) ?? this.defaultAgent;
-      await this.api.createMessage(channelId, `Active Piren agent: ${active}`);
+      await this.api.createMessage(channelId, await this.executeCommand("whoami", undefined, conversation));
       return;
     }
     if (trimmed === "/abort") {
-      const aborted = await this.sessions.abort(this.transportName, conversation);
-      await this.api.createMessage(channelId, aborted ? "Abort sent to active Piren session." : "No active Piren session for this channel.");
+      await this.api.createMessage(channelId, await this.executeCommand("abort", undefined, conversation));
       return;
     }
     if (trimmed.startsWith("/agent")) {
-      await this.handleAgentCommand(channelId, conversation, trimmed);
+      const parts = trimmed.split(/\s+/).filter(Boolean);
+      await this.api.createMessage(channelId, await this.executeCommand("agent", parts[1], conversation));
       return;
     }
     if (trimmed === "/new") {
@@ -360,6 +419,85 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
   }
 
   /**
+   * Handle a native application-command interaction (ADR-0040 D3). The
+   * interaction traverses the exact same fail-closed authorization policy as
+   * an ordinary message — guild+channel/thread rules and D1 DM rules — and
+   * only the five defined commands are translated; arbitrary interaction
+   * data is never treated as a prompt. Authorized commands respond through
+   * the interaction callback, never through an ordinary channel message.
+   */
+  async handleInteraction(interaction: DiscordInteractionPayload): Promise<void> {
+    const parsed = parseInteractionCommand(interaction);
+    if (!parsed.ok) return;
+    if (typeof interaction.id !== "string" || interaction.id.trim() === "") return;
+    if (typeof interaction.token !== "string" || interaction.token.trim() === "") return;
+    if (typeof interaction.channel_id !== "string" || interaction.channel_id === "") return;
+
+    let conversation: string;
+    if (interaction.guild_id !== undefined) {
+      // Guild path: identical policy to the message path. Interactions carry
+      // no thread_id discriminator; a channel_id in the thread allowlist
+      // authorizes exactly that thread, otherwise the channel allowlist
+      // applies. The DM allowlist is never consulted here.
+      if (!this.allowedGuildIds.has(interaction.guild_id)) return;
+      if (this.allowedThreadIds.has(interaction.channel_id)) {
+        // Explicitly allowlisted thread (same conversation key as the real
+        // gateway thread message shape).
+      } else if (!this.allowedChannelIds.has(interaction.channel_id)) {
+        return;
+      }
+      const sender = interaction.member?.user;
+      if (sender?.bot === true) return;
+      if (typeof sender?.id !== "string" || sender.id.trim() === "") return;
+      conversation = `${interaction.guild_id}:${interaction.channel_id}`;
+    } else {
+      // D1 DM path: sender allowlist first (no lookup for unlisted users),
+      // then the verified one-to-one DM channel check.
+      if (this.allowedDmUserIds.size === 0) return;
+      const sender = interaction.user;
+      if (sender?.bot === true) return;
+      const senderId = typeof sender?.id === "string" ? sender.id.trim() : "";
+      if (senderId === "" || !this.allowedDmUserIds.has(senderId)) return;
+      if (!(await this.isDirectMessageChannel(interaction.channel_id))) return;
+      conversation = `dm:${interaction.channel_id}`;
+    }
+
+    const content = await this.executeCommand(parsed.command, parsed.arg, conversation);
+    await this.api.respondToInteraction(interaction.id, interaction.token, content);
+  }
+
+  /**
+   * Execute one of the five shared transport commands and return its
+   * response text. Used by both the legacy text path (which sends the text
+   * as a channel message) and native application commands (which respond
+   * through the interaction callback). Command outputs never contain local
+   * config, tokens, or session internals.
+   */
+  private async executeCommand(command: "start" | "agents" | "agent" | "whoami" | "abort", arg: string | undefined, conversation: string): Promise<string> {
+    if (command === "start") {
+      return "Piren Discord transport ready. Use /agents, /agent <name>, /whoami, /abort, /new, /compact, or send a prompt.";
+    }
+    if (command === "agents") {
+      const active = this.sessions.getActiveAgent(this.transportName, conversation) ?? this.defaultAgent;
+      return `Runnable Piren agents: ${this.runnableAgents.join(", ")}\nActive agent: ${active}`;
+    }
+    if (command === "whoami") {
+      const active = this.sessions.getActiveAgent(this.transportName, conversation) ?? this.defaultAgent;
+      return `Active Piren agent: ${active}`;
+    }
+    if (command === "abort") {
+      const aborted = await this.sessions.abort(this.transportName, conversation);
+      return aborted ? "Abort sent to active Piren session." : "No active Piren session for this channel.";
+    }
+    // agent
+    if (arg === undefined) return "Usage: /agent <name>";
+    if (!this.runnableAgents.includes(arg)) {
+      return `Agent '${arg}' is not in the runnable set. Use /agents to list available agents.`;
+    }
+    await this.sessions.switchAgent(this.transportName, conversation, arg);
+    return `Active Piren agent for this channel: ${arg}`;
+  }
+  /**
    * `/new`: start a fresh Pi session for this conversation through Pi's
    * native control. Never creates a session; failures are acknowledged
    * generically so raw RPC error text, paths, and transcripts never leak
@@ -397,20 +535,6 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
     await this.api.createMessage(channelId, text);
   }
 
-  private async handleAgentCommand(channelId: string, conversation: string, text: string): Promise<void> {
-    const parts = text.split(/\s+/).filter(Boolean);
-    const agent = parts[1];
-    if (!agent) {
-      await this.api.createMessage(channelId, "Usage: /agent <name>");
-      return;
-    }
-    if (!this.runnableAgents.includes(agent)) {
-      await this.api.createMessage(channelId, `Agent '${agent}' is not in the runnable set. Use /agents to list available agents.`);
-      return;
-    }
-    await this.sessions.switchAgent(this.transportName, conversation, agent);
-    await this.api.createMessage(channelId, `Active Piren agent for this channel: ${agent}`);
-  }
 }
 
 /**
@@ -546,6 +670,16 @@ export function runDiscordGateway<TClient extends DiscordPromptClient>(
         dispatch = dispatch.then(() => options.transport.handleMessage(data)).catch((err) => {
           options.onError?.(err instanceof Error ? err : new Error(String(err)));
         });
+        return;
+      }
+      if (type === "INTERACTION_CREATE" && payload.d) {
+        // Native application commands (ADR-0040 D3). The transport applies
+        // the same fail-closed authorization as ordinary messages.
+        const interaction = payload.d as DiscordInteractionPayload;
+        dispatch = dispatch.then(() => options.transport.handleInteraction(interaction)).catch((err) => {
+          options.onError?.(err instanceof Error ? err : new Error(String(err)));
+        });
+        return;
       }
       return;
     }

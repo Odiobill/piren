@@ -41,6 +41,7 @@ function buildTransport(options?: {
   const typing: string[] = [];
   const reactions: Array<{ channelId: string; messageId: string; emoji: string }> = [];
   const getChannelCalls: string[] = [];
+  const interactionCallbacks: Array<{ interactionId: string; content: string }> = [];
   const transport = new DiscordTransport<FakeDiscordClient>({
     transportName: "discord",
     allowedGuildIds: ["111"],
@@ -76,9 +77,12 @@ function buildTransport(options?: {
         if (lookup.type !== undefined) metadata.type = lookup.type;
         return metadata as { id: string; type?: number };
       },
+      async respondToInteraction(interactionId, _interactionToken, content) {
+        interactionCallbacks.push({ interactionId, content });
+      },
     },
   });
-  return { transport, replies, clients, typing, reactions, getChannelCalls };
+  return { transport, replies, clients, typing, reactions, getChannelCalls, interactionCallbacks };
 }
 
 describe("DiscordTransport", () => {
@@ -242,6 +246,7 @@ describe("DiscordTransport", () => {
       async sendTyping() {},
       async addReaction() {},
       async getChannel(channelId) { return { id: channelId, type: 1 }; },
+      async respondToInteraction() {},
     },
     });
 
@@ -290,6 +295,7 @@ describe("DiscordTransport", () => {
         async sendTyping() { throw new Error("typing failed"); },
         async addReaction() { throw new Error("reaction failed"); },
         async getChannel(channelId) { return { id: channelId, type: 1 }; },
+        async respondToInteraction() {},
       },
     });
 
@@ -643,5 +649,134 @@ describe("DiscordTransport DM hardening (D1 review fixes)", () => {
     expect(getChannelCalls).toEqual([]);
     expect(replies).toEqual([]);
     expect(clients).toHaveLength(0);
+  });
+});
+
+describe("DiscordTransport native application commands (ADR-0040 D3)", () => {
+  const guildInteraction = (name: string, options?: Array<{ name: string; type: number; value: unknown }>) => ({
+    id: "int-1",
+    token: "int-token",
+    type: 2,
+    guild_id: "111",
+    channel_id: "222",
+    data: options === undefined ? { name } : { name, options },
+    member: { user: { id: "user-9" } },
+  });
+
+  it("answers /start through the interaction callback, not a channel message", async () => {
+    const { transport, replies, interactionCallbacks, getChannelCalls } = buildTransport();
+
+    await transport.handleInteraction(guildInteraction("start"));
+
+    expect(interactionCallbacks).toHaveLength(1);
+    expect(interactionCallbacks[0]?.interactionId).toBe("int-1");
+    expect(interactionCallbacks[0]?.content).toContain("Piren Discord transport ready");
+    expect(replies).toEqual([]);
+    expect(getChannelCalls).toEqual([]);
+  });
+
+  it("answers /agents and /whoami after authorization, sharing state with the text path", async () => {
+    const { transport, interactionCallbacks, replies } = buildTransport();
+
+    await transport.handleInteraction(guildInteraction("agents"));
+    await transport.handleInteraction(guildInteraction("agent", [{ name: "name", type: 3, value: "thor" }]));
+    await transport.handleInteraction(guildInteraction("whoami"));
+    // Same conversation as the text path: a text /whoami sees the switch too.
+    await transport.handleMessage({ guild_id: "111", channel_id: "222", content: "/whoami" });
+
+    expect(interactionCallbacks.map((c) => c.content)).toEqual([
+      "Runnable Piren agents: piren, thor\nActive agent: piren",
+      "Active Piren agent for this channel: thor",
+      "Active Piren agent: thor",
+    ]);
+    expect(replies.map((r) => r.text)).toEqual(["Active Piren agent: thor"]);
+  });
+
+  it("answers /abort without an active session", async () => {
+    const { transport, interactionCallbacks } = buildTransport();
+
+    await transport.handleInteraction(guildInteraction("abort"));
+
+    expect(interactionCallbacks.map((c) => c.content)).toEqual(["No active Piren session for this channel."]);
+  });
+
+  it("rejects an unknown agent name through the callback without switching", async () => {
+    const { transport, interactionCallbacks } = buildTransport();
+
+    await transport.handleInteraction(guildInteraction("agent", [{ name: "name", type: 3, value: "ghost" }]));
+
+    expect(interactionCallbacks.map((c) => c.content)).toEqual([
+      "Agent 'ghost' is not in the runnable set. Use /agents to list available agents.",
+    ]);
+  });
+
+  it("stays silent for unallowlisted guild, channel, and thread interactions — no callback, lookup, or session", async () => {
+    const { transport, replies, interactionCallbacks, clients, getChannelCalls } = buildTransport();
+
+    await transport.handleInteraction({ ...guildInteraction("start"), guild_id: "999" });
+    await transport.handleInteraction({ ...guildInteraction("start"), channel_id: "888" });
+    await transport.handleInteraction({ ...guildInteraction("start"), channel_id: "777" }); // thread-shaped, not allowlisted
+
+    expect(interactionCallbacks).toEqual([]);
+    expect(replies).toEqual([]);
+    expect(clients).toHaveLength(0);
+    expect(getChannelCalls).toEqual([]);
+  });
+
+  it("authorizes a thread interaction through the explicit thread allowlist", async () => {
+    const { transport, interactionCallbacks } = buildTransport({ allowedThreadIds: ["333"] });
+
+    await transport.handleInteraction({ ...guildInteraction("start"), channel_id: "333" });
+
+    expect(interactionCallbacks).toHaveLength(1);
+  });
+
+  it("authorizes a DM interaction through D1 rules (sender allowlist + verified DM channel)", async () => {
+    const { transport, interactionCallbacks, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleInteraction({
+      id: "int-dm",
+      token: "int-token",
+      type: 2,
+      channel_id: "555",
+      data: { name: "start" },
+      user: { id: "user-1" },
+    });
+
+    expect(getChannelCalls).toEqual(["555"]);
+    expect(interactionCallbacks).toHaveLength(1);
+    expect(interactionCallbacks[0]?.interactionId).toBe("int-dm");
+  });
+
+  it("stays silent for DM interactions from unlisted users, group DMs, and failed lookups", async () => {
+    const unlisted = buildTransport({ allowedDmUserIds: ["user-1"] });
+    await unlisted.transport.handleInteraction({ id: "i1", token: "t", type: 2, channel_id: "555", data: { name: "start" }, user: { id: "user-9" } });
+    expect(unlisted.interactionCallbacks).toEqual([]);
+    expect(unlisted.getChannelCalls).toEqual([]); // no lookup for unlisted senders
+
+    const group = buildTransport({ allowedDmUserIds: ["user-1"], channelLookup: { type: 3 } });
+    await group.transport.handleInteraction({ id: "i2", token: "t", type: 2, channel_id: "555", data: { name: "start" }, user: { id: "user-1" } });
+    expect(group.interactionCallbacks).toEqual([]);
+
+    const failing = buildTransport({ allowedDmUserIds: ["user-1"], channelLookup: "throw" });
+    await failing.transport.handleInteraction({ id: "i3", token: "t", type: 2, channel_id: "555", data: { name: "start" }, user: { id: "user-1" } });
+    expect(failing.interactionCallbacks).toEqual([]);
+  });
+
+  it("rejects malformed interactions silently: missing token/id/channel, wrong type, unknown command, bot user", async () => {
+    const { transport, interactionCallbacks, clients, getChannelCalls } = buildTransport({ allowedDmUserIds: ["user-1"] });
+
+    await transport.handleInteraction({ ...guildInteraction("start"), token: "" });
+    await transport.handleInteraction({ ...guildInteraction("start"), id: "" });
+    await transport.handleInteraction({ ...guildInteraction("start"), channel_id: "" });
+    await transport.handleInteraction({ ...guildInteraction("start"), type: 3 });
+    await transport.handleInteraction({ ...guildInteraction("start"), data: { name: "rm" } });
+    await transport.handleInteraction({ ...guildInteraction("start"), member: { user: { id: "user-9", bot: true } } });
+    // Missing user identity entirely.
+    await transport.handleInteraction({ id: "i", token: "t", type: 2, channel_id: "555", data: { name: "start" } });
+
+    expect(interactionCallbacks).toEqual([]);
+    expect(clients).toHaveLength(0);
+    expect(getChannelCalls).toEqual([]);
   });
 });

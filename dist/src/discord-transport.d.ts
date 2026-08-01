@@ -2,6 +2,7 @@ import { type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import { type TransportFeedbackConfig } from "./transport-feedback.js";
+import { type DiscordCommandSpec, type DiscordInteractionPayload, type RegisteredCommandRef } from "./discord-commands.js";
 /**
  * Discord's message hard limit per message (documented as 2000).
  */
@@ -53,6 +54,13 @@ export interface DiscordBotApi {
      * allowlist; never for guild traffic.
      */
     getChannel(channelId: string): Promise<DiscordChannelMetadata>;
+    /**
+     * Respond to an application-command interaction through Discord's
+     * interaction callback mechanism. The interaction token authenticates the
+     * callback via the URL — no Bot authorization header — and must never be
+     * logged or included in errors.
+     */
+    respondToInteraction(interactionId: string, interactionToken: string, content: string): Promise<void>;
 }
 export declare class DiscordBotApiHttpClient implements DiscordBotApi {
     private readonly botToken;
@@ -62,6 +70,10 @@ export declare class DiscordBotApiHttpClient implements DiscordBotApi {
     sendTyping(channelId: string): Promise<void>;
     addReaction(channelId: string, messageId: string, emoji: string): Promise<void>;
     getChannel(channelId: string): Promise<DiscordChannelMetadata>;
+    listApplicationCommands(applicationId: string): Promise<RegisteredCommandRef[]>;
+    createApplicationCommand(applicationId: string, spec: DiscordCommandSpec): Promise<void>;
+    updateApplicationCommand(applicationId: string, commandId: string, spec: DiscordCommandSpec): Promise<void>;
+    respondToInteraction(interactionId: string, interactionToken: string, content: string): Promise<void>;
     private authHeaders;
     private describeError;
 }
@@ -117,6 +129,23 @@ export declare class DiscordTransport<TClient extends DiscordPromptClient> {
     private sendPromptFeedbackStart;
     private sendPromptFeedbackComplete;
     /**
+     * Handle a native application-command interaction (ADR-0040 D3). The
+     * interaction traverses the exact same fail-closed authorization policy as
+     * an ordinary message — guild+channel/thread rules and D1 DM rules — and
+     * only the five defined commands are translated; arbitrary interaction
+     * data is never treated as a prompt. Authorized commands respond through
+     * the interaction callback, never through an ordinary channel message.
+     */
+    handleInteraction(interaction: DiscordInteractionPayload): Promise<void>;
+    /**
+     * Execute one of the five shared transport commands and return its
+     * response text. Used by both the legacy text path (which sends the text
+     * as a channel message) and native application commands (which respond
+     * through the interaction callback). Command outputs never contain local
+     * config, tokens, or session internals.
+     */
+    private executeCommand;
+    /**
      * `/new`: start a fresh Pi session for this conversation through Pi's
      * native control. Never creates a session; failures are acknowledged
      * generically so raw RPC error text, paths, and transcripts never leak
@@ -129,7 +158,6 @@ export declare class DiscordTransport<TClient extends DiscordPromptClient> {
      * transcript details, generic failure acknowledgement.
      */
     private handleCompactCommand;
-    private handleAgentCommand;
 }
 /**
  * A minimal gateway socket abstraction. The production implementation wraps the

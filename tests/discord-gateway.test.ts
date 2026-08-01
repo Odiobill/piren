@@ -35,6 +35,7 @@ function buildTransport(options?: { allowedDmUserIds?: string[] }) {
       async sendTyping() {},
       async addReaction() {},
       async getChannel(channelId) { return { id: channelId, type: 1 }; },
+      async respondToInteraction() {},
     },
   });
   return { transport, replies };
@@ -240,5 +241,51 @@ describe("Discord gateway intents (D1 review fix)", () => {
     await gateway.close();
     const identify = socket.sent.map((raw) => JSON.parse(raw) as { op: number; d?: { intents?: number } }).find((p) => p.op === 2);
     expect(identify?.d?.intents).toBe(37377);
+  });
+});
+
+describe("runDiscordGateway INTERACTION_CREATE (ADR-0040 D3)", () => {
+  it("dispatches an authorized application-command interaction to the transport", async () => {
+    const callbacks: Array<{ interactionId: string; content: string }> = [];
+    const replies: string[] = [];
+    const transport = new DiscordTransport<FakeDiscordClient>({
+      transportName: "discord",
+      allowedGuildIds: ["111"],
+      allowedChannelIds: ["222"],
+      runnableAgents: ["piren"],
+      defaultAgent: "piren",
+      targetBuilder: async () => ({ command: "fake", args: [], cwd: process.cwd(), env: process.env }),
+      clientFactory: () => new FakeDiscordClient(),
+      api: {
+        async createMessage(_channelId, text) { replies.push(text); },
+        async sendTyping() {},
+        async addReaction() {},
+        async getChannel(channelId) { return { id: channelId, type: 1 }; },
+        async respondToInteraction(interactionId, _token, content) { callbacks.push({ interactionId, content }); },
+      },
+    });
+    const socket = new FakeGatewaySocket();
+    const gateway = runDiscordGateway({
+      botToken: "TOK",
+      applicationId: "1",
+      intents: 1,
+      transport,
+      socketFactory: () => Promise.resolve(socket),
+      heartbeatIntervalMs: 60_000,
+    });
+    await Promise.resolve();
+    socket.triggerOpen();
+    socket.emit(opPayload(10, { d: { heartbeat_interval: 60_000 } }));
+    await gateway.identified();
+    socket.emit(opPayload(0, {
+      t: "INTERACTION_CREATE",
+      s: 9,
+      d: { id: "int-1", token: "int-token", type: 2, guild_id: "111", channel_id: "222", data: { name: "start" }, member: { user: { id: "user-9" } } },
+    }));
+    await gateway.idle();
+    await gateway.close();
+    expect(callbacks).toHaveLength(1);
+    expect(callbacks[0]?.content).toContain("Piren Discord transport ready");
+    expect(replies).toEqual([]);
   });
 });
