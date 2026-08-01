@@ -25,7 +25,7 @@ See [vault layout](vault-layout.md) for the full directory reference.
 
 ## The OKF starter graph
 
-A fresh vault starts nearly empty. The Piren development vault seeds a small starter graph of concept documents under `wiki/concepts/` and `wiki/entities/` to orient new agents and stewards. The starter graph includes:
+A fresh vault starts nearly empty, with a small starter graph of concept documents under `wiki/concepts/` and `wiki/entities/` to orient new agents and stewards. The starter graph includes:
 
 - `wiki/entities/piren.md` - what Piren is.
 - `wiki/concepts/open-knowledge-format.md` - the OKF rule.
@@ -34,7 +34,7 @@ A fresh vault starts nearly empty. The Piren development vault seeds a small sta
 - `wiki/concepts/knowledge-lifecycle.md` - artifact promotion.
 - `wiki/concepts/okf-knowledge-bundle.md` - the bundle format.
 
-These six documents are the minimum useful orientation set. `piren doctor` checks that a fresh scaffold produces exactly these concept documents and no more.
+These six documents are the initial orientation set for a fresh scaffold.
 
 ## Point a device at an existing vault
 
@@ -53,7 +53,7 @@ allowed_agents:
 
 4. Run `piren doctor` to verify.
 
-The agent identity, memory, inbox, skills, and project knowledge travel with the vault. Local installation policy (which agents this device may run) stays outside the vault. See ADR-0002.
+The agent identity, memory, inbox, skills, and project knowledge travel with the vault. Local installation policy (which agents this device may run) stays outside the vault.
 
 ## Packaging a vault for a new team
 
@@ -73,7 +73,7 @@ An OKF knowledge bundle is a portable subset of the vault focused on durable kno
 
 - `wiki/concepts/` - curated concept pages.
 - `wiki/entities/` - entity descriptions.
-- `Projects/<p>/decisions/` - ADRs.
+- `Projects/<p>/decisions/` - durable decision records.
 - `Projects/<p>/index.md` and `log.md` - project context.
 - Relevant `runbooks/`.
 

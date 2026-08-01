@@ -22,7 +22,7 @@ Pi runtime policy: Piren requires a `pi` binary already available on `PATH`. If 
 npm install -g @odiobill/piren
 curl -fsSL https://pi.dev/install.sh | sh   # if pi is not already installed
 pi                                           # inside Pi: /login, then /quit
-piren setup                                  # create the Piren vault + first agent
+piren setup                                  # create or reuse a vault and local config
 piren status
 ```
 
@@ -64,7 +64,7 @@ Contributor, emergency, or offline installs from GitHub or a local tarball are d
 - Scheduler: `piren scheduler --dry-run` plans inbox task and cron job claims with zero LLM calls; `piren scheduler --once` runs one bounded claim-first tick; `piren scheduler` runs the opt-in loop until SIGINT/SIGTERM. Uses device heartbeat priorities and active-device-priority ownership, with conservative one-at-a-time execution and no hidden state.
 - Service lifecycle: systemd user units with tmux plus `@reboot` cron fallback for gateway, Telegram, Discord, and the scheduler. Inspectable, reversible files under `~/.config/piren/services/`.
 - First-run setup: `piren setup` (no flags) checks Pi, creates or reuses a vault, writes local config, and suggests optional service commands; `--help` on every command.
-- Inspectable self-improvement: agents can update handoffs, runbooks, ADRs, project logs, skill candidates, use `self_improvement_trigger_check` to classify correction moments, and opt in to visible-artifact auto-nudges/review loops without hidden memory mutation.
+- Inspectable self-improvement: agents can update handoffs, decision records, runbooks, project logs, and skill candidates; use `self_improvement_trigger_check` to classify correction moments; and opt in to visible-artifact auto-nudges/review loops without hidden memory mutation.
 - Open Knowledge Format (OKF v0.1): the vault is a specified knowledge bundle. `wiki_update_concept`, `wiki_update_entity`, `piren doctor`, and the `vault_conformance_check` tool keep curated wiki documents OKF-conformant with a required non-empty `type` frontmatter field.
 
 ## Architecture sketch
@@ -112,41 +112,21 @@ Online landing page: **https://piren.org/**
 
 Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable implementation rules belong there; phase-specific next-session context belongs in the Piren vault project handoff.
 
-## Current release status
+## Releases and updates
 
-Piren 0.1.0 is the first non-prerelease official release. It contains the full official-release scope (O1–O7): agent groups with read-only fallback, a device-local scheduler service MVP (`--dry-run`/`--once`/loop/service lifecycle), a complete documentation pass, OKF vault conformance, inspectable self-improvement, and the rc.1–rc.3 core (gateway surfaces, vault skills, Pi packages, knowledge lifecycle, vault-backed cron, clean-install validation).
-
-Current verification baseline: 99 test files, 1390 tests, `npm run typecheck`, `npm run build`, and `npm run smoke` passing. `npm run clean-install:check` packs the local source into a tarball and installs it in an isolated HOME (no `github:` fetch in the normal path).
-
-Update an existing global install with:
+Piren 0.1.6 is the current stable release on npm. Update an existing global install with:
 
 ```bash
 piren update
 ```
 
-`piren update` installs the latest `@odiobill/piren` release from the npm registry. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`), never prompts interactively, and has no automatic rollback — if `npm install` fails it reports the error and exits non-zero.
+`piren update` installs the latest `@odiobill/piren` release from the npm registry. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`).
 
-**Upgrading from 0.1.3?** Run `npm install -g @odiobill/piren` once. The `piren update` command bundled with 0.1.3 still uses the retired GitHub install path; after this one-time registry install, `piren update` uses the registry.
+**Upgrading from 0.1.3?** Run `npm install -g @odiobill/piren` once. That older command used a retired GitHub install path; after this one-time registry install, `piren update` uses the registry.
 
-Known limitations:
+## Contributing
 
-- Release candidate: not a stable 1.0. APIs and vault layouts may change before the first official release.
-- Security model is bootstrap-token and local allowlist oriented, not multi-user RBAC.
-- Memory-pack integration is post-RC unless pulled forward.
-
-## Verify from source
-
-```bash
-npm test
-npm run typecheck
-npm run build
-npm run smoke
-npm run clean-install:check
-```
-
-## Landing page
-
-The public landing page lives under `site/` and reuses the integrated web UI palette. It deploys to GitHub Pages via the `.github/workflows/pages.yml` workflow (Actions-deploy mode, since branch-deploy only serves `/` or `/docs`). The custom domain **piren.org** is configured via `site/CNAME` and the Pages API. The workflow is self-enabling: on first run it enables Pages and sets the source to "GitHub Actions" automatically, then publishes on every subsequent push to `main` that touches `site/`. Asset references are relative so the page renders correctly under both the custom domain root and the `*.github.io` subpath.
+Contributor and package-verification procedures are in [Operations](docs/operations.md). Project decisions, development history, and coding-agent instructions stay in the Piren project vault and repository [AGENTS.md](AGENTS.md).
 
 ## License
 

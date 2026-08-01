@@ -1,6 +1,6 @@
 # Extension recipes
 
-Piren core is minimal. Additional capability comes from Pi extension packages (ADR-0013): npm packages that export Pi extensions, declared in `~/.config/piren/config.yml` under the `packages` field. Piren resolves each declared package to its installed entry point and appends it as an additional `--extension` flag to the Pi command.
+Piren core is minimal. Additional capability comes from Pi extension packages: npm packages that export Pi extensions, declared in `~/.config/piren/config.yml` under the `packages` field. Piren resolves each declared package to its installed entry point and appends it as an additional `--extension` flag to the Pi command.
 
 This page is a cookbook for declaring, writing, and testing extensions.
 
@@ -61,7 +61,7 @@ The exact `PiExtensionApi` shape comes from the Pi Coding Agent SDK. Match the p
 
 | Need | Use |
 |------|-----|
-| Reusable procedure (how to do TDD, how to write an ADR) | Vault skill |
+| Reusable procedure (for example, a review or decision-record workflow) | Vault skill |
 | Code that must run (call an API, parse a file, transform data) | Pi package extension |
 | Project-specific convention | Vault skill or project doc |
 | New tool the agent can call | Pi package extension |
@@ -111,7 +111,6 @@ npm run smoke
 
 ## Related
 
-- ADR-0013 — Pi package extensibility
 - [Skills](skills.md)
 - [Configuration](configuration.md)
 - [Operations](operations.md)

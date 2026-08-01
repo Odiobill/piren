@@ -15,7 +15,7 @@ There is no default always-on polling in interactive `piren run`. Automation is 
 
 ## Script-mode cron runs without an LLM
 
-Cron jobs have two modes (ADR-0019, ADR-0023):
+Cron jobs have two modes:
 
 - **agent mode:** runs a prompt through the LLM.
 - **script mode:** runs an executable script directly, no LLM.
@@ -24,7 +24,7 @@ Script-mode cron is the mechanism for routine background work that does not need
 
 ## Lazy skill loading
 
-Skills are loaded lazily (ADR-0017). At startup, Piren injects only the skill catalog (names and one-line descriptions), not full skill bodies. An agent calls `skill_read(name)` to load one full body on demand.
+Skills are loaded lazily. At startup, Piren injects only the skill catalog (names and one-line descriptions), not full skill bodies. An agent calls `skill_read(name)` to load one full body on demand.
 
 This keeps startup prompts small. A vault with fifty skills does not pay for fifty skill bodies on every session start, only for the ones the agent actually reads.
 
@@ -32,11 +32,11 @@ This keeps startup prompts small. A vault with fifty skills does not pay for fif
 
 Piren injects a compact context at session start: agent `SOUL.md`, `MEMORY.md`, the steward directives, the skill catalog, and the project status. It does not dump raw session transcripts or the full vault into the prompt.
 
-Project docs (ADRs, handoffs, logs) are synthesized context. An agent reads the current project state, not a pile of historical traces. This is cheaper and more accurate than feeding the LLM raw history and hoping it synthesizes on the fly.
+Current project documents (decision records, handoffs, logs) are synthesized context. An agent reads the current project state, not a pile of historical traces. This is cheaper and more accurate than feeding the LLM raw history and hoping it synthesizes on the fly.
 
 ## Explicit vault tools, not a large always-on surface
 
-Piren's default tool surface is compact and explicit: `vault_read`, `vault_write`, `vault_list`, `send_to_agent`, `task_claim`, `cron_claim`, and the knowledge-lifecycle tools. Additional capability comes from steward-selected Pi packages (ADR-0013), not a pre-installed bundle.
+Piren's default tool surface is compact and explicit: `vault_read`, `vault_write`, `vault_list`, `send_to_agent`, `task_claim`, `cron_claim`, and the knowledge-lifecycle tools. Additional capability comes from steward-selected Pi packages, not a pre-installed bundle.
 
 A smaller tool surface means fewer tokens spent describing tools the agent will not use, and less ambiguity in tool selection.
 
@@ -46,11 +46,11 @@ A smaller tool surface means fewer tokens spent describing tools the agent will 
 
 ## Claim-scoped bounded execution
 
-Bounded execution (ADR-0029, O7 S2-S3) is claim-scoped: the agent receives one claimed task or one claimed cron job, executes it, records the result, and stops. It does not poll for other work. This prevents a single background run from spiraling into an open-ended LLM session.
+Bounded execution is claim-scoped: the agent receives one claimed task or one claimed cron job, executes it, records the result, and stops. It does not poll for other work. This prevents a single background run from spiraling into an open-ended LLM session.
 
 ## Self-improvement review loops default off
 
-Self-improvement triggers (ADR-0018, ADR-0024) are inspectable and opt-in. The review loop that promotes raw traces into durable artifacts does not run unless enabled. When enabled, its state and decisions live in the vault for inspection.
+Self-improvement triggers are inspectable and opt-in. The review loop that promotes raw traces into durable artifacts does not run unless enabled. When enabled, its state and decisions live in the vault for inspection.
 
 ## The mechanism, not the promise
 
@@ -73,5 +73,3 @@ Each of these is inspectable. You can read the vault, read the config, and read 
 - [Scheduler](scheduler.md)
 - [Cron jobs](cron.md)
 - [Skills](skills.md)
-- ADR-0017 — lazy skill loading
-- ADR-0023 — script-only cron

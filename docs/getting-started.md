@@ -117,6 +117,25 @@ service targets.
 
 For the full live model list after setup, run `pi --list-models`.
 
+## Add an optional messaging transport
+
+After `piren setup` has created local configuration, use an explicit guided command for each messaging bot you want to add:
+
+```bash
+piren telegram configure
+# or
+piren discord configure
+```
+
+Each command collects only machine-local bot settings, shows a redacted preview, and asks for confirmation before writing `~/.config/piren/config.yml`. It does not start a daemon or service. Check the configuration and make one foreground test before installing a long-running service:
+
+```bash
+piren doctor
+piren telegram   # or: piren discord
+```
+
+See [Telegram and Discord transports](transports.md) for platform prerequisites, access control, and service setup.
+
 ## Check status
 
 ```bash

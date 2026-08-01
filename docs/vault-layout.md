@@ -61,7 +61,7 @@ Do not put `.env` or `AGENTS.md` under `team/<agent>/`. Secrets live outside the
 
 ## Agent groups
 
-`agent-groups/` holds group configurations for ADR-0028 agent groups. A concrete group uses:
+`agent-groups/` holds group configurations for agent groups. A concrete group uses:
 
 ```text
 agent-groups/<group>/config.yml    # agents list + fallback_order
@@ -72,7 +72,7 @@ Group-scoped skills sit between shared skills and agent-specific skills in the l
 
 ## Shared directories
 
-- `Projects/`: project-specific working knowledge, decisions, logs, handoffs, runbooks, and imported source material. Project files should use OKF frontmatter such as `type: Project Index`, `type: Project Log`, `type: ADR`, or `type: Runbook` when durable.
+- `Projects/`: project-specific working knowledge, decisions, logs, handoffs, runbooks, and imported source material. Project files should use appropriate non-empty OKF frontmatter such as `type: Project Index`, `type: Project Log`, or `type: Runbook` when durable.
 - `skills/`: shared vault skills available to all agents.
 - `cron/jobs/`: shared scheduled jobs.
 - `cron/runs/`: shared scheduled run records.

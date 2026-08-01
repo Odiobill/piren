@@ -1,17 +1,6 @@
 # Operations
 
-This page covers routine operator tasks and the clean-install checklist.
-
-## Verify a source checkout
-
-```bash
-npm test
-npm run typecheck
-npm run build
-npm run smoke
-```
-
-Current expected baseline: 99 test files, 1390 tests, typecheck/build/smoke passing.
+This page covers routine operator tasks, contributor verification, and the clean-install checklist.
 
 ## Clean install checklist
 
@@ -49,8 +38,8 @@ piren update
 
 ## Automated clean-install validation
 
-Piren ships a clean-install validation script (ADR-0033 Slice R1) that packs
-the exact local source into an npm tarball, installs that tarball into an
+Piren ships a clean-install validation script that packs the exact local source
+into an npm tarball, installs that tarball into an
 isolated HOME and prefix, and verifies the installed binary — with no
 `github:` fetch and no `--install-links` in the normal path:
 

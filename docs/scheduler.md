@@ -2,7 +2,7 @@
 
 The Piren scheduler is a device-local supervisor that watches the shared vault for work belonging to agents enabled on this device, and demand-starts bounded agent executions only when visible vault work is due. It is off by default. Installing or starting it is an explicit steward choice.
 
-The scheduler ships as four layers (ADR-0029 / O7): a read-only dry-run planner, a one-shot `--once` execution tick, an always-on `piren scheduler` loop, and service lifecycle integration (`piren service install scheduler`). All four preserve the same boundaries: local allowed-agent policy first, claim-first execution, at most one executed item per tick, conservative one-at-a-time concurrency, no hidden state, and no automatic cross-agent fallback.
+The scheduler provides four explicit ways to operate: a read-only dry-run planner, a one-shot `--once` execution tick, an always-on `piren scheduler` loop, and service lifecycle integration (`piren service install scheduler`). All four preserve the same boundaries: local allowed-agent policy first, claim-first execution, at most one executed item per tick, conservative one-at-a-time concurrency, no hidden state, and no automatic cross-agent fallback.
 
 ## What shipped
 
@@ -17,23 +17,14 @@ The dry-run loads vault state for every agent in local `allowed_agents`, plans p
 
 `--once` and the loop call the same one-shot primitive: each tick refreshes this device's heartbeats, plans eligible work from `allowed_agents` minus `excluded_agents`, attempts atomic claims in priority order, and executes **at most one** successfully claimed work item (an inbox task, an agent-mode cron job, or a script-mode cron job). A failed claim is skipped without crashing the tick. The loop sleeps between ticks and stops cleanly on `SIGINT`/`SIGTERM` without starting a new tick or leaving a dangling timer.
 
-Example output from the live Piren development vault:
+Example output:
 
 ```text
-SCHEDULER DRY-RUN (device: Ironman)
-  agent: piren
+SCHEDULER DRY-RUN (device: workstation)
+  agent: analyst
     (no claims)
-  agent: dipu
-    (no claims)
-  agent: zai
-    (no claims)
-  agent: sam
-    [CLAIM] inbox_task   team/sam/inbox/20260704T184506845Z-review-o3-slice-3a-group-config-parser-and-membership-resolution.md (priority 10) - unclaimed pending task for agent sam
-    [CLAIM] inbox_task   team/sam/inbox/20260704T205619891Z-review-o3-slice-3d-read-only-fallback-recommendation.md (priority 10) - unclaimed pending task for agent sam
-  agent: dario
-    (no claims)
-  agent: nora
-    [CLAIM] inbox_task   team/nora/inbox/20260704T134837062Z-o2-slice-2e-review-accepted-fallback-check-for-sam.md (priority 10) - unclaimed pending task for agent nora
+  agent: builder
+    [CLAIM] inbox_task   team/builder/inbox/20260801T120000000Z-review-documentation.md (priority 10) - unclaimed pending task for agent builder
 ```
 
 Each `[CLAIM]` line shows the item type (`inbox_task` or `cron_job`), the vault-relative path, the device priority, and a short rationale.
@@ -55,7 +46,7 @@ For inbox tasks:
 - A pending task blocked by `depends_on` or by retry eligibility (below) never gets a claim proposal. `--dry-run` reports it as a `[BLOCK]` line with the exact reason.
 
 For cron jobs:
-- The planner uses active-device-priority ownership (ADR-0019) to pick the owning device.
+- The planner uses active-device-priority ownership to pick the owning device.
 - Only the owning device gets a claim proposal.
 - `device_policy.allowed_devices` restricts eligibility when set.
 
@@ -63,7 +54,7 @@ Proposed claims are sorted by device priority (lower number = higher precedence)
 
 ## Inbox task lifecycle: claim, execute, release
 
-An executed inbox task passes through visible states, all plain files (ADR-0038):
+An executed inbox task passes through visible states, all plain files:
 
 1. **Claimed** — `<task>.claimed.<device>.md`: the tick claimed the task atomically and the bounded agent is working on it. A claimed task never satisfies another task's `depends_on`, even when its status reads `completed`.
 2. **Released** — on validated success only (the bounded runner finished without error AND the claimed file re-reads with `status: completed`; completion is never inferred from the result body), the tick restores the file byte-for-byte to its ordinary name `<task>.md` through a fail-closed no-clobber protocol (temp file, hard link, then unlink the claimed file — never a blind rename). Only then does a completed prerequisite satisfy `depends_on`, letting dependent tasks become claimable on later ticks.
@@ -73,11 +64,11 @@ A crash between the link and the unlink can leave both files visible (a duplicat
 
 ## Task dependencies (`depends_on`)
 
-A task may declare prerequisites in its frontmatter (ADR-0038):
+A task may declare prerequisites in its frontmatter:
 
 ```yaml
 depends_on:
-  - 20260721T120000000Z-implement-slice
+  - 20260721T120000000Z-implement-feature
 ```
 
 - Entries are stable task IDs, never paths or titles. Each ID must match the generated task-ID shape `^[0-9]{8}T[0-9]{9}Z-[a-z0-9]+(?:-[a-z0-9]+)*$`.
@@ -171,7 +162,7 @@ scheduler:
   device_id: thor               # optional explicit override; absent -> sanitized hostname
 ```
 
-Defaults are conservative: 30s poll interval, 300s stale-after, effective concurrency 1. Invalid/non-positive values fall back to the defaults deterministically and are surfaced as warnings in the loop's startup summary. An explicit `device_id` is passed verbatim (not sanitized); when absent, the loop delegates to the S4 sanitized-hostname fallback so hosts like `Ironman` or `Ironman.local` work out of the box.
+Defaults are conservative: 30s poll interval, 300s stale-after, effective concurrency 1. Invalid/non-positive values fall back to the defaults deterministically and are surfaced as warnings in the loop's startup summary. An explicit `device_id` is passed verbatim (not sanitized); when absent, the loop uses a sanitized-hostname fallback so hosts like `Ironman` or `Ironman.local` work out of the box.
 
 The loop reads this config once at startup; each tick re-reads local config for `vault_root` and `allowed_agents`, so agent-set changes take effect without restarting the scheduler.
 
@@ -182,7 +173,7 @@ The scheduler composes with existing local authority:
 - Local `~/.config/piren/config.yml` defines `vault_root`, `allowed_agents`, and `excluded_agents`.
 - The scheduler only considers agents enabled on the local installation.
 - Device records live in the vault under each agent: `team/<agent>/devices/<device>.json`.
-- The steward may manually edit device priorities, and the next heartbeat refresh preserves them (ADR-0029).
+- The steward may manually edit device priorities, and the next heartbeat refresh preserves them.
 
 Example device records for one agent:
 
@@ -217,20 +208,18 @@ The generated systemd user unit is `piren-scheduler.service`; the tmux + `@reboo
 
 - **Web UI scheduler status.** The gateway may later display scheduler status read-only, but it does not own scheduler lifecycle and adds no scheduler controls to the Web UI.
 - **Broad concurrency.** `max_concurrent_agents` is parsed and reported but effective concurrency is 1 (one-at-a-time); no parallel tick execution is implemented.
-- **Automatic cross-agent fallback.** Device failover (same agent, different device) is supported; semantic fallback between different agents is a separate feature (ADR-0028) and is never automatic.
+- **Automatic cross-agent fallback.** Device failover (same agent, different device) is supported; semantic fallback between different agents is separate and is never automatic.
 - **Hidden state.** No database, queue, lock file, or lease; the only coordination artifacts are the existing claimed task/job files and run records.
-- **Automatic retry beyond typed launch failures.** Opt-in retry policy/state is wired (ADR-0038), but the only automatic trigger is a proven pre-handoff `launch_failure`. Every failure at or after prompt handoff stays claimed for manual triage. See "Opt-in automatic retry" and "At-least-once risk and manual triage".
+- **Automatic retry beyond typed launch failures.** Opt-in retry policy/state is available, but the only automatic trigger is a proven pre-handoff `launch_failure`. Every failure at or after prompt handoff stays claimed for manual triage. See "Opt-in automatic retry" and "At-least-once risk and manual triage".
 
-## Relationship to agent fallback (ADR-0028)
+## Relationship to agent fallback
 
-The scheduler handles device failover for the same agent across devices (for example, moving `codex` background work from `thor` to `heimdall` when `thor` is stale). Agent fallback (ADR-0028) handles semantic fallback between different agents (for example, replacing `zai` with `dipu` when `zai`'s provider is down). These features remain distinct.
+The scheduler handles device failover for the same agent across devices (for example, moving background work from `thor` to `heimdall` when `thor` is stale). Agent fallback handles semantic fallback between different agents (for example, selecting an eligible teammate when a provider is down). These features remain distinct.
 
 See [agent groups and fallback](agent-groups.md) for the semantic fallback story.
 
 ## Related
 
-- ADR-0029 — device-local scheduler
-- ADR-0038 — scheduler dependency and retry safety (incl. revision 2 completion release and revision 3 failure classification)
 - [Recovery](recovery.md)
 - [Cron jobs](cron.md)
 - [Service management](service-management.md)

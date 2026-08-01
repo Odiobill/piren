@@ -67,10 +67,10 @@
 <section id="video">
   <div class="container">
     <h2 class="section-title">See it in action</h2>
-    <p class="section-sub">A short walkthrough of Piren 0.1.0: the vault, the inspectable tools, and a fleet sharing one substrate.</p>
+    <p class="section-sub">A short walkthrough of Piren: the vault, the inspectable tools, and a fleet sharing one substrate.</p>
     <figure class="video-card">
       <a class="video-link" href="https://youtu.be/M6anngSckxs" target="_blank" rel="noopener" title="Watch the Piren explainer on YouTube (opens in a new tab)">
-        <img class="video-thumb" src="https://img.youtube.com/vi/M6anngSckxs/hqdefault.jpg" alt="Piren 0.1.0 explainer video — watch on YouTube" width="480" height="360" loading="lazy">
+        <img class="video-thumb" src="https://img.youtube.com/vi/M6anngSckxs/hqdefault.jpg" alt="Piren explainer video — watch on YouTube" width="480" height="360" loading="lazy">
         <span class="video-play" aria-hidden="true">&#9654;</span>
       </a>
       <figcaption>
@@ -110,7 +110,7 @@
       <div class="pillar">
         <span class="pillar-icon">🔍</span>
         <h3>Inspectable self-improvement</h3>
-        <p>Agents update handoffs, runbooks, ADRs, and skill candidates as visible artifacts, not hidden memory mutations. Everything is reviewable.</p>
+        <p>Agents update handoffs, decision records, runbooks, and skill candidates as visible artifacts, not hidden memory mutations. Everything is reviewable.</p>
       </div>
       <div class="pillar">
         <span class="pillar-icon">🍓</span>
@@ -201,8 +201,8 @@
         <p>Keep gateway, Telegram, Discord, and the scheduler always-on with one command. Piren generates systemd user units, with a tmux plus <code>@reboot</code> cron fallback for DietPi and stripped-down SBCs. Inspectable, reversible, no root.</p>
       </div>
       <div class="feature">
-        <h3>Interactive setup wizard</h3>
-        <p>Run <code>piren setup</code> for a guided walk: pick a vault, choose a Pi provider and API key, select a model, and configure gateways. Plus <code>--help</code> on every command.</p>
+        <h3>Guided first run</h3>
+        <p>Run <code>piren setup</code> after signing in to Pi: it creates or reuses a vault and writes local configuration. Add Telegram or Discord later with their separate, explicit <code>configure</code> commands. Plus <code>--help</code> on every command.</p>
       </div>
       <div class="feature">
         <h3>Lazy vault skills</h3>
@@ -279,14 +279,14 @@
       <div class="ladder-arrow">&#9660;</div>
       <div class="ladder-step"><span class="ladder-layer">log entry</span><span class="ladder-desc">The agent appends a timestamped project log line with attribution.</span></div>
       <div class="ladder-arrow">&#9660;</div>
-      <div class="ladder-step"><span class="ladder-layer">project doc</span><span class="ladder-desc">Current status, handoff, and implementation plan get refreshed.</span></div>
+      <div class="ladder-step"><span class="ladder-layer">project doc</span><span class="ladder-desc">Current status, handoff, and project notes get refreshed.</span></div>
       <div class="ladder-arrow">&#9660;</div>
-      <div class="ladder-step"><span class="ladder-layer">ADR / runbook</span><span class="ladder-desc">A durable decision, alternative, or procedure is promoted into the project.</span></div>
+      <div class="ladder-step"><span class="ladder-layer">decision / runbook</span><span class="ladder-desc">A durable decision, alternative, or procedure is promoted into the project.</span></div>
       <div class="ladder-arrow">&#9660;</div>
       <div class="ladder-step"><span class="ladder-layer">skill candidate</span><span class="ladder-desc">A reusable procedure becomes a reviewable draft, promotable to an active skill.</span></div>
     </div>
 
-    <p class="section-sub" style="margin-bottom:0;">When one agent solves a problem, the next agent, or a future session, starts from the accumulated decision, runbook, or skill, not from rediscovery. The steward reviews and promotes; nothing is auto-applied. Raw traces stay evidence. Project docs and ADRs become synthesized truth. Skills become shared procedure.</p>
+    <p class="section-sub" style="margin-bottom:0;">When one agent solves a problem, the next agent, or a future session, starts from the accumulated decision, runbook, or skill, not from rediscovery. The steward reviews and promotes; nothing is auto-applied. Raw traces stay evidence. Current project documents become synthesized truth. Skills become shared procedure.</p>
   </div>
 </section>
 
@@ -364,17 +364,17 @@ vault/
 
 <section id="start">
   <div class="container">
-    <h2 class="section-title">Get started in a minute</h2>
-    <p class="section-sub">Install Piren, create a disposable vault, then start a local agent.</p>
+    <h2 class="section-title">Get started in four steps</h2>
+    <p class="section-sub">Sign in to Pi, install Piren, then let the guided setup create your first local workspace.</p>
     <div class="quickstart">
-      <div class="step"><span class="step-num">1.</span><div><span class="cmd">npm install -g @odiobill/piren</span></div></div>
-      <div class="step"><span class="step-num">2.</span><div><span class="cmd">piren init --vault-root /tmp/piren-vault</span></div></div>
-      <div class="step"><span class="step-num">3.</span><div><span class="cmd">piren setup --apply --vault-root /tmp/piren-vault --agent piren</span></div></div>
-      <div class="step"><span class="step-num">4.</span><div><span class="cmd">piren --vault-root /tmp/piren-vault --agent piren run</span></div></div>
-      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">&#10022;</span><div style="color:var(--text-muted);font-size:0.88rem;">Prefer a guided walk? Configure Pi first (<span class="cmd">pi</span>, then <span class="cmd">/login</span> and <span class="cmd">/quit</span>), then run <span class="cmd">piren setup</span> with no flags: it creates or reuses a vault, picks your locally runnable agents, and writes local config, copying Pi's default provider and model when available (otherwise the agent has no model block and uses Pi's native defaults). The bare wizard does not configure provider keys, model choice, Telegram, Discord, or services. For scripted provider/model provisioning use <span class="cmd">piren setup --apply --provider &lt;id&gt; --model &lt;id&gt; --api-key &lt;key&gt;</span>; keep it always-on with <span class="cmd">piren service install gateway</span>.</div></div>
-      <div class="step"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Or start the gateway: <span class="cmd">piren gateway</span></div></div>
+      <div class="step"><span class="step-num">1.</span><div><span class="cmd">curl -fsSL https://pi.dev/install.sh | sh</span></div></div>
+      <div class="step"><span class="step-num">2.</span><div><span class="cmd">pi</span> &nbsp;then run <span class="cmd">/login</span> and <span class="cmd">/quit</span></div></div>
+      <div class="step"><span class="step-num">3.</span><div><span class="cmd">npm install -g @odiobill/piren</span></div></div>
+      <div class="step"><span class="step-num">4.</span><div><span class="cmd">piren setup</span></div></div>
+      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">+</span><div style="color:var(--text-muted);font-size:0.88rem;"><strong>Optional messaging:</strong> after setup, run <span class="cmd">piren telegram configure</span> or <span class="cmd">piren discord configure</span>. Each flow keeps the bot token and allowlist on this machine, shows a redacted preview, and asks before writing. Then use <span class="cmd">piren doctor</span> and start the selected transport in the foreground before installing a service.</div></div>
+      <div class="step"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Start your agent with <span class="cmd">piren run</span>, or open the local gateway with <span class="cmd">piren gateway</span>.</div></div>
     </div>
-    <p style="text-align:center;margin:1.25rem auto 0;max-width:44rem;color:var(--text-muted);font-size:0.9rem;"><strong>Upgrading from 0.1.3?</strong> Run <span class="cmd">npm install -g @odiobill/piren</span> once. That version's <span class="cmd">piren update</span> still uses the retired GitHub install path.</p>
+    <p style="text-align:center;margin:1.25rem auto 0;max-width:44rem;color:var(--text-muted);font-size:0.9rem;"><strong>Upgrading from 0.1.3?</strong> Run <span class="cmd">npm install -g @odiobill/piren</span> once. That older <span class="cmd">piren update</span> command uses the retired GitHub install path.</p>
     <p style="text-align:center;margin-top:1.75rem;">
       <a href="https://github.com/Odiobill/piren/blob/main/docs/getting-started.md" target="_blank" rel="noopener" class="btn btn-secondary">Full getting-started guide</a>
     </p>

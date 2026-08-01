@@ -29,7 +29,7 @@ Piren is not "Hermes but smaller." It is a lighter, more personal, vault-native 
 ## What does not transfer
 
 - **Opaque memory backends:** Piren has no vector database. If a Hermes skill relied on hidden memory, refactor it to read and write explicit vault artifacts.
-- **Large default tool surface:** Piren starts with a compact, explicit vault-tool surface. Additional capability comes from steward-selected Pi packages (ADR-0013), not a pre-installed bundle.
+- **Large default tool surface:** Piren starts with a compact, explicit vault-tool surface. Additional capability comes from steward-selected Pi packages, not a pre-installed bundle.
 - **Automatic behaviors:** Piren automation is opt-in and visible. Cron, self-improvement triggers, the scheduler, and worker polling all start disabled. Anything in Hermes that ran silently in the background must be explicitly enabled in Piren.
 
 ## Migration steps

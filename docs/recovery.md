@@ -85,7 +85,7 @@ If an agent cannot reach its provider:
 - Check `~/.pi/agent/auth.json` for valid credentials.
 - Check `team/<agent>/config.yml` for the configured provider and model.
 - Run `pi` directly to verify Pi-native auth works.
-- If the provider is down, use agent fallback (ADR-0028): `piren agents --fallback <agent>` to see candidates, then manually reassign the task.
+- If the provider is down, use agent fallback: `piren agents --fallback <agent>` to see candidates, then manually reassign the task.
 
 See [troubleshooting](troubleshooting.md) for common error messages.
 

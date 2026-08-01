@@ -1,6 +1,6 @@
 # Piren discipline
 
-Piren's value comes as much from what it refuses to do as from what it enables. This page is the operator-facing summary of the seven discipline principles that shape every feature. The formal decision records (ADRs) live in the Piren project vault, not in this repository; each principle cites its ADR by number below.
+Piren's value comes as much from what it refuses to do as from what it enables. This page is the operator-facing summary of the seven discipline principles that shape every feature.
 
 ## 1. The vault is the single source of truth
 
@@ -10,7 +10,6 @@ If it is not in the vault, it is not authoritative. The steward can open the vau
 
 Machine-local authority (which agents this installation may run, provider credentials) lives outside the vault under `~/.config/piren/`. This split is deliberate: the vault carries the team, the installation decides which office it runs in today.
 
-See: ADR-0002, ADR-0010.
 
 ## 2. Explicit tools, not transparent interception
 
@@ -18,7 +17,6 @@ Piren exposes vault-native tools (`vault_read`, `vault_write`, `send_to_agent`, 
 
 This makes agent behavior debuggable. When something changes in the vault, you can trace it to a specific tool call in a specific session. You never have to wonder "did the agent edit that file on its own?"
 
-See: ADR-0003.
 
 ## 3. One file per task
 
@@ -26,7 +24,6 @@ Inbox tasks are one Markdown file each, dropped into `team/<agent>/inbox/`. Each
 
 This is the coordination primitive for the whole team. Nora, the release coordinator, assigns work by writing one task file. Developers claim it by renaming it. Reviewers see the result in the vault. The steward sees the full trail in Obsidian.
 
-See: ADR-0004, ADR-0031.
 
 ## 4. Opt-in, visible automation
 
@@ -34,11 +31,11 @@ Automation is never on by default. Cron jobs, self-improvement triggers, the sch
 
 There is no default automatic inbox polling in interactive `piren run`. Polling belongs only to opt-in worker mode (`piren worker` or `PIREN_WORKER=1`), and only for agents explicitly allowed by local installation policy.
 
-See: ADR-0019, ADR-0024, [scheduler](scheduler.md).
+See [scheduler](scheduler.md).
 
 ## 5. Inspectable self-improvement
 
-When an agent learns something durable, it writes a visible vault artifact: a project log entry, a wiki concept page, a runbook, an ADR, or a skill candidate. Nothing is promoted silently.
+When an agent learns something durable, it writes a visible vault artifact: a project log entry, a wiki concept page, a runbook, a decision record, or a skill candidate. Nothing is promoted silently.
 
 The artifact promotion ladder keeps knowledge layers honest:
 
@@ -47,13 +44,13 @@ raw event / task / session
   -> task file or session summary
   -> project log entry
   -> project status / handoff update
-  -> concept, entity, runbook, or ADR
+  -> concept, entity, runbook, or decision record
   -> reusable skill candidate
 ```
 
-Raw traces are evidence. Project docs and ADRs are synthesized truth. Skills are procedural memory. Agents promote knowledge deliberately, never through hidden automatic memory mutation.
+Raw traces are evidence. Current project documents and decision records are synthesized truth. Skills are procedural memory. Agents promote knowledge deliberately, never through hidden automatic memory mutation.
 
-See: ADR-0015, ADR-0018, [knowledge lifecycle](knowledge-lifecycle.md).
+See [knowledge lifecycle](knowledge-lifecycle.md).
 
 ## 6. The steward model
 
@@ -65,7 +62,7 @@ Authority follows a clear hierarchy when agents read the vault:
 
 1. Steward direct instruction (highest).
 2. Local installation policy.
-3. Current project ADRs and implementation plan.
+3. Current project documents and decision records.
 4. Agent `SOUL.md`.
 5. Inbox task files (task scope, not global policy).
 6. Wiki pages and project references.
@@ -73,7 +70,6 @@ Authority follows a clear hierarchy when agents read the vault:
 
 This ordering prevents stale historical artifacts from overriding current steward intent or current architectural decisions.
 
-See: ADR-0007.
 
 ## 7. Boring, local-first engineering
 
@@ -81,7 +77,6 @@ Piren v1 is deliberately boring: explicit vault tools, append-only logs where pr
 
 The runtime requirement is a local `pi` binary on `PATH`. There is no `npx` runtime fallback. This keeps the foundation honest and the failure modes debuggable.
 
-See: ADR-0001, ADR-0006, ADR-0009.
 
 ## What this discipline buys you
 

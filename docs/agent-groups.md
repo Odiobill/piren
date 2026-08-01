@@ -1,8 +1,8 @@
 # Agent groups and fallback
 
-Agent groups (ADR-0028) let you share a skill set and a fallback policy between agents without duplicating configuration under every agent. A group is a role overlay, not an identity replacement. Each agent keeps its own `SOUL.md`, config, and individual identity. The group provides shared procedures and a fallback recommendation policy.
+Agent groups let you share a skill set and a fallback policy between agents without duplicating configuration under every agent. A group is a role overlay, not an identity replacement. Each agent keeps its own `SOUL.md`, config, and individual identity. The group provides shared procedures and a fallback recommendation policy.
 
-The first shipped slice is read-only and diagnostic: it reports and recommends, it does not reassign work automatically. Approval is always required before a task changes hands.
+Fallback recommendations are read-only and diagnostic: they report and recommend, but do not reassign work automatically. Approval is always required before a task changes hands.
 
 ## Group configuration
 
@@ -51,13 +51,13 @@ piren agents --fallback <agent>
 
 Prints the ordered fallback candidates for an agent, filtered by local runnable policy (`allowed_agents` / `excluded_agents`) and same-group membership. This is read-only diagnostic output. It does not reassign any task.
 
-Example (using the Piren development team configuration):
+Example:
 
 ```bash
-$ piren agents --fallback zai
-Fallback candidates for 'zai' (group: developers):
-  [runnable] dipu - priority 1
-  [runnable] sam  - priority 2
+$ piren agents --fallback analyst
+Fallback candidates for 'analyst' (group: research):
+  [runnable] reviewer - priority 1
+  [runnable] writer   - priority 2
 ```
 
 Candidates are filtered through two checks:
@@ -82,22 +82,20 @@ The first implementation is deliberately conservative:
 
 `piren agents` shows each agent's group memberships.
 
-## A real example: the Piren development crew
+## Example fallback policy
 
-The Piren team uses one group, `developers`, with this fallback order:
+A `research` group might use this fallback order:
 
 | Agent | Falls back to |
 |-------|---------------|
-| Zai   | Dipu          |
-| Sam   | Zai           |
-| Dipu  | Zai           |
-| Dario | (none, consultant-only) |
+| analyst | reviewer |
+| reviewer | writer |
+| writer | reviewer |
 
-When Zai's provider quota is exhausted, the system recommends Dipu. Nora (the release coordinator) or the steward approves the reassignment, the task file gets a visible routing note, and the trail is never hidden.
+When an agent's provider is unavailable, Piren recommends an eligible teammate. The steward or coordinator approves any reassignment, the task file gets a visible routing note, and the trail is never hidden.
 
 ## Related
 
-- ADR-0028 — agent groups and fallback agents
 - [Skills](skills.md)
 - [Vault layout](vault-layout.md)
 - [Scheduler](scheduler.md) (device failover for the same agent, the complementary feature)

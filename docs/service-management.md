@@ -4,7 +4,6 @@ Piren service targets (gateway, Telegram, Discord, and the scheduler) are
 long-running processes. This page describes how to keep them running on
 homelab and edge devices using Piren's built-in service lifecycle management.
 
-The design decisions are recorded as ADR-0021 in the Piren project vault.
 
 ## Overview
 
@@ -195,7 +194,7 @@ The `<target>` argument is one of:
 - `gateway` - the web UI and OpenAI-compatible API.
 - `telegram` - the Telegram bot transport.
 - `discord` - the Discord bot transport.
-- `scheduler` - the device-local scheduler loop (ADR-0029).
+- `scheduler` - the device-local scheduler loop.
 
 Telegram and Discord require their config blocks (`telegram:` / `discord:`) to
 be present in `~/.config/piren/config.yml` before the service can run. See
@@ -218,7 +217,7 @@ See [Scheduler](scheduler.md).
 
 ## Scheduler
 
-The device-local scheduler (ADR-0029) is a background supervisor that
+The device-local scheduler is a background supervisor that
 demand-starts bounded agent executions when vault work is due. The dry-run
 planner, the one-shot `--once` tick, the always-on `piren scheduler` loop, and
 service lifecycle integration are all shipped.

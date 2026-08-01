@@ -129,13 +129,13 @@ Commands mirror Telegram:
 
 Discord uses a platform-mandated WebSocket client connection to Discord's gateway. This does not add a WebSocket server to Piren's web UI. Feedback uses Discord REST: `POST /channels/{id}/typing` and `PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`. Reaction failures are best-effort and never abort the assistant response.
 
-ADR-0040 is fully implemented in this build: one-to-one Discord direct messages are supported fail-closed through `allowed_dm_user_ids` (see Access control), the guided configure flow can optionally collect that explicit one-to-one DM user allowlist, and native application commands are available (see Native application commands). Blank DM input leaves every DM denied.
+One-to-one Discord direct messages are supported fail-closed through `allowed_dm_user_ids` (see Access control), the guided configure flow can optionally collect that explicit one-to-one DM user allowlist, and native application commands are available (see Native application commands). Blank DM input leaves every DM denied.
 
 ## Native application commands
 
 When `discord.application_id` is configured, `piren discord` registers five native slash commands at startup — `/start`, `/agents`, `/agent <name>` (required string option), `/whoami`, and `/abort` — through Discord's global application-commands REST endpoints. Registration is narrow and non-destructive: each of the five commands is created or updated by name, and unrelated application commands are never deleted or overwritten. When `application_id` is absent, no registration call is made and the transport runs text commands only; when registration fails, Piren logs a non-secret warning and keeps running with the legacy text-command path.
 
-Native commands traverse the exact same fail-closed authorization as ordinary messages — guild plus ordinary-channel or explicit-thread rules, and the D1 DM rules — before any response, and `/agents` data is exposed only after authorization. Authorized commands answer through Discord's interaction callback mechanism, not an ordinary channel message. Interaction data is never treated as a prompt; unknown or malformed interactions are ignored silently. The mention-prefixed text commands keep working unchanged.
+Native commands traverse the exact same fail-closed authorization as ordinary messages — guild plus ordinary-channel or explicit-thread rules, and direct-message rules — before any response, and `/agents` data is exposed only after authorization. Authorized commands answer through Discord's interaction callback mechanism, not an ordinary channel message. Interaction data is never treated as a prompt; unknown or malformed interactions are ignored silently. The mention-prefixed text commands keep working unchanged.
 
 Portal scopes are prerequisites only: local allowlists remain the final authorization authority for both text and native commands.
 
