@@ -14,9 +14,10 @@ import { readVersion } from "../src/version.js";
  * OIDC workflow with a SLSA provenance attestation, and
  * `@odiobill/piren@0.1.5` (ADR-0038 scheduler safety) was published through
  * the same protected tag-only OIDC workflow from immutable tag `v0.1.5`.
- * These guards keep the package metadata, version, and changelog truthful
- * across the manual-bootstrap 0.1.3 and the OIDC-published 0.1.4/0.1.5
- * releases.
+ * The 0.1.6 ADR-0040 transport release is prepared but is not yet tagged or
+ * published; its candidate metadata must not claim publication early. These
+ * guards keep package metadata, version, and changelog truthful across the
+ * manual-bootstrap 0.1.3, OIDC-published 0.1.4/0.1.5, and 0.1.6 preparation.
  */
 
 const repoRoot = process.cwd();
@@ -25,15 +26,15 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("scoped @odiobill/piren registry releases (0.1.5 OIDC, 0.1.4 OIDC, 0.1.3 bootstrap)", () => {
+describe("scoped @odiobill/piren registry releases (0.1.6 preparation, 0.1.5/0.1.4 OIDC, 0.1.3 bootstrap)", () => {
   it("package.json name is the scoped @odiobill/piren identity", () => {
     const pkg = JSON.parse(read("package.json")) as { name: string };
     expect(pkg.name).toBe("@odiobill/piren");
   });
 
-  it("package.json version is the published 0.1.5 release", () => {
+  it("package.json version is the prepared 0.1.6 release candidate", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
-    expect(pkg.version).toBe("0.1.5");
+    expect(pkg.version).toBe("0.1.6");
   });
 
   it("the executable bin name stays piren (scoped package, unchanged command)", () => {
@@ -56,8 +57,8 @@ describe("scoped @odiobill/piren registry releases (0.1.5 OIDC, 0.1.4 OIDC, 0.1.
     expect(pkg.private === undefined || pkg.private === false).toBe(true);
   });
 
-  it("readVersion reports 0.1.5 from the real package.json", () => {
-    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.5");
+  it("readVersion reports 0.1.6 from the real package.json", () => {
+    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.6");
   });
 
   it("package-lock.json name and version agree with package.json", () => {
@@ -67,27 +68,23 @@ describe("scoped @odiobill/piren registry releases (0.1.5 OIDC, 0.1.4 OIDC, 0.1.
       packages?: Record<string, { name?: string; version?: string }>;
     };
     expect(lock.name).toBe("@odiobill/piren");
-    expect(lock.version).toBe("0.1.5");
+    expect(lock.version).toBe("0.1.6");
     expect(lock.packages?.[""]?.name).toBe("@odiobill/piren");
-    expect(lock.packages?.[""]?.version).toBe("0.1.5");
+    expect(lock.packages?.[""]?.version).toBe("0.1.6");
   });
 
-  it("CHANGELOG has a dated [0.1.5] entry recording OIDC publication with provenance", () => {
+  it("CHANGELOG has a dated [0.1.6] candidate entry without a premature publication claim", () => {
     const cl = read("CHANGELOG.md");
-    const start = cl.indexOf("## [0.1.5]");
-    const end = cl.indexOf("## [0.1.4]");
+    const start = cl.indexOf("## [0.1.6]");
+    const end = cl.indexOf("## [0.1.5]");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const section = cl.slice(start, end);
-    expect(section).toMatch(/## \[0\.1\.5\] - 2026-07-25/);
-    expect(section).toMatch(/ADR-0038/);
-    // Post-publication truth: published to npm latest via the protected
-    // tag-only OIDC workflow with a provenance attestation.
-    expect(section).toMatch(/published/i);
-    expect(section).toMatch(/npm `latest`/);
-    expect(section).toMatch(/OIDC/);
-    expect(section).toMatch(/provenance/i);
-    expect(section).not.toMatch(/not yet tagged or published|prepared release candidate|unreleased/i);
+    expect(section).toMatch(/## \[0\.1\.6\] - 2026-08-01/);
+    expect(section).toMatch(/ADR-0040/);
+    expect(section).toMatch(/D4|three-host/i);
+    expect(section).toMatch(/not yet tagged or published|prepared release candidate/i);
+    expect(section).not.toMatch(/published to npm `latest`|OIDC publication complete/i);
   });
 
   it("CHANGELOG has dated published [0.1.4] and [0.1.3] entries", () => {

@@ -5,6 +5,25 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-08-01
+
+ADR-0040 transport maturity release candidate. Prepared for the protected tag-only OIDC workflow; **not yet tagged or published**.
+
+### Added
+
+- **Guided local transport configuration:** `piren telegram configure` and `piren discord configure` collect only machine-local transport settings, show a redacted token preview, require confirmation, preserve unrelated configuration, and write owner-only local config atomically. Discord configuration can optionally collect an explicit one-to-one DM user allowlist.
+- **Fail-closed Discord direct messages:** `discord.allowed_dm_user_ids` is a separate authorization scope. A DM requires an explicitly allowlisted sender and Bot API verification that the requested channel is a one-to-one DM; group, unknown, malformed, and unallowlisted direct-message shapes are silent. Guild, ordinary-channel, and thread authorization remain independent.
+- **Native Discord application commands:** `/start`, `/agents`, `/agent <name>`, `/whoami`, and `/abort` register non-destructively when `discord.application_id` is configured. Authorized interactions use Discord callbacks and the same fail-closed routing policy as text commands.
+- **Conversation-scoped transport controls:** Telegram forum topics retain isolated sessions and routing; Telegram and Discord expose `/new` and `/compact` for the current live conversation only.
+
+### Changed
+
+- **Transport operator guidance:** documents Discord Developer Portal command scope/intent prerequisites, Telegram BotFather Privacy Mode, direct-message boundaries, guided local setup, and the foreground verification path. Platform permissions remain prerequisites; local allowlists remain the final authorization gate.
+
+### Verification
+
+- D4 live validation passed on the exact staged candidate across Ironman and Thor CIFS-mounted vaults and Heimdall native storage. Mandatory Telegram/Discord ordinary, DM, native-command, and controlled negative authorization rows passed. Telegram forum-topic isolation was N/A because no safe forum test group was available; automated coverage remains evidence.
+
 ## [0.1.5] - 2026-07-25
 
 Scheduler safety and operator surface (ADR-0038). Published as `@odiobill/piren@0.1.5` to npm `latest` through the protected tag-only OIDC trusted-publishing workflow from the immutable `v0.1.5` tag (`7fbcded`); registry metadata carries a SLSA provenance attestation (`npm publish --provenance`, `https://slsa.dev/provenance/v1`).
