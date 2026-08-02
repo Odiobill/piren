@@ -31,6 +31,7 @@ export class RoomBroker {
     nonce;
     timers;
     runTimeoutMs;
+    io;
     activeRuns = new Map();
     pendingApprovals = new Map();
     closed = false;
@@ -41,6 +42,7 @@ export class RoomBroker {
         this.nonce = options.nonce;
         this.timers = options.timers ?? defaultTimers();
         this.runTimeoutMs = options.runTimeoutMs ?? DEFAULT_ROOM_RUN_TIMEOUT_MS;
+        this.io = options.io;
         this.sessions = new TransportSessionManager({
             runnableAgents: this.runnableAgents,
             targetBuilder: options.targetBuilder,
@@ -123,9 +125,12 @@ export class RoomBroker {
             roomId,
             now: this.now,
         };
-        // exactOptionalPropertyTypes: never assign an explicit undefined nonce.
+        // exactOptionalPropertyTypes: never assign explicit undefined optionals.
         if (this.nonce !== undefined) {
             base.nonce = this.nonce;
+        }
+        if (this.io !== undefined) {
+            base.io = this.io;
         }
         return base;
     }
@@ -141,13 +146,35 @@ export class RoomBroker {
             addressedAgent: input.agent,
         });
         run.stewardEventId = stewardEvent.id;
-        // Start the isolated room × agent session. A pre-start failure is a
-        // launch failure: no run_started, exactly one terminal run_finished.
+        // Cancellation boundary 1: close/abort won while the steward event was
+        // being written. Record one cancellation; never build/start a session
+        // or write run_started.
+        if (run.settled) {
+            return await this.finalizeCancelledDuringInit(run, input);
+        }
+        // Start the isolated room × agent session.
         let session;
+        let startupFailed = false;
         try {
             session = await this.sessions.getSession("room", run.key, input.agent);
         }
         catch {
+            startupFailed = true;
+        }
+        // Cancellation boundary 2: close/abort won while the session was
+        // starting. Cancellation wins over any startup outcome: clean up only
+        // the just-created exact session (when one materialized), never write
+        // run_started, never record launch_failure.
+        if (run.settled) {
+            if (session !== undefined) {
+                await session.client.stop().catch(() => { });
+                this.sessions.forgetSession("room", run.key, session.client);
+            }
+            return await this.finalizeCancelledDuringInit(run, input);
+        }
+        if (startupFailed || session === undefined) {
+            // Cancellation did NOT win and the client never reached run_started:
+            // this is the only launch_failure path (ADR-0038 boundary).
             const terminal = await appendRoomEvent({
                 ...appendBase,
                 kind: "run_finished",
@@ -178,20 +205,25 @@ export class RoomBroker {
             runStatus: "running",
             correlationId: stewardEvent.id,
         });
-        run.unsubscribeEvents = run.client.onEvent((event) => this.handleClientEvent(run, event));
-        run.unsubscribeExit = run.client.onExit(() => {
-            run.clientExited = true;
-            this.settle(run, "ambiguous");
-        });
-        run.timeoutHandle = this.timers.setTimeout(() => this.settle(run, "timeout"), this.runTimeoutMs);
-        try {
-            await run.client.prompt(buildRoomMentionPrompt({ roomId: input.roomId, agent: input.agent, text }));
-        }
-        catch {
-            // ADR-0038 boundary: the prompt was handed to Pi after run_started, so
-            // the broker cannot infer whether side effects occurred. Classified by
-            // control-flow position only, never by error text.
-            this.settle(run, "ambiguous");
+        // Cancellation boundary 3: close/abort won while run_started was being
+        // written. Skip wiring and prompt; the cancel finalization below aborts
+        // the just-started client and records exactly one run_cancelled.
+        if (!run.settled) {
+            run.unsubscribeEvents = run.client.onEvent((event) => this.handleClientEvent(run, event));
+            run.unsubscribeExit = run.client.onExit(() => {
+                run.clientExited = true;
+                this.settle(run, "ambiguous");
+            });
+            run.timeoutHandle = this.timers.setTimeout(() => this.settle(run, "timeout"), this.runTimeoutMs);
+            try {
+                await run.client.prompt(buildRoomMentionPrompt({ roomId: input.roomId, agent: input.agent, text }));
+            }
+            catch {
+                // ADR-0038 boundary: the prompt was handed to Pi after run_started, so
+                // the broker cannot infer whether side effects occurred. Classified by
+                // control-flow position only, never by error text.
+                this.settle(run, "ambiguous");
+            }
         }
         await done;
         return await this.finalizeRun(run, input, appendBase);
@@ -231,6 +263,30 @@ export class RoomBroker {
         }
         run.resolveDone();
     }
+    /**
+     * Terminal cancellation for a run that never became active (close/abort
+     * won during initialization): exactly one correlated run_cancelled, with
+     * no session usage, no run_started, and no client access.
+     */
+    async finalizeCancelledDuringInit(run, input) {
+        const terminal = await appendRoomEvent({
+            ...this.appendBase(input.roomId),
+            kind: "run_cancelled",
+            authorKind: "system",
+            author: "system",
+            body: "Run cancelled by the steward.",
+            runStatus: "cancelled",
+            correlationId: run.stewardEventId,
+        });
+        run.terminalEventId = terminal.id;
+        return {
+            status: "cancelled",
+            roomId: input.roomId,
+            agent: input.agent,
+            stewardEventId: run.stewardEventId,
+            terminalEventId: terminal.id,
+        };
+    }
     async finalizeRun(run, input, appendBase) {
         // settle() always assigns a kind before resolving the wait; the fallback
         // is defensive only.
@@ -238,7 +294,9 @@ export class RoomBroker {
         if (kind === "timeout" || kind === "cancel") {
             // Abort only the exact room-agent client. Stale agent_end emitted by
             // the abort is ignored: listeners were unsubscribed at settle time.
-            await run.client.abort().catch(() => { });
+            if (run.client !== undefined) {
+                await run.client.abort().catch(() => { });
+            }
         }
         if (kind === "completed") {
             const text = extractAssistantText(run.events).trim();
@@ -352,7 +410,7 @@ export class RoomBroker {
         if (!pending) {
             throw new Error(`Unknown room approval '${input.requestId}' for room '${input.roomId}' and agent '${input.agent}'.`);
         }
-        if (pending.run.settled || this.activeRuns.get(pending.run.key) !== pending.run) {
+        if (pending.run.settled || pending.run.client === undefined || this.activeRuns.get(pending.run.key) !== pending.run) {
             this.pendingApprovals.delete(approvalKey);
             throw new Error(`Room approval '${input.requestId}' is stale.`);
         }

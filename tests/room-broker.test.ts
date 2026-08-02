@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, link, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,6 +14,10 @@ class FakeRoomClient implements RoomRpcClient {
   aborted = 0;
   prompts: string[] = [];
   responses: { id: string; response: ExtensionUiResponse }[] = [];
+  /** Deterministic start barrier: start() waits for this promise when set. */
+  startGate: Promise<void> | null = null;
+  /** Optional error thrown by start() after the gate resolves. */
+  startError: Error | null = null;
   private listeners: Array<(event: RpcEvent) => void> = [];
   private exitListeners: Array<() => void> = [];
 
@@ -21,6 +25,12 @@ class FakeRoomClient implements RoomRpcClient {
 
   async start(): Promise<void> {
     this.started += 1;
+    if (this.startGate !== null) {
+      await this.startGate;
+    }
+    if (this.startError !== null) {
+      throw this.startError;
+    }
     if (this.behavior === "start-fail") {
       throw new Error("spawn failed (fake)");
     }
@@ -368,8 +378,15 @@ describe("RoomBroker dispatch outcomes", () => {
 
     expect(clients).toHaveLength(2);
     expect(clients[0]).not.toBe(clients[1]);
-    expect(clients[0]?.prompts[0]).toContain(roomOne);
-    expect(clients[1]?.prompts[0]).toContain(roomTwo);
+    // Client creation order is not room order under concurrency; identify
+    // each client by the room id embedded in its bounded prompt.
+    const clientFor = (room: string): FakeRoomClient => {
+      const client = clients.find((candidate) => (candidate.prompts[0] ?? "").includes(room));
+      if (!client) throw new Error(`no client for ${room}`);
+      return client;
+    };
+    expect(clientFor(roomOne).prompts[0]).toContain("First room task.");
+    expect(clientFor(roomTwo).prompts[0]).toContain("Second room task.");
 
     const eventsOne = await readEvents(root, roomOne);
     const eventsTwo = await readEvents(root, roomTwo);
@@ -859,6 +876,243 @@ describe("RoomBroker dead-session lifecycle", () => {
     expect(thorAgain.status).toBe("completed");
     expect(clients).toHaveLength(3);
 
+    await broker.close();
+  });
+});
+
+describe("RoomBroker initialization race barriers", () => {
+  let root: string;
+  let clients: FakeRoomClient[];
+  let timers: ManualTimers;
+  let nonceSeq: number;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-room-broker-race-"));
+    clients = [];
+    timers = new ManualTimers();
+    nonceSeq = 0;
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function makeBroker(options?: {
+    behaviors?: FakeBehavior[];
+    clientFactory?: () => FakeRoomClient;
+    io?: { linkNoClobber(t: string, target: string): Promise<void>; remove(p: string): Promise<void> };
+  }): RoomBroker {
+    const behaviors = options?.behaviors ?? [];
+    return new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi", "thor"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+      clientFactory:
+        options?.clientFactory ??
+        (() => {
+          const client = new FakeRoomClient(behaviors[clients.length] ?? "complete");
+          clients.push(client);
+          return client;
+        }),
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      runTimeoutMs: 60_000,
+      io: options?.io,
+    });
+  }
+
+  async function makeRoom(participants: string[]): Promise<string> {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Race room",
+      participants,
+      now: () => new Date("2026-08-02T17:00:00.000Z"),
+    });
+    return room.id;
+  }
+
+  function gatedWriteIo(gate: Promise<void>, onFirstLink: () => void): {
+    linkNoClobber(t: string, target: string): Promise<void>;
+    remove(p: string): Promise<void>;
+  } {
+    let linkCalls = 0;
+    return {
+      linkNoClobber: async (tempPath: string, targetPath: string) => {
+        linkCalls += 1;
+        if (linkCalls === 1) {
+          onFirstLink();
+          await gate;
+        }
+        await link(tempPath, targetPath);
+      },
+      remove: async (path: string) => {
+        await rm(path, { force: true });
+      },
+    };
+  }
+
+  it("close while the steward append is suspended: no session, no run_started, exactly one run_cancelled", async () => {
+    let firstLinked!: () => void;
+    const atFirstLink = new Promise<void>((resolve) => {
+      firstLinked = resolve;
+    });
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const io = gatedWriteIo(gate, () => firstLinked());
+    const broker = makeBroker({ io });
+    const roomId = await makeRoom(["kimi"]);
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Suspended steward." });
+    await atFirstLink;
+
+    const closePromise = broker.close();
+    releaseGate();
+    await closePromise;
+    const outcome = await dispatch;
+
+    expect(outcome.status).toBe("cancelled");
+    expect(clients).toHaveLength(0); // no session was ever built
+    const events = await readEvents(root, roomId);
+    // close returned only after the durable cancellation evidence existed.
+    expect(events).toHaveLength(2);
+    expect(events.some((entry) => entry.content.includes("kind: steward_message"))).toBe(true);
+    const cancelled = events.filter((entry) => entry.content.includes("kind: run_cancelled"));
+    expect(cancelled).toHaveLength(1);
+    expect(cancelled[0]?.content).toContain("run_status: cancelled");
+    expect(events.some((entry) => entry.content.includes("kind: run_started"))).toBe(false);
+    expect(events.some((entry) => entry.content.includes("kind: run_finished"))).toBe(false);
+    expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
+  });
+
+  it("abort while the steward append is suspended: no session, no run_started, exactly one run_cancelled", async () => {
+    let firstLinked!: () => void;
+    const atFirstLink = new Promise<void>((resolve) => {
+      firstLinked = resolve;
+    });
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const io = gatedWriteIo(gate, () => firstLinked());
+    const broker = makeBroker({ io });
+    const roomId = await makeRoom(["kimi"]);
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Suspended steward." });
+    await atFirstLink;
+
+    const abortPromise = broker.abort(roomId, "kimi");
+    releaseGate();
+    const abortOutcome = await abortPromise;
+    const outcome = await dispatch;
+
+    expect(abortOutcome.status).toBe("cancelled");
+    expect(outcome.status).toBe("cancelled");
+    expect(clients).toHaveLength(0);
+    const events = await readEvents(root, roomId);
+    expect(events).toHaveLength(2);
+    expect(events.filter((entry) => entry.content.includes("kind: run_cancelled"))).toHaveLength(1);
+    expect(events.some((entry) => entry.content.includes("kind: run_started"))).toBe(false);
+    await broker.close();
+  });
+
+  it("abort while session start is suspended: cleans up only the just-created client, one run_cancelled, unrelated session stays cached", async () => {
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const broker = makeBroker({
+      clientFactory: () => {
+        // Only the second client (gated kimi start) hangs; every other
+        // client completes so later explicit mentions finish.
+        const client = new FakeRoomClient(clients.length === 1 ? "hang" : "complete");
+        if (clients.length === 1) {
+          client.startGate = startGate;
+        }
+        clients.push(client);
+        return client;
+      },
+    });
+    const roomId = await makeRoom(["kimi", "thor"]);
+
+    // Seed an unrelated cached room-agent session.
+    expect((await broker.dispatchRoomMention({ roomId, agent: "thor", text: "Thor seed." })).status).toBe("completed");
+    expect(clients).toHaveLength(1);
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Suspended start." });
+    await waitFor(() => clients.length === 2 && clients[1]?.started === 1);
+
+    const abortPromise = broker.abort(roomId, "kimi");
+    releaseStart();
+    const abortOutcome = await abortPromise;
+    const outcome = await dispatch;
+
+    expect(abortOutcome.status).toBe("cancelled");
+    expect(outcome.status).toBe("cancelled");
+    const gated = clients[1]!;
+    expect(gated.stopped).toBe(1); // just-created client cleaned up
+    expect(gated.aborted).toBe(0); // never active: no abort
+    expect(gated.prompts).toHaveLength(0);
+
+    const events = await readEvents(root, roomId);
+    const kimiCancelled = events.filter(
+      (entry) => entry.content.includes("kind: run_cancelled") && entry.content.includes(`correlation_id: ${outcome.stewardEventId}`),
+    );
+    expect(kimiCancelled).toHaveLength(1);
+    expect(
+      events.filter((entry) => entry.content.includes("kind: run_started") && entry.content.includes(`correlation_id: ${outcome.stewardEventId}`)),
+    ).toHaveLength(0);
+    expect(events.some((entry) => entry.content.includes("launch_failure"))).toBe(false);
+    expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
+
+    // The unrelated thor session was not removed or replaced.
+    expect((await broker.dispatchRoomMention({ roomId, agent: "thor", text: "Thor again." })).status).toBe("completed");
+    expect(clients).toHaveLength(2);
+
+    // A later explicit kimi mention builds a fresh client (forgotten session).
+    expect((await broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Fresh kimi." })).status).toBe("completed");
+    expect(clients).toHaveLength(3);
+    expect(clients[2]).not.toBe(gated);
+
+    await broker.close();
+  });
+
+  it("session start failure after abort wins still records cancellation, never launch_failure", async () => {
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const broker = makeBroker({
+      clientFactory: () => {
+        const client = new FakeRoomClient("hang");
+        client.startGate = startGate;
+        client.startError = new Error("spawn exploded after gate (fake)");
+        clients.push(client);
+        return client;
+      },
+    });
+    const roomId = await makeRoom(["kimi"]);
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Start fails after cancel." });
+    await waitFor(() => clients.length === 1 && clients[0]?.started === 1);
+
+    const abortPromise = broker.abort(roomId, "kimi");
+    releaseStart();
+    const abortOutcome = await abortPromise;
+    const outcome = await dispatch;
+
+    expect(abortOutcome.status).toBe("cancelled");
+    expect(outcome.status).toBe("cancelled");
+    const events = await readEvents(root, roomId);
+    expect(events).toHaveLength(2); // steward + run_cancelled
+    expect(events.filter((entry) => entry.content.includes("kind: run_cancelled"))).toHaveLength(1);
+    expect(events.some((entry) => entry.content.includes("kind: run_finished"))).toBe(false);
+    expect(events.some((entry) => entry.content.includes("launch_failure"))).toBe(false);
+    expect(events.some((entry) => entry.content.includes("spawn exploded"))).toBe(false);
+    expect(clients[0]?.prompts).toHaveLength(0);
+    expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
     await broker.close();
   });
 });
