@@ -32,6 +32,7 @@ export class RoomBroker {
     timers;
     runTimeoutMs;
     io;
+    roomReader;
     activeRuns = new Map();
     pendingApprovals = new Map();
     closed = false;
@@ -43,6 +44,7 @@ export class RoomBroker {
         this.timers = options.timers ?? defaultTimers();
         this.runTimeoutMs = options.runTimeoutMs ?? DEFAULT_ROOM_RUN_TIMEOUT_MS;
         this.io = options.io;
+        this.roomReader = options.roomReader ?? readRoom;
         this.sessions = new TransportSessionManager({
             runnableAgents: this.runnableAgents,
             targetBuilder: options.targetBuilder,
@@ -67,7 +69,7 @@ export class RoomBroker {
         }
         let room;
         try {
-            room = await readRoom({ vaultRoot: this.vaultRoot, roomId: input.roomId });
+            room = await this.roomReader({ vaultRoot: this.vaultRoot, roomId: input.roomId });
         }
         catch (error) {
             if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -83,6 +85,13 @@ export class RoomBroker {
         }
         if (!this.runnableAgents.includes(input.agent)) {
             throw new Error(`Agent '${input.agent}' is not in the runnable set.`);
+        }
+        // Post-validation close boundary: close() may have run entirely while
+        // validation was awaited (no reservation existed for it to settle).
+        // This check and the reservation below are one synchronous block with no
+        // await between them, so close() cannot interleave.
+        if (this.closed) {
+            throw new Error("Room broker is closed.");
         }
         // Race-safe in-process reservation: check-and-set is synchronous, before
         // the first event or client side effect. No implicit queue.

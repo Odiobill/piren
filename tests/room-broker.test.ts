@@ -1116,3 +1116,75 @@ describe("RoomBroker initialization race barriers", () => {
     await broker.close();
   });
 });
+
+describe("RoomBroker close during pre-reservation validation", () => {
+  let root: string;
+  let clients: FakeRoomClient[];
+  let timers: ManualTimers;
+  let nonceSeq: number;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-room-broker-prerace-"));
+    clients = [];
+    timers = new ManualTimers();
+    nonceSeq = 0;
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it("rejects closed with zero side effects when close() wins during awaited room validation", async () => {
+    let releaseValidation!: () => void;
+    const validationGate = new Promise<void>((resolve) => {
+      releaseValidation = resolve;
+    });
+    let validationCalls = 0;
+    const roomId = (
+      await createRoom({
+        vaultRoot: root,
+        title: "Pre-validation race room",
+        participants: ["kimi"],
+        now: () => new Date("2026-08-02T17:00:00.000Z"),
+      })
+    ).id;
+
+    const broker = new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+      clientFactory: () => {
+        const client = new FakeRoomClient("complete");
+        clients.push(client);
+        return client;
+      },
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      roomReader: async (options) => {
+        validationCalls += 1;
+        await validationGate;
+        const { readRoom } = await import("../src/rooms.js");
+        return readRoom(options);
+      },
+    });
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Held in validation." });
+    await waitFor(() => validationCalls === 1);
+
+    // close() runs fully while validation is suspended: no reservation exists
+    // for it to settle, and sessions are stopped.
+    await broker.close();
+    releaseValidation();
+
+    await expect(dispatch).rejects.toThrow("Room broker is closed.");
+    expect(clients).toHaveLength(0); // no client/session was ever built
+    expect(await readEvents(root, roomId)).toEqual([]); // no steward/terminal events
+    expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
+
+    // Direct post-close rejection also holds.
+    await expect(broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Too late." })).rejects.toThrow(
+      "Room broker is closed.",
+    );
+  });
+});

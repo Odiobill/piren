@@ -7,7 +7,7 @@ import {
   type RpcSpawnTarget,
 } from "./gateway-rpc.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
-import { appendRoomEvent, readRoom, type RoomWriteIo } from "./rooms.js";
+import { appendRoomEvent, readRoom, type ReadRoomOptions, type RoomRecord, type RoomWriteIo } from "./rooms.js";
 import type { RoomRunFailureKind } from "./rooms.js";
 
 /**
@@ -52,6 +52,8 @@ export interface RoomBrokerOptions {
   runTimeoutMs?: number | undefined;
   /** Injected room-write seam for deterministic suspension tests. */
   io?: RoomWriteIo | undefined;
+  /** Injected room reader for deterministic validation-suspension tests. */
+  roomReader?: ((options: ReadRoomOptions) => Promise<RoomRecord>) | undefined;
 }
 
 export interface RoomMentionInput {
@@ -140,6 +142,7 @@ export class RoomBroker {
   private readonly timers: RoomBrokerTimers;
   private readonly runTimeoutMs: number;
   private readonly io: RoomWriteIo | undefined;
+  private readonly roomReader: (options: ReadRoomOptions) => Promise<RoomRecord>;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private closed = false;
@@ -152,6 +155,7 @@ export class RoomBroker {
     this.timers = options.timers ?? defaultTimers();
     this.runTimeoutMs = options.runTimeoutMs ?? DEFAULT_ROOM_RUN_TIMEOUT_MS;
     this.io = options.io;
+    this.roomReader = options.roomReader ?? readRoom;
     this.sessions = new TransportSessionManager<RoomRpcClient>({
       runnableAgents: this.runnableAgents,
       targetBuilder: options.targetBuilder,
@@ -180,7 +184,7 @@ export class RoomBroker {
 
     let room;
     try {
-      room = await readRoom({ vaultRoot: this.vaultRoot, roomId: input.roomId });
+      room = await this.roomReader({ vaultRoot: this.vaultRoot, roomId: input.roomId });
     } catch (error) {
       if (error instanceof Error && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
         throw new Error(`Room not found: ${input.roomId}`);
@@ -195,6 +199,14 @@ export class RoomBroker {
     }
     if (!this.runnableAgents.includes(input.agent)) {
       throw new Error(`Agent '${input.agent}' is not in the runnable set.`);
+    }
+
+    // Post-validation close boundary: close() may have run entirely while
+    // validation was awaited (no reservation existed for it to settle).
+    // This check and the reservation below are one synchronous block with no
+    // await between them, so close() cannot interleave.
+    if (this.closed) {
+      throw new Error("Room broker is closed.");
     }
 
     // Race-safe in-process reservation: check-and-set is synchronous, before
