@@ -331,6 +331,12 @@ const REQUIRED_AUTHOR_KIND: Record<RoomEventKind, RoomAuthorKind> = {
   run_cancelled: "system",
 };
 
+export const ROOM_RUN_STATUSES = ["running", "completed", "failed", "timed_out", "cancelled"] as const;
+export type RoomRunStatus = (typeof ROOM_RUN_STATUSES)[number];
+
+export const ROOM_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous"] as const;
+export type RoomRunFailureKind = (typeof ROOM_RUN_FAILURE_KINDS)[number];
+
 export interface AppendRoomEventOptions {
   vaultRoot: string;
   roomId: string;
@@ -340,6 +346,10 @@ export interface AppendRoomEventOptions {
   body: string;
   correlationId?: string | undefined;
   addressedAgent?: string | undefined;
+  /** Bounded run outcome, only on system run_* events (see assertValidRunOutcome). */
+  runStatus?: RoomRunStatus | undefined;
+  /** Only on run_finished with run_status: failed. */
+  failureKind?: RoomRunFailureKind | undefined;
   now?: () => Date;
   nonce?: () => string;
   /** Injected final-target seam for deterministic race/collision tests. */
@@ -365,6 +375,8 @@ function renderRoomEvent(options: {
   created: string;
   correlationId?: string | undefined;
   addressedAgent?: string | undefined;
+  runStatus?: RoomRunStatus | undefined;
+  failureKind?: RoomRunFailureKind | undefined;
   body: string;
 }): string {
   const lines = [
@@ -384,8 +396,62 @@ function renderRoomEvent(options: {
   if (options.correlationId !== undefined) {
     lines.push(`correlation_id: ${options.correlationId}`);
   }
+  if (options.runStatus !== undefined) {
+    lines.push(`run_status: ${options.runStatus}`);
+  }
+  if (options.failureKind !== undefined) {
+    lines.push(`failure_kind: ${options.failureKind}`);
+  }
   lines.push("---", "", options.body, "");
   return lines.join("\n");
+}
+
+/**
+ * ADR-0041 R1b run-outcome contract:
+ * - steward_message / agent_message carry no run outcome fields.
+ * - run_started requires run_status: running.
+ * - run_finished requires exactly one of completed / failed / timed_out;
+ *   failure_kind is allowed only for failed and only launch_failure|ambiguous.
+ * - run_cancelled requires run_status: cancelled and no failure_kind.
+ */
+function assertValidRunOutcome(options: AppendRoomEventOptions): void {
+  const kind = options.kind;
+  if (kind === "steward_message" || kind === "agent_message") {
+    if (options.runStatus !== undefined || options.failureKind !== undefined) {
+      throw new Error(`${kind} events must not carry run outcome fields.`);
+    }
+    return;
+  }
+  if (kind === "run_started") {
+    if (options.runStatus !== "running") {
+      throw new Error("run_started requires run_status: running.");
+    }
+    if (options.failureKind !== undefined) {
+      throw new Error("run_started must not carry failure_kind.");
+    }
+    return;
+  }
+  if (kind === "run_finished") {
+    if (options.runStatus !== "completed" && options.runStatus !== "failed" && options.runStatus !== "timed_out") {
+      throw new Error("run_finished requires run_status: completed, failed, or timed_out.");
+    }
+    if (options.failureKind !== undefined) {
+      if (options.runStatus !== "failed") {
+        throw new Error("failure_kind is only valid when run_status is failed.");
+      }
+      if (!(ROOM_RUN_FAILURE_KINDS as readonly string[]).includes(options.failureKind)) {
+        throw new Error(`Unknown failure_kind '${options.failureKind}'. Use launch_failure or ambiguous.`);
+      }
+    }
+    return;
+  }
+  // run_cancelled
+  if (options.runStatus !== "cancelled") {
+    throw new Error("run_cancelled requires run_status: cancelled.");
+  }
+  if (options.failureKind !== undefined) {
+    throw new Error("run_cancelled must not carry failure_kind.");
+  }
 }
 
 /**
@@ -408,6 +474,7 @@ export async function appendRoomEvent(options: AppendRoomEventOptions): Promise<
     );
   }
   assertValidAuthor(options.authorKind, options.author);
+  assertValidRunOutcome(options);
   if (typeof options.body !== "string" || options.body.trim() === "") {
     throw new Error("Room event body is required.");
   }
@@ -458,6 +525,8 @@ export async function appendRoomEvent(options: AppendRoomEventOptions): Promise<
     created,
     correlationId: options.correlationId,
     addressedAgent: options.addressedAgent,
+    runStatus: options.runStatus,
+    failureKind: options.failureKind,
     body: options.body,
   });
   let bytes: number;

@@ -202,6 +202,7 @@ describe("rooms core", () => {
       authorKind: "system" as const,
       author: "system",
       body: "Run started.",
+      runStatus: "running" as const,
       now: () => new Date("2026-08-02T14:05:00.000Z"),
       nonce: () => "abc123",
     };
@@ -301,10 +302,11 @@ describe("rooms core", () => {
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as PromiseRejectedResult).reason.message).toContain("already exists");
 
+    // Both writers target the same event id; arrival order at the link step
+    // is intentionally not assumed. Exactly one body may survive, intact.
     const winner = (fulfilled[0] as PromiseFulfilledResult<{ path: string }>).value;
     const content = await readFile(join(root, winner.path), "utf8");
-    expect(content).toContain("Writer one wins.");
-    expect(content).not.toContain("Writer two loses.");
+    expect(content.includes("Writer one wins.")).not.toBe(content.includes("Writer two loses."));
   });
 
   it("settles a controlled concurrent createRoom race with exactly one winner and preserved manifest", async () => {
@@ -346,10 +348,11 @@ describe("rooms core", () => {
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as PromiseRejectedResult).reason.message).toContain("Room already exists");
 
+    // Arrival order at the link step is not assumed; exactly one participant
+    // list may survive, intact.
     const winner = (fulfilled[0] as PromiseFulfilledResult<{ path: string }>).value;
     const content = await readFile(join(root, winner.path), "utf8");
-    expect(content).toContain("- kimi");
-    expect(content).not.toContain("- thor");
+    expect(content.includes("- kimi")).not.toBe(content.includes("- thor"));
   });
 
   it("rejects every kind/author_kind mismatch from the ADR-0041 vocabulary", async () => {
@@ -413,5 +416,135 @@ describe("rooms core", () => {
 
     const { readdir } = await import("node:fs/promises");
     await expect(readdir(join(root, "collaboration", "rooms", room.id, "events"))).resolves.toEqual([]);
+  });
+});
+
+describe("room run outcome fields", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-rooms-outcome-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  async function makeRoom(): Promise<string> {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Outcome room",
+      participants: ["kimi"],
+      now: () => new Date("2026-08-02T14:00:00.000Z"),
+    });
+    return room.id;
+  }
+
+  it("renders run_status and failure_kind only when valid for the kind", async () => {
+    const roomId = await makeRoom();
+    const steward = await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "steward_message",
+      authorKind: "steward",
+      author: "steward",
+      body: "Go.",
+      addressedAgent: "kimi",
+      now: () => new Date("2026-08-02T14:01:00.000Z"),
+      nonce: () => "s1",
+    });
+    const started = await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "run_started",
+      authorKind: "system",
+      author: "system",
+      body: "Run started.",
+      runStatus: "running",
+      correlationId: steward.id,
+      now: () => new Date("2026-08-02T14:02:00.000Z"),
+      nonce: () => "s2",
+    });
+    const startedContent = await readFile(join(root, started.path), "utf8");
+    expect(startedContent).toContain("run_status: running");
+    expect(startedContent).not.toContain("failure_kind");
+
+    const finished = await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "run_finished",
+      authorKind: "system",
+      author: "system",
+      body: "Run failed.",
+      runStatus: "failed",
+      failureKind: "launch_failure",
+      correlationId: steward.id,
+      now: () => new Date("2026-08-02T14:03:00.000Z"),
+      nonce: () => "s3",
+    });
+    const finishedContent = await readFile(join(root, finished.path), "utf8");
+    expect(finishedContent).toContain("run_status: failed");
+    expect(finishedContent).toContain("failure_kind: launch_failure");
+
+    const cancelled = await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "run_cancelled",
+      authorKind: "system",
+      author: "system",
+      body: "Run cancelled.",
+      runStatus: "cancelled",
+      correlationId: steward.id,
+      now: () => new Date("2026-08-02T14:04:00.000Z"),
+      nonce: () => "s4",
+    });
+    const cancelledContent = await readFile(join(root, cancelled.path), "utf8");
+    expect(cancelledContent).toContain("run_status: cancelled");
+    expect(cancelledContent).not.toContain("failure_kind");
+  });
+
+  it("rejects every invalid kind/run-outcome combination without a write", async () => {
+    const roomId = await makeRoom();
+    const base = { vaultRoot: root, roomId, body: "x" };
+    // message kinds reject all run-outcome fields
+    await expect(
+      appendRoomEvent({ ...base, kind: "steward_message", authorKind: "steward", author: "steward", runStatus: "running" }),
+    ).rejects.toThrow("run outcome");
+    await expect(
+      appendRoomEvent({ ...base, kind: "agent_message", authorKind: "agent", author: "kimi", failureKind: "ambiguous" }),
+    ).rejects.toThrow("run outcome");
+    // run_started requires run_status: running and nothing else
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_started", authorKind: "system", author: "system" }),
+    ).rejects.toThrow("run_status");
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_started", authorKind: "system", author: "system", runStatus: "completed" }),
+    ).rejects.toThrow("run_status");
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_started", authorKind: "system", author: "system", runStatus: "running", failureKind: "ambiguous" }),
+    ).rejects.toThrow("failure_kind");
+    // run_finished requires completed|failed|timed_out; failure_kind only for failed
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_finished", authorKind: "system", author: "system" }),
+    ).rejects.toThrow("run_status");
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_finished", authorKind: "system", author: "system", runStatus: "running" }),
+    ).rejects.toThrow("run_status");
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_finished", authorKind: "system", author: "system", runStatus: "completed", failureKind: "ambiguous" }),
+    ).rejects.toThrow("failure_kind");
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_finished", authorKind: "system", author: "system", runStatus: "failed", failureKind: "bogus" as never }),
+    ).rejects.toThrow("failure_kind");
+    // run_cancelled requires cancelled and no failure_kind
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_cancelled", authorKind: "system", author: "system" }),
+    ).rejects.toThrow("run_status");
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_cancelled", authorKind: "system", author: "system", runStatus: "cancelled", failureKind: "launch_failure" }),
+    ).rejects.toThrow("failure_kind");
+
+    const { readdir } = await import("node:fs/promises");
+    await expect(readdir(join(root, "collaboration", "rooms", roomId, "events"))).resolves.toEqual([]);
   });
 });

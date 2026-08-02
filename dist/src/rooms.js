@@ -259,6 +259,8 @@ const REQUIRED_AUTHOR_KIND = {
     run_finished: "system",
     run_cancelled: "system",
 };
+export const ROOM_RUN_STATUSES = ["running", "completed", "failed", "timed_out", "cancelled"];
+export const ROOM_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous"];
 function renderRoomEvent(options) {
     const lines = [
         "---",
@@ -277,8 +279,61 @@ function renderRoomEvent(options) {
     if (options.correlationId !== undefined) {
         lines.push(`correlation_id: ${options.correlationId}`);
     }
+    if (options.runStatus !== undefined) {
+        lines.push(`run_status: ${options.runStatus}`);
+    }
+    if (options.failureKind !== undefined) {
+        lines.push(`failure_kind: ${options.failureKind}`);
+    }
     lines.push("---", "", options.body, "");
     return lines.join("\n");
+}
+/**
+ * ADR-0041 R1b run-outcome contract:
+ * - steward_message / agent_message carry no run outcome fields.
+ * - run_started requires run_status: running.
+ * - run_finished requires exactly one of completed / failed / timed_out;
+ *   failure_kind is allowed only for failed and only launch_failure|ambiguous.
+ * - run_cancelled requires run_status: cancelled and no failure_kind.
+ */
+function assertValidRunOutcome(options) {
+    const kind = options.kind;
+    if (kind === "steward_message" || kind === "agent_message") {
+        if (options.runStatus !== undefined || options.failureKind !== undefined) {
+            throw new Error(`${kind} events must not carry run outcome fields.`);
+        }
+        return;
+    }
+    if (kind === "run_started") {
+        if (options.runStatus !== "running") {
+            throw new Error("run_started requires run_status: running.");
+        }
+        if (options.failureKind !== undefined) {
+            throw new Error("run_started must not carry failure_kind.");
+        }
+        return;
+    }
+    if (kind === "run_finished") {
+        if (options.runStatus !== "completed" && options.runStatus !== "failed" && options.runStatus !== "timed_out") {
+            throw new Error("run_finished requires run_status: completed, failed, or timed_out.");
+        }
+        if (options.failureKind !== undefined) {
+            if (options.runStatus !== "failed") {
+                throw new Error("failure_kind is only valid when run_status is failed.");
+            }
+            if (!ROOM_RUN_FAILURE_KINDS.includes(options.failureKind)) {
+                throw new Error(`Unknown failure_kind '${options.failureKind}'. Use launch_failure or ambiguous.`);
+            }
+        }
+        return;
+    }
+    // run_cancelled
+    if (options.runStatus !== "cancelled") {
+        throw new Error("run_cancelled requires run_status: cancelled.");
+    }
+    if (options.failureKind !== undefined) {
+        throw new Error("run_cancelled must not carry failure_kind.");
+    }
 }
 /**
  * Append one immutable event file under `collaboration/rooms/<room-id>/events/`.
@@ -298,6 +353,7 @@ export async function appendRoomEvent(options) {
         throw new Error(`Room event kind '${options.kind}' requires author_kind '${requiredAuthorKind}', got '${options.authorKind}'.`);
     }
     assertValidAuthor(options.authorKind, options.author);
+    assertValidRunOutcome(options);
     if (typeof options.body !== "string" || options.body.trim() === "") {
         throw new Error("Room event body is required.");
     }
@@ -341,6 +397,8 @@ export async function appendRoomEvent(options) {
         created,
         correlationId: options.correlationId,
         addressedAgent: options.addressedAgent,
+        runStatus: options.runStatus,
+        failureKind: options.failureKind,
         body: options.body,
     });
     let bytes;
