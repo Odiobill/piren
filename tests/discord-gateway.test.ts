@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runDiscordGateway, type DiscordGatewaySocket, type GatewayMessage } from "../src/discord-transport.js";
+import { runDiscordGateway, createNativeDiscordGatewaySocket, type DiscordGatewaySocket, type GatewayMessage } from "../src/discord-transport.js";
 import { DiscordTransport } from "../src/discord-transport.js";
 import type { RpcEvent } from "../src/gateway-rpc.js";
 
@@ -106,6 +106,53 @@ async function flushMicrotasks(): Promise<void> {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/**
+ * Minimal fake of the native `WebSocket` interface the production adapter
+ * consumes. Records instances so tests can drive events on the exact socket
+ * the adapter constructed.
+ */
+class FakeNativeWebSocket {
+  static readonly OPEN = 1;
+  static instances: FakeNativeWebSocket[] = [];
+  readyState = 0;
+  private readonly listeners = new Map<string, Array<(ev: unknown) => void>>();
+
+  constructor(public readonly url: string) {
+    FakeNativeWebSocket.instances.push(this);
+  }
+
+  addEventListener(type: string, fn: (ev: unknown) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    list.push(fn);
+    this.listeners.set(type, list);
+  }
+  removeEventListener(type: string, fn: (ev: unknown) => void): void {
+    const list = this.listeners.get(type) ?? [];
+    this.listeners.set(type, list.filter((f) => f !== fn));
+  }
+  send(): void {}
+  close(): void {}
+
+  emit(type: string, ev: unknown = {}): void {
+    for (const fn of this.listeners.get(type) ?? []) fn(ev);
+  }
+
+  static reset(): void {
+    FakeNativeWebSocket.instances = [];
+  }
+}
+
+/** Variant that closes before open without ever emitting an error event. */
+class CloseBeforeOpenFakeWebSocket extends FakeNativeWebSocket {
+  constructor(url: string) {
+    super(url);
+    queueMicrotask(() => this.emit("close", { code: 1006 }));
+  }
+}
+
+const FAKE_NATIVE = FakeNativeWebSocket as unknown as typeof WebSocket;
+const FAKE_CLOSE_BEFORE_OPEN = CloseBeforeOpenFakeWebSocket as unknown as typeof WebSocket;
 
 function opPayload(op: number, extra: Record<string, unknown> = {}): GatewayMessage {
   return { op, ...extra } as GatewayMessage;
@@ -539,5 +586,129 @@ describe("runDiscordGateway reconnection lifecycle", () => {
 
     await gateway.close(); // idempotent
     expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createNativeDiscordGatewaySocket settlement", () => {
+  it("rejects promptly when the native socket closes before open without an error event", async () => {
+    FakeNativeWebSocket.reset();
+    const promise = createNativeDiscordGatewaySocket("wss://gateway.discord.gg", FAKE_NATIVE);
+    const ws = FakeNativeWebSocket.instances[0]!;
+    // Server-side close during CONNECTING: no open, no error.
+    ws.emit("close", { code: 1006 });
+    const outcome = await Promise.race([
+      promise.then(
+        () => "resolved" as const,
+        () => "rejected" as const,
+      ),
+      sleep(50).then(() => "pending" as const),
+    ]);
+    expect(outcome).toBe("rejected");
+    await expect(promise).rejects.toThrow("Discord gateway socket closed before open");
+  });
+
+  it("settles exactly once: events after a pre-open close do not re-settle the factory", async () => {
+    FakeNativeWebSocket.reset();
+    const promise = createNativeDiscordGatewaySocket("wss://gateway.discord.gg", FAKE_NATIVE);
+    const ws = FakeNativeWebSocket.instances[0]!;
+    ws.emit("close", { code: 1006 });
+    // Late open/error events for the dead socket must not reverse the rejection.
+    ws.emit("open");
+    ws.emit("error");
+    const outcome = await promise.then(
+      () => "resolved" as const,
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    );
+    expect(outcome).toBe("Discord gateway socket closed before open");
+  });
+
+  it("rejects when the native socket errors before open, without waiting for close", async () => {
+    FakeNativeWebSocket.reset();
+    const promise = createNativeDiscordGatewaySocket("wss://gateway.discord.gg", FAKE_NATIVE);
+    const ws = FakeNativeWebSocket.instances[0]!;
+    ws.emit("error");
+    await expect(promise).rejects.toThrow("Discord gateway socket error");
+  });
+
+  it("resolves on open and forwards later close and error events to the adapter", async () => {
+    FakeNativeWebSocket.reset();
+    const promise = createNativeDiscordGatewaySocket("wss://gateway.discord.gg", FAKE_NATIVE);
+    const ws = FakeNativeWebSocket.instances[0]!;
+    ws.readyState = FakeNativeWebSocket.OPEN;
+    ws.emit("open");
+    const adapter = await promise;
+    let opened = 0;
+    let closed = 0;
+    let errored = 0;
+    adapter.onopen = () => {
+      opened += 1;
+    };
+    adapter.onclose = () => {
+      closed += 1;
+    };
+    adapter.onerror = () => {
+      errored += 1;
+    };
+    ws.emit("open"); // post-settlement open forwards to the adapter only
+    ws.emit("close", { code: 1000 });
+    ws.emit("error");
+    expect(opened).toBe(1);
+    expect(closed).toBe(1);
+    expect(errored).toBe(1);
+  });
+});
+
+describe("runDiscordGateway reconnect via native adapter pre-open failure", () => {
+  it("schedules a bounded reconnect when the native socket closes before open, then handshakes on the retry", async () => {
+    const { transport } = buildTransport();
+    const scheduler = new FakeScheduler();
+    const loopSockets: FakeGatewaySocket[] = [];
+    const errors: string[] = [];
+    const reconnecting: Array<{ attempt: number; delayMs: number }> = [];
+    let factoryCalls = 0;
+    const gateway = runDiscordGateway({
+      botToken: "TOK",
+      applicationId: "1",
+      intents: 1,
+      transport,
+      socketFactory: () => {
+        factoryCalls += 1;
+        if (factoryCalls === 1) {
+          // First attempt: native adapter over a socket that closes before open.
+          return createNativeDiscordGatewaySocket("wss://gateway.discord.gg", FAKE_CLOSE_BEFORE_OPEN);
+        }
+        const s = new FakeGatewaySocket();
+        loopSockets.push(s);
+        return Promise.resolve(s);
+      },
+      heartbeatIntervalMs: 60_000,
+      reconnectInitialDelayMs: 1_000,
+      reconnectMaxDelayMs: 30_000,
+      scheduler,
+      onError: (error) => {
+        errors.push(error.message);
+      },
+      onReconnecting: (info) => {
+        reconnecting.push(info);
+      },
+    });
+    await flushMicrotasks();
+    // The pre-open close rejected the factory, which reached the reconnect scheduler.
+    expect(loopSockets).toHaveLength(0);
+    expect(errors).toEqual(["Discord gateway socket closed before open"]);
+    expect(reconnecting).toEqual([{ attempt: 1, delayMs: 1_000 }]);
+    expect(scheduler.pending).toHaveLength(1);
+
+    // The retry connects and completes a fresh handshake.
+    scheduler.runNext();
+    await flushMicrotasks();
+    expect(loopSockets).toHaveLength(1);
+    const second = loopSockets[0]!;
+    second.triggerOpen();
+    second.emit(opPayload(10, { d: { heartbeat_interval: 60_000 } }));
+    await gateway.identified();
+    const identify = second.sent.map((raw) => JSON.parse(raw) as { op: number }).find((m) => m.op === 2);
+    expect(identify).toBeDefined();
+    await gateway.close();
   });
 });

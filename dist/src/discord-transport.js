@@ -749,10 +749,17 @@ export function runDiscordGateway(options) {
  * Production gateway socket factory: connects to the Discord gateway using the
  * native WebSocket (Node >= 22) and adapts it to the `DiscordGatewaySocket`
  * interface the loop consumes.
+ *
+ * The returned promise settles exactly once: open resolves it, while an error
+ * or a close before open rejects it (a close during CONNECTING legitimately
+ * arrives without any error event, and the reconnect lifecycle depends on the
+ * factory settling). After settlement, events are only forwarded to the
+ * adapter handlers and can never reverse or re-settle the promise.
  */
 export function createNativeDiscordGatewaySocket(url, WebSocketImpl = WebSocket) {
     return new Promise((resolve, reject) => {
         const ws = new WebSocketImpl(url);
+        let settled = false;
         const adapter = {
             onopen: null,
             onmessage: null,
@@ -770,28 +777,35 @@ export function createNativeDiscordGatewaySocket(url, WebSocketImpl = WebSocket)
                 }
             },
         };
-        ws.addEventListener("open", (ev) => adapter.onopen?.(ev));
+        ws.addEventListener("open", (ev) => {
+            if (!settled) {
+                settled = true;
+                resolve(adapter);
+            }
+            adapter.onopen?.(ev);
+        });
         ws.addEventListener("message", (ev) => adapter.onmessage?.({ data: typeof ev.data === "string" ? ev.data : String(ev.data) }));
-        ws.addEventListener("close", (ev) => adapter.onclose?.(ev));
+        ws.addEventListener("close", (ev) => {
+            if (!settled) {
+                settled = true;
+                reject(new Error("Discord gateway socket closed before open"));
+                return;
+            }
+            adapter.onclose?.(ev);
+        });
         ws.addEventListener("error", () => {
             const error = new Error("Discord gateway socket error");
-            if (adapter.onerror) {
-                adapter.onerror(error);
-            }
-            else {
+            if (!settled) {
+                settled = true;
                 reject(error);
+                return;
             }
+            adapter.onerror?.(error);
         });
-        // Resolve once open; if the socket is already open (some impls), resolve now.
-        if (ws.readyState === WebSocketImpl.OPEN) {
+        // Resolve immediately when the socket is already open (some impls).
+        if (!settled && ws.readyState === WebSocketImpl.OPEN) {
+            settled = true;
             resolve(adapter);
-        }
-        else {
-            const onFirstOpen = () => {
-                ws.removeEventListener("open", onFirstOpen);
-                resolve(adapter);
-            };
-            ws.addEventListener("open", onFirstOpen);
         }
     });
 }

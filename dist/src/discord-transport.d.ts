@@ -241,5 +241,11 @@ export declare function runDiscordGateway<TClient extends DiscordPromptClient>(o
  * Production gateway socket factory: connects to the Discord gateway using the
  * native WebSocket (Node >= 22) and adapts it to the `DiscordGatewaySocket`
  * interface the loop consumes.
+ *
+ * The returned promise settles exactly once: open resolves it, while an error
+ * or a close before open rejects it (a close during CONNECTING legitimately
+ * arrives without any error event, and the reconnect lifecycle depends on the
+ * factory settling). After settlement, events are only forwarded to the
+ * adapter handlers and can never reverse or re-settle the promise.
  */
 export declare function createNativeDiscordGatewaySocket(url: string, WebSocketImpl?: typeof WebSocket): Promise<DiscordGatewaySocket>;
