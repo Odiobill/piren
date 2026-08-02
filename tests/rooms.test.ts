@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, link, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -93,6 +93,24 @@ describe("rooms core", () => {
     const { writeFile } = await import("node:fs/promises");
     await writeFile(join(root, room.path), "---\ntype: Task\n---\n# Not a manifest\n", "utf8");
     await expect(readRoom({ vaultRoot: root, roomId: room.id })).rejects.toThrow(room.id);
+  });
+
+  it("rejects a manifest whose frontmatter id differs from the requested room id", async () => {
+    const now = () => new Date("2026-08-02T14:00:00.000Z");
+    const room = await createRoom({ vaultRoot: root, title: "Alpha room", now });
+    const { writeFile } = await import("node:fs/promises");
+    const original = await readFile(join(root, room.path), "utf8");
+    await writeFile(join(root, room.path), original.replace(`id: ${room.id}`, "id: forged-other-id"), "utf8");
+    await expect(readRoom({ vaultRoot: root, roomId: room.id })).rejects.toThrow(room.path);
+  });
+
+  it("rejects a listed room whose directory name differs from its manifest id", async () => {
+    const now = () => new Date("2026-08-02T14:00:00.000Z");
+    const room = await createRoom({ vaultRoot: root, title: "Alpha room", now });
+    const { writeFile } = await import("node:fs/promises");
+    const original = await readFile(join(root, room.path), "utf8");
+    await writeFile(join(root, room.path), original.replace(`id: ${room.id}`, "id: forged-other-id"), "utf8");
+    await expect(listRooms({ vaultRoot: root })).rejects.toThrow(room.path);
   });
 
   it("appends an immutable event and omits optional fields when undefined", async () => {
@@ -191,5 +209,209 @@ describe("rooms core", () => {
     await expect(appendRoomEvent(fixed)).rejects.toThrow("already exists");
     const content = await readFile(join(root, first.path), "utf8");
     expect(content).toContain("Run started.");
+  });
+
+  it("rejects an event append when the final-target link reports EEXIST, leaving no file or temp behind", async () => {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Alpha room",
+      now: () => new Date("2026-08-02T14:00:00.000Z"),
+    });
+    const eexist = Object.assign(new Error("EEXIST: file already exists"), { code: "EEXIST" });
+    const io = {
+      linkNoClobber: async () => {
+        throw eexist;
+      },
+      remove: async (path: string) => {
+        await rm(path, { force: true });
+      },
+    };
+    await expect(
+      appendRoomEvent({
+        vaultRoot: root,
+        roomId: room.id,
+        kind: "steward_message",
+        authorKind: "steward",
+        author: "steward",
+        body: "Hello",
+        now: () => new Date("2026-08-02T14:05:00.000Z"),
+        nonce: () => "abc123",
+        io,
+      }),
+    ).rejects.toThrow("already exists");
+
+    const { readdir } = await import("node:fs/promises");
+    await expect(readdir(join(root, "collaboration", "rooms", room.id, "events"))).resolves.toEqual([]);
+  });
+
+  it("settles a controlled concurrent event-append race with exactly one winner and preserved bytes", async () => {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Alpha room",
+      now: () => new Date("2026-08-02T14:00:00.000Z"),
+    });
+    // Barrier: the first link waits until the second writer arrives, then
+    // links and signals completion; the second writer links only after the
+    // first link completed, so its real link must fail EEXIST. A
+    // rename-based overwrite would let both writers "succeed".
+    let secondArrived!: () => void;
+    let firstLinked!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      secondArrived = resolve;
+    });
+    const linked = new Promise<void>((resolve) => {
+      firstLinked = resolve;
+    });
+    let calls = 0;
+    const io = {
+      linkNoClobber: async (tempPath: string, targetPath: string) => {
+        calls += 1;
+        if (calls === 1) {
+          await gate;
+          await link(tempPath, targetPath);
+          firstLinked();
+        } else {
+          secondArrived();
+          await linked;
+          await link(tempPath, targetPath);
+        }
+      },
+      remove: async (path: string) => {
+        await rm(path, { force: true });
+      },
+    };
+    const base = {
+      vaultRoot: root,
+      roomId: room.id,
+      kind: "steward_message" as const,
+      authorKind: "steward" as const,
+      author: "steward",
+      now: () => new Date("2026-08-02T14:05:00.000Z"),
+      nonce: () => "abc123",
+      io,
+    };
+    const [first, second] = await Promise.allSettled([
+      appendRoomEvent({ ...base, body: "Writer one wins." }),
+      appendRoomEvent({ ...base, body: "Writer two loses." }),
+    ]);
+
+    const fulfilled = [first, second].filter((r) => r.status === "fulfilled");
+    const rejected = [first, second].filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason.message).toContain("already exists");
+
+    const winner = (fulfilled[0] as PromiseFulfilledResult<{ path: string }>).value;
+    const content = await readFile(join(root, winner.path), "utf8");
+    expect(content).toContain("Writer one wins.");
+    expect(content).not.toContain("Writer two loses.");
+  });
+
+  it("settles a controlled concurrent createRoom race with exactly one winner and preserved manifest", async () => {
+    let secondArrived!: () => void;
+    let firstLinked!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      secondArrived = resolve;
+    });
+    const linked = new Promise<void>((resolve) => {
+      firstLinked = resolve;
+    });
+    let calls = 0;
+    const io = {
+      linkNoClobber: async (tempPath: string, targetPath: string) => {
+        calls += 1;
+        if (calls === 1) {
+          await gate;
+          await link(tempPath, targetPath);
+          firstLinked();
+        } else {
+          secondArrived();
+          await linked;
+          await link(tempPath, targetPath);
+        }
+      },
+      remove: async (path: string) => {
+        await rm(path, { force: true });
+      },
+    };
+    const base = { vaultRoot: root, title: "Race room", now: () => new Date("2026-08-02T14:00:00.000Z"), io };
+    const [first, second] = await Promise.allSettled([
+      createRoom({ ...base, participants: ["kimi"] }),
+      createRoom({ ...base, participants: ["thor"] }),
+    ]);
+
+    const fulfilled = [first, second].filter((r) => r.status === "fulfilled");
+    const rejected = [first, second].filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason.message).toContain("Room already exists");
+
+    const winner = (fulfilled[0] as PromiseFulfilledResult<{ path: string }>).value;
+    const content = await readFile(join(root, winner.path), "utf8");
+    expect(content).toContain("- kimi");
+    expect(content).not.toContain("- thor");
+  });
+
+  it("rejects every kind/author_kind mismatch from the ADR-0041 vocabulary", async () => {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Alpha room",
+      participants: ["kimi"],
+      now: () => new Date("2026-08-02T14:00:00.000Z"),
+    });
+    const base = { vaultRoot: root, roomId: room.id, body: "x" };
+    // steward_message must be steward-authored.
+    await expect(
+      appendRoomEvent({ ...base, kind: "steward_message", authorKind: "agent", author: "kimi" }),
+    ).rejects.toThrow("steward_message");
+    // agent_message must be agent-authored.
+    await expect(
+      appendRoomEvent({ ...base, kind: "agent_message", authorKind: "system", author: "system" }),
+    ).rejects.toThrow("agent_message");
+    await expect(
+      appendRoomEvent({ ...base, kind: "agent_message", authorKind: "steward", author: "steward" }),
+    ).rejects.toThrow("agent_message");
+    // run_* events must be system-authored.
+    for (const kind of ["run_started", "run_finished", "run_cancelled"] as const) {
+      await expect(appendRoomEvent({ ...base, kind, authorKind: "agent", author: "kimi" })).rejects.toThrow(
+        kind,
+      );
+      await expect(
+        appendRoomEvent({ ...base, kind, authorKind: "steward", author: "steward" }),
+      ).rejects.toThrow(kind);
+    }
+
+    const { readdir } = await import("node:fs/promises");
+    await expect(readdir(join(root, "collaboration", "rooms", room.id, "events"))).resolves.toEqual([]);
+  });
+
+  it("rejects orphan and self correlation ids with no write", async () => {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Alpha room",
+      participants: ["kimi"],
+      now: () => new Date("2026-08-02T14:00:00.000Z"),
+    });
+    const base = {
+      vaultRoot: root,
+      roomId: room.id,
+      kind: "agent_message" as const,
+      authorKind: "agent" as const,
+      author: "kimi",
+      body: "Reply",
+      now: () => new Date("2026-08-02T14:06:00.000Z"),
+      nonce: () => "self99",
+    };
+    // Orphan: names no existing event in the room.
+    await expect(appendRoomEvent({ ...base, correlationId: "20260802T130000000Z-steward-message-nope00" })).rejects.toThrow(
+      "correlation_id",
+    );
+    // Self: names the id this very append would generate.
+    await expect(
+      appendRoomEvent({ ...base, correlationId: "20260802T140600000Z-agent-message-self99" }),
+    ).rejects.toThrow("itself");
+
+    const { readdir } = await import("node:fs/promises");
+    await expect(readdir(join(root, "collaboration", "rooms", room.id, "events"))).resolves.toEqual([]);
   });
 });

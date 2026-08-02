@@ -1,4 +1,4 @@
-import { mkdir, open, readdir, readFile, rename, stat } from "node:fs/promises";
+import { mkdir, link, open, readdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 /**
@@ -13,9 +13,11 @@ import { parse as parseYaml } from "yaml";
  * delivery-state mutation.
  *
  * Writes follow the proven Piren convention: same-directory unique temp
- * file (no-clobber "wx"), fsync, atomic rename. All paths are validated
- * inside the vault root. Clock and nonce are injectable for deterministic
- * tests.
+ * file (no-clobber "wx"), fsync, then a hard link to the final target that
+ * rejects when the target exists — never a rename, which would silently
+ * overwrite existing evidence. All paths are validated inside the vault
+ * root. Clock, nonce, and the final-target I/O seam are injectable for
+ * deterministic tests.
  */
 export const ROOM_EVENT_KINDS = [
     "steward_message",
@@ -64,7 +66,26 @@ async function pathExists(path) {
         return false;
     }
 }
-async function atomicWriteFile(target, content) {
+function createNodeRoomWriteIo() {
+    return {
+        linkNoClobber: (tempPath, targetPath) => link(tempPath, targetPath),
+        remove: async (absolutePath) => {
+            await rm(absolutePath, { force: true });
+        },
+    };
+}
+const NODE_ROOM_WRITE_IO = createNodeRoomWriteIo();
+function isEexist(error) {
+    return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+/**
+ * Atomic final no-clobber create: same-directory unique temp file (wx,
+ * 0o600, fsynced), then a hard link to the final target which REJECTS when
+ * the target exists. POSIX rename would silently overwrite an existing
+ * target; the link step is the fail-closed authority. Temp cleanup is
+ * best-effort and never masks the original link error.
+ */
+async function atomicCreateNoClobber(target, content, io) {
     const directory = dirname(target);
     await mkdir(directory, { recursive: true });
     const tempPath = resolve(directory, `.${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
@@ -77,7 +98,14 @@ async function atomicWriteFile(target, content) {
     finally {
         await handle.close();
     }
-    await rename(tempPath, target);
+    try {
+        await io.linkNoClobber(tempPath, target);
+    }
+    catch (error) {
+        await io.remove(tempPath).catch(() => { });
+        throw error;
+    }
+    await io.remove(tempPath).catch(() => { });
     return bytes;
 }
 function renderRoomManifest(options) {
@@ -103,7 +131,7 @@ function renderRoomManifest(options) {
         "",
     ].join("\n");
 }
-function parseRoomManifest(content, path) {
+function parseRoomManifest(content, path, expectedId) {
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
     if (!frontmatterMatch) {
         throw new Error(`Room manifest is missing YAML frontmatter: ${path}`);
@@ -127,6 +155,9 @@ function parseRoomManifest(content, path) {
         fail(`type must be 'Room Manifest', got ${JSON.stringify(record.type)}`);
     if (typeof record.id !== "string" || !ROOM_ID_PATTERN.test(record.id))
         fail("id is missing or invalid");
+    if (record.id !== expectedId) {
+        fail(`id '${record.id}' does not match the room directory '${expectedId}'`);
+    }
     if (typeof record.title !== "string" || record.title.trim() === "")
         fail("title is missing or empty");
     if (record.created_by !== "steward")
@@ -164,7 +195,7 @@ export async function readRoom(options) {
     const absolutePath = resolve(root, "collaboration", "rooms", options.roomId, "index.md");
     assertInside(root, absolutePath);
     const content = await readFile(absolutePath, "utf8");
-    return parseRoomManifest(content, relative(root, absolutePath));
+    return parseRoomManifest(content, relative(root, absolutePath), options.roomId);
 }
 /**
  * List room manifests under `collaboration/rooms/`, sorted by created then id.
@@ -201,7 +232,7 @@ export async function listRooms(options) {
             }
             throw error;
         }
-        rooms.push(parseRoomManifest(content, relative(root, absolutePath)));
+        rooms.push(parseRoomManifest(content, relative(root, absolutePath), entry.name));
     }
     rooms.sort((left, right) => left.created.localeCompare(right.created) || left.id.localeCompare(right.id));
     return rooms;
@@ -220,6 +251,14 @@ function assertValidAuthor(authorKind, author) {
         assertValidAgentName(author);
     }
 }
+/** ADR-0041 first-slice vocabulary: each event kind has exactly one valid author kind. */
+const REQUIRED_AUTHOR_KIND = {
+    steward_message: "steward",
+    agent_message: "agent",
+    run_started: "system",
+    run_finished: "system",
+    run_cancelled: "system",
+};
 function renderRoomEvent(options) {
     const lines = [
         "---",
@@ -254,6 +293,10 @@ export async function appendRoomEvent(options) {
     if (!ROOM_AUTHOR_KINDS.includes(options.authorKind)) {
         throw new Error(`Unknown room event author_kind '${options.authorKind}'.`);
     }
+    const requiredAuthorKind = REQUIRED_AUTHOR_KIND[options.kind];
+    if (options.authorKind !== requiredAuthorKind) {
+        throw new Error(`Room event kind '${options.kind}' requires author_kind '${requiredAuthorKind}', got '${options.authorKind}'.`);
+    }
     assertValidAuthor(options.authorKind, options.author);
     if (typeof options.body !== "string" || options.body.trim() === "") {
         throw new Error("Room event body is required.");
@@ -277,11 +320,18 @@ export async function appendRoomEvent(options) {
     if (!ROOM_ID_PATTERN.test(id)) {
         throw new Error(`Generated room event id is invalid: ${id}`);
     }
+    if (options.correlationId !== undefined) {
+        if (options.correlationId === id) {
+            throw new Error(`Room event ${id} cannot correlate to itself.`);
+        }
+        const correlationPath = resolve(root, "collaboration", "rooms", options.roomId, "events", `${options.correlationId}.md`);
+        assertInside(root, correlationPath);
+        if (!(await pathExists(correlationPath))) {
+            throw new Error(`correlation_id '${options.correlationId}' does not name an existing event in room '${options.roomId}'.`);
+        }
+    }
     const absolutePath = resolve(root, "collaboration", "rooms", options.roomId, "events", `${id}.md`);
     assertInside(root, absolutePath);
-    if (await pathExists(absolutePath)) {
-        throw new Error(`Room event already exists: ${id}. Refusing to clobber existing evidence.`);
-    }
     const content = renderRoomEvent({
         id,
         roomId: options.roomId,
@@ -293,7 +343,16 @@ export async function appendRoomEvent(options) {
         addressedAgent: options.addressedAgent,
         body: options.body,
     });
-    const bytes = await atomicWriteFile(absolutePath, content);
+    let bytes;
+    try {
+        bytes = await atomicCreateNoClobber(absolutePath, content, options.io ?? NODE_ROOM_WRITE_IO);
+    }
+    catch (error) {
+        if (isEexist(error)) {
+            throw new Error(`Room event already exists: ${id}. Refusing to clobber existing evidence.`);
+        }
+        throw error;
+    }
     return {
         id,
         path: relative(root, absolutePath),
@@ -322,13 +381,24 @@ export async function createRoom(options) {
     assertValidRoomId(id);
     const roomDir = resolve(root, "collaboration", "rooms", id);
     assertInside(root, roomDir);
+    // Defense-in-depth fast path only: the no-clobber link on index.md below
+    // is the fail-closed authority against concurrent creation.
     if (await pathExists(roomDir)) {
         throw new Error(`Room already exists: ${id}. Refusing to overwrite existing room evidence.`);
     }
     await mkdir(join(roomDir, "events"), { recursive: true });
     const manifest = renderRoomManifest({ id, title, participants, timestamp: created });
     const absolutePath = join(roomDir, "index.md");
-    const bytes = await atomicWriteFile(absolutePath, manifest);
+    let bytes;
+    try {
+        bytes = await atomicCreateNoClobber(absolutePath, manifest, options.io ?? NODE_ROOM_WRITE_IO);
+    }
+    catch (error) {
+        if (isEexist(error)) {
+            throw new Error(`Room already exists: ${id}. Refusing to overwrite existing room evidence.`);
+        }
+        throw error;
+    }
     return {
         id,
         path: relative(root, absolutePath),

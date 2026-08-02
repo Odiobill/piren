@@ -201,6 +201,8 @@ describe("OKF graph core", () => {
         "templates/adr-template.md": "---\ntype: ADR\ntitle: ADR Template\n---\n# Template\n",
         // Raw room events are operational evidence and excluded; curated room
         // manifests and summaries stay graph-visible (ADR-0041).
+        "collaboration/rooms/room-1/index.md":
+          "---\ntype: Room Manifest\nid: room-1\ntitle: Room 1\ncreated_by: steward\nparticipants: []\nstatus: open\ncreated: 2026-08-02T14:00:00.000Z\nupdated: 2026-08-02T14:00:00.000Z\n---\n# Room 1\n",
         "collaboration/rooms/room-1/events/event-1.md": "---\ntype: Room Event\ntitle: Event 1\n---\n# Event\n",
         "collaboration/rooms/room-1/summary.md": "---\ntype: Room Summary\ntitle: Room 1 Summary\n---\n# Summary\n",
         // team/zai/cron/ (not jobs/runs) and team/zai/ itself are not operational roots.
@@ -211,6 +213,7 @@ describe("OKF graph core", () => {
 
     expect(graph.nodes.map((n) => n.path)).toEqual([
       "Projects/Piren/decisions/ADR-0022-open-knowledge-format.md",
+      "collaboration/rooms/room-1/index.md",
       "collaboration/rooms/room-1/summary.md",
       "team/zai/cron/policy.md",
       "team/zai/notes.md",
