@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runDiscordGateway, type DiscordGatewaySocket, type GatewayMessage } from "../src/discord-transport.js";
 import { DiscordTransport } from "../src/discord-transport.js";
 import type { RpcEvent } from "../src/gateway-rpc.js";
@@ -67,6 +67,44 @@ class FakeGatewaySocket implements DiscordGatewaySocket {
     this.closed = true;
     if (this.onclose) this.onclose({});
   }
+  /** Test helper: simulate a server-side close (not initiated by the loop). */
+  triggerClose(): void {
+    if (this.onclose) this.onclose({});
+  }
+  /** Test helper: fire the error event. */
+  triggerError(err: unknown): void {
+    if (this.onerror) this.onerror(err);
+  }
+}
+
+/** Injectable fake for the reconnect scheduling seam (no real timers). */
+class FakeScheduler {
+  pending: Array<{ handle: object; fn: () => void; delayMs: number }> = [];
+  private nextId = 0;
+  setTimeout(fn: () => void, delayMs: number): object {
+    const handle = { id: ++this.nextId };
+    this.pending.push({ handle, fn, delayMs });
+    return handle;
+  }
+  clearTimeout(handle: unknown): void {
+    this.pending = this.pending.filter((p) => p.handle !== handle);
+  }
+  runNext(): boolean {
+    const next = this.pending.shift();
+    if (!next) return false;
+    next.fn();
+    return true;
+  }
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function opPayload(op: number, extra: Record<string, unknown> = {}): GatewayMessage {
@@ -287,5 +325,219 @@ describe("runDiscordGateway INTERACTION_CREATE (ADR-0040 D3)", () => {
     expect(callbacks).toHaveLength(1);
     expect(callbacks[0]?.content).toContain("Piren Discord transport ready");
     expect(replies).toEqual([]);
+  });
+});
+
+describe("runDiscordGateway reconnection lifecycle", () => {
+  function buildReconnectingGateway(overrides?: {
+    heartbeatIntervalMs?: number;
+    reconnectMaxDelayMs?: number;
+    factoryFailuresBeforeSuccess?: number;
+  }) {
+    const { transport, replies } = buildTransport();
+    const scheduler = new FakeScheduler();
+    const sockets: FakeGatewaySocket[] = [];
+    let factoryCalls = 0;
+    const failures = overrides?.factoryFailuresBeforeSuccess ?? 0;
+    const socketFactory = () => {
+      factoryCalls += 1;
+      if (factoryCalls <= failures) return Promise.reject(new Error("connect failed"));
+      const s = new FakeGatewaySocket();
+      sockets.push(s);
+      return Promise.resolve(s);
+    };
+    const errors: string[] = [];
+    const reconnecting: Array<{ attempt: number; delayMs: number }> = [];
+    let readyCount = 0;
+    const gateway = runDiscordGateway({
+      botToken: "TOK",
+      applicationId: "1",
+      intents: 1,
+      transport,
+      socketFactory,
+      heartbeatIntervalMs: overrides?.heartbeatIntervalMs ?? 60_000,
+      reconnectInitialDelayMs: 1_000,
+      reconnectMaxDelayMs: overrides?.reconnectMaxDelayMs ?? 30_000,
+      scheduler,
+      onReady: () => {
+        readyCount += 1;
+      },
+      onError: (error) => {
+        errors.push(error.message);
+      },
+      onReconnecting: (info) => {
+        reconnecting.push(info);
+      },
+    });
+    return { gateway, transport, replies, scheduler, sockets, errors, reconnecting, readyCountRef: () => readyCount };
+  }
+
+  async function handshake(socket: FakeGatewaySocket): Promise<void> {
+    socket.triggerOpen();
+    socket.emit(opPayload(10, { d: { heartbeat_interval: 60_000 } }));
+    await flushMicrotasks();
+  }
+
+  it("reconnects exactly once after an unexpected close; the replacement re-identifies and accepts events", async () => {
+    const { gateway, scheduler, sockets, replies, reconnecting, readyCountRef } = buildReconnectingGateway();
+    await flushMicrotasks();
+    expect(sockets).toHaveLength(1);
+    const first = sockets[0]!;
+    await handshake(first);
+    await gateway.identified();
+    first.emit(opPayload(0, { t: "READY", s: 1, d: {} }));
+    await gateway.idle();
+    expect(readyCountRef()).toBe(1);
+
+    // Unexpected server-side close: reconnect is scheduled, not immediate.
+    first.triggerClose();
+    expect(sockets).toHaveLength(1);
+    expect(scheduler.pending).toHaveLength(1);
+    expect(reconnecting).toEqual([{ attempt: 1, delayMs: 1_000 }]);
+
+    scheduler.runNext();
+    await flushMicrotasks();
+    expect(sockets).toHaveLength(2);
+    const second = sockets[1]!;
+    await handshake(second);
+
+    // The replacement runs a fresh handshake: a new Identify on the new socket.
+    const secondIdentify = second.sent.map((raw) => JSON.parse(raw) as { op: number }).find((m) => m.op === 2);
+    expect(secondIdentify).toBeDefined();
+    second.emit(opPayload(0, { t: "READY", s: 1, d: {} }));
+    expect(readyCountRef()).toBe(2);
+
+    // The replacement accepts ordinary messages and interactions.
+    second.emit(opPayload(0, { t: "MESSAGE_CREATE", s: 2, d: { guild_id: "111", channel_id: "222", content: "ping" } }));
+    await gateway.idle();
+    expect(replies).toEqual(["pong"]);
+
+    await gateway.close();
+    expect(scheduler.pending).toHaveLength(0);
+  });
+
+  it("treats an error/close pair for one connection as a single disconnect with one scheduled retry", async () => {
+    const { gateway, scheduler, sockets, errors } = buildReconnectingGateway();
+    await flushMicrotasks();
+    const first = sockets[0]!;
+    await handshake(first);
+    await gateway.identified();
+
+    first.triggerError(new Error("boom"));
+    first.triggerClose(); // error and close for the same socket: one reconnect only
+    expect(errors).toEqual(["boom"]);
+    expect(scheduler.pending).toHaveLength(1);
+    expect(sockets).toHaveLength(1);
+
+    scheduler.runNext();
+    await flushMicrotasks();
+    expect(sockets).toHaveLength(2);
+    // No second retry queued from the single disconnect.
+    expect(scheduler.pending).toHaveLength(0);
+    await gateway.close();
+  });
+
+  it("retries a socket-factory failure with capped exponential backoff and resets after READY", async () => {
+    const { gateway, scheduler, sockets, reconnecting } = buildReconnectingGateway({
+      factoryFailuresBeforeSuccess: 3,
+      reconnectMaxDelayMs: 3_000,
+    });
+    await flushMicrotasks();
+    expect(sockets).toHaveLength(0);
+    expect(scheduler.pending).toHaveLength(1);
+    expect(reconnecting).toEqual([{ attempt: 1, delayMs: 1_000 }]);
+
+    scheduler.runNext(); // second attempt fails
+    await flushMicrotasks();
+    expect(reconnecting).toEqual([
+      { attempt: 1, delayMs: 1_000 },
+      { attempt: 2, delayMs: 2_000 },
+    ]);
+
+    scheduler.runNext(); // third attempt fails: 4000 capped to 3000
+    await flushMicrotasks();
+    expect(reconnecting).toEqual([
+      { attempt: 1, delayMs: 1_000 },
+      { attempt: 2, delayMs: 2_000 },
+      { attempt: 3, delayMs: 3_000 },
+    ]);
+
+    scheduler.runNext(); // fourth attempt succeeds
+    await flushMicrotasks();
+    expect(sockets).toHaveLength(1);
+    const socket = sockets[0]!;
+    await handshake(socket);
+    await gateway.identified();
+    socket.emit(opPayload(0, { t: "READY", s: 1, d: {} }));
+    await gateway.idle();
+
+    // A successful READY resets the backoff: the next failure starts at the initial delay.
+    socket.triggerClose();
+    expect(reconnecting[reconnecting.length - 1]).toEqual({ attempt: 1, delayMs: 1_000 });
+    scheduler.runNext();
+    await flushMicrotasks();
+    expect(sockets).toHaveLength(2);
+    await gateway.close();
+  });
+
+  it("clears the old heartbeat and ignores stale socket events from the previous connection", async () => {
+    const { gateway, scheduler, sockets, replies, readyCountRef } = buildReconnectingGateway({ heartbeatIntervalMs: 10 });
+    await flushMicrotasks();
+    const first = sockets[0]!;
+    await handshake(first);
+    await gateway.identified();
+    first.emit(opPayload(0, { t: "READY", s: 1, d: {} }));
+    await sleep(35);
+    const heartbeatsOnFirst = (): number =>
+      first.sent.map((raw) => JSON.parse(raw) as { op: number }).filter((m) => m.op === 1).length;
+    expect(heartbeatsOnFirst()).toBeGreaterThan(0);
+
+    first.triggerClose();
+    scheduler.runNext();
+    await flushMicrotasks();
+    const second = sockets[1]!;
+    await handshake(second);
+    await gateway.identified();
+
+    // The old heartbeat timer was cleared: the stale socket sends no more heartbeats.
+    const staleCount = heartbeatsOnFirst();
+    await sleep(40);
+    expect(heartbeatsOnFirst()).toBe(staleCount);
+
+    // Stale events from the old generation are inert: no READY, no dispatch, no new Identify.
+    const readyBefore = readyCountRef();
+    first.emit(opPayload(0, { t: "READY", s: 99, d: {} }));
+    first.emit(opPayload(0, { t: "MESSAGE_CREATE", s: 100, d: { guild_id: "111", channel_id: "222", content: "stale" } }));
+    first.emit(opPayload(10, { d: { heartbeat_interval: 10 } }));
+    first.triggerClose(); // a late close from the superseded socket schedules nothing
+    await gateway.idle();
+    expect(readyCountRef()).toBe(readyBefore);
+    expect(replies).toEqual([]);
+    const staleIdentifies = first.sent.map((raw) => JSON.parse(raw) as { op: number }).filter((m) => m.op === 2);
+    expect(staleIdentifies).toHaveLength(1);
+    expect(scheduler.pending).toHaveLength(0);
+    await gateway.close();
+  });
+
+  it("explicit close cancels a pending retry, prevents reconnects, and closes the transport exactly once", async () => {
+    const { gateway, transport, scheduler, sockets } = buildReconnectingGateway();
+    const closeSpy = vi.spyOn(transport, "close");
+    await flushMicrotasks();
+    const first = sockets[0]!;
+    await handshake(first);
+    await gateway.identified();
+
+    first.triggerClose();
+    expect(scheduler.pending).toHaveLength(1);
+
+    await gateway.close();
+    expect(scheduler.pending).toHaveLength(0); // retry cancelled
+    expect(scheduler.runNext()).toBe(false); // nothing left to run
+    await flushMicrotasks();
+    expect(sockets).toHaveLength(1); // no reconnect happened
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+
+    await gateway.close(); // idempotent
+    expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 });

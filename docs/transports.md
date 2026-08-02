@@ -129,6 +129,8 @@ Commands mirror Telegram:
 
 Discord uses a platform-mandated WebSocket client connection to Discord's gateway. This does not add a WebSocket server to Piren's web UI. Feedback uses Discord REST: `POST /channels/{id}/typing` and `PUT /channels/{id}/messages/{message_id}/reactions/{emoji}/@me`. Reaction failures are best-effort and never abort the assistant response.
 
+**Automatic reconnect.** When the gateway socket closes unexpectedly, errors, or fails to open, `piren discord` retries the connection indefinitely with capped exponential backoff (1 s initial delay, 30 s cap) instead of exiting. Each retry logs a non-secret notice with the delay and attempt number, runs a fresh Identify handshake, and prints the usual `Discord gateway ready.` when the replacement connection is READY. Conversation Pi RPC sessions survive transient reconnects; only an explicit shutdown (SIGINT/SIGTERM, for example via `piren service stop discord`) cancels retries and stops the transport. Note that under tmux-cron, `piren service status discord` only confirms the tmux session/process exists — see [service management](service-management.md) for the status scope.
+
 One-to-one Discord direct messages are supported fail-closed through `allowed_dm_user_ids` (see Access control), the guided configure flow can optionally collect that explicit one-to-one DM user allowlist, and native application commands are available (see Native application commands). Blank DM input leaves every DM denied.
 
 ## Native application commands

@@ -189,8 +189,25 @@ export interface RunDiscordGatewayOptions<TClient extends DiscordPromptClient> {
     socketFactory: () => Promise<DiscordGatewaySocket>;
     /** Overrides the Hello heartbeat_interval. Mainly for fast tests. */
     heartbeatIntervalMs?: number | undefined;
+    /** Initial reconnect delay after an unexpected disconnect. Default 1000 ms. */
+    reconnectInitialDelayMs?: number | undefined;
+    /** Cap for the exponential reconnect delay. Default 30000 ms. */
+    reconnectMaxDelayMs?: number | undefined;
+    /** Injectable scheduling seam for reconnect delays. Tests avoid real timers. */
+    scheduler?: DiscordGatewayScheduler | undefined;
     onReady?: (() => void) | undefined;
     onError?: ((error: Error) => void) | undefined;
+    /** Non-secret reconnect notice with the scheduled delay and attempt number. */
+    onReconnecting?: ((info: DiscordGatewayReconnectInfo) => void) | undefined;
+}
+/** Minimal scheduling seam so reconnect delays are testable without real timers. */
+export interface DiscordGatewayScheduler {
+    setTimeout(fn: () => void, delayMs: number): unknown;
+    clearTimeout(handle: unknown): void;
+}
+export interface DiscordGatewayReconnectInfo {
+    attempt: number;
+    delayMs: number;
 }
 export interface DiscordGatewayHandle {
     /** Resolves once the Identify payload has been sent (after Hello). */
@@ -204,6 +221,16 @@ export interface DiscordGatewayHandle {
  * Drive a Discord gateway connection: open the socket, send Identify on Hello,
  * dispatch MESSAGE_CREATE events to the transport, and heartbeat at the
  * negotiated interval echoing the last sequence number.
+ *
+ * Reconnect lifecycle: an unexpected socket close, socket error, or socket
+ * factory/open failure schedules a replacement connection with bounded
+ * exponential backoff (default 1 s initial, 30 s cap) and retries
+ * indefinitely. Each attempt is a fresh generation: disconnecting supersedes
+ * the old generation so its heartbeat timer and stale socket events become
+ * inert, and a close/error pair for one socket schedules at most one retry.
+ * The DiscordTransport (and its Pi RPC sessions) survives transient
+ * reconnects; only an explicit close() cancels pending retries, prevents
+ * future reconnects, and closes the transport exactly once.
  *
  * Discord requires a persistent WebSocket *client* connection (the Piren
  * process dials out to Discord). This is categorically different from adding a

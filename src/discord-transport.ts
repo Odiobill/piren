@@ -593,9 +593,33 @@ export interface RunDiscordGatewayOptions<TClient extends DiscordPromptClient> {
   socketFactory: () => Promise<DiscordGatewaySocket>;
   /** Overrides the Hello heartbeat_interval. Mainly for fast tests. */
   heartbeatIntervalMs?: number | undefined;
+  /** Initial reconnect delay after an unexpected disconnect. Default 1000 ms. */
+  reconnectInitialDelayMs?: number | undefined;
+  /** Cap for the exponential reconnect delay. Default 30000 ms. */
+  reconnectMaxDelayMs?: number | undefined;
+  /** Injectable scheduling seam for reconnect delays. Tests avoid real timers. */
+  scheduler?: DiscordGatewayScheduler | undefined;
   onReady?: (() => void) | undefined;
   onError?: ((error: Error) => void) | undefined;
+  /** Non-secret reconnect notice with the scheduled delay and attempt number. */
+  onReconnecting?: ((info: DiscordGatewayReconnectInfo) => void) | undefined;
 }
+
+/** Minimal scheduling seam so reconnect delays are testable without real timers. */
+export interface DiscordGatewayScheduler {
+  setTimeout(fn: () => void, delayMs: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
+export interface DiscordGatewayReconnectInfo {
+  attempt: number;
+  delayMs: number;
+}
+
+const defaultGatewayScheduler: DiscordGatewayScheduler = {
+  setTimeout: (fn, delayMs) => setTimeout(fn, delayMs),
+  clearTimeout: (handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
+};
 
 export interface DiscordGatewayHandle {
   /** Resolves once the Identify payload has been sent (after Hello). */
@@ -611,6 +635,16 @@ export interface DiscordGatewayHandle {
  * dispatch MESSAGE_CREATE events to the transport, and heartbeat at the
  * negotiated interval echoing the last sequence number.
  *
+ * Reconnect lifecycle: an unexpected socket close, socket error, or socket
+ * factory/open failure schedules a replacement connection with bounded
+ * exponential backoff (default 1 s initial, 30 s cap) and retries
+ * indefinitely. Each attempt is a fresh generation: disconnecting supersedes
+ * the old generation so its heartbeat timer and stale socket events become
+ * inert, and a close/error pair for one socket schedules at most one retry.
+ * The DiscordTransport (and its Pi RPC sessions) survives transient
+ * reconnects; only an explicit close() cancels pending retries, prevents
+ * future reconnects, and closes the transport exactly once.
+ *
  * Discord requires a persistent WebSocket *client* connection (the Piren
  * process dials out to Discord). This is categorically different from adding a
  * WebSocket server to Piren's web UI (which stays SSE plus POST per ADR-0012).
@@ -618,6 +652,10 @@ export interface DiscordGatewayHandle {
 export function runDiscordGateway<TClient extends DiscordPromptClient>(
   options: RunDiscordGatewayOptions<TClient>,
 ): DiscordGatewayHandle {
+  const scheduler = options.scheduler ?? defaultGatewayScheduler;
+  const reconnectInitialDelayMs = options.reconnectInitialDelayMs ?? 1_000;
+  const reconnectMaxDelayMs = options.reconnectMaxDelayMs ?? 30_000;
+
   let socket: DiscordGatewaySocket | null = null;
   let sequence: number | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -625,6 +663,9 @@ export function runDiscordGateway<TClient extends DiscordPromptClient>(
   let identifySent = false;
   const identifyResolvers: Array<() => void> = [];
   let closed = false;
+  let generation = 0;
+  let reconnectTimer: unknown = null;
+  let reconnectAttempt = 0;
 
   const notifyIdentified = (): void => {
     while (identifyResolvers.length > 0) {
@@ -637,8 +678,15 @@ export function runDiscordGateway<TClient extends DiscordPromptClient>(
     if (socket) socket.send(JSON.stringify({ op: OP_HEARTBEAT, d: sequence }));
   };
 
+  const clearHeartbeat = (): void => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
   const startHeartbeat = (intervalMs: number): void => {
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    clearHeartbeat();
     heartbeatTimer = setInterval(sendHeartbeat, intervalMs);
   };
 
@@ -665,6 +713,8 @@ export function runDiscordGateway<TClient extends DiscordPromptClient>(
       const type = payload.t;
       const data = payload.d as { id?: string; guild_id?: string; channel_id?: string; thread_id?: string; content?: string; author?: { id?: string; bot?: boolean } } | undefined;
       if (type === "READY") {
+        // A completed handshake proves the connection healthy: reset backoff.
+        reconnectAttempt = 0;
         options.onReady?.();
         return;
       }
@@ -706,52 +756,106 @@ export function runDiscordGateway<TClient extends DiscordPromptClient>(
     notifyIdentified();
   };
 
-  const teardown = async (): Promise<void> => {
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-    }
-    await dispatch;
-    if (socket) {
+  const scheduleReconnect = (): void => {
+    if (closed) return;
+    if (reconnectTimer !== null) return; // at most one pending reconnect
+    reconnectAttempt += 1;
+    const delayMs = Math.min(reconnectInitialDelayMs * 2 ** (reconnectAttempt - 1), reconnectMaxDelayMs);
+    options.onReconnecting?.({ attempt: reconnectAttempt, delayMs });
+    reconnectTimer = scheduler.setTimeout(() => {
+      reconnectTimer = null;
+      void connect();
+    }, delayMs);
+  };
+
+  const handleDisconnect = (gen: number, error: Error): void => {
+    if (closed || gen !== generation) return;
+    // Supersede this generation first so every stale handler and heartbeat
+    // timer for it becomes inert. A close/error pair for one socket therefore
+    // passes this guard exactly once and schedules at most one reconnect.
+    generation += 1;
+    clearHeartbeat();
+    const stale = socket;
+    socket = null;
+    if (stale) {
       try {
-        socket.close();
+        stale.close();
       } catch {
         // best-effort close
       }
-      socket = null;
+    }
+    options.onError?.(error);
+    scheduleReconnect();
+  };
+
+  const connect = async (): Promise<void> => {
+    if (closed) return;
+    const gen = ++generation;
+    identifySent = false;
+    sequence = null;
+    let fresh: DiscordGatewaySocket;
+    try {
+      fresh = await options.socketFactory();
+    } catch (err) {
+      if (closed) return;
+      options.onError?.(err instanceof Error ? err : new Error(String(err)));
+      scheduleReconnect();
+      return;
+    }
+    if (closed || gen !== generation) {
+      // Closed (or superseded) while the factory call was in flight: discard
+      // the fresh socket best-effort instead of wiring a zombie connection.
+      try {
+        fresh.close();
+      } catch {
+        // best-effort close
+      }
+      return;
+    }
+    socket = fresh;
+    fresh.onopen = () => {
+      // Nothing to send before Hello; the gateway speaks first.
+    };
+    fresh.onmessage = (ev) => {
+      if (closed || gen !== generation) return;
+      let payload: GatewayMessage;
+      try {
+        payload = JSON.parse(ev.data) as GatewayMessage;
+      } catch {
+        return;
+      }
+      handlePayload(payload);
+    };
+    fresh.onclose = () => {
+      handleDisconnect(gen, new Error("Discord gateway closed unexpectedly"));
+    };
+    fresh.onerror = (ev) => {
+      const message = ev instanceof Error ? ev.message : "Discord gateway socket error";
+      handleDisconnect(gen, new Error(message));
+    };
+  };
+
+  const teardown = async (): Promise<void> => {
+    if (reconnectTimer !== null) {
+      scheduler.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    clearHeartbeat();
+    await dispatch;
+    const active = socket;
+    socket = null;
+    if (active) {
+      try {
+        active.close();
+      } catch {
+        // best-effort close
+      }
     }
     await options.transport.close();
   };
 
   // Boot the connection.
-  (async () => {
-    try {
-      socket = await options.socketFactory();
-      socket.onopen = () => {
-        // Nothing to send before Hello; the gateway speaks first.
-      };
-      socket.onmessage = (ev) => {
-        let payload: GatewayMessage;
-        try {
-          payload = JSON.parse(ev.data) as GatewayMessage;
-        } catch {
-          return;
-        }
-        handlePayload(payload);
-      };
-      socket.onclose = () => {
-        if (!closed) {
-          options.onError?.(new Error("Discord gateway closed unexpectedly"));
-        }
-      };
-      socket.onerror = (ev) => {
-        const message = ev instanceof Error ? ev.message : "Discord gateway socket error";
-        options.onError?.(new Error(message));
-      };
-    } catch (err) {
-      options.onError?.(err instanceof Error ? err : new Error(String(err)));
-    }
-  })();
+  void connect();
 
   return {
     identified(): Promise<void> {
@@ -764,6 +868,7 @@ export function runDiscordGateway<TClient extends DiscordPromptClient>(
       await dispatch;
     },
     async close(): Promise<void> {
+      if (closed) return;
       closed = true;
       await teardown();
     },

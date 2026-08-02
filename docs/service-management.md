@@ -152,6 +152,15 @@ For systemd these map to `systemctl --user start|stop|restart|status`. For
 tmux-cron, start runs the launch script, stop kills the tmux session, and
 status reports whether the session exists.
 
+Status scope: `piren service status` reports process supervision, not platform
+connectivity. Under tmux-cron it only confirms that the tmux session (and its
+`node ... piren <transport>` process) exists; under systemd it reports the unit
+state systemd knows. A transport process can be alive while its platform
+connection is down. Discord mitigates this in-process: the gateway
+automatically reconnects after an unexpected disconnect with capped
+exponential backoff (see [transports](transports.md#discord)), so a live-but-
+temporarily-disconnected process recovers on its own.
+
 ## First-run setup
 
 Running `piren setup` with no flags launches the minimal first-run flow. It
@@ -213,7 +222,9 @@ See [Scheduler](scheduler.md).
 - Transport tokens and API keys stay in `~/.config/piren/config.yml` and
   `~/.pi/agent/auth.json` respectively, never in the vault or the repository.
 - The `running` status recorded in config is advisory (set at install time).
-  `piren service status` checks the live state for an accurate report.
+  `piren service status` checks the live supervised process/unit state — not
+  platform connectivity. In particular, under tmux-cron a tmux session for a
+  disconnected transport still reports as present.
 
 ## Scheduler
 

@@ -401,6 +401,7 @@ try {
       socketFactory: () => createNativeDiscordGatewaySocket(gatewayUrl),
       onReady: () => console.log("Discord gateway ready."),
       onError: (error) => console.error(error.message),
+      onReconnecting: (info) => console.error(`Discord gateway disconnected; reconnecting in ${Math.max(1, Math.round(info.delayMs / 1000))}s (attempt ${info.attempt}).`),
     });
     let shuttingDown = false;
     const shutdown = () => {
