@@ -199,6 +199,10 @@ describe("OKF graph core", () => {
         "cron/jobs/global-job.md": "---\ntype: Cron Job\ntitle: Global Job\n---\n# Global Job\n",
         "cron/runs/global-run.md": "---\ntype: Cron Run\ntitle: Global Run\n---\n# Global Run\n",
         "templates/adr-template.md": "---\ntype: ADR\ntitle: ADR Template\n---\n# Template\n",
+        // Raw room events are operational evidence and excluded; curated room
+        // manifests and summaries stay graph-visible (ADR-0041).
+        "collaboration/rooms/room-1/events/event-1.md": "---\ntype: Room Event\ntitle: Event 1\n---\n# Event\n",
+        "collaboration/rooms/room-1/summary.md": "---\ntype: Room Summary\ntitle: Room 1 Summary\n---\n# Summary\n",
         // team/zai/cron/ (not jobs/runs) and team/zai/ itself are not operational roots.
         "team/zai/notes.md": "---\ntype: Concept\ntitle: Zai Notes\n---\n# Notes\n",
         "team/zai/cron/policy.md": "---\ntype: Concept\ntitle: Cron Policy\n---\n# Policy\n",
@@ -207,6 +211,7 @@ describe("OKF graph core", () => {
 
     expect(graph.nodes.map((n) => n.path)).toEqual([
       "Projects/Piren/decisions/ADR-0022-open-knowledge-format.md",
+      "collaboration/rooms/room-1/summary.md",
       "team/zai/cron/policy.md",
       "team/zai/notes.md",
       "wiki/concepts/vault-knowledge.md",

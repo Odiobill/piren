@@ -145,6 +145,9 @@ describe("OKF filename predicates", () => {
   it("exposes the documented Piren type taxonomy without rejecting unknowns", () => {
     expect(PIREN_OKF_TYPES).toContain("Concept");
     expect(PIREN_OKF_TYPES).toContain("Cron Run");
+    expect(PIREN_OKF_TYPES).toContain("Room Manifest");
+    expect(PIREN_OKF_TYPES).toContain("Room Event");
+    expect(PIREN_OKF_TYPES).toContain("Room Summary");
     expect(Array.isArray(PIREN_OKF_TYPES)).toBe(true);
   });
 
@@ -178,6 +181,22 @@ describe("checkVaultConformance", () => {
     });
     const result = await checkVaultConformance({ root: "", reader });
     expect(result.ok).toBe(true);
+    expect(result.checked).toBe(2);
+    expect(result.problems).toEqual([]);
+  });
+
+  it("accepts typed room records (manifest reserved, events and summary typed)", async () => {
+    const reader = fakeReader({
+      "collaboration/rooms/room-1/index.md":
+        "---\ntype: Room Manifest\nid: room-1\ntitle: Room 1\ncreated_by: steward\nparticipants: []\nstatus: open\ncreated: 2026-08-02T14:00:00.000Z\nupdated: 2026-08-02T14:00:00.000Z\n---\n# Room 1\n",
+      "collaboration/rooms/room-1/events/event-1.md":
+        "---\ntype: Room Event\nid: event-1\nroom: room-1\ncreated: 2026-08-02T14:05:00.000Z\nauthor_kind: steward\nauthor: steward\nkind: steward_message\n---\nHello.\n",
+      "collaboration/rooms/room-1/summary.md":
+        "---\ntype: Room Summary\ntitle: Room 1 Summary\n---\n# Summary\n",
+    });
+    const result = await checkVaultConformance({ root: "", reader });
+    expect(result.ok).toBe(true);
+    // index.md is a reserved filename (skipped); event + summary are checked.
     expect(result.checked).toBe(2);
     expect(result.problems).toEqual([]);
   });

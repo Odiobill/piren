@@ -30,6 +30,7 @@ describe("Piren vault initialization", () => {
     await expect(stat(join(root, "team", "thor", "logs"))).resolves.toBeDefined();
     await expect(stat(join(root, "team", "thor", "sessions"))).resolves.toBeDefined();
     await expect(stat(join(root, "agent-groups"))).resolves.toBeDefined();
+    await expect(stat(join(root, "collaboration", "rooms"))).resolves.toBeDefined();
     await expect(stat(join(root, "team", "groups"))).rejects.toThrow();
     await expect(stat(join(root, "Projects"))).resolves.toBeDefined();
     await expect(stat(join(root, "wiki", "concepts"))).resolves.toBeDefined();

@@ -30,6 +30,9 @@ export const PIREN_OKF_TYPES = [
     "Task",
     "Cron Job",
     "Cron Run",
+    "Room Manifest",
+    "Room Event",
+    "Room Summary",
 ];
 /** OKF reserved filenames (SPEC section 3.1) with their own structure. */
 export function isOkfReservedFilename(name) {

@@ -19,6 +19,8 @@ vault/
 ├── skills/
 ├── templates/
 ├── agent-groups/
+├── collaboration/
+│   └── rooms/
 ├── cron/
 │   ├── jobs/
 │   └── runs/
@@ -58,6 +60,22 @@ Operational directories:
 - `cron/jobs/` and `cron/runs/`: agent-scoped scheduled work and run history.
 
 Do not put `.env` or `AGENTS.md` under `team/<agent>/`. Secrets live outside the vault, and Piren identity is `SOUL.md`.
+
+## Collaboration rooms
+
+`collaboration/rooms/` is the vault-owned room collaboration area (ADR-0041). Fresh vaults create only the empty `collaboration/rooms/` directory; rooms are never created automatically.
+
+```text
+collaboration/rooms/<room-id>/
+├── index.md            # mutable room manifest (type: Room Manifest)
+├── events/
+│   └── <event-id>.md   # immutable raw evidence (type: Room Event)
+└── summary.md          # curated summary, explicit promotion only (type: Room Summary)
+```
+
+The manifest records the room id, title, `created_by: steward`, explicit participants, `status: open|closed`, and timestamps. Event files are append-only raw evidence: a response, correction, or state change is a new event, never an edit. Event kinds are `steward_message`, `run_started`, `agent_message`, `run_finished`, and `run_cancelled`. `summary.md` is a curated artifact written only by explicit promotion; it is distinct from raw events and from the Pi transcript.
+
+Raw `collaboration/rooms/*/events/` documents are excluded from the Knowledge Graph (like inbox/cron/session records); typed manifests and summaries remain graph-visible. The record API lives in `src/rooms.ts` (`createRoom`, `listRooms`, `readRoom`, `appendRoomEvent`). Gateway routes, dispatch, and room UI are later ADR-0041 slices and are not implemented yet.
 
 ## Agent groups
 

@@ -23,6 +23,12 @@ function isGraphOperationalPath(path) {
     if (first === "cron" && (second === "jobs" || second === "runs")) {
         return true;
     }
+    // Raw room events: collaboration/rooms/<room>/events/**. These are
+    // immutable operational evidence (ADR-0041); curated room manifests and
+    // summaries stay graph-visible.
+    if (first === "collaboration" && second === "rooms" && segments[3] === "events") {
+        return true;
+    }
     // Agent-scoped operational trees: team/<agent>/<skills|inbox|sessions|devices>/**
     // and team/<agent>/cron/<jobs|runs>/**. team/ itself and team/<agent>/ are kept.
     const third = segments[2];

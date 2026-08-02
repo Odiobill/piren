@@ -272,6 +272,9 @@ export async function initVault(options: InitVaultOptions): Promise<InitVaultRes
   await mkdir(join(vaultRoot, "skills"), { recursive: true });
   await mkdir(join(vaultRoot, "templates"), { recursive: true });
   await mkdir(join(vaultRoot, "agent-groups"), { recursive: true });
+  // ADR-0041: vault-owned room collaboration area. Rooms, events, and
+  // summaries are never created automatically; the directory starts empty.
+  await mkdir(join(vaultRoot, "collaboration", "rooms"), { recursive: true });
   await mkdir(join(vaultRoot, "cron", "jobs"), { recursive: true });
   await mkdir(join(vaultRoot, "cron", "runs"), { recursive: true });
   await mkdir(join(agentDir, "inbox"), { recursive: true });
