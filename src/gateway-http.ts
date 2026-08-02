@@ -9,6 +9,8 @@ import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
 import { createInboxTask } from "./inbox.js";
 import { buildOkfGraph } from "./okf-graph.js";
+import { RoomBroker, type RoomApprovalInput } from "./room-broker.js";
+import { createRoom, listRoomEvents, listRooms, readRoom, type RoomRecord } from "./rooms.js";
 import type { VaultDirReader } from "./okf.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -134,6 +136,7 @@ export class GatewayServer {
   private readonly targetBuilder: RpcTargetBuilder | undefined;
   private readonly authToken: string;
   private readonly publicDir: string | undefined;
+  private readonly roomBroker: RoomBroker | undefined;
   private shuttingDown = false;
 
   constructor(options: GatewayServerOptions) {
@@ -144,6 +147,16 @@ export class GatewayServer {
     this.targetBuilder = options.targetBuilder;
     this.authToken = options.authToken ?? "";
     this.publicDir = options.publicDir;
+    // ADR-0041 R1c: the room broker is wired only when all required room
+    // runtime options are present. Room runs use isolated room × agent
+    // clients via the broker, never the global gateway chat client.
+    if (options.vaultRoot !== undefined && options.targetBuilder !== undefined && this.runnableAgents.length > 0) {
+      this.roomBroker = new RoomBroker({
+        vaultRoot: options.vaultRoot,
+        runnableAgents: this.runnableAgents,
+        targetBuilder: options.targetBuilder,
+      });
+    }
     if (options.initialAgent !== undefined) {
       this.currentAgent = options.initialAgent;
     } else if (this.runnableAgents.length > 0) {
@@ -171,6 +184,11 @@ export class GatewayServer {
 
   async close(): Promise<void> {
     this.shuttingDown = true;
+    // Room runs get their durable cancellation evidence before the server
+    // stops listening.
+    if (this.roomBroker) {
+      await this.roomBroker.close();
+    }
     await this.client.stop();
     await new Promise<void>((resolve, reject) => {
       this.server.close((err) => (err ? reject(err) : resolve()));
@@ -253,6 +271,8 @@ export class GatewayServer {
       await this.handleVaultGraph(res);
     } else if (req.method === "POST" && url.pathname === "/api/vault/inbox") {
       await this.handleVaultInbox(req, res);
+    } else if (url.pathname === "/api/rooms" || url.pathname.startsWith("/api/rooms/")) {
+      await this.handleRooms(req, res, url);
     } else if (req.method === "GET" && this.publicDir) {
       await this.handleStatic(res, url.pathname);
     } else {
@@ -968,6 +988,296 @@ export class GatewayServer {
       } else {
         this.writeJson(res, 400, { error: msg });
       }
+    }
+  }
+
+  /** Safe durable manifest shape: no absolutePath, no byte counts. */
+  private safeRoom(room: RoomRecord): Record<string, unknown> {
+    return {
+      id: room.id,
+      path: room.path,
+      title: room.title,
+      createdBy: room.createdBy,
+      participants: room.participants,
+      status: room.status,
+      created: room.created,
+      updated: room.updated,
+    };
+  }
+
+  /**
+   * Map room core/broker errors to HTTP statuses with non-secret messages.
+   * Unknown errors become a generic 500: filesystem paths, raw Pi errors,
+   * stderr, tokens, and tracebacks never reach the response.
+   */
+  private roomError(res: ServerResponse, error: unknown): void {
+    if (error instanceof Error && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+      this.writeJson(res, 404, { error: "room not found" });
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith("Room not found") || message.startsWith("Invalid room id")) {
+      this.writeJson(res, 404, { error: message });
+    } else if (message.startsWith("Unknown room approval")) {
+      this.writeJson(res, 404, { error: message });
+    } else if (message.includes("already active") || message.startsWith("Room already exists") || message.includes("is stale") || message.startsWith("Room broker is closed") || (message.startsWith("Room '") && message.includes("is closed"))) {
+      this.writeJson(res, 409, { error: message });
+    } else if (
+      message.includes("title is required") ||
+      message.includes("text is required") ||
+      message.includes("Invalid agent name") ||
+      message.includes("Duplicate room participant") ||
+      message.includes("not a participant") ||
+      message.includes("not in the runnable set")
+    ) {
+      this.writeJson(res, 400, { error: message });
+    } else {
+      this.writeJson(res, 500, { error: "internal error" });
+    }
+  }
+
+  /**
+   * Room route family (ADR-0041 R1c). Requires the wired room broker;
+   * without room capability every room route is a 404.
+   */
+  private async handleRooms(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (!this.roomBroker || !this.vaultRoot) {
+      this.writeJson(res, 404, { error: "not found" });
+      return;
+    }
+    const segments = url.pathname.split("/").filter((segment) => segment !== "");
+    // segments: ["api", "rooms", roomId?, ...rest]
+    const roomId = segments.length >= 3 ? decodeURIComponent(segments[2] ?? "") : "";
+    const rest = segments.slice(3);
+
+    if (segments.length === 2 && req.method === "POST") {
+      await this.handleRoomCreate(req, res);
+    } else if (segments.length === 2 && req.method === "GET") {
+      await this.handleRoomList(res);
+    } else if (segments.length === 3 && req.method === "GET") {
+      await this.handleRoomRead(res, roomId);
+    } else if (rest[0] === "events" && rest.length === 2 && rest[1] === "stream" && req.method === "GET") {
+      await this.handleRoomEventStream(req, res, roomId);
+    } else if (rest[0] === "events" && rest.length === 1 && req.method === "GET") {
+      await this.handleRoomEvents(res, roomId);
+    } else if (rest[0] === "messages" && rest.length === 1 && req.method === "POST") {
+      await this.handleRoomMessage(req, res, roomId);
+    } else if (rest[0] === "abort" && rest.length === 1 && req.method === "POST") {
+      await this.handleRoomAbort(req, res, roomId);
+    } else if (rest[0] === "approve" && rest.length === 1 && req.method === "POST") {
+      await this.handleRoomApprove(req, res, roomId);
+    } else {
+      this.writeJson(res, 404, { error: "not found" });
+    }
+  }
+
+  private async handleRoomCreate(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const title = parsed.value.title;
+    if (typeof title !== "string" || title.trim() === "") {
+      this.writeJson(res, 400, { error: "title is required" });
+      return;
+    }
+    const participants = parsed.value.participants;
+    if (participants !== undefined && (!Array.isArray(participants) || participants.some((p) => typeof p !== "string"))) {
+      this.writeJson(res, 400, { error: "participants must be an array of agent name strings" });
+      return;
+    }
+    try {
+      const room = await createRoom({
+        vaultRoot: this.vaultRoot as string,
+        title,
+        ...(participants !== undefined ? { participants: participants as string[] } : {}),
+      });
+      this.writeJson(res, 201, { room: this.safeRoom(room) });
+    } catch (error) {
+      this.roomError(res, error);
+    }
+  }
+
+  private async handleRoomList(res: ServerResponse): Promise<void> {
+    try {
+      const rooms = await listRooms({ vaultRoot: this.vaultRoot as string });
+      this.writeJson(res, 200, { rooms: rooms.map((room) => this.safeRoom(room)) });
+    } catch (error) {
+      this.roomError(res, error);
+    }
+  }
+
+  private async handleRoomRead(res: ServerResponse, roomId: string): Promise<void> {
+    try {
+      const room = await readRoom({ vaultRoot: this.vaultRoot as string, roomId });
+      this.writeJson(res, 200, { room: this.safeRoom(room) });
+    } catch (error) {
+      this.roomError(res, error);
+    }
+  }
+
+  private async handleRoomEvents(res: ServerResponse, roomId: string): Promise<void> {
+    try {
+      const events = await listRoomEvents({ vaultRoot: this.vaultRoot as string, roomId });
+      this.writeJson(res, 200, { events });
+    } catch (error) {
+      this.roomError(res, error);
+    }
+  }
+
+  /**
+   * Structured steward-to-one-agent mention. The dispatch agent comes only
+   * from body.agent (never text parsing) and is revalidated by the broker
+   * against room participants and local runnable policy. Awaits the bounded
+   * outcome; an active room × agent conflict is a 409 with no queue.
+   */
+  private async handleRoomMessage(req: IncomingMessage, res: ServerResponse, roomId: string): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const agent = parsed.value.agent;
+    const text = parsed.value.text;
+    if (typeof agent !== "string" || agent.trim() === "") {
+      this.writeJson(res, 400, { error: "agent is required" });
+      return;
+    }
+    if (typeof text !== "string" || text.trim() === "") {
+      this.writeJson(res, 400, { error: "text is required" });
+      return;
+    }
+    try {
+      const outcome = await (this.roomBroker as RoomBroker).dispatchRoomMention({ roomId, agent, text });
+      this.writeJson(res, 200, { outcome });
+    } catch (error) {
+      this.roomError(res, error);
+    }
+  }
+
+  /** Abort the active run for exactly this room × agent. */
+  private async handleRoomAbort(req: IncomingMessage, res: ServerResponse, roomId: string): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const agent = parsed.value.agent;
+    if (typeof agent !== "string" || agent.trim() === "") {
+      this.writeJson(res, 400, { error: "agent is required" });
+      return;
+    }
+    try {
+      const outcome = await (this.roomBroker as RoomBroker).abort(roomId, agent);
+      this.writeJson(res, 200, { outcome });
+    } catch (error) {
+      this.roomError(res, error);
+    }
+  }
+
+  /**
+   * Forward an approval response to the exact pending room-agent request.
+   * Exactly one of confirmed, value, or cancelled must be present.
+   */
+  private async handleRoomApprove(req: IncomingMessage, res: ServerResponse, roomId: string): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const agent = parsed.value.agent;
+    const requestId = parsed.value.request_id;
+    if (typeof agent !== "string" || agent.trim() === "") {
+      this.writeJson(res, 400, { error: "agent is required" });
+      return;
+    }
+    if (typeof requestId !== "string" || requestId === "") {
+      this.writeJson(res, 400, { error: "request_id is required" });
+      return;
+    }
+    const confirmed = parsed.value.confirmed;
+    const value = parsed.value.value;
+    const cancelled = parsed.value.cancelled;
+    let response: RoomApprovalInput["response"];
+    if (cancelled === true && confirmed === undefined && value === undefined) {
+      response = { cancelled: true };
+    } else if (typeof confirmed === "boolean" && value === undefined && cancelled === undefined) {
+      response = { confirmed };
+    } else if (typeof value === "string" && confirmed === undefined && cancelled === undefined) {
+      response = { value };
+    } else {
+      this.writeJson(res, 400, { error: "exactly one of confirmed, value, or cancelled is required" });
+      return;
+    }
+    try {
+      (this.roomBroker as RoomBroker).respondToRoomApproval({ roomId, agent, requestId, response });
+      this.writeJson(res, 200, { ok: true });
+    } catch (error) {
+      this.roomError(res, error);
+    }
+  }
+
+  /**
+   * Scoped SSE stream for exactly one room: live committed room records as
+   * `room_event`, live pending approvals as `approval`. Historic events are
+   * served by GET .../events; this is a live broker subscription, not
+   * polling and not a replay. Heartbeat + disconnect cleanup required.
+   */
+  private async handleRoomEventStream(req: IncomingMessage, res: ServerResponse, roomId: string): Promise<void> {
+    // Validate the room exists before opening the stream.
+    try {
+      await readRoom({ vaultRoot: this.vaultRoot as string, roomId });
+    } catch (error) {
+      this.roomError(res, error);
+      return;
+    }
+
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    res.flushHeaders?.();
+
+    const stream: ChatStream = { queue: [], closed: false, waiters: [] };
+    const broker = this.roomBroker as RoomBroker;
+    const unsubscribeEvents = broker.onRoomEvent(roomId, (event) => {
+      enqueue(stream, { type: "room_event", data: event as unknown as Record<string, unknown> });
+    });
+    const unsubscribeApprovals = broker.onRoomApproval(roomId, (approval) => {
+      enqueue(stream, { type: "approval", data: approval as unknown as Record<string, unknown> });
+    });
+
+    const heartbeat = setInterval(() => {
+      res.write(": heartbeat\n\n");
+    }, HEARTBEAT_INTERVAL_MS);
+
+    const cleanup = (): void => {
+      clearInterval(heartbeat);
+      unsubscribeEvents();
+      unsubscribeApprovals();
+      closeStream(stream);
+    };
+    req.on("close", cleanup);
+
+    try {
+      while (true) {
+        while (stream.queue.length > 0) {
+          const event = stream.queue.shift();
+          if (!event) break;
+          this.writeSse(res, event);
+        }
+        if (stream.closed) {
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          stream.waiters.push(resolve);
+        });
+      }
+    } finally {
+      cleanup();
+      res.end();
     }
   }
 

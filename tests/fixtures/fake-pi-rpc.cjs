@@ -25,6 +25,9 @@
 const process = require("node:process");
 
 let buffer = "";
+// Blocking-approval state: set by a "waitapprove" prompt, cleared by the
+// matching extension_ui_response or by abort.
+let waitingApprovalId = null;
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -38,6 +41,22 @@ function handle(cmd) {
     }
     emit({ type: "response", command: "prompt", success: true, id: cmd.id });
     emit({ type: "agent_start" });
+
+    // If the message requests a BLOCKING approval ("waitapprove"), emit an
+    // extension_ui_request and hold agent_end until the matching
+    // extension_ui_response (or abort) arrives. This models a real approval
+    // gate deterministically for room/gateway lifecycle tests.
+    if (typeof cmd.message === "string" && cmd.message.includes("waitapprove")) {
+      waitingApprovalId = "ui-req-" + Date.now();
+      emit({
+        type: "extension_ui_request",
+        id: waitingApprovalId,
+        method: "confirm",
+        title: "Approve action?",
+        message: "The agent wants to proceed.",
+      });
+      return;
+    }
 
     // If the message requests approval, emit an extension_ui_request before
     // completing the turn, so the approval round-trip can be tested.
@@ -68,7 +87,12 @@ function handle(cmd) {
   }
   if (cmd.type === "extension_ui_response") {
     // Pi resolves the pending request internally; no ack response is sent back.
-    // The fake just swallows it to avoid hanging the client.
+    // A response for a blocking waitapprove request completes the held turn.
+    if (waitingApprovalId !== null && cmd.id === waitingApprovalId) {
+      waitingApprovalId = null;
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Approved." } });
+      emit({ type: "agent_end", messages: [] });
+    }
     return;
   }
   if (cmd.type === "get_state") {
@@ -108,6 +132,7 @@ function handle(cmd) {
     emit({ type: "response", command: "abort", success: true, id: cmd.id });
     // Model the real behavior: aborting a turn emits agent_end so the stream
     // drains and active SSE streams close cleanly.
+    waitingApprovalId = null;
     emit({ type: "agent_end", messages: [] });
     return;
   }

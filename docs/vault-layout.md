@@ -75,9 +75,9 @@ collaboration/rooms/<room-id>/
 
 The manifest records the room id, title, `created_by: steward`, explicit participants, `status: open|closed`, and timestamps. Event files are append-only raw evidence: a response, correction, or state change is a new event, never an edit. Event kinds are `steward_message`, `run_started`, `agent_message`, `run_finished`, and `run_cancelled`. System run events carry a bounded typed outcome: `run_started` requires `run_status: running`; `run_finished` requires `run_status: completed|failed|timed_out` (`failure_kind: launch_failure|ambiguous` only when failed); `run_cancelled` requires `run_status: cancelled`. `summary.md` is a curated artifact written only by explicit promotion; it is distinct from raw events and from the Pi transcript.
 
-The room-run broker core (`src/room-broker.ts`) processes one explicit steward-to-one-runnable-participant mention on an isolated `room × agent` Pi RPC client, appending only immutable correlated events and scoping approvals/abort to that exact client. HTTP/SSE routes and room UI are later slices and are not implemented yet.
+The room-run broker core (`src/room-broker.ts`) processes one explicit steward-to-one-runnable-participant mention on an isolated `room × agent` Pi RPC client, appending only immutable correlated events and scoping approvals/abort to that exact client. The gateway serves an authenticated room HTTP/SSE API over the broker (see [API reference](api.md)); a room UI is a later slice and is not implemented yet.
 
-Raw `collaboration/rooms/*/events/` documents are excluded from the Knowledge Graph (like inbox/cron/session records); typed manifests and summaries remain graph-visible. The record API lives in `src/rooms.ts` (`createRoom`, `listRooms`, `readRoom`, `appendRoomEvent`).
+Raw `collaboration/rooms/*/events/` documents are excluded from the Knowledge Graph (like inbox/cron/session records); typed manifests and summaries remain graph-visible. The record API lives in `src/rooms.ts` (`createRoom`, `listRooms`, `readRoom`, `appendRoomEvent`, `listRoomEvents`).
 
 ## Agent groups
 

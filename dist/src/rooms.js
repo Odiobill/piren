@@ -289,51 +289,56 @@ function renderRoomEvent(options) {
     return lines.join("\n");
 }
 /**
- * ADR-0041 R1b run-outcome contract:
- * - steward_message / agent_message carry no run outcome fields.
- * - run_started requires run_status: running.
- * - run_finished requires exactly one of completed / failed / timed_out;
- *   failure_kind is allowed only for failed and only launch_failure|ambiguous.
- * - run_cancelled requires run_status: cancelled and no failure_kind.
+/**
+ * Shared run-outcome grammar (ADR-0041 R1b): message kinds carry no run
+ * fields; run_started requires running; run_finished requires
+ * completed|failed|timed_out with failure_kind only for failed;
+ * run_cancelled requires cancelled and no failure_kind. Returns the
+ * narrowed values for record construction.
  */
-function assertValidRunOutcome(options) {
-    const kind = options.kind;
+function validateRunOutcomeFields(kind, runStatus, failureKind) {
     if (kind === "steward_message" || kind === "agent_message") {
-        if (options.runStatus !== undefined || options.failureKind !== undefined) {
+        if (runStatus !== undefined || failureKind !== undefined) {
             throw new Error(`${kind} events must not carry run outcome fields.`);
         }
-        return;
+        return {};
     }
     if (kind === "run_started") {
-        if (options.runStatus !== "running") {
+        if (runStatus !== "running") {
             throw new Error("run_started requires run_status: running.");
         }
-        if (options.failureKind !== undefined) {
+        if (failureKind !== undefined) {
             throw new Error("run_started must not carry failure_kind.");
         }
-        return;
+        return { runStatus: "running" };
     }
     if (kind === "run_finished") {
-        if (options.runStatus !== "completed" && options.runStatus !== "failed" && options.runStatus !== "timed_out") {
+        if (runStatus !== "completed" && runStatus !== "failed" && runStatus !== "timed_out") {
             throw new Error("run_finished requires run_status: completed, failed, or timed_out.");
         }
-        if (options.failureKind !== undefined) {
-            if (options.runStatus !== "failed") {
+        const result = { runStatus };
+        if (failureKind !== undefined) {
+            if (runStatus !== "failed") {
                 throw new Error("failure_kind is only valid when run_status is failed.");
             }
-            if (!ROOM_RUN_FAILURE_KINDS.includes(options.failureKind)) {
-                throw new Error(`Unknown failure_kind '${options.failureKind}'. Use launch_failure or ambiguous.`);
+            if (!ROOM_RUN_FAILURE_KINDS.includes(failureKind)) {
+                throw new Error(`Unknown failure_kind '${String(failureKind)}'. Use launch_failure or ambiguous.`);
             }
+            result.failureKind = failureKind;
         }
-        return;
+        return result;
     }
     // run_cancelled
-    if (options.runStatus !== "cancelled") {
+    if (runStatus !== "cancelled") {
         throw new Error("run_cancelled requires run_status: cancelled.");
     }
-    if (options.failureKind !== undefined) {
+    if (failureKind !== undefined) {
         throw new Error("run_cancelled must not carry failure_kind.");
     }
+    return { runStatus: "cancelled" };
+}
+function assertValidRunOutcome(options) {
+    validateRunOutcomeFields(options.kind, options.runStatus, options.failureKind);
 }
 /**
  * Append one immutable event file under `collaboration/rooms/<room-id>/events/`.
@@ -469,5 +474,143 @@ export async function createRoom(options) {
         updated: created,
         bytes,
     };
+}
+/**
+ * Parse and validate one immutable room event document against the full
+ * R1a/R1b grammar, its own filename identity, and its room. Fail-closed:
+ * any malformed or tampered field rejects naming the vault-relative path.
+ */
+export function parseRoomEvent(content, path, expectedRoomId) {
+    const fail = (reason) => {
+        throw new Error(`Malformed room event ${path}: ${reason}`);
+    };
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/);
+    if (frontmatterMatch === null) {
+        throw new Error(`Malformed room event ${path}: missing YAML frontmatter`);
+    }
+    let fields;
+    try {
+        fields = parseYaml(frontmatterMatch[1] ?? "");
+    }
+    catch (error) {
+        fail(`malformed YAML frontmatter: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (typeof fields !== "object" || fields === null || Array.isArray(fields)) {
+        fail("frontmatter is not a mapping");
+    }
+    const record = fields;
+    if (record.type !== "Room Event")
+        fail(`type must be 'Room Event', got ${JSON.stringify(record.type)}`);
+    if (typeof record.id !== "string" || !ROOM_ID_PATTERN.test(record.id))
+        fail("id is missing or invalid");
+    const fileStem = path.replace(/\.md$/, "").split("/").pop() ?? "";
+    if (record.id !== fileStem)
+        fail(`id '${record.id}' does not match the event filename '${fileStem}'`);
+    if (record.room !== expectedRoomId)
+        fail(`room must be '${expectedRoomId}'`);
+    if (typeof record.created !== "string" || record.created === "")
+        fail("created is missing");
+    if (typeof record.author_kind !== "string" || !ROOM_AUTHOR_KINDS.includes(record.author_kind)) {
+        fail("author_kind is missing or unknown");
+    }
+    if (typeof record.kind !== "string" || !ROOM_EVENT_KINDS.includes(record.kind)) {
+        fail("kind is missing or unknown");
+    }
+    const kind = record.kind;
+    const authorKind = record.author_kind;
+    if (REQUIRED_AUTHOR_KIND[kind] !== authorKind) {
+        fail(`kind '${kind}' requires author_kind '${REQUIRED_AUTHOR_KIND[kind]}'`);
+    }
+    if (typeof record.author !== "string")
+        fail("author is missing");
+    const author = record.author;
+    try {
+        assertValidAuthor(authorKind, author);
+    }
+    catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+    }
+    let addressedAgent;
+    if (record.addressed_agent !== undefined) {
+        if (kind !== "steward_message")
+            fail("addressed_agent is only valid on steward_message events");
+        if (typeof record.addressed_agent !== "string" || !AGENT_NAME_PATTERN.test(record.addressed_agent)) {
+            fail("addressed_agent is not a valid agent name");
+        }
+        addressedAgent = record.addressed_agent;
+    }
+    let correlationId;
+    if (record.correlation_id !== undefined) {
+        if (typeof record.correlation_id !== "string" || !ROOM_ID_PATTERN.test(record.correlation_id)) {
+            fail("correlation_id is invalid");
+        }
+        correlationId = record.correlation_id;
+    }
+    let outcome;
+    try {
+        outcome = validateRunOutcomeFields(kind, record.run_status, record.failure_kind);
+    }
+    catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+        throw error;
+    }
+    const body = content.slice(frontmatterMatch[0].length).trim();
+    if (body === "")
+        fail("body is empty");
+    const event = {
+        id: record.id,
+        roomId: expectedRoomId,
+        created: record.created,
+        authorKind,
+        author,
+        kind,
+        body,
+        path,
+    };
+    // exactOptionalPropertyTypes: assign optional fields only when defined.
+    if (addressedAgent !== undefined)
+        event.addressedAgent = addressedAgent;
+    if (correlationId !== undefined)
+        event.correlationId = correlationId;
+    if (outcome.runStatus !== undefined)
+        event.runStatus = outcome.runStatus;
+    if (outcome.failureKind !== undefined)
+        event.failureKind = outcome.failureKind;
+    return event;
+}
+/**
+ * List validated immutable events for one room in deterministic
+ * chronological (created, id) order. The room manifest is re-read and
+ * validated first; only `collaboration/rooms/<room-id>/events/*.md` is
+ * enumerated (dotfiles and non-Markdown files skipped); every record is
+ * validated fail-closed against the event grammar, its filename, and its
+ * room. No mutation, no polling, vault-relative paths only.
+ */
+export async function listRoomEvents(options) {
+    // Validates the room id pattern and the manifest before any event access.
+    await readRoom({ vaultRoot: options.vaultRoot, roomId: options.roomId });
+    const root = resolve(options.vaultRoot);
+    const eventsDir = resolve(root, "collaboration", "rooms", options.roomId, "events");
+    assertInside(root, eventsDir);
+    let entries;
+    try {
+        entries = await readdir(eventsDir, { withFileTypes: true });
+    }
+    catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+        throw error;
+    }
+    const events = [];
+    for (const entry of entries) {
+        if (!entry.isFile() || entry.name.startsWith(".") || !entry.name.endsWith(".md"))
+            continue;
+        const absolutePath = join(eventsDir, entry.name);
+        const content = await readFile(absolutePath, "utf8");
+        events.push(parseRoomEvent(content, relative(root, absolutePath), options.roomId));
+    }
+    events.sort((left, right) => left.created.localeCompare(right.created) || left.id.localeCompare(right.id));
+    return events;
 }
 //# sourceMappingURL=rooms.js.map

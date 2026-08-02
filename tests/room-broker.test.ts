@@ -1188,3 +1188,100 @@ describe("RoomBroker close during pre-reservation validation", () => {
     );
   });
 });
+
+describe("RoomBroker subscription seams", () => {
+  let root: string;
+  let clients: FakeRoomClient[];
+  let timers: ManualTimers;
+  let nonceSeq: number;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-room-broker-sub-"));
+    clients = [];
+    timers = new ManualTimers();
+    nonceSeq = 0;
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function makeBroker(behaviors: FakeBehavior[]): RoomBroker {
+    return new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi", "thor"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+      clientFactory: () => {
+        const client = new FakeRoomClient(behaviors[clients.length] ?? "complete");
+        clients.push(client);
+        return client;
+      },
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      runTimeoutMs: 60_000,
+    });
+  }
+
+  async function makeRoom(title: string, participants: string[]): Promise<string> {
+    const room = await createRoom({
+      vaultRoot: root,
+      title,
+      participants,
+      now: () => new Date("2026-08-02T17:00:00.000Z"),
+    });
+    return room.id;
+  }
+
+  it("publishes committed room events only to that room's listeners, and unsubscribes cleanly", async () => {
+    const broker = makeBroker(["complete", "complete"]);
+    const roomOne = await makeRoom("Sub one", ["kimi"]);
+    const roomTwo = await makeRoom("Sub two", ["thor"]);
+
+    const seenOne: { id: string; kind: string }[] = [];
+    const seenTwo: { id: string; kind: string }[] = [];
+    const unsubscribeOne = broker.onRoomEvent(roomOne, (event) => {
+      seenOne.push({ id: event.id, kind: event.kind });
+    });
+    broker.onRoomEvent(roomTwo, (event) => {
+      seenTwo.push({ id: event.id, kind: event.kind });
+    });
+
+    const outcome = await broker.dispatchRoomMention({ roomId: roomOne, agent: "kimi", text: "Publish me." });
+    expect(outcome.status).toBe("completed");
+
+    expect(seenOne.map((event) => event.kind)).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
+    expect(seenTwo).toEqual([]);
+    // Listener receives the structured committed record, matching the durable files.
+    const durable = await readEvents(root, roomOne);
+    expect([...seenOne.map((event) => event.id)].sort()).toEqual(durable.map((entry) => entry.name.replace(/\.md$/, "")).sort());
+
+    unsubscribeOne();
+    await broker.dispatchRoomMention({ roomId: roomOne, agent: "kimi", text: "Second run." });
+    expect(seenOne).toHaveLength(4); // no further deliveries after unsubscribe
+
+    await broker.close();
+  });
+
+  it("forwards pending approvals to the room listener and clears them on terminal completion", async () => {
+    const broker = makeBroker(["approval"]);
+    const roomId = await makeRoom("Approval sub room", ["kimi"]);
+
+    const approvals: { requestId: string; agent: string; method: string }[] = [];
+    broker.onRoomApproval(roomId, (approval) => {
+      approvals.push({ requestId: approval.requestId, agent: approval.agent, method: approval.method });
+    });
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Approve?" });
+    await waitFor(() => broker.hasPendingApproval(roomId, "kimi", "req-1"));
+
+    expect(approvals).toEqual([{ requestId: "req-1", agent: "kimi", method: "confirm" }]);
+
+    broker.respondToRoomApproval({ roomId, agent: "kimi", requestId: "req-1", response: { confirmed: true } });
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    expect(broker.hasPendingApproval(roomId, "kimi", "req-1")).toBe(false);
+    expect(approvals).toHaveLength(1);
+    await broker.close();
+  });
+});

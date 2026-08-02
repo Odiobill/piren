@@ -2,7 +2,7 @@ import { mkdtemp, link, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRoom, appendRoomEvent, listRooms, readRoom } from "../src/rooms.js";
+import { createRoom, appendRoomEvent, listRoomEvents, listRooms, readRoom } from "../src/rooms.js";
 
 describe("rooms core", () => {
   let root: string;
@@ -546,5 +546,148 @@ describe("room run outcome fields", () => {
 
     const { readdir } = await import("node:fs/promises");
     await expect(readdir(join(root, "collaboration", "rooms", roomId, "events"))).resolves.toEqual([]);
+  });
+});
+
+describe("listRoomEvents durable reader", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-rooms-reader-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  async function seedRoom(): Promise<string> {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Reader room",
+      participants: ["kimi"],
+      now: () => new Date("2026-08-02T14:00:00.000Z"),
+    });
+    const steward = await appendRoomEvent({
+      vaultRoot: root,
+      roomId: room.id,
+      kind: "steward_message",
+      authorKind: "steward",
+      author: "steward",
+      body: "Go.",
+      addressedAgent: "kimi",
+      now: () => new Date("2026-08-02T14:01:00.000Z"),
+      nonce: () => "a1",
+    });
+    await appendRoomEvent({
+      vaultRoot: root,
+      roomId: room.id,
+      kind: "run_started",
+      authorKind: "system",
+      author: "system",
+      body: "Run started.",
+      runStatus: "running",
+      correlationId: steward.id,
+      now: () => new Date("2026-08-02T14:02:00.000Z"),
+      nonce: () => "a2",
+    });
+    await appendRoomEvent({
+      vaultRoot: root,
+      roomId: room.id,
+      kind: "agent_message",
+      authorKind: "agent",
+      author: "kimi",
+      body: "Done here.",
+      correlationId: steward.id,
+      now: () => new Date("2026-08-02T14:03:00.000Z"),
+      nonce: () => "a3",
+    });
+    await appendRoomEvent({
+      vaultRoot: root,
+      roomId: room.id,
+      kind: "run_finished",
+      authorKind: "system",
+      author: "system",
+      body: "Run completed.",
+      runStatus: "completed",
+      correlationId: steward.id,
+      now: () => new Date("2026-08-02T14:04:00.000Z"),
+      nonce: () => "a4",
+    });
+    return room.id;
+  }
+
+  it("returns validated chronological event records with bodies, optional fields, and vault-relative paths", async () => {
+    const roomId = await seedRoom();
+    const events = await listRoomEvents({ vaultRoot: root, roomId });
+
+    expect(events.map((event) => event.kind)).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
+    const [steward, started, reply, finished] = events;
+    expect(steward?.addressedAgent).toBe("kimi");
+    expect(steward?.correlationId).toBeUndefined();
+    expect(steward?.body).toBe("Go.");
+    expect(steward?.path).toBe(`collaboration/rooms/${roomId}/events/${steward?.id ?? "missing"}.md`);
+    expect(steward?.path.startsWith("/")).toBe(false);
+    expect(started?.runStatus).toBe("running");
+    expect(started?.correlationId).toBe(steward?.id ?? "missing");
+    expect(reply?.author).toBe("kimi");
+    expect(reply?.body).toBe("Done here.");
+    expect(finished?.runStatus).toBe("completed");
+    expect(finished?.failureKind).toBeUndefined();
+  });
+
+  it("rejects a missing room and an invalid room id before any vault access", async () => {
+    await expect(listRoomEvents({ vaultRoot: root, roomId: "no-such-room" })).rejects.toThrow("no-such-room");
+    await expect(listRoomEvents({ vaultRoot: root, roomId: "../escape" })).rejects.toThrow("Invalid room id");
+  });
+
+  it("fails closed on a tampered event naming its vault-relative path", async () => {
+    const roomId = await seedRoom();
+    const eventsDir = join(root, "collaboration", "rooms", roomId, "events");
+    const names = await (await import("node:fs/promises")).readdir(eventsDir);
+    const target = names.find((name) => name.includes("agent-message"))!;
+    const { writeFile } = await import("node:fs/promises");
+    const original = await readFile(join(eventsDir, target), "utf8");
+    // Tamper: author_kind no longer matches the kind vocabulary.
+    await writeFile(join(eventsDir, target), original.replace("author_kind: agent", "author_kind: system"), "utf8");
+
+    await expect(listRoomEvents({ vaultRoot: root, roomId })).rejects.toThrow(
+      `collaboration/rooms/${roomId}/events/${target}`,
+    );
+  });
+
+  it("fails closed when an event filename does not match its frontmatter id", async () => {
+    const roomId = await seedRoom();
+    const eventsDir = join(root, "collaboration", "rooms", roomId, "events");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(eventsDir, "forged-name.md"),
+      [
+        "---",
+        "type: Room Event",
+        "id: some-other-id",
+        `room: ${roomId}`,
+        "created: 2026-08-02T14:05:00.000Z",
+        "author_kind: steward",
+        "author: steward",
+        "kind: steward_message",
+        "---",
+        "",
+        "Forged.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await expect(listRoomEvents({ vaultRoot: root, roomId })).rejects.toThrow("forged-name.md");
+  });
+
+  it("skips dotfiles and non-Markdown files in the events directory", async () => {
+    const roomId = await seedRoom();
+    const eventsDir = join(root, "collaboration", "rooms", roomId, "events");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(eventsDir, ".hidden.md"), "secret", "utf8");
+    await writeFile(join(eventsDir, "notes.txt"), "not an event", "utf8");
+
+    const events = await listRoomEvents({ vaultRoot: root, roomId });
+    expect(events).toHaveLength(4);
   });
 });

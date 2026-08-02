@@ -1,7 +1,9 @@
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { extractAssistantText, } from "./gateway-rpc.js";
-import { appendRoomEvent, readRoom } from "./rooms.js";
+import { appendRoomEvent, readRoom, } from "./rooms.js";
 export const DEFAULT_ROOM_RUN_TIMEOUT_MS = 120_000;
+/** Only these Pi UI request methods are approvable room approvals. */
+const APPROVABLE_METHODS = new Set(["confirm", "select", "input"]);
 function defaultTimers() {
     return {
         setTimeout: (callback, ms) => setTimeout(callback, ms),
@@ -35,6 +37,8 @@ export class RoomBroker {
     roomReader;
     activeRuns = new Map();
     pendingApprovals = new Map();
+    roomEventListeners = new Map();
+    roomApprovalListeners = new Map();
     closed = false;
     constructor(options) {
         this.vaultRoot = options.vaultRoot;
@@ -58,6 +62,77 @@ export class RoomBroker {
     }
     hasPendingApproval(roomId, agent, requestId) {
         return this.pendingApprovals.has(`${roomId}:${agent}:${requestId}`);
+    }
+    /**
+     * Subscribe to committed events for exactly one room. Listeners receive
+     * structured safe data only AFTER each immutable event file was appended;
+     * the returned function unsubscribes cleanly.
+     */
+    onRoomEvent(roomId, listener) {
+        let listeners = this.roomEventListeners.get(roomId);
+        if (!listeners) {
+            listeners = new Set();
+            this.roomEventListeners.set(roomId, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners.delete(listener);
+            if (listeners.size === 0) {
+                this.roomEventListeners.delete(roomId);
+            }
+        };
+    }
+    /**
+     * Subscribe to pending approval notifications for exactly one room.
+     * Only confirm/select/input requests are forwarded, only after the broker
+     * registered the exact active room-agent-request approval. Never
+     * auto-approves and never persists approval payloads.
+     */
+    onRoomApproval(roomId, listener) {
+        let listeners = this.roomApprovalListeners.get(roomId);
+        if (!listeners) {
+            listeners = new Set();
+            this.roomApprovalListeners.set(roomId, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners.delete(listener);
+            if (listeners.size === 0) {
+                this.roomApprovalListeners.delete(roomId);
+            }
+        };
+    }
+    /**
+     * Append one immutable room event, then publish its structured safe data
+     * to that room's listeners. Publication happens only after the durable
+     * no-clobber append succeeded.
+     */
+    async appendAndPublish(roomId, options) {
+        const result = await appendRoomEvent({ ...this.appendBase(roomId), ...options });
+        const notification = {
+            roomId,
+            id: result.id,
+            kind: options.kind,
+            authorKind: options.authorKind,
+            author: options.author,
+            created: result.created,
+            body: options.body,
+        };
+        if (options.addressedAgent !== undefined)
+            notification.addressedAgent = options.addressedAgent;
+        if (options.correlationId !== undefined)
+            notification.correlationId = options.correlationId;
+        if (options.runStatus !== undefined)
+            notification.runStatus = options.runStatus;
+        if (options.failureKind !== undefined)
+            notification.failureKind = options.failureKind;
+        const listeners = this.roomEventListeners.get(roomId);
+        if (listeners) {
+            for (const listener of [...listeners]) {
+                listener(notification);
+            }
+        }
+        return result;
     }
     async dispatchRoomMention(input) {
         if (this.closed) {
@@ -144,10 +219,8 @@ export class RoomBroker {
         return base;
     }
     async runMention(run, input, text, done) {
-        const appendBase = this.appendBase(input.roomId);
         // 1. Immutable steward message with the structured addressed agent.
-        const stewardEvent = await appendRoomEvent({
-            ...appendBase,
+        const stewardEvent = await this.appendAndPublish(input.roomId, {
             kind: "steward_message",
             authorKind: "steward",
             author: "steward",
@@ -184,8 +257,7 @@ export class RoomBroker {
         if (startupFailed || session === undefined) {
             // Cancellation did NOT win and the client never reached run_started:
             // this is the only launch_failure path (ADR-0038 boundary).
-            const terminal = await appendRoomEvent({
-                ...appendBase,
+            const terminal = await this.appendAndPublish(input.roomId, {
                 kind: "run_finished",
                 authorKind: "system",
                 author: "system",
@@ -205,8 +277,7 @@ export class RoomBroker {
         }
         run.client = session.client;
         // 2. run_started after the isolated client/session started.
-        await appendRoomEvent({
-            ...appendBase,
+        await this.appendAndPublish(input.roomId, {
             kind: "run_started",
             authorKind: "system",
             author: "system",
@@ -235,19 +306,38 @@ export class RoomBroker {
             }
         }
         await done;
-        return await this.finalizeRun(run, input, appendBase);
+        return await this.finalizeRun(run, input);
     }
     handleClientEvent(run, event) {
         if (run.settled)
             return;
         run.events.push(event);
         if (event.type === "extension_ui_request" && typeof event.id === "string") {
+            const method = typeof event.method === "string" ? event.method : "";
+            // Only approvable request kinds register or forward; other Pi UI
+            // requests (notify, setStatus, ...) never become room approvals.
+            if (!APPROVABLE_METHODS.has(method))
+                return;
             this.pendingApprovals.set(`${run.key}:${event.id}`, {
                 roomId: run.roomId,
                 agent: run.agent,
                 requestId: event.id,
                 run,
             });
+            const { type: _type, id: _id, ...payload } = event;
+            const notification = {
+                roomId: run.roomId,
+                agent: run.agent,
+                requestId: event.id,
+                method,
+                payload,
+            };
+            const listeners = this.roomApprovalListeners.get(run.roomId);
+            if (listeners) {
+                for (const listener of [...listeners]) {
+                    listener(notification);
+                }
+            }
             return;
         }
         if (event.type === "agent_end") {
@@ -278,8 +368,7 @@ export class RoomBroker {
      * no session usage, no run_started, and no client access.
      */
     async finalizeCancelledDuringInit(run, input) {
-        const terminal = await appendRoomEvent({
-            ...this.appendBase(input.roomId),
+        const terminal = await this.appendAndPublish(input.roomId, {
             kind: "run_cancelled",
             authorKind: "system",
             author: "system",
@@ -296,7 +385,7 @@ export class RoomBroker {
             terminalEventId: terminal.id,
         };
     }
-    async finalizeRun(run, input, appendBase) {
+    async finalizeRun(run, input) {
         // settle() always assigns a kind before resolving the wait; the fallback
         // is defensive only.
         const kind = run.settleKind ?? "cancel";
@@ -311,8 +400,7 @@ export class RoomBroker {
             const text = extractAssistantText(run.events).trim();
             let agentEventId;
             if (text !== "") {
-                const agentEvent = await appendRoomEvent({
-                    ...appendBase,
+                const agentEvent = await this.appendAndPublish(input.roomId, {
                     kind: "agent_message",
                     authorKind: "agent",
                     author: input.agent,
@@ -321,8 +409,7 @@ export class RoomBroker {
                 });
                 agentEventId = agentEvent.id;
             }
-            const terminal = await appendRoomEvent({
-                ...appendBase,
+            const terminal = await this.appendAndPublish(input.roomId, {
                 kind: "run_finished",
                 authorKind: "system",
                 author: "system",
@@ -344,8 +431,7 @@ export class RoomBroker {
             return outcome;
         }
         if (kind === "ambiguous") {
-            const terminal = await appendRoomEvent({
-                ...appendBase,
+            const terminal = await this.appendAndPublish(input.roomId, {
                 kind: "run_finished",
                 authorKind: "system",
                 author: "system",
@@ -371,8 +457,7 @@ export class RoomBroker {
             };
         }
         if (kind === "timeout") {
-            const terminal = await appendRoomEvent({
-                ...appendBase,
+            const terminal = await this.appendAndPublish(input.roomId, {
                 kind: "run_finished",
                 authorKind: "system",
                 author: "system",
@@ -390,8 +475,7 @@ export class RoomBroker {
             };
         }
         // cancel
-        const terminal = await appendRoomEvent({
-            ...appendBase,
+        const terminal = await this.appendAndPublish(input.roomId, {
             kind: "run_cancelled",
             authorKind: "system",
             author: "system",

@@ -50,6 +50,7 @@ export declare class GatewayServer {
     private readonly targetBuilder;
     private readonly authToken;
     private readonly publicDir;
+    private readonly roomBroker;
     private shuttingDown;
     constructor(options: GatewayServerOptions);
     start(port?: number, hostname?: string): Promise<GatewayHandle>;
@@ -122,6 +123,44 @@ export declare class GatewayServer {
      * Configured vaultRoot is required, otherwise 403 (no write surface).
      */
     private handleVaultInbox;
+    /** Safe durable manifest shape: no absolutePath, no byte counts. */
+    private safeRoom;
+    /**
+     * Map room core/broker errors to HTTP statuses with non-secret messages.
+     * Unknown errors become a generic 500: filesystem paths, raw Pi errors,
+     * stderr, tokens, and tracebacks never reach the response.
+     */
+    private roomError;
+    /**
+     * Room route family (ADR-0041 R1c). Requires the wired room broker;
+     * without room capability every room route is a 404.
+     */
+    private handleRooms;
+    private handleRoomCreate;
+    private handleRoomList;
+    private handleRoomRead;
+    private handleRoomEvents;
+    /**
+     * Structured steward-to-one-agent mention. The dispatch agent comes only
+     * from body.agent (never text parsing) and is revalidated by the broker
+     * against room participants and local runnable policy. Awaits the bounded
+     * outcome; an active room × agent conflict is a 409 with no queue.
+     */
+    private handleRoomMessage;
+    /** Abort the active run for exactly this room × agent. */
+    private handleRoomAbort;
+    /**
+     * Forward an approval response to the exact pending room-agent request.
+     * Exactly one of confirmed, value, or cancelled must be present.
+     */
+    private handleRoomApprove;
+    /**
+     * Scoped SSE stream for exactly one room: live committed room records as
+     * `room_event`, live pending approvals as `approval`. Historic events are
+     * served by GET .../events; this is a live broker subscription, not
+     * polling and not a replay. Heartbeat + disconnect cleanup required.
+     */
+    private handleRoomEventStream;
     private writeJson;
     private writeSse;
 }

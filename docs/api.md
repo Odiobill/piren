@@ -112,6 +112,19 @@ OpenAI-compatible:
 
 - `POST /api/v1/chat/completions`
 
+Collaboration rooms (available when the gateway is wired with a vault root, runnable agents, and an agent target builder; otherwise all room routes return 404):
+
+- `POST /api/rooms` — create a room. Body `{title, participants?}`; returns `201 {room}` with the safe manifest shape (vault-relative path only).
+- `GET /api/rooms` — list room manifests.
+- `GET /api/rooms/<roomId>` — read one room manifest; unknown room returns 404.
+- `GET /api/rooms/<roomId>/events` — validated chronological immutable event records.
+- `GET /api/rooms/<roomId>/events/stream` — scoped SSE for that one room only: live committed records as `event: room_event`, live pending approvals as `event: approval`, with heartbeat. Historic events come from the events route; there is no replay.
+- `POST /api/rooms/<roomId>/messages` — structured steward-to-one-agent mention. Body `{agent, text}` (the agent comes only from the body, never from text parsing); awaits the bounded run and returns `200 {outcome}`. A second mention for an active room × agent pair returns 409.
+- `POST /api/rooms/<roomId>/abort` — abort the active run for exactly this room × agent; returns `200 {outcome}` (`cancelled` or `no-active-run`).
+- `POST /api/rooms/<roomId>/approve` — forward an approval response to the exact pending room-agent request. Body `{agent, request_id}` plus exactly one of `confirmed`, `value`, or `cancelled`. Unknown or stale requests reject without reaching any other client.
+
+Room runs execute on isolated room × agent Pi RPC clients through the room broker, never the global chat client. Validation, conflict, and shutdown semantics are recorded as immutable room events under `collaboration/rooms/` (see [vault layout](vault-layout.md)).
+
 Static UI:
 
 - `GET /`

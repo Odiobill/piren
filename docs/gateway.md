@@ -79,6 +79,12 @@ Routes:
 
 The browser is read-only, hides dotfiles, caps listings and reads, and enforces vault path boundaries. The graph route is also read-only: it indexes OKF-typed Markdown documents across the vault from the root, including project indexes, decision records, runbooks, concepts, and entities, then extracts directed links and returns JSON for the Web UI Knowledge Graph panel. Side panels share the same width and are horizontally resizable so the chat stretches with the available space.
 
+## Collaboration rooms
+
+When the gateway is wired with a vault root, the local runnable-agent set, and an agent target builder (the normal `piren gateway` path), it also serves the room API documented in [API reference](api.md): room create/list/read, durable event reads, a scoped per-room SSE stream, structured steward-to-one-agent messages, room-scoped abort, and room-scoped approvals.
+
+Room runs execute through the room broker on isolated room × agent Pi RPC clients — never the global chat client. One explicit mention starts one bounded run; a concurrent mention for the same room × agent is rejected with 409. Immutable correlated events (steward message, run started, agent reply, terminal outcome) are appended under `collaboration/rooms/<room-id>/events/` and are the response timeline. Approvals round-trip only to the exact room-agent client that raised them. Closing the gateway closes the broker first, so active room runs end with durable cancellation evidence.
+
 ## Session management
 
 Routes:
