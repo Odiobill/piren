@@ -16,8 +16,9 @@ import { readVersion } from "../src/version.js";
  * the same protected tag-only OIDC workflow from immutable tag `v0.1.5`.
  * `@odiobill/piren@0.1.6` (ADR-0040 transport maturity) was published through
  * the same protected tag-only OIDC workflow from immutable tag `v0.1.6`.
- * These guards keep package metadata, version, and changelog truthful across
- * the manual-bootstrap 0.1.3 and OIDC-published 0.1.4 through 0.1.6 releases.
+ * The pending 0.1.7 patch restores Discord gateway availability after transient
+ * WebSocket disconnects. These guards keep package metadata, version, and
+ * changelog truthful across the manual-bootstrap 0.1.3 and later OIDC releases.
  */
 
 const repoRoot = process.cwd();
@@ -26,15 +27,15 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("scoped @odiobill/piren registry releases (0.1.6/0.1.5/0.1.4 OIDC, 0.1.3 bootstrap)", () => {
+describe("scoped @odiobill/piren registry releases (0.1.7 candidate; 0.1.6/0.1.5/0.1.4 OIDC; 0.1.3 bootstrap)", () => {
   it("package.json name is the scoped @odiobill/piren identity", () => {
     const pkg = JSON.parse(read("package.json")) as { name: string };
     expect(pkg.name).toBe("@odiobill/piren");
   });
 
-  it("package.json version is the published 0.1.6 release", () => {
+  it("package.json version is the pending 0.1.7 Discord reconnect patch", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
-    expect(pkg.version).toBe("0.1.6");
+    expect(pkg.version).toBe("0.1.7");
   });
 
   it("the executable bin name stays piren (scoped package, unchanged command)", () => {
@@ -57,8 +58,8 @@ describe("scoped @odiobill/piren registry releases (0.1.6/0.1.5/0.1.4 OIDC, 0.1.
     expect(pkg.private === undefined || pkg.private === false).toBe(true);
   });
 
-  it("readVersion reports 0.1.6 from the real package.json", () => {
-    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.6");
+  it("readVersion reports 0.1.7 from the real package.json", () => {
+    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.1.7");
   });
 
   it("package-lock.json name and version agree with package.json", () => {
@@ -68,12 +69,26 @@ describe("scoped @odiobill/piren registry releases (0.1.6/0.1.5/0.1.4 OIDC, 0.1.
       packages?: Record<string, { name?: string; version?: string }>;
     };
     expect(lock.name).toBe("@odiobill/piren");
-    expect(lock.version).toBe("0.1.6");
+    expect(lock.version).toBe("0.1.7");
     expect(lock.packages?.[""]?.name).toBe("@odiobill/piren");
-    expect(lock.packages?.[""]?.version).toBe("0.1.6");
+    expect(lock.packages?.[""]?.version).toBe("0.1.7");
   });
 
-  it("CHANGELOG has a dated [0.1.6] entry recording OIDC publication with provenance", () => {
+  it("CHANGELOG has a dated unpublished [0.1.7] Discord reconnect candidate entry", () => {
+    const cl = read("CHANGELOG.md");
+    const start = cl.indexOf("## [0.1.7]");
+    const end = cl.indexOf("## [0.1.6]");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const section = cl.slice(start, end);
+    expect(section).toMatch(/## \[0\.1\.7\] - 2026-08-02/);
+    expect(section).toMatch(/Discord gateway/i);
+    expect(section).toMatch(/reconnect/i);
+    expect(section).toMatch(/not yet tagged or published/i);
+    expect(section).not.toMatch(/published as|npm `latest`|SLSA provenance/i);
+  });
+
+  it("CHANGELOG retains a dated [0.1.6] entry recording OIDC publication with provenance", () => {
     const cl = read("CHANGELOG.md");
     const start = cl.indexOf("## [0.1.6]");
     const end = cl.indexOf("## [0.1.5]");

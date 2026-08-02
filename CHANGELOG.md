@@ -5,6 +5,19 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-08-02
+
+Discord gateway resiliency patch. This candidate is not yet tagged or published.
+
+### Fixed
+
+- **Discord gateway reconnection:** unexpected Gateway socket closes, errors, and connection-opening failures now retry indefinitely with capped exponential backoff (one second to 30 seconds). Each replacement performs a fresh Discord handshake; stale socket events and heartbeats cannot affect the replacement, and a close/error pair schedules only one retry. Explicit shutdown cancels a pending retry and closes transport sessions exactly once.
+- **Native WebSocket pre-open close:** a native Discord WebSocket that closes while connecting now rejects the socket factory with a non-secret error, allowing the reconnect scheduler to run instead of leaving a supervised process permanently awaiting connection.
+
+### Changed
+
+- **Service-status guidance:** `piren service status` is documented as process-supervision state, not proof of platform connectivity; the Discord transport logs non-secret reconnect attempt and delay notices.
+
 ## [0.1.6] - 2026-08-01
 
 ADR-0040 transport maturity. Published as `@odiobill/piren@0.1.6` to npm `latest` through the protected tag-only OIDC trusted-publishing workflow from immutable tag `v0.1.6` (`66af990`); registry metadata carries a SLSA provenance attestation (`npm publish --provenance`, `https://slsa.dev/provenance/v1`).

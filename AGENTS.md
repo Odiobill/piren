@@ -155,7 +155,7 @@ Current baseline:
 
 ```text
 Test Files  118 passed (118)
-Tests       1873 passed (1873)
+Tests       1884 passed (1884)
 SMOKE PASSED
 ```
 
