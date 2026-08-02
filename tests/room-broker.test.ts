@@ -1285,3 +1285,93 @@ describe("RoomBroker subscription seams", () => {
     await broker.close();
   });
 });
+
+describe("RoomBroker listener containment", () => {
+  let root: string;
+  let clients: FakeRoomClient[];
+  let timers: ManualTimers;
+  let nonceSeq: number;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-room-broker-contain-"));
+    clients = [];
+    timers = new ManualTimers();
+    nonceSeq = 0;
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function makeBroker(behaviors: FakeBehavior[]): RoomBroker {
+    return new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+      clientFactory: () => {
+        const client = new FakeRoomClient(behaviors[clients.length] ?? "complete");
+        clients.push(client);
+        return client;
+      },
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      runTimeoutMs: 60_000,
+    });
+  }
+
+  it("contains a throwing event listener: the run still completes and healthy listeners receive every event", async () => {
+    const broker = makeBroker(["complete"]);
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Containment room",
+      participants: ["kimi"],
+      now: () => new Date("2026-08-02T17:00:00.000Z"),
+    });
+    const roomId = room.id;
+
+    broker.onRoomEvent(roomId, () => {
+      throw new Error("observer exploded");
+    });
+    const healthy: string[] = [];
+    broker.onRoomEvent(roomId, (event) => {
+      healthy.push(event.kind);
+    });
+
+    const outcome = await broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Go." });
+    expect(outcome.status).toBe("completed");
+    expect(healthy).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
+
+    const events = await readEvents(root, roomId);
+    expect(events).toHaveLength(4);
+    await broker.close();
+  });
+
+  it("contains a throwing approval listener: a valid exact approval still completes the run", async () => {
+    const broker = makeBroker(["approval"]);
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Approval containment room",
+      participants: ["kimi"],
+      now: () => new Date("2026-08-02T17:00:00.000Z"),
+    });
+    const roomId = room.id;
+
+    broker.onRoomApproval(roomId, () => {
+      throw new Error("approval observer exploded");
+    });
+    const healthy: string[] = [];
+    broker.onRoomApproval(roomId, (approval) => {
+      healthy.push(approval.requestId);
+    });
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Approve?" });
+    await waitFor(() => broker.hasPendingApproval(roomId, "kimi", "req-1"));
+    expect(healthy).toEqual(["req-1"]);
+
+    broker.respondToRoomApproval({ roomId, agent: "kimi", requestId: "req-1", response: { confirmed: true } });
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    await broker.close();
+  });
+});

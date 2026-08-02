@@ -51,6 +51,8 @@ export declare class GatewayServer {
     private readonly authToken;
     private readonly publicDir;
     private readonly roomBroker;
+    /** Idempotent cleanup callbacks for live room SSE handlers. */
+    private readonly roomStreamCleanups;
     private shuttingDown;
     constructor(options: GatewayServerOptions);
     start(port?: number, hostname?: string): Promise<GatewayHandle>;

@@ -129,7 +129,15 @@ export class RoomBroker {
         const listeners = this.roomEventListeners.get(roomId);
         if (listeners) {
             for (const listener of [...listeners]) {
-                listener(notification);
+                // Observers are non-authoritative: one throwing listener must never
+                // turn a durable append into a broker failure or affect other
+                // listeners. Exceptions are contained, never persisted.
+                try {
+                    listener(notification);
+                }
+                catch {
+                    // contained
+                }
             }
         }
         return result;
@@ -335,7 +343,14 @@ export class RoomBroker {
             const listeners = this.roomApprovalListeners.get(run.roomId);
             if (listeners) {
                 for (const listener of [...listeners]) {
-                    listener(notification);
+                    // Same containment as room events: a throwing observer must not
+                    // escape the Pi event handler or affect the run lifecycle.
+                    try {
+                        listener(notification);
+                    }
+                    catch {
+                        // contained
+                    }
                 }
             }
             return;

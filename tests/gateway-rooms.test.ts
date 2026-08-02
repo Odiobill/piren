@@ -481,3 +481,187 @@ describe("Gateway room SSE scoping and shutdown", () => {
     expect(kinds.sort()).toEqual(["run_cancelled", "run_started", "steward_message"]);
   });
 });
+
+describe("Gateway room SSE shutdown lifecycle", () => {
+  let root: string;
+  let server: GatewayServer;
+  let handle: GatewayHandle;
+  const token = "test-room-token";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-gateway-rooms-shut-"));
+    await initVault({ vaultRoot: root, agentName: "piren" });
+    server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: token,
+      vaultRoot: root,
+      runnableAgents: ["fake"],
+      targetBuilder: async () => fakePiTarget(),
+    });
+    handle = await server.start();
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function url(path: string): string {
+    return `http://${handle.hostname}:${handle.port}${path}`;
+  }
+
+  it("server.close() resolves promptly with an open room stream and an active blocking run", async () => {
+    const created = await post(url("/api/rooms"), { title: "Shutdown room", participants: ["fake"] }, token);
+    const { room } = (await created.json()) as { room: { id: string } };
+    const roomId = room.id;
+
+    // Persistent room stream with an active reader.
+    const streamResponse = await fetch(url(`/api/rooms/${roomId}/events/stream`), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(streamResponse.status).toBe(200);
+    const reader = streamResponse.body!.getReader();
+    let streamEnded = false;
+    const readDone = (async () => {
+      try {
+        while (!(await reader.read()).done) {
+          // drain until the server ends the response
+        }
+      } catch {
+        // cancelled
+      }
+      streamEnded = true;
+    })();
+
+    // Active blocking run (waits on an approval that never comes).
+    const dispatch = post(url(`/api/rooms/${roomId}/messages`), { agent: "fake", text: "waitapprove please" }, token);
+    await waitForStreamValue(async () => {
+      const events = await fetch(url(`/api/rooms/${roomId}/events`), { headers: { authorization: `Bearer ${token}` } });
+      const body = (await events.json()) as { events: { kind: string }[] };
+      return body.events.some((event) => event.kind === "run_started");
+    });
+
+    // Close must resolve promptly despite the persistent SSE connection.
+    await Promise.race([
+      server.close(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("server.close() hung")), 5000)),
+    ]);
+
+    const outcome = (await (await dispatch).json()) as { outcome: { status: string } };
+    expect(outcome.outcome.status).toBe("cancelled");
+
+    await Promise.race([readDone, new Promise((_, reject) => setTimeout(() => reject(new Error("SSE reader hung")), 5000))]);
+    expect(streamEnded).toBe(true);
+
+    // Exactly one durable cancellation, no double terminal.
+    const { readdir, readFile } = await import("node:fs/promises");
+    const dir = join(root, "collaboration", "rooms", roomId, "events");
+    const kinds: string[] = [];
+    for (const name of (await readdir(dir)).sort()) {
+      const content = await readFile(join(dir, name), "utf8");
+      const kind = content.match(/^kind: ([a-z_]+)$/m)?.[1];
+      if (kind) kinds.push(kind);
+    }
+    expect(kinds.sort()).toEqual(["run_cancelled", "run_started", "steward_message"]);
+  }, 20000);
+});
+
+describe("Gateway room route hardening", () => {
+  let root: string;
+  let server: GatewayServer;
+  let handle: GatewayHandle;
+  const token = "test-room-token";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-gateway-rooms-hard-"));
+    await initVault({ vaultRoot: root, agentName: "piren" });
+    server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: token,
+      vaultRoot: root,
+      runnableAgents: ["fake"],
+      targetBuilder: async () => fakePiTarget(),
+    });
+    handle = await server.start();
+  });
+
+  afterEach(async () => {
+    await server.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function url(path: string): string {
+    return `http://${handle.hostname}:${handle.port}${path}`;
+  }
+
+  it("returns a non-secret 500 for a tampered event correlation, never partial data", async () => {
+    const created = await post(url("/api/rooms"), { title: "Tamper room", participants: ["fake"] }, token);
+    const { room } = (await created.json()) as { room: { id: string } };
+    const message = await post(url(`/api/rooms/${room.id}/messages`), { agent: "fake", text: "Hello" }, token);
+    expect(message.status).toBe(200);
+
+    // Tamper: point the agent_message correlation at a nonexistent event.
+    const { readdir, readFile, writeFile } = await import("node:fs/promises");
+    const dir = join(root, "collaboration", "rooms", room.id, "events");
+    const target = (await readdir(dir)).find((name) => name.includes("agent-message"))!;
+    const original = await readFile(join(dir, target), "utf8");
+    await writeFile(
+      join(dir, target),
+      original.replace(/correlation_id: .+/, "correlation_id: 20260802T130000000Z-steward-message-ghost"),
+      "utf8",
+    );
+
+    const response = await fetch(url(`/api/rooms/${room.id}/events`), { headers: { authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("internal error");
+    expect(body.error).not.toContain(root);
+    expect(body.error).not.toContain("collaboration/");
+  });
+});
+
+describe("Gateway room malformed URL handling", () => {
+  let root: string;
+  let server: GatewayServer;
+  let handle: GatewayHandle;
+  const token = "test-room-token";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-gateway-rooms-url-"));
+    await initVault({ vaultRoot: root, agentName: "piren" });
+    server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: token,
+      vaultRoot: root,
+      runnableAgents: ["fake"],
+      targetBuilder: async () => fakePiTarget(),
+    });
+    handle = await server.start();
+  });
+
+  afterEach(async () => {
+    await server.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function url(path: string): string {
+    return `http://${handle.hostname}:${handle.port}${path}`;
+  }
+
+  it("returns a controlled non-secret 400 for a malformed percent-encoded room id", async () => {
+    const malformed = await fetch(url("/api/rooms/%E0%A4%A/events"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect([400]).toContain(malformed.status);
+    const body = (await malformed.json()) as { error: string };
+    expect(typeof body.error).toBe("string");
+    expect(body.error).not.toContain("URI");
+
+    // The server stays healthy and traversal stays fail-closed afterwards.
+    const list = await fetch(url("/api/rooms"), { headers: { authorization: `Bearer ${token}` } });
+    expect(list.status).toBe(200);
+    const traversal = await fetch(url("/api/rooms/..%2F..%2Fteam"), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect([400, 404]).toContain(traversal.status);
+  });
+});

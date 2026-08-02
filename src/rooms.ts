@@ -762,6 +762,23 @@ export async function listRoomEvents(options: ListRoomEventsOptions): Promise<Ro
     const content = await readFile(absolutePath, "utf8");
     events.push(parseRoomEvent(content, relative(root, absolutePath), options.roomId));
   }
+
+  // Correlation integrity (same grammar as append): every correlation target
+  // must name an existing event in this room, and no event may correlate to
+  // itself. Fail closed on the tampered record, naming its path.
+  const eventIds = new Set(events.map((event) => event.id));
+  for (const event of events) {
+    if (event.correlationId === undefined) continue;
+    if (event.correlationId === event.id) {
+      throw new Error(`Malformed room event ${event.path}: event cannot correlate to itself`);
+    }
+    if (!eventIds.has(event.correlationId)) {
+      throw new Error(
+        `Malformed room event ${event.path}: correlation_id '${event.correlationId}' does not name an existing event in this room`,
+      );
+    }
+  }
+
   events.sort((left, right) => left.created.localeCompare(right.created) || left.id.localeCompare(right.id));
   return events;
 }

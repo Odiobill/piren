@@ -137,6 +137,8 @@ export class GatewayServer {
   private readonly authToken: string;
   private readonly publicDir: string | undefined;
   private readonly roomBroker: RoomBroker | undefined;
+  /** Idempotent cleanup callbacks for live room SSE handlers. */
+  private readonly roomStreamCleanups = new Set<() => void>();
   private shuttingDown = false;
 
   constructor(options: GatewayServerOptions) {
@@ -188,6 +190,12 @@ export class GatewayServer {
     // stops listening.
     if (this.roomBroker) {
       await this.roomBroker.close();
+    }
+    // Persistent room SSE connections would otherwise keep server.close()
+    // waiting forever: wake/end every live room stream, unsubscribe its
+    // broker listeners, and stop its heartbeat. Cleanups are idempotent.
+    for (const cleanup of [...this.roomStreamCleanups]) {
+      cleanup();
     }
     await this.client.stop();
     await new Promise<void>((resolve, reject) => {
@@ -1047,7 +1055,17 @@ export class GatewayServer {
     }
     const segments = url.pathname.split("/").filter((segment) => segment !== "");
     // segments: ["api", "rooms", roomId?, ...rest]
-    const roomId = segments.length >= 3 ? decodeURIComponent(segments[2] ?? "") : "";
+    let roomId = "";
+    if (segments.length >= 3) {
+      try {
+        roomId = decodeURIComponent(segments[2] ?? "");
+      } catch {
+        // Malformed percent-encoding: controlled non-secret rejection before
+        // any vault access or event/client side effect.
+        this.writeJson(res, 400, { error: "malformed room id" });
+        return;
+      }
+    }
     const rest = segments.slice(3);
 
     if (segments.length === 2 && req.method === "POST") {
@@ -1254,11 +1272,16 @@ export class GatewayServer {
     }, HEARTBEAT_INTERVAL_MS);
 
     const cleanup = (): void => {
+      if (cleaned) return;
+      cleaned = true;
       clearInterval(heartbeat);
       unsubscribeEvents();
       unsubscribeApprovals();
+      this.roomStreamCleanups.delete(cleanup);
       closeStream(stream);
     };
+    let cleaned = false;
+    this.roomStreamCleanups.add(cleanup);
     req.on("close", cleanup);
 
     try {

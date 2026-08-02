@@ -691,3 +691,80 @@ describe("listRoomEvents durable reader", () => {
     expect(events).toHaveLength(4);
   });
 });
+
+describe("listRoomEvents correlation integrity", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-rooms-corr-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  async function seedCorrelated(): Promise<{ roomId: string; stewardId: string }> {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Correlation room",
+      participants: ["kimi"],
+      now: () => new Date("2026-08-02T14:00:00.000Z"),
+    });
+    const steward = await appendRoomEvent({
+      vaultRoot: root,
+      roomId: room.id,
+      kind: "steward_message",
+      authorKind: "steward",
+      author: "steward",
+      body: "Go.",
+      addressedAgent: "kimi",
+      now: () => new Date("2026-08-02T14:01:00.000Z"),
+      nonce: () => "c1",
+    });
+    await appendRoomEvent({
+      vaultRoot: root,
+      roomId: room.id,
+      kind: "agent_message",
+      authorKind: "agent",
+      author: "kimi",
+      body: "Reply.",
+      correlationId: steward.id,
+      now: () => new Date("2026-08-02T14:02:00.000Z"),
+      nonce: () => "c2",
+    });
+    return { roomId: room.id, stewardId: steward.id };
+  }
+
+  it("fails closed when a correlation_id names no event in the same room", async () => {
+    const { roomId } = await seedCorrelated();
+    const eventsDir = join(root, "collaboration", "rooms", roomId, "events");
+    const names = await (await import("node:fs/promises")).readdir(eventsDir);
+    const target = names.find((name) => name.includes("agent-message"))!;
+    const { writeFile } = await import("node:fs/promises");
+    const original = await readFile(join(eventsDir, target), "utf8");
+    await writeFile(
+      join(eventsDir, target),
+      original.replace(/correlation_id: .+/, "correlation_id: 20260802T130000000Z-steward-message-ghost"),
+      "utf8",
+    );
+
+    await expect(listRoomEvents({ vaultRoot: root, roomId })).rejects.toThrow(
+      `collaboration/rooms/${roomId}/events/${target}`,
+    );
+  });
+
+  it("fails closed when an event correlates to itself", async () => {
+    const { roomId } = await seedCorrelated();
+    const eventsDir = join(root, "collaboration", "rooms", roomId, "events");
+    const names = await (await import("node:fs/promises")).readdir(eventsDir);
+    const target = names.find((name) => name.includes("agent-message"))!;
+    const selfId = target.replace(/\.md$/, "");
+    const { writeFile } = await import("node:fs/promises");
+    const original = await readFile(join(eventsDir, target), "utf8");
+    await writeFile(join(eventsDir, target), original.replace(/correlation_id: .+/, `correlation_id: ${selfId}`), "utf8");
+
+    await expect(listRoomEvents({ vaultRoot: root, roomId })).rejects.toThrow(
+      `collaboration/rooms/${roomId}/events/${target}`,
+    );
+  });
+});
