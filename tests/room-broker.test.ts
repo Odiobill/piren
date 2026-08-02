@@ -459,20 +459,24 @@ describe("RoomBroker terminal paths", () => {
     await broker.close();
   });
 
-  it("records exactly one launch_failure terminal event when the prompt is rejected after run_started", async () => {
+  it("records exactly one ambiguous terminal event when the prompt is rejected after run_started", async () => {
     const broker = makeBroker({ behaviors: ["prompt-fail"] });
     const roomId = await makeRoom();
 
     const outcome = await broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Go." });
     expect(outcome.status).toBe("failed");
     if (outcome.status !== "failed") throw new Error("unreachable");
-    expect(outcome.failureKind).toBe("launch_failure");
+    // ADR-0038 boundary: after the prompt handoff the broker cannot infer
+    // whether side effects occurred, so the failure is ambiguous, never
+    // launch_failure.
+    expect(outcome.failureKind).toBe("ambiguous");
 
     const events = await readEvents(root, roomId);
     expect(events).toHaveLength(3); // steward + run_started + run_finished
     const finished = byKind(events, "run_finished") ?? "";
     expect(finished).toContain("run_status: failed");
-    expect(finished).toContain("failure_kind: launch_failure");
+    expect(finished).toContain("failure_kind: ambiguous");
+    expect(finished).not.toContain("launch_failure");
     expect(finished).not.toContain("prompt rejected");
     expect(byKind(events, "agent_message")).toBeUndefined();
     expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
@@ -538,8 +542,17 @@ describe("RoomBroker terminal paths", () => {
 
     await broker.close();
     const outcomeTwo = await dispatchTwo;
-    expect(outcomeTwo.status).toBe("closed");
+    // Graceful close cancels the remaining run with a terminal record.
+    expect(outcomeTwo.status).toBe("cancelled");
     expect(clients.every((client) => client.stopped === 1)).toBe(true);
+
+    const afterClose = await readEvents(root, roomId);
+    const allCancelled = afterClose.filter((entry) => entry.content.includes("kind: run_cancelled"));
+    expect(allCancelled).toHaveLength(2);
+    if (outcomeTwo.status === "cancelled") {
+      const secondCancel = allCancelled.find((entry) => entry.content.includes(`correlation_id: ${outcomeTwo.stewardEventId}`));
+      expect(secondCancel?.content).toContain("run_status: cancelled");
+    }
   });
 
   it("settles a mid-run client exit once with a non-secret ambiguous failure and releases the key", async () => {
@@ -689,6 +702,163 @@ describe("RoomBroker approvals", () => {
     expect(() =>
       broker.respondToRoomApproval({ roomId, agent: "kimi", requestId: "req-1", response: { confirmed: true } }),
     ).toThrow("Unknown room approval");
+    await broker.close();
+  });
+});
+
+describe("RoomBroker close lifecycle", () => {
+  let root: string;
+  let clients: FakeRoomClient[];
+  let timers: ManualTimers;
+  let nonceSeq: number;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-room-broker-close-"));
+    clients = [];
+    timers = new ManualTimers();
+    nonceSeq = 0;
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function makeBroker(behaviors: FakeBehavior[]): RoomBroker {
+    return new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi", "thor"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+      clientFactory: () => {
+        const client = new FakeRoomClient(behaviors[clients.length] ?? "hang");
+        clients.push(client);
+        return client;
+      },
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      runTimeoutMs: 60_000,
+    });
+  }
+
+  async function makeRoom(participants: string[]): Promise<string> {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Close room",
+      participants,
+      now: () => new Date("2026-08-02T17:00:00.000Z"),
+    });
+    return room.id;
+  }
+
+  it("close during an active run writes exactly one run_cancelled, clears state, and waits for records before stopping clients", async () => {
+    const broker = makeBroker(["approval"]);
+    const roomId = await makeRoom(["kimi"]);
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Needs approval then hangs." });
+    await waitFor(() => broker.hasPendingApproval(roomId, "kimi", "req-1"));
+    expect(timers.pending).toBe(1);
+
+    await broker.close();
+    const outcome = await dispatch;
+    // Close finalization records cancellation, not an ambiguous failure.
+    expect(outcome.status).toBe("cancelled");
+
+    const events = await readEvents(root, roomId);
+    const cancelled = events.filter((entry) => entry.content.includes("kind: run_cancelled"));
+    expect(cancelled).toHaveLength(1);
+    expect(cancelled[0]?.content).toContain("run_status: cancelled");
+    expect(cancelled[0]?.content).not.toContain("failure_kind");
+    // The stale agent_end emitted by the shutdown abort wrote nothing extra.
+    expect(events.filter((entry) => entry.content.includes("kind: run_finished"))).toHaveLength(0);
+
+    expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
+    expect(broker.hasPendingApproval(roomId, "kimi", "req-1")).toBe(false);
+    expect(timers.pending).toBe(0);
+    expect(clients[0]?.aborted).toBe(1);
+    expect(clients[0]?.stopped).toBe(1);
+
+    // Idempotent second close creates no record.
+    await broker.close();
+    expect(await readEvents(root, roomId)).toHaveLength(events.length);
+  });
+
+  it("close with no active run is idempotent and writes no records", async () => {
+    const broker = makeBroker([]);
+    const roomId = await makeRoom(["kimi"]);
+    await broker.close();
+    await broker.close();
+    expect(await readEvents(root, roomId)).toEqual([]);
+    await expect(broker.dispatchRoomMention({ roomId, agent: "kimi", text: "late" })).rejects.toThrow("closed");
+  });
+});
+
+describe("RoomBroker dead-session lifecycle", () => {
+  let root: string;
+  let clients: FakeRoomClient[];
+  let timers: ManualTimers;
+  let nonceSeq: number;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-room-broker-dead-"));
+    clients = [];
+    timers = new ManualTimers();
+    nonceSeq = 0;
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function makeBroker(behaviors: FakeBehavior[]): RoomBroker {
+    return new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi", "thor"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+      clientFactory: () => {
+        const client = new FakeRoomClient(behaviors[clients.length] ?? "complete");
+        clients.push(client);
+        return client;
+      },
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      runTimeoutMs: 60_000,
+    });
+  }
+
+  it("forgets only the exited room-agent session so the next explicit mention starts a distinct fresh client", async () => {
+    // kimi's first client exits mid-run; thor's client completes and stays cached.
+    const broker = makeBroker(["exit-mid-run", "complete", "complete", "complete"]);
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Dead session room",
+      participants: ["kimi", "thor"],
+      now: () => new Date("2026-08-02T17:00:00.000Z"),
+    });
+    const roomId = room.id;
+
+    const failedOutcome = await broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Dies." });
+    expect(failedOutcome.status).toBe("failed");
+    expect(clients).toHaveLength(1);
+
+    // Unrelated room-agent session: completed run, client stays cached.
+    const thorOutcome = await broker.dispatchRoomMention({ roomId, agent: "thor", text: "Thor lives." });
+    expect(thorOutcome.status).toBe("completed");
+    expect(clients).toHaveLength(2);
+
+    // A NEW explicit mention for the exited room × agent starts a fresh,
+    // distinct client — not a retry of the failed run, not the dead client.
+    const retryOutcome = await broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Fresh start." });
+    expect(retryOutcome.status).toBe("completed");
+    expect(clients).toHaveLength(3);
+    expect(clients[2]).not.toBe(clients[0]);
+    expect(clients[2]?.prompts[0]).toContain("Fresh start.");
+
+    // The unrelated thor session was NOT forgotten: reuses its cached client.
+    const thorAgain = await broker.dispatchRoomMention({ roomId, agent: "thor", text: "Thor again." });
+    expect(thorAgain.status).toBe("completed");
+    expect(clients).toHaveLength(3);
+
     await broker.close();
   });
 });

@@ -117,6 +117,24 @@ export class TransportSessionManager {
         session.lastUsedAt = this.now();
         return { status: "completed", tokensBefore: result.tokensBefore, estimatedTokensAfter: result.estimatedTokensAfter };
     }
+    /**
+     * Remove exactly one known-dead session from the map WITHOUT stopping its
+     * client. Use only when the client's process has already exited (stopping
+     * a dead client is meaningless and error-prone). The optional
+     * expectedClient guard refuses to forget a session that was replaced in
+     * the meantime. A later explicit getSession for the same key builds a
+     * fresh client. Returns true only when the exact session was forgotten.
+     */
+    forgetSession(transport, conversationId, expectedClient) {
+        const key = sessionKey(transport, conversationId);
+        const existing = this.sessions.get(key);
+        if (!existing)
+            return false;
+        if (expectedClient !== undefined && existing.client !== expectedClient)
+            return false;
+        this.sessions.delete(key);
+        return true;
+    }
     async closeIdleSessions(maxIdleMs) {
         const cutoff = this.now() - maxIdleMs;
         let closed = 0;

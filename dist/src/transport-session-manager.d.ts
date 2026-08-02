@@ -81,6 +81,15 @@ export declare class TransportSessionManager<TClient extends TransportRpcClient 
      * does not change automatic-compaction policy. RPC errors reject.
      */
     compact(transport: string, conversationId: string): Promise<TransportCompactOutcome>;
+    /**
+     * Remove exactly one known-dead session from the map WITHOUT stopping its
+     * client. Use only when the client's process has already exited (stopping
+     * a dead client is meaningless and error-prone). The optional
+     * expectedClient guard refuses to forget a session that was replaced in
+     * the meantime. A later explicit getSession for the same key builds a
+     * fresh client. Returns true only when the exact session was forgotten.
+     */
+    forgetSession(transport: string, conversationId: string, expectedClient?: TClient): boolean;
     closeIdleSessions(maxIdleMs: number): Promise<number>;
     closeAll(): Promise<void>;
     private assertRunnable;

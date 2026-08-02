@@ -179,13 +179,19 @@ export class RoomBroker {
             correlationId: stewardEvent.id,
         });
         run.unsubscribeEvents = run.client.onEvent((event) => this.handleClientEvent(run, event));
-        run.unsubscribeExit = run.client.onExit(() => this.settle(run, "exit"));
+        run.unsubscribeExit = run.client.onExit(() => {
+            run.clientExited = true;
+            this.settle(run, "ambiguous");
+        });
         run.timeoutHandle = this.timers.setTimeout(() => this.settle(run, "timeout"), this.runTimeoutMs);
         try {
             await run.client.prompt(buildRoomMentionPrompt({ roomId: input.roomId, agent: input.agent, text }));
         }
         catch {
-            this.settle(run, "launch_failure");
+            // ADR-0038 boundary: the prompt was handed to Pi after run_started, so
+            // the broker cannot infer whether side effects occurred. Classified by
+            // control-flow position only, never by error text.
+            this.settle(run, "ambiguous");
         }
         await done;
         return await this.finalizeRun(run, input, appendBase);
@@ -226,10 +232,9 @@ export class RoomBroker {
         run.resolveDone();
     }
     async finalizeRun(run, input, appendBase) {
-        const kind = run.settleKind ?? "closed";
-        if (kind === "closed") {
-            return { status: "closed", roomId: input.roomId, agent: input.agent, stewardEventId: run.stewardEventId };
-        }
+        // settle() always assigns a kind before resolving the wait; the fallback
+        // is defensive only.
+        const kind = run.settleKind ?? "cancel";
         if (kind === "timeout" || kind === "cancel") {
             // Abort only the exact room-agent client. Stale agent_end emitted by
             // the abort is ignored: listeners were unsubscribed at settle time.
@@ -271,28 +276,7 @@ export class RoomBroker {
             }
             return outcome;
         }
-        if (kind === "launch_failure") {
-            const terminal = await appendRoomEvent({
-                ...appendBase,
-                kind: "run_finished",
-                authorKind: "system",
-                author: "system",
-                body: "The run could not be started.",
-                runStatus: "failed",
-                failureKind: "launch_failure",
-                correlationId: run.stewardEventId,
-            });
-            run.terminalEventId = terminal.id;
-            return {
-                status: "failed",
-                roomId: input.roomId,
-                agent: input.agent,
-                stewardEventId: run.stewardEventId,
-                terminalEventId: terminal.id,
-                failureKind: "launch_failure",
-            };
-        }
-        if (kind === "exit") {
+        if (kind === "ambiguous") {
             const terminal = await appendRoomEvent({
                 ...appendBase,
                 kind: "run_finished",
@@ -304,6 +288,12 @@ export class RoomBroker {
                 correlationId: run.stewardEventId,
             });
             run.terminalEventId = terminal.id;
+            if (run.clientExited === true) {
+                // The cached client is dead: forget exactly this composite session
+                // (without stopping it) so a later explicit mention builds a fresh
+                // client. Never a retry of the failed run; unrelated sessions stay.
+                this.sessions.forgetSession("room", run.key, run.client);
+            }
             return {
                 status: "failed",
                 roomId: input.roomId,
@@ -385,17 +375,22 @@ export class RoomBroker {
         return { status: "cancelled", roomId, agent, terminalEventId: run.terminalEventId };
     }
     /**
-     * Close the broker: settle every active run silently (no further room
-     * records), clear all pending approvals, and stop all room sessions.
+     * Close the broker: cancel every active run exactly once with a durable
+     * non-secret run_cancelled record, wait for all finalization writes, then
+     * stop all room sessions. Stale agent_end events from shutdown append
+     * nothing. Idempotent; a close with no active runs writes no records.
      */
     async close() {
         if (this.closed)
             return;
         this.closed = true;
+        const finalizations = [];
         for (const run of [...this.activeRuns.values()]) {
-            this.settle(run, "closed");
+            this.settle(run, "cancel");
+            finalizations.push(run.finalized);
         }
         this.pendingApprovals.clear();
+        await Promise.all(finalizations);
         await this.sessions.closeAll();
     }
 }

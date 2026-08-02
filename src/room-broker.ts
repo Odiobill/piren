@@ -62,8 +62,7 @@ export type RoomDispatchOutcome =
   | { status: "completed"; roomId: string; agent: string; stewardEventId: string; agentEventId?: string; terminalEventId: string }
   | { status: "failed"; roomId: string; agent: string; stewardEventId: string; terminalEventId: string; failureKind: RoomRunFailureKind }
   | { status: "timed_out"; roomId: string; agent: string; stewardEventId: string; terminalEventId: string }
-  | { status: "cancelled"; roomId: string; agent: string; stewardEventId: string; terminalEventId: string }
-  | { status: "closed"; roomId: string; agent: string; stewardEventId: string };
+  | { status: "cancelled"; roomId: string; agent: string; stewardEventId: string; terminalEventId: string };
 
 export type RoomAbortOutcome =
   | { status: "cancelled"; roomId: string; agent: string; terminalEventId: string }
@@ -78,7 +77,7 @@ export interface RoomApprovalInput {
 
 export const DEFAULT_ROOM_RUN_TIMEOUT_MS = 120_000;
 
-type RunSettleKind = "completed" | "launch_failure" | "exit" | "timeout" | "cancel" | "closed";
+type RunSettleKind = "completed" | "ambiguous" | "timeout" | "cancel";
 
 interface ActiveRun {
   key: string;
@@ -88,6 +87,8 @@ interface ActiveRun {
   stewardEventId: string;
   settled: boolean;
   settleKind?: RunSettleKind;
+  /** True only when the settle was caused by the client's process exiting. */
+  clientExited?: boolean;
   terminalEventId?: string;
   events: RpcEvent[];
   timeoutHandle?: unknown;
@@ -299,13 +300,19 @@ export class RoomBroker {
     });
 
     run.unsubscribeEvents = run.client.onEvent((event) => this.handleClientEvent(run, event));
-    run.unsubscribeExit = run.client.onExit(() => this.settle(run, "exit"));
+    run.unsubscribeExit = run.client.onExit(() => {
+      run.clientExited = true;
+      this.settle(run, "ambiguous");
+    });
     run.timeoutHandle = this.timers.setTimeout(() => this.settle(run, "timeout"), this.runTimeoutMs);
 
     try {
       await run.client.prompt(buildRoomMentionPrompt({ roomId: input.roomId, agent: input.agent, text }));
     } catch {
-      this.settle(run, "launch_failure");
+      // ADR-0038 boundary: the prompt was handed to Pi after run_started, so
+      // the broker cannot infer whether side effects occurred. Classified by
+      // control-flow position only, never by error text.
+      this.settle(run, "ambiguous");
     }
 
     await done;
@@ -352,11 +359,9 @@ export class RoomBroker {
     input: RoomMentionInput,
     appendBase: { vaultRoot: string; roomId: string; now: () => Date; nonce?: () => string },
   ): Promise<RoomDispatchOutcome> {
-    const kind = run.settleKind ?? "closed";
-
-    if (kind === "closed") {
-      return { status: "closed", roomId: input.roomId, agent: input.agent, stewardEventId: run.stewardEventId };
-    }
+    // settle() always assigns a kind before resolving the wait; the fallback
+    // is defensive only.
+    const kind = run.settleKind ?? "cancel";
 
     if (kind === "timeout" || kind === "cancel") {
       // Abort only the exact room-agent client. Stale agent_end emitted by
@@ -401,29 +406,7 @@ export class RoomBroker {
       return outcome;
     }
 
-    if (kind === "launch_failure") {
-      const terminal = await appendRoomEvent({
-        ...appendBase,
-        kind: "run_finished",
-        authorKind: "system",
-        author: "system",
-        body: "The run could not be started.",
-        runStatus: "failed",
-        failureKind: "launch_failure",
-        correlationId: run.stewardEventId,
-      });
-      run.terminalEventId = terminal.id;
-      return {
-        status: "failed",
-        roomId: input.roomId,
-        agent: input.agent,
-        stewardEventId: run.stewardEventId,
-        terminalEventId: terminal.id,
-        failureKind: "launch_failure",
-      };
-    }
-
-    if (kind === "exit") {
+    if (kind === "ambiguous") {
       const terminal = await appendRoomEvent({
         ...appendBase,
         kind: "run_finished",
@@ -435,6 +418,12 @@ export class RoomBroker {
         correlationId: run.stewardEventId,
       });
       run.terminalEventId = terminal.id;
+      if (run.clientExited === true) {
+        // The cached client is dead: forget exactly this composite session
+        // (without stopping it) so a later explicit mention builds a fresh
+        // client. Never a retry of the failed run; unrelated sessions stay.
+        this.sessions.forgetSession("room", run.key, run.client);
+      }
       return {
         status: "failed",
         roomId: input.roomId,
@@ -521,16 +510,21 @@ export class RoomBroker {
   }
 
   /**
-   * Close the broker: settle every active run silently (no further room
-   * records), clear all pending approvals, and stop all room sessions.
+   * Close the broker: cancel every active run exactly once with a durable
+   * non-secret run_cancelled record, wait for all finalization writes, then
+   * stop all room sessions. Stale agent_end events from shutdown append
+   * nothing. Idempotent; a close with no active runs writes no records.
    */
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    const finalizations: Promise<void>[] = [];
     for (const run of [...this.activeRuns.values()]) {
-      this.settle(run, "closed");
+      this.settle(run, "cancel");
+      finalizations.push(run.finalized);
     }
     this.pendingApprovals.clear();
+    await Promise.all(finalizations);
     await this.sessions.closeAll();
   }
 }

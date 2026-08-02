@@ -162,3 +162,41 @@ describe("TransportSessionManager", () => {
     await expect(manager.compact("telegram", "chat-1")).rejects.toThrow("pi rpc exploded");
   });
 });
+
+describe("TransportSessionManager forgetSession", () => {
+  it("forgets only the exact known-dead session without stopping its client", async () => {
+    const created: FakeTransportClient[] = [];
+    const manager = new TransportSessionManager<FakeTransportClient>({
+      runnableAgents: ["piren", "thor"],
+      defaultAgent: "piren",
+      targetBuilder: async () => target,
+      clientFactory: () => {
+        const client = new FakeTransportClient();
+        created.push(client);
+        return client;
+      },
+    });
+
+    await manager.getSession("room", "room-1:kimi", "piren");
+    await manager.getSession("room", "room-1:thor", "thor");
+    expect(created).toHaveLength(2);
+
+    // Wrong expected client refuses to forget.
+    expect(manager.forgetSession("room", "room-1:kimi", created[1]!)).toBe(false);
+    expect(manager.getActiveAgent("room", "room-1:kimi")).toBe("piren");
+
+    // Exact known-dead session is forgotten WITHOUT stopping the client.
+    expect(manager.forgetSession("room", "room-1:kimi", created[0]!)).toBe(true);
+    expect(created[0]!.stopped).toBe(0);
+    expect(manager.getActiveAgent("room", "room-1:kimi")).toBeNull();
+    // Unrelated session untouched.
+    expect(manager.getActiveAgent("room", "room-1:thor")).toBe("thor");
+
+    // Unknown key is a no-op.
+    expect(manager.forgetSession("room", "room-1:kimi")).toBe(false);
+
+    // A later explicit getSession builds a fresh client.
+    await manager.getSession("room", "room-1:kimi", "piren");
+    expect(created).toHaveLength(3);
+  });
+});
