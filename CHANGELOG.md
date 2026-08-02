@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.7] - 2026-08-02
 
-Discord gateway resiliency patch. This candidate is not yet tagged or published.
+Discord gateway resiliency patch. Published as `@odiobill/piren@0.1.7` to npm `latest` through the protected tag-only OIDC trusted-publishing workflow from immutable tag `v0.1.7` (`30c5e88`); registry metadata carries a SLSA provenance attestation (`npm publish --provenance`, `https://slsa.dev/provenance/v1`).
 
 ### Fixed
 

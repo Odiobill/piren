@@ -114,7 +114,7 @@ Project coding-agent instructions live in [AGENTS.md](AGENTS.md). Stable impleme
 
 ## Releases and updates
 
-Piren 0.1.6 is the current stable release on npm. Update an existing global install with:
+Piren 0.1.7 is the current stable release on npm. Update an existing global install with:
 
 ```bash
 piren update
