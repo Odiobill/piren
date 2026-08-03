@@ -13,7 +13,7 @@ export function AboutView({ phase, authRequired }: { phase: ShellPhase; authRequ
     phase === "ready-local"
       ? "Gateway reachable — no token required."
       : phase === "token-ready"
-        ? "Token ready — validated by your first protected request."
+        ? "Token ready — not yet validated; validation occurs only after the first protected request succeeds."
         : phase === "token-accepted"
           ? "Token accepted — a protected request succeeded."
           : "Connected.";

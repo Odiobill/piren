@@ -86,6 +86,15 @@ describe("app shell source surface (static)", () => {
     expect(about).toContain("not shown or edited");
   });
 
+  it("About never claims token readiness is validated before a successful protected request", async () => {
+    const sources = await readSourceFiles();
+    const about = sources.get("AboutView.tsx") ?? "";
+    // The token-ready status must use explicit future/non-validation wording.
+    expect(about).toContain("not yet validated");
+    // The ambiguous already-validated phrasing is forbidden.
+    expect(about).not.toContain("validated by your first");
+  });
+
   it("the Agents page renders the roster non-interactively with a chat-unavailable note", async () => {
     const sources = await readSourceFiles();
     const agents = sources.get("AgentsView.tsx") ?? "";
