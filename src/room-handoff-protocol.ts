@@ -206,8 +206,13 @@ export function resolveRoomMentionToolResult(value: string | undefined | null): 
     case "ok":
       return { ok: true, reply: result.reply };
     case "rejected":
-      return { ok: false, error: `room mention was rejected: ${result.reason}` };
+      // Fixed bounded non-secret error. The broker's authorization reason may
+      // legitimately embed the room id (for example "a run is already active
+      // for room '<id>'"), and R2b forbids exposing room/internal ids through
+      // the tool, so the broker-provided reason is NEVER interpolated.
+      return { ok: false, error: "room mention was rejected by the room broker" };
     case "failed":
+      // failureKind is a fixed enum (launch_failure | ambiguous), never an id.
       return { ok: false, error: `room mention failed (${result.failureKind})` };
     case "timed_out":
       return { ok: false, error: "room mention timed out" };

@@ -300,10 +300,13 @@ describe("room mention activation flag and request placeholder (R2b)", () => {
     expect(resolveRoomMentionToolResult("{not json").ok).toBe(false);
     // version mismatch.
     expect(resolveRoomMentionToolResult(JSON.stringify({ v: 999, status: "ok", reply: "x" })).ok).toBe(false);
-    // rejected.
+    // rejected: the broker reason is never interpolated (R2b no-internal-id boundary).
     const rejected = resolveRoomMentionToolResult(renderHandoffResultValue({ status: "rejected", reason: "target not runnable" }));
     expect(rejected.ok).toBe(false);
-    if (!rejected.ok) expect(rejected.error).toContain("target not runnable");
+    if (!rejected.ok) {
+      expect(rejected.error).toMatch(/rejected/i);
+      expect(rejected.error).not.toContain("target not runnable");
+    }
     // failed.
     const failed = resolveRoomMentionToolResult(renderHandoffResultValue({ status: "failed", reason: "x", failureKind: "ambiguous" }));
     expect(failed.ok).toBe(false);
@@ -312,5 +315,44 @@ describe("room mention activation flag and request placeholder (R2b)", () => {
     expect(resolveRoomMentionToolResult(renderHandoffResultValue({ status: "timed_out" })).ok).toBe(false);
     // cancelled status.
     expect(resolveRoomMentionToolResult(renderHandoffResultValue({ status: "cancelled" })).ok).toBe(false);
+  });
+});
+
+describe("room_mention tool error secrecy (R2b review)", () => {
+  it("a rejected result never interpolates a broker reason that may contain a room id or correlation text", () => {
+    const roomId = "20260803T110000000Z-secret-room-xyzzy";
+    const leaky = renderHandoffResultValue({
+      status: "rejected",
+      reason: `a run is already active for room '${roomId}' and agent 'thor'`,
+    });
+    const outcome = resolveRoomMentionToolResult(leaky);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).not.toContain(roomId);
+      expect(outcome.error).not.toContain("secret-room-xyzzy");
+      // Fixed bounded non-secret error.
+      expect(outcome.error).toMatch(/rejected/i);
+    }
+
+    const participantLeak = renderHandoffResultValue({
+      status: "rejected",
+      reason: `agent 'thor' is not a participant of room '${roomId}'`,
+    });
+    const outcome2 = resolveRoomMentionToolResult(participantLeak);
+    expect(outcome2.ok).toBe(false);
+    if (!outcome2.ok) {
+      expect(outcome2.error).not.toContain(roomId);
+    }
+  });
+
+  it("a failed result keeps its bounded failureKind and never interpolates a reason with internal ids", () => {
+    const roomId = "20260803T110000000Z-secret-room-xyzzy";
+    const value = renderHandoffResultValue({ status: "failed", reason: `worker failed in room '${roomId}'`, failureKind: "ambiguous" });
+    const outcome = resolveRoomMentionToolResult(value);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.error).toContain("ambiguous");
+      expect(outcome.error).not.toContain(roomId);
+    }
   });
 });

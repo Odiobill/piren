@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import extension from "../src/pi-extension.js";
 import type { AlertMirrorSenders } from "../src/alert-mirror.js";
-import { ROOM_HANDOFF_PROTOCOL_VERSION, ROOM_HANDOFF_REQUEST_TITLE } from "../src/room-handoff-protocol.js";
+import { ROOM_HANDOFF_MAX_REPLY_LENGTH, ROOM_HANDOFF_PROTOCOL_VERSION, ROOM_HANDOFF_REQUEST_TITLE } from "../src/room-handoff-protocol.js";
 
 let root: string;
 let agentDir: string;
@@ -1518,13 +1518,16 @@ describe("room_mention gated extension tool (ADR-0041 R2b)", () => {
     }
   });
 
-  it("a rejected response exposes only the bounded non-secret reason, never room ids or event ids", async () => {
+  it("a rejected response is a fixed non-secret error and never interpolates the broker reason", async () => {
     const pi = fakePi();
     await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
     const { ctx } = inputCtx({ value: JSON.stringify({ v: 1, status: "rejected", reason: "target not runnable" }) });
     const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, ctx);
     const text = (result.content as { text: string }[])[0]!.text;
-    expect(text).toContain("target not runnable");
+    expect(result.isError).toBe(true);
+    expect(text).toMatch(/rejected/i);
+    // The broker-provided reason is never interpolated (R2b no-internal-id boundary).
+    expect(text).not.toContain("target not runnable");
     expect(text).not.toContain("collaboration/rooms");
     expect(text).not.toContain("2026");
   });
@@ -1544,5 +1547,57 @@ describe("room_mention gated extension tool (ADR-0041 R2b)", () => {
     // ctx without ui.input (e.g. print mode).
     const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, { ui: {} });
     expect(result.isError).toBe(true);
+  });
+});
+
+describe("room_mention tool error secrecy and oversized reply (R2b review)", () => {
+  const enabledEnv = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local", PIREN_ROOM_MENTION_ENABLED: "1" };
+
+  function inputCtx(canned: { value?: string | undefined; calls?: { title: unknown; placeholder: unknown }[] }) {
+    const calls = canned.calls ?? [];
+    return {
+      calls,
+      ctx: {
+        ui: {
+          input: async (title: unknown, placeholder: unknown) => {
+            calls.push({ title, placeholder });
+            return canned.value;
+          },
+        },
+      },
+    };
+  }
+
+  it("a rejected handoff whose broker reason contains a room id is shown as a fixed non-secret error (content and details.error)", async () => {
+    const roomId = "20260803T110000000Z-secret-room-xyzzy";
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
+    const { calls, ctx } = inputCtx({
+      value: JSON.stringify({ v: 1, status: "rejected", reason: `a run is already active for room '${roomId}' and agent 'thor'` }),
+    });
+    const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    const text = (result.content as { text: string }[])[0]!.text;
+    expect(text).not.toContain(roomId);
+    expect(text).not.toContain("secret-room-xyzzy");
+    expect(text).toMatch(/rejected/i);
+    const detailsError = (result.details as { error?: string }).error ?? "";
+    expect(detailsError).not.toContain(roomId);
+    expect(detailsError).not.toContain("secret-room-xyzzy");
+    // Exactly one input attempt; no retry.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("an oversized ok.reply in the broker response is an explicit error after exactly one input attempt", async () => {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
+    const oversized = "R".repeat(ROOM_HANDOFF_MAX_REPLY_LENGTH + 10);
+    const { calls, ctx } = inputCtx({ value: JSON.stringify({ v: 1, status: "ok", reply: oversized }) });
+    const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(1);
+    // The oversized reply is not surfaced as a successful reply.
+    const text = (result.content as { text: string }[])[0]!.text;
+    expect(text).not.toBe(oversized);
   });
 });
