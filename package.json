@@ -21,7 +21,7 @@
     "prepack": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json && node -e \"require('fs').cpSync('public','dist/public',{recursive:true})\"",
+    "build": "tsc -p tsconfig.build.json && vite build --config web/vite.config.ts",
     "smoke": "tsx scripts/smoke.ts",
     "clean-install:check": "tsx scripts/clean-install-check.ts"
   },
@@ -31,8 +31,13 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
+    "vite": "^8.2.0",
     "vitest": "^4.0.15"
   }
 }

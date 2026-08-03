@@ -1022,16 +1022,17 @@ async function main() {
             await openServer.close();
         }
         console.log("gateway no-token localhost open access: ok");
-        // Phase 3 frontend: static file serving. The gateway serves index.html
-        // at GET / and other static assets by relative path with MIME detection.
-        // API routes take priority over static files.
+        // Phase 3 frontend: static file serving. The gateway serves the built
+        // workbench (dist/public, emitted by the vite build) at GET / and other
+        // static assets by relative path with MIME detection. API routes take
+        // priority over static files.
         const staticServer = new GatewayServer({
             target: { command: process.execPath, args: [fakePiScript], cwd: process.cwd(), env: process.env },
-            publicDir: join(process.cwd(), "public"),
+            publicDir: join(process.cwd(), "dist", "public"),
         });
         try {
             const staticHandle = await staticServer.start();
-            // GET / serves index.html
+            // GET / serves the workbench index.html
             const indexRes = await fetch(`http://${staticHandle.hostname}:${staticHandle.port}/`);
             if (indexRes.status !== 200)
                 throw new Error(`index HTTP ${indexRes.status}`);
@@ -1039,14 +1040,18 @@ async function main() {
                 throw new Error("index did not return text/html");
             }
             const indexBody = await indexRes.text();
-            if (!indexBody.includes("Piren Gateway"))
-                throw new Error("index.html did not contain expected title");
-            // GET /app.js serves JavaScript
-            const jsRes = await fetch(`http://${staticHandle.hostname}:${staticHandle.port}/app.js`);
-            if (jsRes.status !== 200)
-                throw new Error(`app.js HTTP ${jsRes.status}`);
-            if (!jsRes.headers.get("content-type")?.includes("javascript")) {
-                throw new Error("app.js did not return javascript content-type");
+            if (!indexBody.includes("id=\"root\"")) {
+                throw new Error("built index.html did not contain the React mount element");
+            }
+            // The entry asset referenced by the built index.html must be servable.
+            const entryMatch = indexBody.match(/src="(\/assets\/[^"]+\.js)"/);
+            if (!entryMatch?.[1])
+                throw new Error("built index.html did not reference an entry asset");
+            const entryRes = await fetch(`http://${staticHandle.hostname}:${staticHandle.port}${entryMatch[1]}`);
+            if (entryRes.status !== 200)
+                throw new Error(`entry asset HTTP ${entryRes.status}`);
+            if (!entryRes.headers.get("content-type")?.includes("javascript")) {
+                throw new Error("entry asset did not return javascript content-type");
             }
             // API routes still take priority over static files
             const apiRes = await fetch(`http://${staticHandle.hostname}:${staticHandle.port}/api/auth/info`);
@@ -1056,7 +1061,7 @@ async function main() {
         finally {
             await staticServer.close();
         }
-        console.log("gateway static file serving: ok");
+        console.log("gateway static file serving (built workbench): ok");
         // Phase 3 tracer bullet 8: session resume and abort. The RPC client gained
         // abort/getMessages/switchSession; the gateway exposes them as POST
         // /api/chat/abort, GET /api/chat/messages, POST /api/chat/resume, and

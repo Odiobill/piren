@@ -1,11 +1,7 @@
 # Piren
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="public/piren-logo-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="public/piren-logo-light.svg">
-    <img alt="Piren animated logo" src="public/piren-logo-light.svg" width="420">
-  </picture>
+  <img alt="Piren logo" src="web/src/assets/piren-logo.png" width="220">
 </p>
 
 Piren is a lightweight, local-first agent runtime on top of [Pi Coding Agent](https://pi.dev/). It keeps agent identity, operational state, logs, sessions, task exchange, skills, cron jobs, and cumulative project knowledge in an inspectable Markdown vault.
@@ -50,6 +46,28 @@ piren status
 
 Contributor, emergency, or offline installs from GitHub or a local tarball are documented in [Getting started](docs/getting-started.md) and [Operations](docs/operations.md).
 
+## Web workbench (local testing)
+
+The gateway serves a React/Vite workbench shell built from `web/` and emitted to `dist/public`. It is the in-place replacement for the retired no-build static UI: the shell probes the public auth endpoint, offers an in-memory-only bearer-token entry when the gateway requires one, and shows a steward-facing "coming next" state. Room behavior (navigator, timeline, dispatch, approvals) arrives in later separately-gated slices; read-only vault/graph navigation is deferred to a later phase.
+
+From a source checkout, build the workbench and start the gateway against your local config:
+
+```bash
+npm run build                      # tsc -> dist/src + vite build -> dist/public
+piren gateway --port 7317          # uses your ~/.config/piren/config.yml vault and agents
+```
+
+Then open **http://127.0.0.1:7317/** in a browser. A source `piren gateway` requires the build to have run first (the vite build emits `dist/public`); until then static GETs return 404. If the gateway is bound to a non-localhost host, pass `--token <token>` or set `PIREN_TOKEN`; the token is kept in memory only and is never written to storage.
+
+Acceptance checklist for the workbench shell:
+
+- [ ] `GET /` returns the workbench `index.html` with the Piren logo in the header.
+- [ ] The page shows "Checking gateway authentication…" then either the token form (non-localhost with token) or the "Workbench shell ready" card.
+- [ ] Entering the token connects and shows the "Authenticated" status; the token is not persisted across a reload.
+- [ ] The "Coming next" card lists R3b-2…R3b-6; no room/chat/vault API calls are made by the shell.
+- [ ] The page is keyboard-usable (Tab/Enter), shows visible focus, and reads sensibly with a screen reader.
+
+
 ## Feature overview
 
 - Vault-native agent identity: `team/<agent>/SOUL.md`, `MEMORY.md`, config, inbox, sessions, logs, devices, skills, and cron.
@@ -59,7 +77,7 @@ Contributor, emergency, or offline installs from GitHub or a local tarball are d
 - Agent groups and fallback: group-scoped skills (`shared < group < agent`), read-only fallback recommendation via `piren agents --fallback <agent>`, filtered by local runnable policy and same-group membership. No automatic rerouting.
 - Pi package extensibility: install extra Pi extensions through npm packages declared in local Piren config.
 - Gateway process isolation: web, Telegram, Discord, and OpenAI-compatible API surfaces drive Pi through RPC, not in-process embedding.
-- Minimal web UI: agent selection, chat streaming with Markdown rendering, steering, approval gates, read-only vault browser, read-only knowledge graph, and read-only context usage indicator. No model or configuration controls.
+- Minimal web UI: React/Vite workbench shell with a public auth probe, in-memory bearer-token entry, and an authenticated shell; room navigator, timeline, dispatch, and approval/abort controls arrive in later separately-gated slices. No model or configuration controls.
 - Vault-backed cron: Markdown cron job files with active-device ownership, atomic claiming, and inspectable run records.
 - Scheduler: `piren scheduler --dry-run` plans inbox task and cron job claims with zero LLM calls; `piren scheduler --once` runs one bounded claim-first tick; `piren scheduler` runs the opt-in loop until SIGINT/SIGTERM. Uses device heartbeat priorities and active-device-priority ownership, with conservative one-at-a-time execution and no hidden state.
 - Service lifecycle: systemd user units with tmux plus `@reboot` cron fallback for gateway, Telegram, Discord, and the scheduler. Inspectable, reversible files under `~/.config/piren/services/`.

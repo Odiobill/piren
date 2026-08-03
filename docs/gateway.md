@@ -26,7 +26,7 @@ Defaults:
 
 - host: `127.0.0.1`
 - port: `7317`
-- static UI: served from Piren's packaged `public/` directory
+- static UI: the React/Vite workbench shell, built from `web/` and served from `dist/public`. A source `piren gateway` requires `npm run build` first so `dist/public` exists.
 
 ## Chat streaming protocol
 
@@ -48,20 +48,16 @@ Open:
 http://127.0.0.1:7317/
 ```
 
-The UI provides:
+The UI provides (build-foundation slice):
 
-- agent selection from the locally runnable set
-- chat with token streaming
-- steering and follow-up
-- approval gates
-- read-only vault browser
-- read-only OKF knowledge graph
-- session list and resume support
-- abort button for runaway turns
-- read-only context usage indicator
-- in-memory Bearer token entry when auth is required
+- public auth probe (`GET /api/auth/info`) with loading/error states
+- in-memory Bearer token entry when auth is required (never written to storage)
+- an authenticated shell with a steward-facing "coming next" state
+- the Piren logo and responsive, keyboard-usable semantic layout
 
-The UI intentionally does not provide model selection, thinking controls, or configuration editing. Those belong in vault config and local config. The model badge shows the live model plus best-effort context-window usage percentage when Pi exposes token telemetry. API routes remain available for external integrations.
+The room workbench (navigator, timeline, structured dispatch, approvals, abort) arrives in later separately-gated slices; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
+
+The UI intentionally does not provide model selection, thinking controls, or configuration editing. Those belong in vault config and local config. API routes remain available for external integrations.
 
 ## Auth
 

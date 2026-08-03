@@ -28,6 +28,7 @@ import {
   type AgentManageDeps,
 } from "./agent-manage.js";
 import { resolveGatewayToken, assertAuthGate, isLocalhostBind, defaultTokenFilePath } from "./gateway-auth.js";
+import { resolvePublicDir } from "./public-dir.js";
 import { formatHelp, formatCommandHelp, isHelpRequest } from "./help.js";
 import {
   parseArgs,
@@ -151,14 +152,6 @@ import {
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 
-// Resolve the public directory (frontend static files) relative to this
-// module's location. From source: src/ -> ../public. From compiled dist:
-// dist/src/ -> ../public = dist/public. The build script copies public/
-// to dist/public/ so the path works in both environments.
-function resolvePublicDir(): string {
-  return join(thisDir, "..", "public");
-}
-
 // Guided local transport onboarding (ADR-0040). Resolves the local runnable
 // agent set, then drives the interactive configure flow with the real
 // readline prompt. Never launches a daemon, installs a service, or contacts
@@ -266,7 +259,7 @@ try {
       initialAgent: context.agentName,
       targetBuilder,
       authToken: resolvedToken.token !== "" ? resolvedToken.token : undefined,
-      publicDir: resolvePublicDir(),
+      publicDir: resolvePublicDir(thisDir),
     });
     const handle = await server.start(port ?? 7317, bindHost);
     console.log(`Piren gateway listening on http://${handle.hostname}:${handle.port}`);

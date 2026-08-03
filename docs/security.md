@@ -46,7 +46,7 @@ the thread belongs under an allowlisted channel.
 
 Piren resolves path-scoped tool paths against the vault root and rejects traversal outside it. Name-scoped tools validate path components before constructing vault paths.
 
-The web vault browser is read-only.
+The vault browser and graph API routes are read-only (external integrations; the integrated UI browser/graph is deferred to a later phase).
 
 ## Cron safety
 
