@@ -125,6 +125,8 @@ Collaboration rooms (available when the gateway is wired with a vault root, runn
 
 Room runs execute on isolated room × agent Pi RPC clients through the room broker, never the global chat client. Validation, conflict, and shutdown semantics are recorded as immutable room events under `collaboration/rooms/` (see [vault layout](vault-layout.md)).
 
+Agent-to-agent handoff (`room_mention`): within a broker-spawned room run only, the lead agent may call the reserved `room_mention(to, text)` extension tool to ask one permitted room participant for bounded help. The tool exists only inside flagged broker-spawned room runs (root leads and handoff workers); it is never registered for ordinary gateway/transport/ask/worker processes and is never triggered by rendered `@text`. Limits are fixed: at most one accepted handoff per steward root, at most one depth level (a worker cannot hand off again), and no repeated source → target pair in a root. The accepted handoff appends an immutable `agent_message` handoff record (author: lead, `addressed_agent`: worker, correlated to the steward root) and the worker's run records correlate to that handoff event, never directly to the root. There is no queue, retry, catch-up, or fallback; a rejected or failed handoff returns a bounded non-secret tool error. The reserved internal handoff request is not an approval: it never appears as `event: approval` on the room SSE stream and cannot be answered through `POST /api/rooms/<roomId>/approve`. The PWA/room workbench remains a later slice (R3) and is not implemented yet.
+
 Static UI:
 
 - `GET /`

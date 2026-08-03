@@ -28,6 +28,11 @@ let buffer = "";
 // Blocking-approval state: set by a "waitapprove" prompt, cleared by the
 // matching extension_ui_response or by abort.
 let waitingApprovalId = null;
+// Blocking reserved room-handoff state (ADR-0041 R2b): set by a
+// "roomhandoff" prompt, cleared by the matching extension_ui_response or by
+// abort. The id is deterministic so gateway proofs can assert the internal
+// handoff request is never answerable through the public approval path.
+let waitingHandoffId = null;
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -41,6 +46,33 @@ function handle(cmd) {
     }
     emit({ type: "response", command: "prompt", success: true, id: cmd.id });
     emit({ type: "agent_start" });
+
+    // Reserved R2b room_mention handoff: emit the exact reserved input
+    // envelope (deterministic id, reserved title, versioned placeholder with
+    // only to/text) and hold agent_end until the matching
+    // extension_ui_response (or abort) arrives. This models a broker-spawned
+    // flagged room client whose extension called ctx.ui.input() with the
+    // reserved envelope.
+    if (typeof cmd.message === "string" && cmd.message.includes("roomhandoff")) {
+      waitingHandoffId = "handoff-req-1";
+      const match = cmd.message.match(/roomhandoff(?:->([a-z0-9-]+))?(?::([\s\S]*))?/);
+      const target = match?.[1] ?? "thor";
+      const text = (match?.[2] ?? "").trim() || "help from the lead";
+      emit({
+        type: "extension_ui_request",
+        id: waitingHandoffId,
+        method: "input",
+        title: "piren:room-handoff",
+        placeholder: JSON.stringify({ v: 1, to: target, text }),
+      });
+      return;
+    }
+
+    // Blocking "hang": keep the run active (ack + agent_start, no agent_end)
+    // until abort. Used to hold a handoff worker mid-run for lifecycle proofs.
+    if (typeof cmd.message === "string" && cmd.message.includes("hang")) {
+      return;
+    }
 
     // If the message requests a BLOCKING approval ("waitapprove"), emit an
     // extension_ui_request and hold agent_end until the matching
@@ -87,6 +119,14 @@ function handle(cmd) {
   }
   if (cmd.type === "extension_ui_response") {
     // Pi resolves the pending request internally; no ack response is sent back.
+    // A response for a reserved handoff request completes the held turn.
+    if (waitingHandoffId !== null && cmd.id === waitingHandoffId) {
+      waitingHandoffId = null;
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Lead done." } });
+      emit({ type: "queue_update", steering: [], followUp: [] });
+      emit({ type: "agent_end", messages: [] });
+      return;
+    }
     // A response for a blocking waitapprove request completes the held turn.
     if (waitingApprovalId !== null && cmd.id === waitingApprovalId) {
       waitingApprovalId = null;
@@ -133,6 +173,7 @@ function handle(cmd) {
     // Model the real behavior: aborting a turn emits agent_end so the stream
     // drains and active SSE streams close cleanly.
     waitingApprovalId = null;
+    waitingHandoffId = null;
     emit({ type: "agent_end", messages: [] });
     return;
   }

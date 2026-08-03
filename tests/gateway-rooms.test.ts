@@ -665,3 +665,239 @@ describe("Gateway room malformed URL handling", () => {
     expect([400, 404]).toContain(traversal.status);
   });
 });
+
+describe("Gateway room handoff proof (ADR-0041 R2c)", () => {
+  let root: string;
+  let server: GatewayServer;
+  let handle: GatewayHandle;
+  let serverClosed = false;
+  const token = "test-room-token";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-gateway-rooms-handoff-"));
+    await initVault({ vaultRoot: root, agentName: "piren" });
+    server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: token,
+      vaultRoot: root,
+      runnableAgents: ["fake", "thor"],
+      targetBuilder: async () => fakePiTarget(),
+    });
+    handle = await server.start();
+    serverClosed = false;
+  });
+
+  afterEach(async () => {
+    if (!serverClosed) {
+      await server.close();
+    }
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function url(path: string): string {
+    return `http://${handle.hostname}:${handle.port}${path}`;
+  }
+
+  async function createRoom(participants: string[]): Promise<string> {
+    const response = await post(url("/api/rooms"), { title: "Handoff proof room", participants }, token);
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { room: { id: string } };
+    return body.room.id;
+  }
+
+  async function readEvents(roomId: string): Promise<Record<string, unknown>[]> {
+    const response = await fetch(url(`/api/rooms/${roomId}/events`), { headers: { authorization: `Bearer ${token}` } });
+    const body = (await response.json()) as { events: Record<string, unknown>[] };
+    return body.events;
+  }
+
+  async function eventCount(roomId: string, predicate: (event: Record<string, unknown>) => boolean): Promise<number> {
+    return (await readEvents(roomId)).filter(predicate).length;
+  }
+
+  /** Collect SSE event kinds and committed room_event bodies for one room. */
+  function collectRoomStream(roomId: string, collected: { kinds: string[]; roomEvents: Record<string, unknown>[] }): { cancel: () => void; done: Promise<void> } {
+    const controller = new AbortController();
+    const done = (async () => {
+      const response = await fetch(url(`/api/rooms/${roomId}/events/stream`), {
+        headers: { authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (true) {
+          const { value, done: finished } = await reader.read();
+          if (finished) break;
+          buffer += decoder.decode(value, { stream: true });
+          collected.kinds = [...buffer.matchAll(/event: ([a-z_]+)/g)].map((match) => match[1]!);
+          // The buffer is cumulative, so a full rescan yields the ordered
+          // sequence exactly once; reassign rather than push to avoid dupes.
+          collected.roomEvents = [...buffer.matchAll(/event: room_event\ndata: (\{.*\})\n\n/g)].map((match) =>
+            JSON.parse(match[1]!) as Record<string, unknown>,
+          );
+        }
+      } catch {
+        // aborted
+      }
+    })();
+    return { cancel: () => controller.abort(), done };
+  }
+
+  it("yields the durable and SSE-visible lead → worker handoff chain from one authenticated steward message", async () => {
+    const roomId = await createRoom(["fake", "thor"]);
+
+    const collected: { kinds: string[]; roomEvents: Record<string, unknown>[] } = { kinds: [], roomEvents: [] };
+    const stream = collectRoomStream(roomId, collected);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const response = await post(
+      url(`/api/rooms/${roomId}/messages`),
+      { agent: "fake", text: "roomhandoff->thor: Summarize the report." },
+      token,
+    );
+    expect(response.status).toBe(200);
+    const outcome = (await response.json()) as { outcome: { status: string } };
+    expect(outcome.outcome.status).toBe("completed");
+
+    const events = await readEvents(roomId);
+    expect(events.map((event) => event.kind)).toEqual([
+      "steward_message",
+      "run_started",
+      "agent_message",
+      "run_started",
+      "agent_message",
+      "run_finished",
+      "agent_message",
+      "run_finished",
+    ]);
+
+    const chain = events as Record<string, string>[];
+    const S = chain[0]!;
+    const leadStarted = chain[1]!;
+    const H = chain[2]!;
+    const workerStarted = chain[3]!;
+    const workerReply = chain[4]!;
+    const workerFinished = chain[5]!;
+    const leadReply = chain[6]!;
+    const leadFinished = chain[7]!;
+    // S: steward_message addressed to the lead.
+    expect(S["addressedAgent"]).toBe("fake");
+    // Lead run_started correlates to S.
+    expect(leadStarted["correlationId"]).toBe(S.id);
+    // H: structured agent_message handoff (author lead, addressed worker, corr S).
+    expect(H.kind).toBe("agent_message");
+    expect(H.author).toBe("fake");
+    expect(H["addressedAgent"]).toBe("thor");
+    expect(H["correlationId"]).toBe(S.id);
+    expect(String(H.body)).toContain("Summarize the report.");
+    // Worker run_started / reply / terminal all correlate to H, never S.
+    expect(workerStarted["correlationId"]).toBe(H.id);
+    expect(workerStarted["correlationId"]).not.toBe(S.id);
+    expect(workerReply.author).toBe("thor");
+    expect(workerReply["correlationId"]).toBe(H.id);
+    expect(workerFinished["correlationId"]).toBe(H.id);
+    expect(workerFinished["runStatus"]).toBe("completed");
+    // Lead reply + terminal correlate to S.
+    expect(leadReply.author).toBe("fake");
+    expect(leadReply["correlationId"]).toBe(S.id);
+    expect(leadFinished["correlationId"]).toBe(S.id);
+
+    // The same chain is SSE-visible in order, with no approval frames.
+    await waitForStream(() => collected.roomEvents.length >= 8);
+    expect(collected.kinds.filter((kind) => kind === "room_event")).toHaveLength(8);
+    expect(collected.kinds.filter((kind) => kind === "approval")).toEqual([]);
+    expect(collected.roomEvents.map((event) => event.kind)).toEqual(events.map((event) => event.kind));
+    expect(collected.roomEvents.some((event) => event["addressedAgent"] === "thor")).toBe(true);
+
+    stream.cancel();
+    await stream.done;
+  });
+
+  it("keeps the reserved internal handoff request out of approvals and unanswerable via the public /approve path", async () => {
+    const roomId = await createRoom(["fake", "thor"]);
+    // Worker "hang" keeps the handoff live so the internal request is pending.
+    const dispatch = post(url(`/api/rooms/${roomId}/messages`), { agent: "fake", text: "roomhandoff->thor:hang" }, token);
+    await waitForStreamValue(async () => (await eventCount(roomId, (event) => event.kind === "run_started")) >= 2);
+
+    // The reserved handoff request is NOT in the approval registry: the
+    // public /approve route cannot answer it (unknown request).
+    const approve = await post(url(`/api/rooms/${roomId}/approve`), { agent: "fake", request_id: "handoff-req-1", value: "x" }, token);
+    expect(approve.status).toBe(404);
+    // Wrong room / wrong agent also reject.
+    const wrongRoom = await post(url("/api/rooms/other-room/approve"), { agent: "fake", request_id: "handoff-req-1", value: "x" }, token);
+    expect(wrongRoom.status).toBe(404);
+    const wrongAgent = await post(url(`/api/rooms/${roomId}/approve`), { agent: "thor", request_id: "handoff-req-1", value: "x" }, token);
+    expect(wrongAgent.status).toBe(404);
+
+    // Resolve the live handoff via abort: cancels the exact worker.
+    const abort = await post(url(`/api/rooms/${roomId}/abort`), { agent: "fake" }, token);
+    expect(abort.status).toBe(200);
+    const outcome = (await (await dispatch).json()) as { outcome: { status: string } };
+    expect(outcome.outcome.status).toBe("cancelled");
+  });
+
+  it("source abort during a live handoff cancels the exact worker with exactly one correlated child cancellation", async () => {
+    const roomId = await createRoom(["fake", "thor"]);
+    const dispatch = post(url(`/api/rooms/${roomId}/messages`), { agent: "fake", text: "roomhandoff->thor:hang" }, token);
+    await waitForStreamValue(async () => (await eventCount(roomId, (event) => event.kind === "run_started")) >= 2);
+
+    const abort = await post(url(`/api/rooms/${roomId}/abort`), { agent: "fake" }, token);
+    expect(abort.status).toBe(200);
+    const abortBody = (await abort.json()) as { outcome: { status: string } };
+    expect(abortBody.outcome.status).toBe("cancelled");
+    const outcome = (await (await dispatch).json()) as { outcome: { status: string } };
+    expect(outcome.outcome.status).toBe("cancelled");
+
+    const events = await readEvents(roomId);
+    const H = events.find((event) => event.kind === "agent_message" && event["addressedAgent"] === "thor") as Record<string, string>;
+    const S = events[0] as Record<string, string>;
+    // Worker cancellation correlated to H, exactly one.
+    const workerCancelled = events.filter(
+      (event) => event.kind === "run_cancelled" && event["correlationId"] === H.id,
+    );
+    expect(workerCancelled).toHaveLength(1);
+    // Lead cancellation correlated to S, exactly one.
+    const leadCancelled = events.filter((event) => event.kind === "run_cancelled" && event["correlationId"] === S.id);
+    expect(leadCancelled).toHaveLength(1);
+    // No worker terminal beyond the cancellation (no run_finished for the worker).
+    expect(events.filter((event) => event.kind === "run_finished" && event["correlationId"] === H.id)).toHaveLength(0);
+    expect(events.filter((event) => event.kind === "run_started" && event["correlationId"] === H.id)).toHaveLength(1);
+  });
+
+  it("gateway close during a live handoff leaves no detached worker and records exactly one correlated child cancellation", async () => {
+    const roomId = await createRoom(["fake", "thor"]);
+    const dispatch = post(url(`/api/rooms/${roomId}/messages`), { agent: "fake", text: "roomhandoff->thor:hang" }, token);
+    await waitForStreamValue(async () => (await eventCount(roomId, (event) => event.kind === "run_started")) >= 2);
+
+    await server.close();
+    serverClosed = true;
+    const outcome = (await (await dispatch).json()) as { outcome: { status: string } };
+    expect(outcome.outcome.status).toBe("cancelled");
+
+    // Read the durable vault evidence directly (server is closed).
+    const { readdir, readFile } = await import("node:fs/promises");
+    const dir = join(root, "collaboration", "rooms", roomId, "events");
+    const names = await readdir(dir);
+    const kinds: string[] = [];
+    const events: Record<string, string>[] = [];
+    for (const name of names.sort()) {
+      const content = await readFile(join(dir, name), "utf8");
+      const kind = content.match(/^kind: ([a-z_]+)$/m)?.[1];
+      const id = content.match(/^id: ([^\n]+)$/m)?.[1];
+      const corr = content.match(/^correlation_id: ([^\n]+)$/m)?.[1];
+      const addressed = content.match(/^addressed_agent: ([^\n]+)$/m)?.[1];
+      const author = content.match(/^author: ([^\n]+)$/m)?.[1];
+      if (kind) kinds.push(kind);
+      events.push({ kind: kind ?? "", id: id ?? "", correlationId: corr ?? "", addressedAgent: addressed ?? "", author: author ?? "" });
+    }
+    const H = events.find((event) => event.kind === "agent_message" && event.addressedAgent === "thor")!;
+    const S = events.find((event) => event.kind === "steward_message")!;
+    expect(events.filter((event) => event.kind === "run_cancelled" && event.correlationId === H.id)).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "run_cancelled" && event.correlationId === S.id)).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "run_started" && event.correlationId === H.id)).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "run_finished" && event.correlationId === H.id)).toHaveLength(0);
+    expect(kinds.filter((kind) => kind === "run_cancelled")).toHaveLength(2);
+  });
+});

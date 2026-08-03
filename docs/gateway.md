@@ -85,6 +85,8 @@ When the gateway is wired with a vault root, the local runnable-agent set, and a
 
 Room runs execute through the room broker on isolated room × agent Pi RPC clients — never the global chat client. One explicit mention starts one bounded run; a concurrent mention for the same room × agent is rejected with 409. Immutable correlated events (steward message, run started, agent reply, terminal outcome) are appended under `collaboration/rooms/<room-id>/events/` and are the response timeline. Approvals round-trip only to the exact room-agent client that raised them. Closing the gateway closes the broker first, so active room runs end with durable cancellation evidence.
 
+A broker-spawned room run may also use the gated `room_mention(to, text)` extension tool to ask one permitted room participant for bounded help (room handoff, slice R2). The tool is registered only inside broker-spawned flagged room runs (leads and workers) — ordinary gateway/transport/ask/worker/review processes never expose it — and dispatch is driven by the reserved Pi RPC input envelope, never by rendered `@text`. Limits are fixed: one accepted handoff per steward root, depth one, no repeated source → target pair. The lead→worker chain is immutable: the handoff `agent_message` correlates to the steward root, and the worker's start/reply/terminal records correlate to the handoff, never directly to the root. There is no queue, retry, or fallback. The internal handoff request is not an approval: it never appears on the room SSE stream as `approval` and is not answerable through `POST /api/rooms/<roomId>/approve`. A room workbench UI remains a later slice (R3).
+
 ## Session management
 
 Routes:
