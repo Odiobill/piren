@@ -7,7 +7,9 @@ import { parseAuthInfo, type AuthInfoResponse } from "./auth";
  * module with buildAuthHeaders().
  */
 export async function fetchAuthInfo(signal?: AbortSignal): Promise<AuthInfoResponse> {
-  const res = await fetch("/api/auth/info", { signal });
+  // exactOptionalPropertyTypes: never pass { signal: undefined } as init.
+  const init = signal === undefined ? undefined : { signal };
+  const res = await fetch("/api/auth/info", init);
   if (!res.ok) throw new Error(`auth info HTTP ${res.status}`);
   return parseAuthInfo(await res.json());
 }

@@ -20,7 +20,7 @@
   "scripts": {
     "prepack": "npm run build",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json && vite build --config web/vite.config.ts",
     "smoke": "tsx scripts/smoke.ts",
     "clean-install:check": "tsx scripts/clean-install-check.ts"

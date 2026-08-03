@@ -8,6 +8,24 @@
 /** Shell authentication phases. */
 export type AuthPhase = "loading" | "token-needed" | "ready";
 
+/**
+ * Honest shell status (ADR-0041 R3b-1 review): the R3b-1 shell never claims
+ * a token is authenticated or validated. A token is only "ready" (held in
+ * memory); validation happens only when a later authorized slice makes its
+ * first protected request and the gateway accepts it.
+ */
+export type ShellAuthStatus =
+  | { status: "ready-local" } // gateway reachable, no token required (localhost)
+  | { status: "token-needed" } // gateway requires a token, none entered yet
+  | { status: "token-ready"; token: string }; // token entered, in memory, NOT validated
+
+/** Resolve the honest shell status from the auth probe and current token. */
+export function resolveShellAuth(authRequired: boolean, token: string): ShellAuthStatus {
+  if (!authRequired) return { status: "ready-local" };
+  const trimmed = token.trim();
+  return trimmed === "" ? { status: "token-needed" } : { status: "token-ready", token: trimmed };
+}
+
 /** Validated shape of the public GET /api/auth/info response. */
 export interface AuthInfoResponse {
   authRequired: boolean;

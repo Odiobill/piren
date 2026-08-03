@@ -63,7 +63,7 @@ Acceptance checklist for the workbench shell:
 
 - [ ] `GET /` returns the workbench `index.html` with the Piren logo in the header.
 - [ ] The page shows "Checking gateway authentication…" then either the token form (non-localhost with token) or the "Workbench shell ready" card.
-- [ ] Entering the token connects and shows the "Authenticated" status; the token is not persisted across a reload.
+- [ ] Entering the token shows "Token ready" (never "Authenticated" — no protected request has been made); the token is not persisted across a reload.
 - [ ] The "Coming next" card lists R3b-2…R3b-6; no room/chat/vault API calls are made by the shell.
 - [ ] The page is keyboard-usable (Tab/Enter), shows visible focus, and reads sensibly with a screen reader.
 

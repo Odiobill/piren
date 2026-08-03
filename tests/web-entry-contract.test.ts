@@ -58,6 +58,25 @@ describe("web workbench entry and build contract (R3b-1)", () => {
     expect(pkg.devDependencies.vite).toBeDefined();
   });
 
+  it("root typecheck also checks the web TypeScript project", async () => {
+    const pkg = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts.typecheck).toContain("tsc --noEmit");
+    expect(pkg.scripts.typecheck).toContain("tsc -p web/tsconfig.json --noEmit");
+  });
+
+  it("web/tsconfig.json typechecks the frontend under strict settings", async () => {
+    const webTsconfig = JSON.parse(await readFile(join(webRoot, "tsconfig.json"), "utf8")) as {
+      compilerOptions: Record<string, unknown>;
+      include?: string[];
+    };
+    expect(webTsconfig.compilerOptions.strict).toBe(true);
+    expect(webTsconfig.compilerOptions["noUncheckedIndexedAccess"]).toBe(true);
+    expect(webTsconfig.compilerOptions["exactOptionalPropertyTypes"]).toBe(true);
+    expect(webTsconfig.include).toContain("src");
+  });
+
   it("workbench source never uses browser storage APIs", async () => {
     const srcDir = join(webRoot, "src");
     const files = await readdir(srcDir, { recursive: true });
