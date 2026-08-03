@@ -184,12 +184,38 @@ export function appendLiveItem(items: TimelineItem[], item: TimelineItem): Timel
 }
 
 /**
- * Replace the timeline's event/approval items with the durable historic
- * sequence (server-chronological) after a fresh whole-history reread.
- * Non-authoritative error markers are preserved in place; the fresh events
- * are appended in their durable order with no client-generated ordering.
+ * Replace the timeline with the durable historic sequence after a fresh
+ * whole-history reread. The durable server order is displayed as-is (never
+ * re-sorted client-side); transient non-authoritative stream diagnostics
+ * from the old stream are cleared, never prepended to the sequence.
  */
-export function replaceHistoricWithEvents(items: TimelineItem[], events: RoomEventRecord[]): TimelineItem[] {
-  const errors = items.filter((item) => item.type === "error");
-  return [...errors, ...events.map((event) => ({ type: "event" as const, id: event.id, event }))];
+export function replaceHistoricWithEvents(events: RoomEventRecord[]): TimelineItem[] {
+  return events.map((event) => ({ type: "event" as const, id: event.id, event }));
+}
+
+/** Reconnect budget scoped to a room selection / manual reconnect lifecycle (R3b-3). */
+export const MAX_AUTO_RECONNECT_ATTEMPTS = 1;
+
+export interface ReconnectBudget {
+  attemptsUsed: number;
+}
+
+export function initialReconnectBudget(): ReconnectBudget {
+  return { attemptsUsed: 0 };
+}
+
+/**
+ * A stream ended unexpectedly. Exactly one automatic whole-history
+ * reread + re-subscription is allowed per lifecycle; after it, only an
+ * explicit manual Reconnect may retry. Opening a stream NEVER resets this
+ * budget — an open/end flapping stream cannot loop forever.
+ */
+export function streamEnded(budget: ReconnectBudget): {
+  budget: ReconnectBudget;
+  action: "auto-reconnect" | "manual-reconnect-required";
+} {
+  if (budget.attemptsUsed < MAX_AUTO_RECONNECT_ATTEMPTS) {
+    return { budget: { attemptsUsed: budget.attemptsUsed + 1 }, action: "auto-reconnect" };
+  }
+  return { budget, action: "manual-reconnect-required" };
 }

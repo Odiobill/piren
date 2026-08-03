@@ -5,8 +5,12 @@ import {
   appendLiveItem,
   createSseParser,
   frameToTimelineItem,
+  initialReconnectBudget,
+  MAX_AUTO_RECONNECT_ATTEMPTS,
   parseRoomEvents,
   replaceHistoricWithEvents,
+  streamEnded,
+  type ReconnectBudget,
   type RoomEventRecord,
   type TimelineItem,
 } from "../web/src/timeline.js";
@@ -132,21 +136,46 @@ describe("timeline reducer", () => {
     expect(items).toHaveLength(2);
   });
 
-  it("replaceHistoricWithEvents replaces event/approval items with the durable sequence and keeps error markers", () => {
-    const before: TimelineItem[] = [
-      { type: "event", id: "stale", event: event({ id: "stale" }) },
-      { type: "approval", id: "approval-old", approval: { roomId: "room-1", agent: "piren", requestId: "old", method: "confirm" } },
-      { type: "error", id: "err-1", message: "malformed frame seen" },
-    ];
-    const after = replaceHistoricWithEvents(before, historic);
-    expect(after.map((item) => item.id)).toEqual(["err-1", "h1", "h2"]);
+  it("replaceHistoricWithEvents clears transient diagnostics and displays the durable server sequence in order", () => {
+    // A successful whole-history reread replaces the timeline with the
+    // durable sequence in its original order; prior malformed-frame
+    // diagnostics from the old stream are cleared, never prepended.
+    const after = replaceHistoricWithEvents(historic);
+    expect(after.map((item) => item.id)).toEqual(["h1", "h2"]);
+    expect(after.every((item) => item.type === "event")).toBe(true);
   });
 
   it("replaceHistoricWithEvents never duplicates an id that a live frame already appended", () => {
-    const before: TimelineItem[] = [{ type: "event", id: "h2", event: event({ id: "h2" }) }];
-    const after = replaceHistoricWithEvents(before, historic);
+    const after = replaceHistoricWithEvents(historic);
     expect(after.map((item) => item.id)).toEqual(["h1", "h2"]);
     expect(after).toHaveLength(2);
+  });
+});
+
+describe("reconnect budget (open/end flapping is bounded)", () => {
+  it("the first stream end triggers one automatic reconnect", () => {
+    const result = streamEnded(initialReconnectBudget());
+    expect(result.action).toBe("auto-reconnect");
+    expect(result.budget).toEqual({ attemptsUsed: 1 });
+  });
+
+  it("two open/end cycles trigger exactly one automatic reconnect (no open reset)", () => {
+    let budget: ReconnectBudget = initialReconnectBudget();
+    // Cycle 1: stream opens (no budget reset exists), then ends.
+    let result = streamEnded(budget);
+    budget = result.budget;
+    expect(result.action).toBe("auto-reconnect");
+    // Cycle 2: stream opens again — opening must NOT reset the budget — then ends.
+    result = streamEnded(budget);
+    expect(result.action).toBe("manual-reconnect-required");
+    expect(result.budget).toEqual({ attemptsUsed: 1 });
+  });
+
+  it("the budget caps at one automatic attempt per selection/manual-reconnect lifecycle", () => {
+    expect(MAX_AUTO_RECONNECT_ATTEMPTS).toBe(1);
+    expect(initialReconnectBudget()).toEqual({ attemptsUsed: 0 });
+    const afterAuto = streamEnded(initialReconnectBudget()).budget;
+    expect(streamEnded(afterAuto).action).toBe("manual-reconnect-required");
   });
 });
 
@@ -183,5 +212,20 @@ describe("timeline source surface (static)", () => {
     // RoomNavigator mounts the timeline in the room detail view.
     const navigator = sources.get("RoomNavigator.tsx") ?? "";
     expect(navigator).toContain("RoomTimeline");
+  });
+
+  it("the reconnect budget is scoped to selection/manual reconnect and never reset on stream open", async () => {
+    const sources = new Map<string, string>();
+    const files = await readdir(webSrc, { recursive: true });
+    for (const f of files) {
+      if (typeof f === "string" && (f.endsWith(".ts") || f.endsWith(".tsx"))) {
+        sources.set(f, await readFile(join(webSrc, f), "utf8"));
+      }
+    }
+    const timeline = sources.get("RoomTimeline.tsx") ?? "";
+    expect(timeline).toContain("streamEnded");
+    // Budget reset appears exactly twice: room-selection reset and the
+    // explicit manual Reconnect handler — never in the stream-open path.
+    expect((timeline.match(/initialReconnectBudget\(\)/g) ?? []).length).toBe(3);
   });
 });

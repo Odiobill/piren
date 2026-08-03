@@ -3,7 +3,10 @@ import { fetchRoomEvents, streamRoomEvents, UnauthorizedError } from "./api";
 import {
   appendLiveItem,
   frameToTimelineItem,
+  initialReconnectBudget,
   replaceHistoricWithEvents,
+  streamEnded,
+  type ReconnectBudget,
   type RoomEventRecord,
   type TimelineItem,
 } from "./timeline";
@@ -58,7 +61,14 @@ export function RoomTimeline({
   const [phase, setPhase] = useState<TimelinePhase>({ phase: "loading" });
   const [announcement, setAnnouncement] = useState("");
   const [attemptKey, setAttemptKey] = useState(0);
-  const autoAttemptsRef = useRef(0);
+  const budgetRef = useRef<ReconnectBudget>(initialReconnectBudget());
+
+  // The reconnect budget is scoped to the room-selection/manual-reconnect
+  // lifecycle: selecting a room (or a token change) starts a fresh lifecycle.
+  // Opening a stream NEVER resets it, so open/end flapping cannot loop.
+  useEffect(() => {
+    budgetRef.current = initialReconnectBudget();
+  }, [roomId, token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,7 +81,7 @@ export function RoomTimeline({
       try {
         const events = await fetchRoomEvents(roomId, token, controller.signal);
         if (cancelled) return;
-        setPhase({ phase: "ready", items: replaceHistoricWithEvents([], events), stream: "connecting", message: null });
+        setPhase({ phase: "ready", items: replaceHistoricWithEvents(events), stream: "connecting", message: null });
         await streamRoomEvents(
           roomId,
           token,
@@ -81,7 +91,6 @@ export function RoomTimeline({
               setPhase((previous) =>
                 previous.phase === "ready" ? { ...previous, stream: "live", message: null } : previous,
               );
-              autoAttemptsRef.current = 0;
             },
             onFrame: (frame) => {
               if (cancelled) return;
@@ -124,9 +133,12 @@ export function RoomTimeline({
     })();
 
     function scheduleReconnect() {
-      if (cancelled || autoAttemptsRef.current >= 1) return;
-      autoAttemptsRef.current += 1;
-      setAttemptKey((key) => key + 1);
+      if (cancelled) return;
+      const decision = streamEnded(budgetRef.current);
+      budgetRef.current = decision.budget;
+      if (decision.action === "auto-reconnect") {
+        setAttemptKey((key) => key + 1);
+      }
     }
 
     return () => {
@@ -136,7 +148,7 @@ export function RoomTimeline({
   }, [roomId, token, onUnauthorized, attemptKey]);
 
   function handleReconnect() {
-    autoAttemptsRef.current = 0;
+    budgetRef.current = initialReconnectBudget();
     setPhase({ phase: "loading" });
     setAttemptKey((key) => key + 1);
   }
