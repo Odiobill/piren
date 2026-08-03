@@ -28,6 +28,14 @@ export const ROOM_HANDOFF_PROTOCOL_VERSION = 1;
 export const ROOM_HANDOFF_REQUEST_TITLE = "piren:room-handoff";
 /** Fixed maximum request text length (characters). Deliberately tiny. */
 export const ROOM_HANDOFF_MAX_TEXT_LENGTH = 4000;
+/** Fixed maximum worker reply length returned in an `ok` control result. */
+export const ROOM_HANDOFF_MAX_REPLY_LENGTH = 4000;
+/**
+ * Explicit non-secret marker appended by the broker when a worker reply is
+ * truncated to {@link ROOM_HANDOFF_MAX_REPLY_LENGTH}. The immutable worker
+ * evidence is never altered; only the control-plane result is bounded.
+ */
+export const ROOM_HANDOFF_TRUNCATION_MARKER = "\n…[reply truncated]";
 /** Bounded result statuses returned to the lead's waiting tool call. */
 export const ROOM_HANDOFF_RESULT_STATUSES = ["ok", "rejected", "failed", "timed_out", "cancelled"];
 /**
@@ -100,6 +108,19 @@ export function renderHandoffResultValue(result) {
     return JSON.stringify(payload);
 }
 /**
+ * Deterministically bound a worker reply for the control-plane `ok` result.
+ * A reply within the cap is returned unchanged; an oversized reply is cut to
+ * fit the cap WITH the explicit non-secret truncation marker appended, so the
+ * rendered value always passes {@link parseHandoffResultValue}. The immutable
+ * worker evidence is never touched by this helper.
+ */
+export function truncateHandoffReply(reply) {
+    if (reply.length <= ROOM_HANDOFF_MAX_REPLY_LENGTH) {
+        return reply;
+    }
+    return reply.slice(0, ROOM_HANDOFF_MAX_REPLY_LENGTH - ROOM_HANDOFF_TRUNCATION_MARKER.length) + ROOM_HANDOFF_TRUNCATION_MARKER;
+}
+/**
  * Parse a rendered result value back into the typed result. Used by the
  * extension (R2b) to convert only a valid, matching result into the tool
  * result. Returns a deterministic reason for every malformed shape.
@@ -125,6 +146,9 @@ export function parseHandoffResultValue(value) {
     if (status === "ok") {
         if (typeof parsed.reply !== "string") {
             return { ok: false, reason: "handoff result ok status requires a reply string" };
+        }
+        if (parsed.reply.length > ROOM_HANDOFF_MAX_REPLY_LENGTH) {
+            return { ok: false, reason: "handoff result ok reply exceeds the maximum length" };
         }
         return { ok: true, version: ROOM_HANDOFF_PROTOCOL_VERSION, result: { status: "ok", reply: parsed.reply } };
     }

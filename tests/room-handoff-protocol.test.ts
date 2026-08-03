@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { RpcEvent } from "../src/gateway-rpc.js";
 import {
+  ROOM_HANDOFF_MAX_REPLY_LENGTH,
   ROOM_HANDOFF_MAX_TEXT_LENGTH,
   ROOM_HANDOFF_PROTOCOL_VERSION,
   ROOM_HANDOFF_REQUEST_TITLE,
   ROOM_HANDOFF_RESULT_STATUSES,
+  ROOM_HANDOFF_TRUNCATION_MARKER,
   isHandoffInputRequest,
   parseHandoffInputRequest,
   parseHandoffResultValue,
   renderHandoffResultValue,
+  truncateHandoffReply,
   type RoomHandoffResult,
 } from "../src/room-handoff-protocol.js";
 
@@ -189,5 +192,53 @@ describe("renderHandoffResultValue and parseHandoffResultValue", () => {
     expect(
       parseHandoffResultValue(JSON.stringify({ v: 1, status: "failed", reason: "x" })).ok,
     ).toBe(false);
+  });
+});
+
+describe("bounded handoff reply (R2a review)", () => {
+  it("exports a fixed max reply length and a deterministic truncation marker", () => {
+    expect(typeof ROOM_HANDOFF_MAX_REPLY_LENGTH).toBe("number");
+    expect(ROOM_HANDOFF_MAX_REPLY_LENGTH).toBeGreaterThan(0);
+    expect(typeof ROOM_HANDOFF_TRUNCATION_MARKER).toBe("string");
+    expect(ROOM_HANDOFF_TRUNCATION_MARKER.length).toBeGreaterThan(0);
+    expect(ROOM_HANDOFF_TRUNCATION_MARKER.length).toBeLessThan(ROOM_HANDOFF_MAX_REPLY_LENGTH);
+  });
+
+  it("truncateHandoffReply leaves a short reply unchanged", () => {
+    const short = "All done.";
+    expect(truncateHandoffReply(short)).toBe(short);
+    const atCap = "x".repeat(ROOM_HANDOFF_MAX_REPLY_LENGTH);
+    expect(truncateHandoffReply(atCap)).toBe(atCap);
+  });
+
+  it("truncateHandoffReply caps an oversized reply to the max length with the marker", () => {
+    const oversized = "y".repeat(ROOM_HANDOFF_MAX_REPLY_LENGTH + 500);
+    const truncated = truncateHandoffReply(oversized);
+    expect(truncated.length).toBeLessThanOrEqual(ROOM_HANDOFF_MAX_REPLY_LENGTH);
+    expect(truncated.endsWith(ROOM_HANDOFF_TRUNCATION_MARKER)).toBe(true);
+    expect(truncated.startsWith("y".repeat(50))).toBe(true);
+  });
+
+  it("parseHandoffResultValue rejects an oversized ok.reply", () => {
+    const oversized = "z".repeat(ROOM_HANDOFF_MAX_REPLY_LENGTH + 1);
+    const value = JSON.stringify({ v: ROOM_HANDOFF_PROTOCOL_VERSION, status: "ok", reply: oversized });
+    const parsed = parseHandoffResultValue(value);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.reason).toMatch(/reply|length|maximum/i);
+  });
+
+  it("a broker-truncated reply at the cap round-trips through render and parse", () => {
+    const oversized = "w".repeat(ROOM_HANDOFF_MAX_REPLY_LENGTH + 1000);
+    const truncated = truncateHandoffReply(oversized);
+    const value = renderHandoffResultValue({ status: "ok", reply: truncated });
+    const parsed = parseHandoffResultValue(value);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.result.status).toBe("ok");
+      if (parsed.result.status === "ok") {
+        expect(parsed.result.reply).toBe(truncated);
+        expect(parsed.result.reply.length).toBeLessThanOrEqual(ROOM_HANDOFF_MAX_REPLY_LENGTH);
+      }
+    }
   });
 });
