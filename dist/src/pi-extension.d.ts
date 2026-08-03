@@ -1,5 +1,14 @@
 import { type BootstrapOptions } from "./bootstrap.js";
 import { type AlertMirrorSenders } from "./alert-mirror.js";
+/**
+ * The narrow tool-execution context the `room_mention` tool needs: Pi's
+ * documented `ctx.ui.input()` reserved-envelope dialog (ADR-0041 R2b).
+ */
+interface ExtensionToolContext {
+    ui?: {
+        input?: (title: string, placeholder?: string) => Promise<string | undefined>;
+    };
+}
 interface ExtensionAPI {
     registerFlag?: (name: string, options: {
         description?: string;
@@ -11,7 +20,7 @@ interface ExtensionAPI {
         label?: string;
         description?: string;
         parameters?: unknown;
-        execute: (toolCallId: string, params: any) => Promise<unknown> | unknown;
+        execute: (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: unknown, ctx?: ExtensionToolContext) => Promise<unknown> | unknown;
     }) => void;
     registerCommand: (name: string, command: {
         description?: string;

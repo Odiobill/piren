@@ -1,7 +1,7 @@
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { extractAssistantText, } from "./gateway-rpc.js";
 import { appendRoomEvent, isValidAgentName, readRoom, } from "./rooms.js";
-import { isHandoffInputRequest, parseHandoffInputRequest, renderHandoffResultValue, truncateHandoffReply, } from "./room-handoff-protocol.js";
+import { isHandoffInputRequest, parseHandoffInputRequest, renderHandoffResultValue, truncateHandoffReply, ROOM_MENTION_ENABLED_ENV_VAR, } from "./room-handoff-protocol.js";
 export const DEFAULT_ROOM_RUN_TIMEOUT_MS = 120_000;
 /** Only these Pi UI request methods are approvable room approvals. */
 const APPROVABLE_METHODS = new Set(["confirm", "select", "input"]);
@@ -41,6 +41,23 @@ export function buildHandoffPrompt(input) {
         input.text,
     ].join("\n");
 }
+/**
+ * Decorate a room-client spawn target with the gated `room_mention`
+ * activation flag (ADR-0041 R2b). Returns a NEW target object with a NEW env
+ * object: every existing entry is preserved, the input target and its env are
+ * never mutated, and the global `process.env` is never touched. Only the
+ * broker's spawned room clients (root leads and handoff workers) receive the
+ * flag; ordinary gateway/transport/ask/worker/review processes do not.
+ */
+export function decorateRoomClientTarget(target) {
+    return {
+        ...target,
+        env: {
+            ...target.env,
+            [ROOM_MENTION_ENABLED_ENV_VAR]: "1",
+        },
+    };
+}
 export class RoomBroker {
     vaultRoot;
     runnableAgents;
@@ -69,7 +86,9 @@ export class RoomBroker {
         this.roomReader = options.roomReader ?? readRoom;
         this.sessions = new TransportSessionManager({
             runnableAgents: this.runnableAgents,
-            targetBuilder: options.targetBuilder,
+            // Decorate only room-client spawn targets with the activation flag; the
+            // caller's targetBuilder output and the global env are never mutated.
+            targetBuilder: async (agent) => decorateRoomClientTarget(await options.targetBuilder(agent)),
             clientFactory: options.clientFactory,
             // The manager tracks last-used millis; the broker clock returns Dates.
             now: () => this.now().getTime(),

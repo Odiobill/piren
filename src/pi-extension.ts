@@ -56,6 +56,23 @@ import {
   resolveReviewLoopConfig,
   suggestCorrectionArtifacts,
 } from "./self-improvement.js";
+import {
+  ROOM_HANDOFF_REQUEST_TITLE,
+  isRoomMentionEnabled,
+  renderHandoffRequestPlaceholder,
+  resolveRoomMentionToolResult,
+  validateRoomMentionArgs,
+} from "./room-handoff-protocol.js";
+
+/**
+ * The narrow tool-execution context the `room_mention` tool needs: Pi's
+ * documented `ctx.ui.input()` reserved-envelope dialog (ADR-0041 R2b).
+ */
+interface ExtensionToolContext {
+  ui?: {
+    input?: (title: string, placeholder?: string) => Promise<string | undefined>;
+  };
+}
 
 interface ExtensionAPI {
   registerFlag?: (name: string, options: { description?: string; type?: string }) => void;
@@ -65,7 +82,13 @@ interface ExtensionAPI {
     label?: string;
     description?: string;
     parameters?: unknown;
-    execute: (toolCallId: string, params: any) => Promise<unknown> | unknown;
+    execute: (
+      toolCallId: string,
+      params: any,
+      signal?: AbortSignal,
+      onUpdate?: unknown,
+      ctx?: ExtensionToolContext,
+    ) => Promise<unknown> | unknown;
   }) => void;
   registerCommand: (
     name: string,
@@ -1318,12 +1341,57 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Pire
     },
   });
 
+  // ADR-0041 R2b gated room_mention tool. Registered ONLY when this extension
+  // process was spawned by the RoomBroker for an active room run (root lead or
+  // handoff worker), signalled by PIREN_ROOM_MENTION_ENABLED=1 in the spawn
+  // env. When the flag is absent the entire tool set stays byte-for-byte
+  // unchanged. The tool accepts only {to, text}; it uses the R2a protocol
+  // helper and Pi's documented ctx.ui.input() reserved envelope, and never
+  // takes or derives model-supplied source/room/root/correlation/budget fields.
+  const roomMentionEnabled = isRoomMentionEnabled(env as Record<string, string | undefined>);
+  if (roomMentionEnabled) {
+    pi.registerTool({
+      name: "room_mention",
+      label: "Room Mention",
+      description:
+        "Ask one permitted room participant for bounded help during this active room run. The request is recorded as an immutable room handoff and the bounded worker reply is returned. Subject to one-depth and one-handoff-per-steward-request limits.",
+      parameters: Type.Object({
+        to: Type.String({ description: "Target room participant agent name (lowercase kebab-case)" }),
+        text: Type.String({ description: "Bounded request text for the worker" }),
+      }),
+      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+        // Validate arguments before ANY UI operation.
+        const to = typeof params?.to === "string" ? params.to : "";
+        const text = typeof params?.text === "string" ? params.text : "";
+        const argError = validateRoomMentionArgs(to, text);
+        if (argError !== null) {
+          return errorResult(argError);
+        }
+        const ui = (ctx as ExtensionToolContext | undefined)?.ui;
+        if (typeof ui?.input !== "function") {
+          return errorResult("room_mention is unavailable: the reserved input UI method is not supported in this mode.");
+        }
+        // Emit the reserved versioned input envelope and accept only a valid
+        // R2a structured result. No fallback to user input, HTTP, vault
+        // writes, scheduler tasks, retries, or a second attempt.
+        const value = await ui.input(ROOM_HANDOFF_REQUEST_TITLE, renderHandoffRequestPlaceholder(to, text));
+        const outcome = resolveRoomMentionToolResult(value);
+        if (!outcome.ok) {
+          return errorResult(outcome.error);
+        }
+        return textResult(outcome.reply);
+      },
+    });
+  }
+
   pi.registerCommand("piren_status", {
     description: "Show Piren agent, vault, runnable-agent policy, packages, tools, and degraded write mode",
     handler: async (_args, ctx) => {
       const report = await buildPirenStatusReport({
         context,
-        toolNames: PIREN_TOOL_NAMES,
+        // room_mention is registered only under the activation flag; reflect
+        // the actual registered tool set in the status report.
+        toolNames: roomMentionEnabled ? [...PIREN_TOOL_NAMES, "room_mention"] : PIREN_TOOL_NAMES,
         localOutboxDir: outboxDir,
         localCacheDir: cacheDir,
         skillCount: skills.length,

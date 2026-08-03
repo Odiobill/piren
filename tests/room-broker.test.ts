@@ -2804,3 +2804,84 @@ describe("RoomBroker handoff final review lifecycle fixes (R2a)", () => {
     await broker.close();
   });
 });
+
+describe("RoomBroker room-client target decoration (R2b)", () => {
+  let root: string;
+  let timers: ManualTimers;
+  let nonceSeq: number;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-room-decorate-"));
+    timers = new ManualTimers();
+    nonceSeq = 0;
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it("decorates lead and worker spawn targets with the activation flag without mutating the source target or process.env", async () => {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Decorate room",
+      participants: ["kimi", "thor"],
+      now: () => new Date("2026-08-02T17:00:00.000Z"),
+    });
+    const roomId = room.id;
+
+    const builtTargets: RpcSpawnTarget[] = [];
+    const sourceEnvs: NodeJS.ProcessEnv[] = [];
+    const flagBefore = process.env.PIREN_ROOM_MENTION_ENABLED;
+    const clients: FakeRoomClient[] = [];
+
+    const broker = new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi", "thor"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => {
+        // The production-shaped target: a shared base env that must not be mutated.
+        const env: NodeJS.ProcessEnv = { PATH: "/usr/bin", PIREN_VAULT_ROOT: root, PIREN_AGENT: agent };
+        sourceEnvs.push(env);
+        return { command: "fake", args: [agent], cwd: root, env };
+      },
+      clientFactory: (target) => {
+        builtTargets.push(target);
+        let client: FakeRoomClient;
+        if (clients.length === 0) {
+          client = new FakeRoomClient("handoff");
+          client.handoffSequence = [{ to: "thor", text: "help", requestId: "handoff-1" }];
+        } else {
+          client = new FakeRoomClient("complete");
+        }
+        clients.push(client);
+        return client;
+      },
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      runTimeoutMs: 60_000,
+    });
+
+    const outcome = await broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Lead." });
+    expect(outcome.status).toBe("completed");
+
+    // Both the lead (root) and the worker (handoff child) targets carry the flag.
+    expect(builtTargets).toHaveLength(2);
+    for (const target of builtTargets) {
+      expect(target.env.PIREN_ROOM_MENTION_ENABLED).toBe("1");
+      // Existing env entries are preserved.
+      expect(target.env.PATH).toBe("/usr/bin");
+      expect(target.env.PIREN_VAULT_ROOT).toBe(root);
+    }
+    expect(builtTargets[0]!.env.PIREN_AGENT).toBe("kimi");
+    expect(builtTargets[1]!.env.PIREN_AGENT).toBe("thor");
+
+    // The source target/env objects returned by the targetBuilder were NOT mutated.
+    for (const env of sourceEnvs) {
+      expect(env.PIREN_ROOM_MENTION_ENABLED).toBeUndefined();
+    }
+
+    // The broker never touched the global process env.
+    expect(process.env.PIREN_ROOM_MENTION_ENABLED).toBe(flagBefore);
+    await broker.close();
+  });
+});

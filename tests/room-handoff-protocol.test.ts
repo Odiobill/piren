@@ -7,11 +7,16 @@ import {
   ROOM_HANDOFF_REQUEST_TITLE,
   ROOM_HANDOFF_RESULT_STATUSES,
   ROOM_HANDOFF_TRUNCATION_MARKER,
+  ROOM_MENTION_ENABLED_ENV_VAR,
   isHandoffInputRequest,
+  isRoomMentionEnabled,
   parseHandoffInputRequest,
   parseHandoffResultValue,
+  renderHandoffRequestPlaceholder,
   renderHandoffResultValue,
+  resolveRoomMentionToolResult,
   truncateHandoffReply,
+  validateRoomMentionArgs,
   type RoomHandoffResult,
 } from "../src/room-handoff-protocol.js";
 
@@ -240,5 +245,72 @@ describe("bounded handoff reply (R2a review)", () => {
         expect(parsed.result.reply.length).toBeLessThanOrEqual(ROOM_HANDOFF_MAX_REPLY_LENGTH);
       }
     }
+  });
+});
+
+describe("room mention activation flag and request placeholder (R2b)", () => {
+  it("exports the activation env var name and recognizes exactly the enabled value", () => {
+    expect(ROOM_MENTION_ENABLED_ENV_VAR).toBe("PIREN_ROOM_MENTION_ENABLED");
+    expect(isRoomMentionEnabled({ PIREN_ROOM_MENTION_ENABLED: "1" })).toBe(true);
+    expect(isRoomMentionEnabled({ PIREN_ROOM_MENTION_ENABLED: "0" })).toBe(false);
+    expect(isRoomMentionEnabled({ PIREN_ROOM_MENTION_ENABLED: "true" })).toBe(false);
+    expect(isRoomMentionEnabled({})).toBe(false);
+  });
+
+  it("renders a versioned request placeholder carrying only to and text", () => {
+    const placeholder = renderHandoffRequestPlaceholder("thor", "Summarize the report.");
+    const parsed = JSON.parse(placeholder) as Record<string, unknown>;
+    expect(parsed).toEqual({ v: ROOM_HANDOFF_PROTOCOL_VERSION, to: "thor", text: "Summarize the report." });
+    // No source/room/root/correlation/budget/capability fields may be present.
+    expect(Object.keys(parsed).sort()).toEqual(["text", "to", "v"]);
+  });
+
+  it("a rendered placeholder round-trips through the broker-side parser", () => {
+    const placeholder = renderHandoffRequestPlaceholder("thor", "Do X");
+    const event: RpcEvent = {
+      type: "extension_ui_request",
+      id: "req-1",
+      method: "input",
+      title: ROOM_HANDOFF_REQUEST_TITLE,
+      placeholder,
+    };
+    expect(isHandoffInputRequest(event)).toBe(true);
+    const parsed = parseHandoffInputRequest(event);
+    expect(parsed).toEqual({ ok: true, version: ROOM_HANDOFF_PROTOCOL_VERSION, to: "thor", text: "Do X" });
+  });
+
+  it("validateRoomMentionArgs rejects invalid to/text before any UI operation", () => {
+    expect(validateRoomMentionArgs("thor", "Do X")).toBeNull();
+    expect(validateRoomMentionArgs("Bad Name", "Do X")).toMatch(/agent name/i);
+    expect(validateRoomMentionArgs("", "Do X")).toMatch(/agent name/i);
+    expect(validateRoomMentionArgs("thor", "   ")).toMatch(/blank|text/i);
+    expect(validateRoomMentionArgs("thor", "x".repeat(ROOM_HANDOFF_MAX_TEXT_LENGTH + 1))).toMatch(/length|maximum/i);
+  });
+
+  it("resolveRoomMentionToolResult maps a valid ok to only the bounded reply", () => {
+    const value = renderHandoffResultValue({ status: "ok", reply: "Worker says hi." });
+    expect(resolveRoomMentionToolResult(value)).toEqual({ ok: true, reply: "Worker says hi." });
+  });
+
+  it("resolveRoomMentionToolResult turns cancelled/no-value/malformed/rejected/failed/timed_out into explicit errors", () => {
+    // cancelled (undefined) and explicit no-value.
+    expect(resolveRoomMentionToolResult(undefined).ok).toBe(false);
+    expect(resolveRoomMentionToolResult(null).ok).toBe(false);
+    // malformed value.
+    expect(resolveRoomMentionToolResult("{not json").ok).toBe(false);
+    // version mismatch.
+    expect(resolveRoomMentionToolResult(JSON.stringify({ v: 999, status: "ok", reply: "x" })).ok).toBe(false);
+    // rejected.
+    const rejected = resolveRoomMentionToolResult(renderHandoffResultValue({ status: "rejected", reason: "target not runnable" }));
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.error).toContain("target not runnable");
+    // failed.
+    const failed = resolveRoomMentionToolResult(renderHandoffResultValue({ status: "failed", reason: "x", failureKind: "ambiguous" }));
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error).toContain("ambiguous");
+    // timed_out.
+    expect(resolveRoomMentionToolResult(renderHandoffResultValue({ status: "timed_out" })).ok).toBe(false);
+    // cancelled status.
+    expect(resolveRoomMentionToolResult(renderHandoffResultValue({ status: "cancelled" })).ok).toBe(false);
   });
 });

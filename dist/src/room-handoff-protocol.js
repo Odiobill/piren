@@ -108,6 +108,72 @@ export function renderHandoffResultValue(result) {
     return JSON.stringify(payload);
 }
 /**
+ * The environment flag that activates the gated `room_mention` extension
+ * tool. The RoomBroker sets it to "1" only on its spawned room-client targets
+ * (root leads and handoff workers); every other process leaves it unset.
+ */
+export const ROOM_MENTION_ENABLED_ENV_VAR = "PIREN_ROOM_MENTION_ENABLED";
+/** True only when the activation flag is exactly the enabled value "1". */
+export function isRoomMentionEnabled(env) {
+    return env[ROOM_MENTION_ENABLED_ENV_VAR] === "1";
+}
+/**
+ * Render the versioned request placeholder carried by the reserved input
+ * envelope. It carries ONLY `to` and `text` (plus the protocol version);
+ * callers can never supply a room id, source identity, root correlation,
+ * budget, or capability through the envelope. Assumes the args were already
+ * validated by {@link validateRoomMentionArgs}.
+ */
+export function renderHandoffRequestPlaceholder(to, text) {
+    return JSON.stringify({ v: ROOM_HANDOFF_PROTOCOL_VERSION, to, text });
+}
+/**
+ * Validate `room_mention(to, text)` arguments BEFORE any UI operation.
+ * Returns a deterministic non-secret error string, or null when valid.
+ */
+export function validateRoomMentionArgs(to, text) {
+    if (!isValidAgentName(to)) {
+        return "room_mention 'to' must be a valid lowercase kebab-case agent name";
+    }
+    if (typeof text !== "string" || text.trim() === "") {
+        return "room_mention 'text' must be non-blank";
+    }
+    if (text.length > ROOM_HANDOFF_MAX_TEXT_LENGTH) {
+        return "room_mention 'text' exceeds the maximum length";
+    }
+    return null;
+}
+/**
+ * Map a raw `ctx.ui.input()` response value to a bounded `room_mention` tool
+ * outcome. Only a valid `ok` result yields the bounded worker reply. Every
+ * cancelled, no-value, malformed, version-mismatched, rejected, failed,
+ * timed_out, or cancelled-status reply becomes an explicit bounded non-secret
+ * error with NO fallback action. Never exposes room ids, internal event ids,
+ * or failure exceptions.
+ */
+export function resolveRoomMentionToolResult(value) {
+    if (value === undefined || value === null) {
+        return { ok: false, error: "room mention was cancelled" };
+    }
+    const parsed = parseHandoffResultValue(value);
+    if (!parsed.ok) {
+        return { ok: false, error: `room mention result was not understood (${parsed.reason})` };
+    }
+    const result = parsed.result;
+    switch (result.status) {
+        case "ok":
+            return { ok: true, reply: result.reply };
+        case "rejected":
+            return { ok: false, error: `room mention was rejected: ${result.reason}` };
+        case "failed":
+            return { ok: false, error: `room mention failed (${result.failureKind})` };
+        case "timed_out":
+            return { ok: false, error: "room mention timed out" };
+        case "cancelled":
+            return { ok: false, error: "room mention was cancelled" };
+    }
+}
+/**
  * Deterministically bound a worker reply for the control-plane `ok` result.
  * A reply within the cap is returned unchanged; an oversized reply is cut to
  * fit the cap WITH the explicit non-secret truncation marker appended, so the
