@@ -39,7 +39,12 @@ export type RoomStatus = (typeof ROOM_STATUSES)[number];
 // Compact-UTC ids carry uppercase T/Z (e.g. 20260802T140000000Z-slug), so
 // the kebab check is case-insensitive. Separators and dots stay rejected.
 const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/i;
-const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+export const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+
+/** Single source of truth for a valid lowercase kebab-case agent name. */
+export function isValidAgentName(name: string): boolean {
+  return AGENT_NAME_PATTERN.test(name);
+}
 
 function assertValidRoomId(roomId: string): void {
   if (!ROOM_ID_PATTERN.test(roomId)) {
@@ -322,6 +327,23 @@ function assertValidAuthor(authorKind: RoomAuthorKind, author: string): void {
   }
 }
 
+/**
+ * Shared addressed_agent grammar (ADR-0041 R2a): permitted on a
+ * steward_message (always implicitly non-self) and on a structured
+ * agent_message handoff, where it MUST name a valid agent distinct from the
+ * author. Every other kind rejects. Returns the validated value.
+ */
+function validateAddressedAgent(kind: RoomEventKind, author: string, addressedAgent: string): string {
+  if (kind !== "steward_message" && kind !== "agent_message") {
+    throw new Error("addressed_agent is only valid on steward_message or agent_message events.");
+  }
+  assertValidAgentName(addressedAgent);
+  if (kind === "agent_message" && addressedAgent === author) {
+    throw new Error("agent_message addressed_agent must differ from the author (no self-handoff).");
+  }
+  return addressedAgent;
+}
+
 /** ADR-0041 first-slice vocabulary: each event kind has exactly one valid author kind. */
 const REQUIRED_AUTHOR_KIND: Record<RoomEventKind, RoomAuthorKind> = {
   steward_message: "steward",
@@ -489,10 +511,7 @@ export async function appendRoomEvent(options: AppendRoomEventOptions): Promise<
     throw new Error("Room event body is required.");
   }
   if (options.addressedAgent !== undefined) {
-    if (options.kind !== "steward_message") {
-      throw new Error("addressed_agent is only valid on steward_message events.");
-    }
-    assertValidAgentName(options.addressedAgent);
+    validateAddressedAgent(options.kind, options.author, options.addressedAgent);
   }
   if (options.correlationId !== undefined && !ROOM_ID_PATTERN.test(options.correlationId)) {
     throw new Error(`Invalid correlation_id '${options.correlationId}'.`);
@@ -681,11 +700,12 @@ export function parseRoomEvent(content: string, path: string, expectedRoomId: st
 
   let addressedAgent: string | undefined;
   if (record.addressed_agent !== undefined) {
-    if (kind !== "steward_message") fail("addressed_agent is only valid on steward_message events");
-    if (typeof record.addressed_agent !== "string" || !AGENT_NAME_PATTERN.test(record.addressed_agent)) {
-      fail("addressed_agent is not a valid agent name");
+    if (typeof record.addressed_agent !== "string") fail("addressed_agent is not a valid agent name");
+    try {
+      addressedAgent = validateAddressedAgent(kind, author, record.addressed_agent as string);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
     }
-    addressedAgent = record.addressed_agent as string;
   }
   let correlationId: string | undefined;
   if (record.correlation_id !== undefined) {

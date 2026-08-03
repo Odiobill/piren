@@ -180,7 +180,14 @@ describe("rooms core", () => {
     await expect(appendRoomEvent({ ...base, kind: "run_exploded" as never })).rejects.toThrow("Unknown room event kind");
     await expect(appendRoomEvent({ ...base, authorKind: "steward" as const })).rejects.toThrow("author");
     await expect(appendRoomEvent({ ...base, roomId: "../escape" })).rejects.toThrow("Invalid room id");
-    await expect(appendRoomEvent({ ...base, addressedAgent: "kimi" })).rejects.toThrow("steward_message");
+    // agent_message may now carry a non-self addressed_agent (R2a handoff);
+    // a self-target (addressed == author) is rejected on the self-rule, not
+    // the steward_message-only rule.
+    await expect(appendRoomEvent({ ...base, addressedAgent: "kimi" })).rejects.toThrow(/differ from the author|self/i);
+    // run_* events still reject addressed_agent on the steward/agent-message rule.
+    await expect(
+      appendRoomEvent({ ...base, kind: "run_started" as const, authorKind: "system" as const, author: "system", runStatus: "running" as const, addressedAgent: "kimi" }),
+    ).rejects.toThrow(/addressed_agent/);
     await expect(appendRoomEvent({ ...base, body: "   " })).rejects.toThrow("body");
     await expect(appendRoomEvent({ ...base, roomId: "no-such-room" })).rejects.toThrow("no-such-room");
 
@@ -766,5 +773,167 @@ describe("listRoomEvents correlation integrity", () => {
     await expect(listRoomEvents({ vaultRoot: root, roomId })).rejects.toThrow(
       `collaboration/rooms/${roomId}/events/${target}`,
     );
+  });
+});
+
+describe("agent_message structured handoff addressed_agent (ADR-0041 R2a)", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-rooms-handoff-grammar-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  async function makeRoom(): Promise<string> {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Handoff grammar room",
+      participants: ["kimi", "thor"],
+      now: () => new Date("2026-08-02T14:00:00.000Z"),
+    });
+    return room.id;
+  }
+
+  it("allows an agent_message to carry a valid non-self addressed_agent", async () => {
+    const roomId = await makeRoom();
+    const steward = await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "steward_message",
+      authorKind: "steward",
+      author: "steward",
+      body: "Go.",
+      addressedAgent: "kimi",
+      now: () => new Date("2026-08-02T14:01:00.000Z"),
+      nonce: () => "s1",
+    });
+    const handoff = await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "agent_message",
+      authorKind: "agent",
+      author: "kimi",
+      body: "Thor, please summarize.",
+      addressedAgent: "thor",
+      correlationId: steward.id,
+      now: () => new Date("2026-08-02T14:02:00.000Z"),
+      nonce: () => "h1",
+    });
+    expect(handoff.id).toBeDefined();
+    const events = await listRoomEvents({ vaultRoot: root, roomId });
+    const parsed = events.find((event) => event.id === handoff.id);
+    expect(parsed).toBeDefined();
+    expect(parsed?.kind).toBe("agent_message");
+    expect(parsed?.author).toBe("kimi");
+    expect(parsed?.addressedAgent).toBe("thor");
+    expect(parsed?.correlationId).toBe(steward.id);
+  });
+
+  it("rejects an agent_message whose addressed_agent equals the author (self-handoff)", async () => {
+    const roomId = await makeRoom();
+    await expect(
+      appendRoomEvent({
+        vaultRoot: root,
+        roomId,
+        kind: "agent_message",
+        authorKind: "agent",
+        author: "kimi",
+        body: "Self.",
+        addressedAgent: "kimi",
+        now: () => new Date("2026-08-02T14:01:00.000Z"),
+        nonce: () => "h1",
+      }),
+    ).rejects.toThrow(/differ from the author|self/i);
+    const events = await listRoomEvents({ vaultRoot: root, roomId });
+    expect(events).toEqual([]);
+  });
+
+  it("rejects an agent_message with an invalid addressed_agent name", async () => {
+    const roomId = await makeRoom();
+    await expect(
+      appendRoomEvent({
+        vaultRoot: root,
+        roomId,
+        kind: "agent_message",
+        authorKind: "agent",
+        author: "kimi",
+        body: "Bad.",
+        addressedAgent: "Bad Name",
+        now: () => new Date("2026-08-02T14:01:00.000Z"),
+        nonce: () => "h1",
+      }),
+    ).rejects.toThrow(/agent name/i);
+  });
+
+  it("still rejects addressed_agent on run_started/run_finished/run_cancelled", async () => {
+    const roomId = await makeRoom();
+    const steward = await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "steward_message",
+      authorKind: "steward",
+      author: "steward",
+      body: "Go.",
+      addressedAgent: "kimi",
+      now: () => new Date("2026-08-02T14:01:00.000Z"),
+      nonce: () => "s1",
+    });
+    await expect(
+      appendRoomEvent({
+        vaultRoot: root,
+        roomId,
+        kind: "run_started",
+        authorKind: "system",
+        author: "system",
+        body: "started",
+        runStatus: "running",
+        addressedAgent: "thor",
+        correlationId: steward.id,
+        now: () => new Date("2026-08-02T14:02:00.000Z"),
+        nonce: () => "x1",
+      }),
+    ).rejects.toThrow(/addressed_agent/);
+  });
+
+  it("preserves ordinary agent_message behavior: no addressed_agent is still valid", async () => {
+    const roomId = await makeRoom();
+    const reply = await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "agent_message",
+      authorKind: "agent",
+      author: "kimi",
+      body: "Ordinary reply.",
+      now: () => new Date("2026-08-02T14:01:00.000Z"),
+      nonce: () => "r1",
+    });
+    const events = await listRoomEvents({ vaultRoot: root, roomId });
+    const parsed = events.find((event) => event.id === reply.id);
+    expect(parsed?.addressedAgent).toBeUndefined();
+  });
+
+  it("fails closed when a persisted agent_message carries a self addressed_agent", async () => {
+    const roomId = await makeRoom();
+    await appendRoomEvent({
+      vaultRoot: root,
+      roomId,
+      kind: "agent_message",
+      authorKind: "agent",
+      author: "kimi",
+      body: "Handoff.",
+      addressedAgent: "thor",
+      now: () => new Date("2026-08-02T14:01:00.000Z"),
+      nonce: () => "h1",
+    });
+    const eventsDir = join(root, "collaboration", "rooms", roomId, "events");
+    const { readdir, writeFile } = await import("node:fs/promises");
+    const names = await readdir(eventsDir);
+    const target = names.find((name) => name.includes("agent-message"))!;
+    const original = await readFile(join(eventsDir, target), "utf8");
+    await writeFile(join(eventsDir, target), original.replace("addressed_agent: thor", "addressed_agent: kimi"), "utf8");
+    await expect(listRoomEvents({ vaultRoot: root, roomId })).rejects.toThrow(/differ from the author|self/i);
   });
 });

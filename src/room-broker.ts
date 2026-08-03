@@ -9,6 +9,7 @@ import {
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import {
   appendRoomEvent,
+  isValidAgentName,
   readRoom,
   type AppendRoomEventOptions,
   type AppendRoomEventResult,
@@ -20,6 +21,12 @@ import {
   type RoomWriteIo,
 } from "./rooms.js";
 import type { RoomRunFailureKind } from "./rooms.js";
+import {
+  isHandoffInputRequest,
+  parseHandoffInputRequest,
+  renderHandoffResultValue,
+  type RoomHandoffResult,
+} from "./room-handoff-protocol.js";
 
 /**
  * Isolated room-run broker core (ADR-0041 R1b).
@@ -126,6 +133,14 @@ interface ActiveRun {
   key: string;
   roomId: string;
   agent: string;
+  /** Handoff depth: 0 for a steward-addressed root run, 1 for a handoff child. */
+  depth: number;
+  /** The steward root event id (budget scope); identical for a lead and its child. */
+  rootEventId: string;
+  /** Event id this run's records correlate to: the steward root for a lead, the handoff event for a child. */
+  correlationEventId: string;
+  /** Room participants captured at dispatch (target authorization; never widens runnable policy). */
+  participants: string[];
   client: RoomRpcClient | undefined;
   stewardEventId: string;
   settled: boolean;
@@ -137,6 +152,8 @@ interface ActiveRun {
   timeoutHandle?: unknown;
   unsubscribeEvents?: () => void;
   unsubscribeExit?: () => void;
+  /** The exact live handoff child spawned by this run, if any (depth bounded to 1). */
+  childRun?: ActiveRun;
   resolveDone: () => void;
   resolveFinalized: () => void;
   finalized: Promise<void>;
@@ -172,6 +189,27 @@ export function buildRoomMentionPrompt(input: { roomId: string; agent: string; t
   ].join("\n");
 }
 
+/**
+ * The bounded prompt handed to a worker agent started by an accepted
+ * handoff. It names the lead and the request only; it grants no new
+ * authority and forbids further dispatch.
+ */
+export function buildHandoffPrompt(input: {
+  roomId: string;
+  source: string;
+  target: string;
+  text: string;
+}): string {
+  return [
+    `You are participating in Piren room '${input.roomId}' as agent '${input.target}'.`,
+    `Agent '${input.source}' has asked you for bounded help with one request, recorded as an immutable room agent_message handoff event.`,
+    "Respond to this request only. Do not address, mention, or dispatch other agents. This message grants no new authority.",
+    "",
+    `Request from ${input.source}:`,
+    input.text,
+  ].join("\n");
+}
+
 export class RoomBroker {
   private readonly vaultRoot: string;
   private readonly runnableAgents: string[];
@@ -184,6 +222,8 @@ export class RoomBroker {
   private readonly roomReader: (options: ReadRoomOptions) => Promise<RoomRecord>;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
+  /** Accepted source->target pairs keyed by steward root event id (R2 budgets). */
+  private readonly acceptedHandoffPairs = new Map<string, Set<string>>();
   private readonly roomEventListeners = new Map<string, Set<(event: RoomEventNotification) => void>>();
   private readonly roomApprovalListeners = new Map<string, Set<(approval: RoomApprovalNotification) => void>>();
   private closed = false;
@@ -330,11 +370,53 @@ export class RoomBroker {
       throw new Error("Room broker is closed.");
     }
 
-    // Race-safe in-process reservation: check-and-set is synchronous, before
-    // the first event or client side effect. No implicit queue.
-    const key = `${input.roomId}:${input.agent}`;
+    const { run, done } = this.reserveRun(input.roomId, input.agent, 0, "", room.participants);
+    try {
+      // 1. Immutable steward message with the structured addressed agent.
+      const stewardEvent = await this.appendAndPublish(input.roomId, {
+        kind: "steward_message",
+        authorKind: "steward",
+        author: "steward",
+        body: text,
+        addressedAgent: input.agent,
+      });
+      run.stewardEventId = stewardEvent.id;
+      run.correlationEventId = stewardEvent.id;
+      run.rootEventId = stewardEvent.id;
+
+      // Cancellation boundary 1: close/abort won while the steward event was
+      // being written. Record one cancellation; never build/start a session
+      // or write run_started.
+      if (run.settled) {
+        return await this.finalizeCancelledDuringInit(run);
+      }
+
+      return await this.executeRoomRun(
+        run,
+        buildRoomMentionPrompt({ roomId: input.roomId, agent: input.agent, text }),
+        done,
+      );
+    } finally {
+      this.activeRuns.delete(run.key);
+      run.resolveFinalized();
+    }
+  }
+
+  /**
+   * Race-safe in-process reservation: check-and-set is synchronous, before
+   * the first event or client side effect. No implicit queue. Shared by the
+   * steward-rooted lead run (depth 0) and an accepted handoff child (depth 1).
+   */
+  private reserveRun(
+    roomId: string,
+    agent: string,
+    depth: number,
+    rootEventId: string,
+    participants: string[],
+  ): { run: ActiveRun; done: Promise<void> } {
+    const key = `${roomId}:${agent}`;
     if (this.activeRuns.has(key)) {
-      throw new Error(`A run is already active for room '${input.roomId}' and agent '${input.agent}'.`);
+      throw new Error(`A run is already active for room '${roomId}' and agent '${agent}'.`);
     }
     let resolveDone!: () => void;
     let resolveFinalized!: () => void;
@@ -343,8 +425,12 @@ export class RoomBroker {
     });
     const run: ActiveRun = {
       key,
-      roomId: input.roomId,
-      agent: input.agent,
+      roomId,
+      agent,
+      depth,
+      rootEventId,
+      correlationEventId: "",
+      participants,
       client: undefined,
       stewardEventId: "",
       settled: false,
@@ -357,13 +443,7 @@ export class RoomBroker {
       resolveDone = resolve;
     });
     this.activeRuns.set(key, run);
-
-    try {
-      return await this.runMention(run, input, text, done);
-    } finally {
-      this.activeRuns.delete(key);
-      run.resolveFinalized();
-    }
+    return { run, done };
   }
 
   private appendBase(roomId: string): { vaultRoot: string; roomId: string; now: () => Date; nonce?: () => string; io?: RoomWriteIo } {
@@ -382,34 +462,18 @@ export class RoomBroker {
     return base;
   }
 
-  private async runMention(
-    run: ActiveRun,
-    input: RoomMentionInput,
-    text: string,
-    done: Promise<void>,
-  ): Promise<RoomDispatchOutcome> {
-    // 1. Immutable steward message with the structured addressed agent.
-    const stewardEvent = await this.appendAndPublish(input.roomId, {
-      kind: "steward_message",
-      authorKind: "steward",
-      author: "steward",
-      body: text,
-      addressedAgent: input.agent,
-    });
-    run.stewardEventId = stewardEvent.id;
-
-    // Cancellation boundary 1: close/abort won while the steward event was
-    // being written. Record one cancellation; never build/start a session
-    // or write run_started.
-    if (run.settled) {
-      return await this.finalizeCancelledDuringInit(run, input);
-    }
-
+  /**
+   * Shared isolated room-run execution (session start -> run_started -> wire ->
+   * prompt -> await terminal -> finalize). Used by both the steward-rooted
+   * lead and an accepted handoff child; the correlation root and prompt are
+   * supplied by the caller. Preserves the R1 cancellation barriers.
+   */
+  private async executeRoomRun(run: ActiveRun, prompt: string, done: Promise<void>): Promise<RoomDispatchOutcome> {
     // Start the isolated room × agent session.
     let session;
     let startupFailed = false;
     try {
-      session = await this.sessions.getSession("room", run.key, input.agent);
+      session = await this.sessions.getSession("room", run.key, run.agent);
     } catch {
       startupFailed = true;
     }
@@ -423,26 +487,26 @@ export class RoomBroker {
         await session.client.stop().catch(() => {});
         this.sessions.forgetSession("room", run.key, session.client);
       }
-      return await this.finalizeCancelledDuringInit(run, input);
+      return await this.finalizeCancelledDuringInit(run);
     }
 
     if (startupFailed || session === undefined) {
       // Cancellation did NOT win and the client never reached run_started:
       // this is the only launch_failure path (ADR-0038 boundary).
-      const terminal = await this.appendAndPublish(input.roomId, {
+      const terminal = await this.appendAndPublish(run.roomId, {
         kind: "run_finished",
         authorKind: "system",
         author: "system",
         body: "The run could not be started.",
         runStatus: "failed",
         failureKind: "launch_failure",
-        correlationId: stewardEvent.id,
+        correlationId: run.correlationEventId,
       });
       return {
         status: "failed",
-        roomId: input.roomId,
-        agent: input.agent,
-        stewardEventId: stewardEvent.id,
+        roomId: run.roomId,
+        agent: run.agent,
+        stewardEventId: run.correlationEventId,
         terminalEventId: terminal.id,
         failureKind: "launch_failure",
       };
@@ -450,13 +514,13 @@ export class RoomBroker {
     run.client = session.client;
 
     // 2. run_started after the isolated client/session started.
-    await this.appendAndPublish(input.roomId, {
+    await this.appendAndPublish(run.roomId, {
       kind: "run_started",
       authorKind: "system",
       author: "system",
-      body: `Run started for agent '${input.agent}'.`,
+      body: `Run started for agent '${run.agent}'.`,
       runStatus: "running",
-      correlationId: stewardEvent.id,
+      correlationId: run.correlationEventId,
     });
 
     // Cancellation boundary 3: close/abort won while run_started was being
@@ -471,7 +535,7 @@ export class RoomBroker {
       run.timeoutHandle = this.timers.setTimeout(() => this.settle(run, "timeout"), this.runTimeoutMs);
 
       try {
-        await run.client.prompt(buildRoomMentionPrompt({ roomId: input.roomId, agent: input.agent, text }));
+        await run.client.prompt(prompt);
       } catch {
         // ADR-0038 boundary: the prompt was handed to Pi after run_started, so
         // the broker cannot infer whether side effects occurred. Classified by
@@ -481,13 +545,177 @@ export class RoomBroker {
     }
 
     await done;
-    return await this.finalizeRun(run, input);
+    return await this.finalizeRun(run);
+  }
+
+  /**
+   * R2a: process a reserved handoff control request emitted by the exact
+   * active parent run. Parses and authorizes the bounded request, records the
+   * immutable agent_message handoff, starts exactly one isolated child run,
+   * and answers the same Pi request id with a bounded structured result. A
+   * malformed or rejected request returns a bounded rejection and performs no
+   * dispatch, no queued work, and no retry.
+   */
+  private async processHandoff(sourceRun: ActiveRun, event: RpcEvent): Promise<void> {
+    const requestId = event.id as string;
+    try {
+      const parsed = parseHandoffInputRequest(event);
+      if (!parsed.ok) {
+        this.respondToHandoffInput(sourceRun, requestId, { status: "rejected", reason: parsed.reason });
+        return;
+      }
+      const auth = this.evaluateHandoffAuthorization(sourceRun, parsed.to);
+      if (!auth.ok) {
+        this.respondToHandoffInput(sourceRun, requestId, { status: "rejected", reason: auth.reason });
+        return;
+      }
+      // Acceptance is recorded before any side effect so the fixed budgets
+      // hold even if a later step fails.
+      this.recordHandoffAcceptance(sourceRun.rootEventId, sourceRun.agent, parsed.to);
+      // H: immutable agent_message handoff (author: lead, addressed: worker,
+      // correlation: the steward root S).
+      const handoffEvent = await this.appendAndPublish(sourceRun.roomId, {
+        kind: "agent_message",
+        authorKind: "agent",
+        author: sourceRun.agent,
+        body: parsed.text,
+        addressedAgent: parsed.to,
+        correlationId: sourceRun.rootEventId,
+      });
+      // Source settled while H was written: it is being torn down; skip the
+      // child and the input response (its client is being aborted).
+      if (sourceRun.settled) {
+        return;
+      }
+      const { outcome, reply } = await this.dispatchHandoffChild(sourceRun, handoffEvent.id, parsed.to, parsed.text);
+      if (!sourceRun.settled) {
+        this.respondToHandoffInput(sourceRun, requestId, this.outcomeToHandoffResult(outcome, reply, parsed.to));
+      }
+    } catch {
+      // Unexpected dispatch failure (for example a rare reservation race):
+      // never leave the lead blocked and never retry. Classified ambiguous.
+      if (!sourceRun.settled) {
+        this.respondToHandoffInput(sourceRun, requestId, {
+          status: "failed",
+          reason: "handoff dispatch failed",
+          failureKind: "ambiguous",
+        });
+      }
+    }
+  }
+
+  /**
+   * Strict fail-closed handoff authorization with deterministic non-secret
+   * reasons. Repeat-pair is checked before one-per-root so each budget is
+   * independently observable.
+   */
+  private evaluateHandoffAuthorization(sourceRun: ActiveRun, target: string): { ok: true } | { ok: false; reason: string } {
+    if (sourceRun.depth !== 0) {
+      return { ok: false, reason: "only a steward-addressed lead may hand off (depth limit reached)" };
+    }
+    if (!isValidAgentName(target)) {
+      return { ok: false, reason: "handoff target is not a valid agent name" };
+    }
+    if (target === sourceRun.agent) {
+      return { ok: false, reason: "an agent cannot hand off to itself" };
+    }
+    if (!this.runnableAgents.includes(target)) {
+      return { ok: false, reason: `agent '${target}' is not in the runnable set` };
+    }
+    if (!sourceRun.participants.includes(target)) {
+      return { ok: false, reason: `agent '${target}' is not a participant of room '${sourceRun.roomId}'` };
+    }
+    const accepted = this.acceptedHandoffPairs.get(sourceRun.rootEventId);
+    if (accepted !== undefined && accepted.has(`${sourceRun.agent}->${target}`)) {
+      return { ok: false, reason: "this source-target pair has already accepted a handoff for this steward root" };
+    }
+    if (accepted !== undefined && accepted.size >= 1) {
+      return { ok: false, reason: "this steward root has already accepted one agent handoff" };
+    }
+    if (this.activeRuns.has(`${sourceRun.roomId}:${target}`)) {
+      return { ok: false, reason: `a run is already active for room '${sourceRun.roomId}' and agent '${target}'` };
+    }
+    return { ok: true };
+  }
+
+  private recordHandoffAcceptance(rootEventId: string, source: string, target: string): void {
+    let set = this.acceptedHandoffPairs.get(rootEventId);
+    if (set === undefined) {
+      set = new Set();
+      this.acceptedHandoffPairs.set(rootEventId, set);
+    }
+    set.add(`${source}->${target}`);
+  }
+
+  /**
+   * Start exactly one isolated handoff child (depth 1) correlated to H. The
+   * child reuses the shared room-run execution; its terminal outcome and
+   * reply text are returned to {@link processHandoff}. The source-child link
+   * is cleared on completion so a later source settle cannot touch it.
+   */
+  private async dispatchHandoffChild(
+    sourceRun: ActiveRun,
+    handoffEventId: string,
+    target: string,
+    text: string,
+  ): Promise<{ outcome: RoomDispatchOutcome; reply: string }> {
+    const { run, done } = this.reserveRun(sourceRun.roomId, target, 1, sourceRun.rootEventId, sourceRun.participants);
+    run.correlationEventId = handoffEventId;
+    run.stewardEventId = handoffEventId;
+    sourceRun.childRun = run;
+    try {
+      const outcome = await this.executeRoomRun(
+        run,
+        buildHandoffPrompt({ roomId: sourceRun.roomId, source: sourceRun.agent, target, text }),
+        done,
+      );
+      const reply = extractAssistantText(run.events).trim();
+      return { outcome, reply };
+    } finally {
+      if (sourceRun.childRun === run) {
+        delete sourceRun.childRun;
+      }
+      this.activeRuns.delete(run.key);
+      run.resolveFinalized();
+    }
+  }
+
+  /** Map a child terminal outcome to the bounded non-secret handoff result. */
+  private outcomeToHandoffResult(outcome: RoomDispatchOutcome, reply: string, target: string): RoomHandoffResult {
+    switch (outcome.status) {
+      case "completed":
+        return { status: "ok", reply };
+      case "failed":
+        return { status: "failed", reason: `worker '${target}' run failed`, failureKind: outcome.failureKind };
+      case "timed_out":
+        return { status: "timed_out" };
+      case "cancelled":
+        return { status: "cancelled" };
+    }
+  }
+
+  /** Answer the lead's waiting input request id with a structured value. */
+  private respondToHandoffInput(sourceRun: ActiveRun, requestId: string, result: RoomHandoffResult): void {
+    if (sourceRun.client === undefined) return;
+    try {
+      sourceRun.client.respondToUiRequest(requestId, { value: renderHandoffResultValue(result) });
+    } catch {
+      // contained: a dead client cannot receive the response.
+    }
   }
 
   private handleClientEvent(run: ActiveRun, event: RpcEvent): void {
     if (run.settled) return;
     run.events.push(event);
     if (event.type === "extension_ui_request" && typeof event.id === "string") {
+      // R2a: a reserved handoff control request is consumed only from this
+      // exact active run, BEFORE generic input approval forwarding. It never
+      // enters the approval registry or notifications, and is never
+      // answerable through the public room approval path.
+      if (isHandoffInputRequest(event)) {
+        void this.processHandoff(run, event);
+        return;
+      }
       const method = typeof event.method === "string" ? event.method : "";
       // Only approvable request kinds register or forward; other Pi UI
       // requests (notify, setStatus, ...) never become room approvals.
@@ -540,6 +768,12 @@ export class RoomBroker {
         this.pendingApprovals.delete(approvalKey);
       }
     }
+    // R2a: a source abort/timeout/exit/close cancels ONLY its exact live
+    // handoff child. Depth is bounded to 1, so no recursive cascade beyond
+    // one level; a child can never have its own accepted child.
+    if (run.childRun !== undefined && !run.childRun.settled) {
+      this.settle(run.childRun, "cancel");
+    }
     run.resolveDone();
   }
 
@@ -548,29 +782,30 @@ export class RoomBroker {
    * won during initialization): exactly one correlated run_cancelled, with
    * no session usage, no run_started, and no client access.
    */
-  private async finalizeCancelledDuringInit(run: ActiveRun, input: RoomMentionInput): Promise<RoomDispatchOutcome> {
-    const terminal = await this.appendAndPublish(input.roomId, {
+  private async finalizeCancelledDuringInit(run: ActiveRun): Promise<RoomDispatchOutcome> {
+    const terminal = await this.appendAndPublish(run.roomId, {
       kind: "run_cancelled",
       authorKind: "system",
       author: "system",
       body: "Run cancelled by the steward.",
       runStatus: "cancelled",
-      correlationId: run.stewardEventId,
+      correlationId: run.correlationEventId,
     });
     run.terminalEventId = terminal.id;
     return {
       status: "cancelled",
-      roomId: input.roomId,
-      agent: input.agent,
-      stewardEventId: run.stewardEventId,
+      roomId: run.roomId,
+      agent: run.agent,
+      stewardEventId: run.correlationEventId,
       terminalEventId: terminal.id,
     };
   }
 
-  private async finalizeRun(run: ActiveRun, input: RoomMentionInput): Promise<RoomDispatchOutcome> {
+  private async finalizeRun(run: ActiveRun): Promise<RoomDispatchOutcome> {
     // settle() always assigns a kind before resolving the wait; the fallback
     // is defensive only.
     const kind = run.settleKind ?? "cancel";
+    const correlationId = run.correlationEventId;
 
     if (kind === "timeout" || kind === "cancel") {
       // Abort only the exact room-agent client. Stale agent_end emitted by
@@ -584,29 +819,29 @@ export class RoomBroker {
       const text = extractAssistantText(run.events).trim();
       let agentEventId: string | undefined;
       if (text !== "") {
-        const agentEvent = await this.appendAndPublish(input.roomId, {
+        const agentEvent = await this.appendAndPublish(run.roomId, {
           kind: "agent_message",
           authorKind: "agent",
-          author: input.agent,
+          author: run.agent,
           body: text,
-          correlationId: run.stewardEventId,
+          correlationId,
         });
         agentEventId = agentEvent.id;
       }
-      const terminal = await this.appendAndPublish(input.roomId, {
+      const terminal = await this.appendAndPublish(run.roomId, {
         kind: "run_finished",
         authorKind: "system",
         author: "system",
         body: "Run completed.",
         runStatus: "completed",
-        correlationId: run.stewardEventId,
+        correlationId,
       });
       run.terminalEventId = terminal.id;
       const outcome: RoomDispatchOutcome = {
         status: "completed",
-        roomId: input.roomId,
-        agent: input.agent,
-        stewardEventId: run.stewardEventId,
+        roomId: run.roomId,
+        agent: run.agent,
+        stewardEventId: correlationId,
         terminalEventId: terminal.id,
       };
       if (agentEventId !== undefined) {
@@ -616,14 +851,14 @@ export class RoomBroker {
     }
 
     if (kind === "ambiguous") {
-      const terminal = await this.appendAndPublish(input.roomId, {
+      const terminal = await this.appendAndPublish(run.roomId, {
         kind: "run_finished",
         authorKind: "system",
         author: "system",
         body: "The run ended unexpectedly.",
         runStatus: "failed",
         failureKind: "ambiguous",
-        correlationId: run.stewardEventId,
+        correlationId,
       });
       run.terminalEventId = terminal.id;
       if (run.clientExited === true) {
@@ -634,48 +869,48 @@ export class RoomBroker {
       }
       return {
         status: "failed",
-        roomId: input.roomId,
-        agent: input.agent,
-        stewardEventId: run.stewardEventId,
+        roomId: run.roomId,
+        agent: run.agent,
+        stewardEventId: correlationId,
         terminalEventId: terminal.id,
         failureKind: "ambiguous",
       };
     }
 
     if (kind === "timeout") {
-      const terminal = await this.appendAndPublish(input.roomId, {
+      const terminal = await this.appendAndPublish(run.roomId, {
         kind: "run_finished",
         authorKind: "system",
         author: "system",
         body: "Run timed out.",
         runStatus: "timed_out",
-        correlationId: run.stewardEventId,
+        correlationId,
       });
       run.terminalEventId = terminal.id;
       return {
         status: "timed_out",
-        roomId: input.roomId,
-        agent: input.agent,
-        stewardEventId: run.stewardEventId,
+        roomId: run.roomId,
+        agent: run.agent,
+        stewardEventId: correlationId,
         terminalEventId: terminal.id,
       };
     }
 
     // cancel
-    const terminal = await this.appendAndPublish(input.roomId, {
+    const terminal = await this.appendAndPublish(run.roomId, {
       kind: "run_cancelled",
       authorKind: "system",
       author: "system",
       body: "Run cancelled by the steward.",
       runStatus: "cancelled",
-      correlationId: run.stewardEventId,
+      correlationId,
     });
     run.terminalEventId = terminal.id;
     return {
       status: "cancelled",
-      roomId: input.roomId,
-      agent: input.agent,
-      stewardEventId: run.stewardEventId,
+      roomId: run.roomId,
+      agent: run.agent,
+      stewardEventId: correlationId,
       terminalEventId: terminal.id,
     };
   }
