@@ -573,14 +573,16 @@ export class RoomBroker {
   }
 
   /**
-   * R2a: process a reserved handoff control request emitted by the exact
-   * active parent run. Parses and authorizes the bounded request, records the
-   * immutable agent_message handoff, starts exactly one isolated child run,
-   * and answers the same Pi request id with a bounded structured result. A
-   * malformed or rejected request returns a bounded rejection and performs no
-   * dispatch, no queued work, and no retry.
+   * Synchronous accept gate for a reserved handoff control request. Parse and
+   * authorize the bounded request; a malformed or rejected request is answered
+   * with a bounded rejection and performs no dispatch, no queued work, and no
+   * retry — and CRUCIALLY never touches `run.handoffPromise`. Only an ACCEPTED
+   * handoff records the budget, reserves the exact depth-1 child target
+   * synchronously, binds it to the source, and assigns `run.handoffPromise` to
+   * the actual in-flight async work, so a later rejected request can never
+   * overwrite the accepted handoff's finalization dependency.
    */
-  private async processHandoff(sourceRun: ActiveRun, event: RpcEvent): Promise<void> {
+  private startHandoffIfAccepted(sourceRun: ActiveRun, event: RpcEvent): void {
     const requestId = event.id as string;
     const parsed = parseHandoffInputRequest(event);
     if (!parsed.ok) {
@@ -596,7 +598,8 @@ export class RoomBroker {
     // synchronously BEFORE any awaited H append. The reservation makes the
     // target occupied immediately, so a concurrent mention for the same target
     // is rejected at its own reservation and can never interleave between an
-    // accepted H and the child reservation (no orphan H).
+    // accepted H and the child reservation (no orphan H). Only now does the
+    // accepted handoff become the root's finalization dependency.
     this.recordHandoffAcceptance(sourceRun.rootEventId, sourceRun.agent, parsed.to);
     const { run: childRun, done: childDone } = this.reserveRun(
       sourceRun.roomId,
@@ -606,7 +609,23 @@ export class RoomBroker {
       sourceRun.participants,
     );
     sourceRun.childRun = childRun;
+    sourceRun.handoffPromise = this.runAcceptedHandoff(sourceRun, childRun, childDone, parsed, requestId);
+  }
 
+  /**
+   * The async body of an ACCEPTED handoff. Fully contained: it NEVER rejects,
+   * so `run.handoffPromise` always resolves and the lead is always answered
+   * (or skipped when already settled). Appends the immutable agent_message
+   * handoff H, binds the child correlation, executes exactly one isolated
+   * child run, and answers the same Pi request id with a bounded result.
+   */
+  private async runAcceptedHandoff(
+    sourceRun: ActiveRun,
+    childRun: ActiveRun,
+    childDone: Promise<void>,
+    parsed: { version: number; to: string; text: string },
+    requestId: string,
+  ): Promise<void> {
     // H: immutable agent_message handoff (author: lead, addressed: worker,
     // correlation: the steward root S).
     let handoffEvent: AppendRoomEventResult;
@@ -642,12 +661,13 @@ export class RoomBroker {
     // H, with no session start and no prompt. Never a launch_failure: the
     // child never attempted to start.
     if (sourceRun.settled) {
-      await this.finalizeCancelledDuringInit(childRun);
+      await this.finalizeCancelledDuringInit(childRun).catch(() => {});
       this.releasePreReservedChild(sourceRun, childRun);
       return;
     }
 
-    // Execute the pre-reserved child.
+    // Execute the pre-reserved child. Contain every post-H execution exception
+    // so the lead is answered and no session/key leaks.
     const { outcome, reply } = await this.executeHandoffChild(sourceRun, childRun, childDone, parsed.to, parsed.text);
     if (!sourceRun.settled) {
       this.respondToHandoffInput(sourceRun, requestId, this.outcomeToHandoffResult(outcome, reply, parsed.to));
@@ -714,9 +734,14 @@ export class RoomBroker {
   /**
    * Execute the pre-reserved depth-1 handoff child (already bound to the
    * source and correlated to H). Reuses the shared room-run execution; its
-   * terminal outcome and reply text are returned to {@link processHandoff}.
-   * The source-child link is cleared on completion so a later source settle
-   * cannot touch it.
+   * terminal outcome and reply text are returned to the caller. The
+   * source-child link and active key are cleared exactly once. EVERY post-H
+   * execution exception is contained here: the materialized exact child
+   * session is stopped/forgotten so it cannot be reused as an untracked
+   * session, a best-effort correlated terminal is written when writable, and
+   * a bounded failed/ambiguous outcome is returned so the lead is always
+   * answered. This method never throws; no orphan record, no retry, and the
+   * launch-failure boundary (session start failure) is preserved.
    */
   private async executeHandoffChild(
     sourceRun: ActiveRun,
@@ -733,8 +758,51 @@ export class RoomBroker {
       );
       const reply = extractAssistantText(childRun.events).trim();
       return { outcome, reply };
+    } catch {
+      await this.containFailedHandoffChild(childRun);
+      return {
+        outcome: {
+          status: "failed",
+          roomId: childRun.roomId,
+          agent: childRun.agent,
+          stewardEventId: childRun.correlationEventId,
+          terminalEventId: childRun.terminalEventId ?? "",
+          failureKind: "ambiguous",
+        },
+        reply: "",
+      };
     } finally {
       this.releasePreReservedChild(sourceRun, childRun);
+    }
+  }
+
+  /**
+   * Contain a child that threw during post-H execution (for example a child
+   * run_started append failure after the session was constructed): stop and
+   * forget the exact materialized session so it cannot be reused, settle the
+   * child, and write a best-effort correlated run_finished(ambiguous) when
+   * writable. Never retries and never throws.
+   */
+  private async containFailedHandoffChild(childRun: ActiveRun): Promise<void> {
+    if (childRun.client !== undefined) {
+      await childRun.client.stop().catch(() => {});
+      this.sessions.forgetSession("room", childRun.key, childRun.client);
+    }
+    // Settle so any later cascade/listener is inert; resolves the child wait.
+    this.settle(childRun, "cancel");
+    try {
+      const terminal = await this.appendAndPublish(childRun.roomId, {
+        kind: "run_finished",
+        authorKind: "system",
+        author: "system",
+        body: "The run ended unexpectedly.",
+        runStatus: "failed",
+        failureKind: "ambiguous",
+        correlationId: childRun.correlationEventId,
+      });
+      childRun.terminalEventId = terminal.id;
+    } catch {
+      // best-effort: the terminal could not be written; do not retry.
     }
   }
 
@@ -773,7 +841,7 @@ export class RoomBroker {
       // enters the approval registry or notifications, and is never
       // answerable through the public room approval path.
       if (isHandoffInputRequest(event)) {
-        run.handoffPromise = this.processHandoff(run, event);
+        this.startHandoffIfAccepted(run, event);
         return;
       }
       const method = typeof event.method === "string" ? event.method : "";

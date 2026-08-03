@@ -158,25 +158,34 @@ class FakeRoomClient implements RoomRpcClient {
 
   respondToUiRequest(id: string, response: ExtensionUiResponse): void {
     this.responses.push({ id, response });
-    // A handoff control response carries a structured `value`. Capture its
-    // parsed status; a "handoff" lead then continues to a normal terminal or
-    // emits the next queued handoff request.
-    const isHandoff = this.behavior === "handoff" || this.behavior === "handoff-hang";
-    const current = this.currentHandoffRequest();
-    if (isHandoff && current !== null && id === current.requestId) {
+    // A "handoff-hang" lead stays blocked until aborted/closed: record any
+    // structured handoff value (accepted OR rejected) and never complete.
+    if (this.behavior === "handoff-hang") {
       if ("value" in response) {
         const parsed = parseHandoffResultValue(response.value);
         this.handoffResults.push({ id, status: parsed.ok ? parsed.result.status : "malformed" });
       }
-      this.handoffCursor += 1;
-      if (this.currentHandoffRequest() !== null) {
-        // Next queued handoff request in the same root.
-        this.emitHandoffRequest();
-      } else if (this.behavior === "handoff") {
-        this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Lead continued." } });
-        this.emit({ type: "agent_end", messages: [] });
-      }
       return;
+    }
+    // A "handoff" lead advances its request sequence on the current request's
+    // response and completes once the sequence is exhausted.
+    if (this.behavior === "handoff") {
+      const current = this.currentHandoffRequest();
+      if (current !== null && id === current.requestId) {
+        if ("value" in response) {
+          const parsed = parseHandoffResultValue(response.value);
+          this.handoffResults.push({ id, status: parsed.ok ? parsed.result.status : "malformed" });
+        }
+        this.handoffCursor += 1;
+        if (this.currentHandoffRequest() !== null) {
+          // Next queued handoff request in the same root.
+          this.emitHandoffRequest();
+        } else {
+          this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Lead continued." } });
+          this.emit({ type: "agent_end", messages: [] });
+        }
+        return;
+      }
     }
     this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Done." } });
     this.emit({ type: "agent_end", messages: [] });
@@ -2586,6 +2595,212 @@ describe("RoomBroker handoff bounded reply and budget lifecycle (R2a review)", (
     for (const rootId of rootIds) {
       expect(broker.hasHandoffBudgetForRoot(rootId)).toBe(false);
     }
+    await broker.close();
+  });
+});
+
+describe("RoomBroker handoff final review lifecycle fixes (R2a)", () => {
+  let root: string;
+  let clients: FakeRoomClient[];
+  let timers: ManualTimers;
+  let nonceSeq: number;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-room-handoff-finalfix-"));
+    clients = [];
+    timers = new ManualTimers();
+    nonceSeq = 0;
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function byKind(events: { content: string }[], kind: string): string[] {
+    return events.filter((entry) => entry.content.includes(`kind: ${kind}`)).map((entry) => entry.content);
+  }
+
+  async function makeRoom(participants: string[] = ["kimi", "thor"]): Promise<string> {
+    const room = await createRoom({
+      vaultRoot: root,
+      title: "Final fix room",
+      participants,
+      now: () => new Date("2026-08-02T17:00:00.000Z"),
+    });
+    return room.id;
+  }
+
+  function gateNthLink(n: number): { io: { linkNoClobber(t: string, target: string): Promise<void>; remove(p: string): Promise<void> }; hit: Promise<void>; release: () => void } {
+    let releaseFn!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseFn = resolve; });
+    let hitFn!: () => void;
+    const hit = new Promise<void>((resolve) => { hitFn = resolve; });
+    let calls = 0;
+    const io = {
+      linkNoClobber: async (tempPath: string, targetPath: string) => {
+        calls += 1;
+        if (calls === n) {
+          hitFn();
+          await gate;
+        }
+        await link(tempPath, targetPath);
+      },
+      remove: async (p: string) => { await rm(p, { force: true }); },
+    };
+    return { io, hit, release: () => releaseFn() };
+  }
+
+  function failNthLink(n: number, message: string): { linkNoClobber(t: string, target: string): Promise<void>; remove(p: string): Promise<void> } {
+    let calls = 0;
+    return {
+      linkNoClobber: async (tempPath: string, targetPath: string) => {
+        calls += 1;
+        if (calls === n) {
+          throw new Error(message);
+        }
+        await link(tempPath, targetPath);
+      },
+      remove: async (p: string) => { await rm(p, { force: true }); },
+    };
+  }
+
+  it("a rejected second reserved request must not overwrite the accepted handoff's finalization tracking (abort waits for H + child cancellation)", async () => {
+    // Lead appends: steward_message(1), run_started(2), H(3). Gate link 3 (H).
+    const { io, hit, release } = gateNthLink(3);
+    const broker = new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi", "thor"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+      clientFactory: () => {
+        let client: FakeRoomClient;
+        if (clients.length === 0) {
+          client = new FakeRoomClient("handoff-hang");
+          client.handoffSequence = [{ to: "thor", text: "first", requestId: "handoff-1" }];
+        } else {
+          client = new FakeRoomClient("hang");
+        }
+        clients.push(client);
+        return client;
+      },
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      runTimeoutMs: 60_000,
+      io,
+    });
+    const roomId = await makeRoom();
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Lead." });
+    await hit; // first handoff accepted, child thor reserved, H append suspended
+
+    const lead = clients[0]!;
+    // Send a SECOND reserved request (same pair → rejected by one-per-root).
+    lead.emit({
+      type: "extension_ui_request",
+      id: "handoff-2",
+      method: "input",
+      title: ROOM_HANDOFF_REQUEST_TITLE,
+      placeholder: JSON.stringify({ v: ROOM_HANDOFF_PROTOCOL_VERSION, to: "thor", text: "second" }),
+    });
+    // The second request was answered with a rejection (not a dispatch).
+    await waitFor(() => lead.handoffResults.some((result) => result.id === "handoff-2"));
+    expect(lead.handoffResults.find((result) => result.id === "handoff-2")?.status).toBe("rejected");
+
+    // Abort the source. It must NOT resolve before the accepted handoff's H +
+    // correlated child cancellation are durable (i.e. before the gate releases).
+    let abortResolved = false;
+    const abortPromise = broker.abort(roomId, "kimi").then((outcome) => {
+      abortResolved = true;
+      return outcome;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(abortResolved).toBe(false); // still waiting for the accepted handoff
+
+    release();
+    const abortOutcome = await abortPromise;
+    expect(abortOutcome.status).toBe("cancelled");
+    expect(abortResolved).toBe(true);
+    const outcome = await dispatch;
+    expect((outcome as { status: string }).status).toBe("cancelled");
+
+    const events = await readEvents(root, roomId);
+    const handoffs = byKind(events, "agent_message").filter((content) => content.includes("addressed_agent: thor"));
+    expect(handoffs).toHaveLength(1); // exactly one H (the second was rejected)
+    const handoffId = handoffs[0]!.match(/id: ([^\n]+)/)?.[1]!;
+    expect(byKind(events, "run_cancelled").filter((content) => content.includes(`correlation_id: ${handoffId}`))).toHaveLength(1);
+    expect(byKind(events, "run_started").some((content) => content.includes("agent 'thor'"))).toBe(false);
+    expect(clients.find((client) => client !== lead)).toBeUndefined(); // no thor session/prompt
+    expect(broker.hasActiveRun(roomId, "thor")).toBe(false);
+    expect(broker.hasHandoffBudgetForRoot((outcome as { stewardEventId: string }).stewardEventId)).toBe(false);
+    await broker.close();
+  });
+
+  it("contains a one-shot child run_started append failure: bounded failed result, no worker prompt, no session/key reuse, no thrown promise", async () => {
+    // Lead appends: steward_message(1), run_started(2), H(3); child thor run_started(4) FAILS.
+    const broker = new RoomBroker({
+      vaultRoot: root,
+      runnableAgents: ["kimi", "thor"],
+      targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+      clientFactory: () => {
+        let client: FakeRoomClient;
+        if (clients.length === 0) {
+          client = new FakeRoomClient("handoff");
+          client.handoffSequence = [{ to: "thor", text: "help", requestId: "handoff-1" }];
+        } else {
+          client = new FakeRoomClient("complete");
+        }
+        clients.push(client);
+        return client;
+      },
+      now: () => new Date("2026-08-02T18:00:00.000Z"),
+      nonce: () => `n${++nonceSeq}`,
+      timers,
+      runTimeoutMs: 60_000,
+      io: failNthLink(4, "child run_started write failed (fake)"),
+    });
+    const roomId = await makeRoom();
+
+    const outcome = await broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Lead." });
+    // The lead completed after receiving a bounded failed/ambiguous result.
+    expect(outcome.status).toBe("completed");
+
+    const lead = clients[0]!;
+    expect(lead.handoffResults).toEqual([{ id: "handoff-1", status: "failed" }]);
+    const value = lead.responses.find((response) => response.id === "handoff-1")?.response;
+    if (value && "value" in value) {
+      const parsed = parseHandoffResultValue(value.value);
+      if (parsed.ok && parsed.result.status === "failed") {
+        expect(parsed.result.failureKind).toBe("ambiguous");
+      } else {
+        throw new Error("expected a failed/ambiguous handoff result");
+      }
+    }
+
+    // No worker prompt: the child's run_started append failed before any prompt.
+    const worker = clients[1]!;
+    expect(worker.prompts).toHaveLength(0);
+    // The materialized child session was stopped so it cannot be reused.
+    expect(worker.stopped).toBe(1);
+    // No active child/key remains.
+    expect(broker.hasActiveRun(roomId, "thor")).toBe(false);
+
+    const events = await readEvents(root, roomId);
+    const handoffs = byKind(events, "agent_message").filter((content) => content.includes("addressed_agent: thor"));
+    expect(handoffs).toHaveLength(1); // H exists
+    const handoffId = handoffs[0]!.match(/id: ([^\n]+)/)?.[1]!;
+    // No child run_started was ever written.
+    expect(byKind(events, "run_started").some((content) => content.includes("agent 'thor'"))).toBe(false);
+    // Best-effort correlated terminal: exactly one run_finished(ambiguous) for H.
+    const childTerminal = byKind(events, "run_finished").filter((content) => content.includes(`correlation_id: ${handoffId}`));
+    expect(childTerminal).toHaveLength(1);
+    expect(childTerminal[0]).toContain("failure_kind: ambiguous");
+    // Not a launch_failure (the session had already started).
+    expect(childTerminal[0]).not.toContain("launch_failure");
+
+    // The forgotten child session is not reused: a fresh thor mention builds a new client.
+    const retry = await broker.dispatchRoomMention({ roomId, agent: "thor", text: "Fresh thor." });
+    expect(retry.status).toBe("completed");
+    expect(clients.length).toBe(3);
+    expect(clients[2]).not.toBe(worker);
     await broker.close();
   });
 });
