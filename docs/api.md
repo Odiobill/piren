@@ -114,7 +114,8 @@ OpenAI-compatible:
 
 Collaboration rooms (available when the gateway is wired with a vault root, runnable agents, and an agent target builder; otherwise all room routes return 404):
 
-- `POST /api/rooms` — create a room. Body `{title, participants?}`; returns `201 {room}` with the safe manifest shape (vault-relative path only).
+- `GET /api/room-agents` — the vault-agent roster for the workbench: `{agents: [{name, online}]}`, deterministically sorted by name. Names come from the vault-defined `team/<agent>/` roster supplied to the gateway at startup; `online` is local installation policy only — membership in this gateway's resolved runnable set — never Pi-process presence, provider reachability, transport state, or identity. An empty supplied roster returns `[]`. The route reveals no config, tokens, groups, or diagnostics and starts no Pi clients.
+- `POST /api/rooms` — create a room. Body `{title, participants?}`; returns `201 {room}` with the safe manifest shape (vault-relative path only). Every explicitly supplied participant must be in the gateway's runnable set; offline/non-runnable participants are rejected with the non-secret 400 participant/runnable semantics, so the offline UI rule is not bypassable by a direct POST.
 - `GET /api/rooms` — list room manifests.
 - `GET /api/rooms/<roomId>` — read one room manifest; unknown room returns 404.
 - `GET /api/rooms/<roomId>/events` — validated chronological immutable event records.

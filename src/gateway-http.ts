@@ -11,6 +11,7 @@ import { createInboxTask } from "./inbox.js";
 import { buildOkfGraph } from "./okf-graph.js";
 import { RoomBroker, type RoomApprovalInput } from "./room-broker.js";
 import { createRoom, listRoomEvents, listRooms, readRoom, type RoomRecord } from "./rooms.js";
+import { buildRoomAgentsResponse } from "./room-agents.js";
 import type { VaultDirReader } from "./okf.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -61,6 +62,15 @@ export interface GatewayServerOptions {
   vaultRoot?: string | undefined;
   /** Runnable agents for the web UI. If absent, agent switching is disabled. */
   runnableAgents?: string[] | undefined;
+  /**
+   * Vault-defined agent roster (`team/<agent>/` names) for GET
+   * /api/room-agents (ADR-0041 R3b-2). Explicitly supplied by the caller
+   * (the CLI passes the already-resolved local-policy report); the server
+   * never rereads local config or creates directories to derive it. When
+   * absent, the roster route returns an empty list. `online` is local
+   * installation policy only — membership in `runnableAgents`.
+   */
+  vaultAgents?: string[] | undefined;
   /** Initial active agent. Defaults to the first runnable agent or null. */
   initialAgent?: string | undefined;
   /**
@@ -132,6 +142,7 @@ export class GatewayServer {
   private readonly streams = new Map<string, ChatStream>();
   private readonly vaultRoot: string | undefined;
   private readonly runnableAgents: string[];
+  private readonly vaultAgents: string[];
   private currentAgent: string | null;
   private readonly targetBuilder: RpcTargetBuilder | undefined;
   private readonly authToken: string;
@@ -146,6 +157,7 @@ export class GatewayServer {
     this.client = new PiRpcClient(options.target);
     this.vaultRoot = options.vaultRoot;
     this.runnableAgents = options.runnableAgents ?? [];
+    this.vaultAgents = options.vaultAgents ?? [];
     this.targetBuilder = options.targetBuilder;
     this.authToken = options.authToken ?? "";
     this.publicDir = options.publicDir;
@@ -255,6 +267,8 @@ export class GatewayServer {
       await this.handleSetThinking(req, res);
     } else if (req.method === "GET" && url.pathname === "/api/chat/agents") {
       await this.handleAgents(res);
+    } else if (req.method === "GET" && url.pathname === "/api/room-agents") {
+      await this.handleRoomAgents(res);
     } else if (req.method === "POST" && url.pathname === "/api/chat/switch") {
       await this.handleSwitch(req, res);
     } else if (req.method === "POST" && url.pathname === "/api/chat/approve") {
@@ -1105,6 +1119,18 @@ export class GatewayServer {
       this.writeJson(res, 400, { error: "participants must be an array of agent name strings" });
       return;
     }
+    // R3b-2 participant enforcement: every explicitly supplied participant
+    // must be in this gateway's runnable set, so the offline UI rule is not
+    // bypassable by a direct POST. Reuses the broker's non-secret 400
+    // vocabulary (roomError maps "not in the runnable set" to 400).
+    if (Array.isArray(participants)) {
+      for (const participant of participants as string[]) {
+        if (!this.runnableAgents.includes(participant)) {
+          this.roomError(res, new Error(`Agent '${participant}' is not in the runnable set.`));
+          return;
+        }
+      }
+    }
     try {
       const room = await createRoom({
         vaultRoot: this.vaultRoot as string,
@@ -1124,6 +1150,15 @@ export class GatewayServer {
     } catch (error) {
       this.roomError(res, error);
     }
+  }
+
+  /**
+   * GET /api/room-agents (ADR-0041 R3b-2). Deterministic vault-agent roster
+   * where `online` is local installation policy only (membership in the
+   * resolved runnableAgents set) — never Pi/transport/provider presence.
+   */
+  private async handleRoomAgents(res: ServerResponse): Promise<void> {
+    this.writeJson(res, 200, buildRoomAgentsResponse(this.vaultAgents, this.runnableAgents));
   }
 
   private async handleRoomRead(res: ServerResponse, roomId: string): Promise<void> {

@@ -48,14 +48,15 @@ Open:
 http://127.0.0.1:7317/
 ```
 
-The UI provides (build-foundation slice):
+The UI provides (room-navigator slice):
 
 - public auth probe (`GET /api/auth/info`) with loading/error states
-- in-memory Bearer token entry when auth is required (never written to storage)
-- an authenticated shell with a steward-facing "coming next" state
+- in-memory Bearer token entry when auth is required (never written to storage); the first protected request validates the token, and a rejected token returns to the entry without persistence
+- a room navigator: room list/create/select, with a vault-agent roster where **online** means runnable on this installation (local installation policy only, not a live presence or provider probe); **offline** agents are visible, labelled, and disabled, and the gateway also rejects offline participants on direct POST
+- participants chosen before creation only — they are immutable afterwards
 - the Piren logo and responsive, keyboard-usable semantic layout
 
-The room workbench (navigator, timeline, structured dispatch, approvals, abort) arrives in later separately-gated slices; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
+The timeline, structured dispatch, approvals, and abort arrive in later separately-gated slices; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
 
 The UI intentionally does not provide model selection, thinking controls, or configuration editing. Those belong in vault config and local config. API routes remain available for external integrations.
 

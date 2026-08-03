@@ -11,6 +11,7 @@ import { createInboxTask } from "./inbox.js";
 import { buildOkfGraph } from "./okf-graph.js";
 import { RoomBroker } from "./room-broker.js";
 import { createRoom, listRoomEvents, listRooms, readRoom } from "./rooms.js";
+import { buildRoomAgentsResponse } from "./room-agents.js";
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const MIME_TYPES = {
@@ -79,6 +80,7 @@ export class GatewayServer {
     streams = new Map();
     vaultRoot;
     runnableAgents;
+    vaultAgents;
     currentAgent;
     targetBuilder;
     authToken;
@@ -92,6 +94,7 @@ export class GatewayServer {
         this.client = new PiRpcClient(options.target);
         this.vaultRoot = options.vaultRoot;
         this.runnableAgents = options.runnableAgents ?? [];
+        this.vaultAgents = options.vaultAgents ?? [];
         this.targetBuilder = options.targetBuilder;
         this.authToken = options.authToken ?? "";
         this.publicDir = options.publicDir;
@@ -202,6 +205,9 @@ export class GatewayServer {
         }
         else if (req.method === "GET" && url.pathname === "/api/chat/agents") {
             await this.handleAgents(res);
+        }
+        else if (req.method === "GET" && url.pathname === "/api/room-agents") {
+            await this.handleRoomAgents(res);
         }
         else if (req.method === "POST" && url.pathname === "/api/chat/switch") {
             await this.handleSwitch(req, res);
@@ -1048,6 +1054,18 @@ export class GatewayServer {
             this.writeJson(res, 400, { error: "participants must be an array of agent name strings" });
             return;
         }
+        // R3b-2 participant enforcement: every explicitly supplied participant
+        // must be in this gateway's runnable set, so the offline UI rule is not
+        // bypassable by a direct POST. Reuses the broker's non-secret 400
+        // vocabulary (roomError maps "not in the runnable set" to 400).
+        if (Array.isArray(participants)) {
+            for (const participant of participants) {
+                if (!this.runnableAgents.includes(participant)) {
+                    this.roomError(res, new Error(`Agent '${participant}' is not in the runnable set.`));
+                    return;
+                }
+            }
+        }
         try {
             const room = await createRoom({
                 vaultRoot: this.vaultRoot,
@@ -1068,6 +1086,14 @@ export class GatewayServer {
         catch (error) {
             this.roomError(res, error);
         }
+    }
+    /**
+     * GET /api/room-agents (ADR-0041 R3b-2). Deterministic vault-agent roster
+     * where `online` is local installation policy only (membership in the
+     * resolved runnableAgents set) — never Pi/transport/provider presence.
+     */
+    async handleRoomAgents(res) {
+        this.writeJson(res, 200, buildRoomAgentsResponse(this.vaultAgents, this.runnableAgents));
     }
     async handleRoomRead(res, roomId) {
         try {

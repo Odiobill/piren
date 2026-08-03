@@ -83,15 +83,20 @@ describe("web auth shell contract (R3b-1)", () => {
       expect(app).toMatch(/not been validated/i);
     });
 
-    it("the shell calls no protected endpoint (auth-info only)", async () => {
+    it("the shell calls only its authorized endpoints (auth-info + room-agents + rooms)", async () => {
       const [app, api] = await Promise.all([
         readFile(join(process.cwd(), "web", "src", "App.tsx"), "utf8"),
         readFile(join(process.cwd(), "web", "src", "api.ts"), "utf8"),
       ]);
       const combined = `${app}\n${api}`;
+      // R3b-1 authorized the public auth probe; R3b-2 authorized the
+      // room-agents roster and room list/create/read routes.
       expect(combined).toContain("/api/auth/info");
-      for (const forbidden of ["/api/chat", "/api/rooms", "/api/vault", "/api/v1/"]) {
-        expect(combined, `${forbidden} must not be called by the R3b-1 shell`).not.toContain(forbidden);
+      expect(combined).toContain("/api/room-agents");
+      expect(combined).toContain("/api/rooms");
+      // Chat, vault, and completions endpoints stay outside the workbench shell.
+      for (const forbidden of ["/api/chat", "/api/vault", "/api/v1/"]) {
+        expect(combined, `${forbidden} must not be called by the shell`).not.toContain(forbidden);
       }
     });
   });

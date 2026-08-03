@@ -1,30 +1,32 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import logoUrl from "./assets/piren-logo.png";
-import { buildAuthHeaders, resolveShellAuth } from "./auth";
+import { resolveShellAuth } from "./auth";
 import { fetchAuthInfo } from "./api";
+import { RoomNavigator } from "./RoomNavigator";
 
 /**
- * Workbench shell (ADR-0041 R3b-1). This slice ships only the build
- * foundation plus a minimal in-memory Bearer-token entry and a
- * gateway-reachable shell: no room behavior, no timeline, no composer, no
- * approvals/abort, no service worker, no vault browser/graph, and no
- * model/thinking/provider/config/secret controls.
+ * Workbench shell. R3b-1 shipped the build foundation and the in-memory
+ * Bearer-token entry; R3b-2 adds the room navigator (list/create/select with
+ * the local-policy agent roster). Still excluded: timeline, composer,
+ * dispatch, approvals, abort, vault browser/graph, model/config controls,
+ * service worker, offline behavior, and any storage of the token.
  *
- * Honest auth state: the shell never claims a token is authenticated or
- * validated. It distinguishes a no-token localhost shell ("Gateway
- * reachable") from a token-entered shell ("Token ready"); the token is held
- * in memory only and is validated only when a later authorized slice makes
- * its first protected request.
+ * Honest auth state: the shell never claims a token is authenticated before
+ * a protected request succeeds. It distinguishes a no-token localhost shell
+ * ("Gateway reachable"), a token-entered shell ("Token ready"), and a
+ * token-accepted shell ("Token accepted", after a verified protected
+ * request). A 401 on a protected request returns to token entry without
+ * persisting anything.
  */
 type ShellState =
   | { phase: "loading" }
   | { phase: "error"; message: string }
   | { phase: "token-needed"; token: string }
   | { phase: "ready-local" }
-  | { phase: "token-ready"; token: string };
+  | { phase: "token-ready"; token: string }
+  | { phase: "token-accepted"; token: string };
 
 const COMING_NEXT = [
-  { label: "Room navigator", bullet: "R3b-2", note: "room list/create/select with immutable participants" },
   { label: "Room timeline", bullet: "R3b-3", note: "historic events plus live SSE, immutable rendering, reconnect re-read" },
   { label: "Structured dispatch", bullet: "R3b-4", note: "the video-ready \u201cPiren building itself\u201d demonstration" },
   { label: "Approval + abort controls", bullet: "R3b-5", note: "scoped approval cards and room-agent abort" },
@@ -41,13 +43,15 @@ function StatusBadge({ state }: { state: ShellState }) {
           ? "Token required"
           : state.phase === "ready-local"
             ? "Gateway reachable"
-            : "Token ready";
+            : state.phase === "token-ready"
+              ? "Token ready"
+              : "Token accepted";
   const tone =
-    state.phase === "ready-local" || state.phase === "token-ready"
+    state.phase === "ready-local" || state.phase === "token-accepted"
       ? "ok"
       : state.phase === "error"
         ? "error"
-        : state.phase === "token-needed"
+        : state.phase === "token-needed" || state.phase === "token-ready"
           ? "warn"
           : "idle";
   return (
@@ -90,6 +94,23 @@ export default function App() {
     if (state.phase === "token-needed") tokenInputRef.current?.focus();
   }, [state.phase]);
 
+  // Truthful transitions: a successful protected request upgrades
+  // token-ready -> token-accepted; a 401 returns to token entry without
+  // persisting anything. Both callbacks are stable (functional updates) so
+  // the navigator does not reload on each render.
+  const handleValidated = useCallback(() => {
+    setState((previous) => (previous.phase === "token-ready" ? { phase: "token-accepted", token: previous.token } : previous));
+  }, []);
+
+  const handleUnauthorized = useCallback(() => {
+    setTokenHint("The gateway rejected that token. Check it and try again.");
+    setState((previous) =>
+      previous.phase === "token-ready" || previous.phase === "token-accepted"
+        ? { phase: "token-needed", token: previous.token }
+        : previous,
+    );
+  }, []);
+
   function handleTokenSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (state.phase !== "token-needed") return;
@@ -101,8 +122,7 @@ export default function App() {
     }
     setTokenHint(null);
     // In-memory only: the token lives in React state for this page load and
-    // is dropped on reload. Nothing is sent yet in R3b-1; later bullets use
-    // buildAuthHeaders(token) on their requests.
+    // is dropped on reload. The first protected request below validates it.
     setState({ phase: "token-ready", token });
   }
 
@@ -111,13 +131,15 @@ export default function App() {
     setRetryKey((k) => k + 1);
   }
 
+  const readyPhase = state.phase === "ready-local" || state.phase === "token-ready" || state.phase === "token-accepted";
+
   return (
     <div className="shell">
       <header className="shell-header">
         <img src={logoUrl} alt="Piren logo" className="shell-logo" width={48} height={48} />
         <div className="shell-heading">
           <h1>Piren Workbench</h1>
-          <p className="shell-subtitle">Local-first agent collaboration shell (R3b-1)</p>
+          <p className="shell-subtitle">Local-first agent collaboration shell</p>
         </div>
         <StatusBadge state={state} />
       </header>
@@ -184,28 +206,44 @@ export default function App() {
           </section>
         )}
 
-        {state.phase === "ready-local" && (
-          <section className="card">
-            <h2>Gateway reachable</h2>
-            <p className="muted">
-              This host requires no token, so the shell is ready without one. No authenticated
-              request has been made yet: R3b-1 only probes the public auth endpoint, and room,
-              chat, or vault APIs are not called in this slice.
-            </p>
+        {readyPhase && (
+          <>
+            <section className="card">
+              {state.phase === "ready-local" && (
+                <>
+                  <h2>Gateway reachable</h2>
+                  <p className="muted">
+                    This host requires no token, so the shell is ready without one. Room data loads
+                    below; the shell calls only the room-agents roster and room routes.
+                  </p>
+                </>
+              )}
+              {state.phase === "token-ready" && (
+                <>
+                  <h2>Token ready</h2>
+                  <p className="muted">
+                    The token is held in memory for this page only and has <strong>not been validated</strong>: your first protected request below checks it. A rejected
+                    token returns you to the token entry without persisting anything.
+                  </p>
+                </>
+              )}
+              {state.phase === "token-accepted" && (
+                <>
+                  <h2>Token accepted</h2>
+                  <p className="muted">
+                    The gateway accepted this token on a protected request. It stays in memory for
+                    this page only and is never written to storage.
+                  </p>
+                </>
+              )}
+            </section>
+            <RoomNavigator
+              token={state.phase === "ready-local" ? "" : state.token}
+              onValidated={handleValidated}
+              onUnauthorized={handleUnauthorized}
+            />
             <ComingNext />
-          </section>
-        )}
-
-        {state.phase === "token-ready" && (
-          <section className="card">
-            <h2>Token ready</h2>
-            <p className="muted">
-              The token is held in memory for this page only and has <strong>not been validated</strong>: no protected request has been made. Validation happens only
-              when a later authorized slice makes its first authenticated request and the
-              gateway accepts it. No room, chat, or vault APIs are called in this slice.
-            </p>
-            <ComingNext />
-          </section>
+          </>
         )}
       </main>
 
@@ -221,7 +259,7 @@ export default function App() {
 
 function ComingNext() {
   return (
-    <>
+    <section className="card">
       <h3>Coming next (each separately steward-gated)</h3>
       <ul className="coming-next">
         {COMING_NEXT.map((item) => (
@@ -237,6 +275,6 @@ function ComingNext() {
         Read-only vault/graph navigation is deferred to R4; the service worker is deferred to R3c
         or later.
       </p>
-    </>
+    </section>
   );
 }

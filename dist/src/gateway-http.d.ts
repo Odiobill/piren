@@ -5,6 +5,15 @@ export interface GatewayServerOptions {
     vaultRoot?: string | undefined;
     /** Runnable agents for the web UI. If absent, agent switching is disabled. */
     runnableAgents?: string[] | undefined;
+    /**
+     * Vault-defined agent roster (`team/<agent>/` names) for GET
+     * /api/room-agents (ADR-0041 R3b-2). Explicitly supplied by the caller
+     * (the CLI passes the already-resolved local-policy report); the server
+     * never rereads local config or creates directories to derive it. When
+     * absent, the roster route returns an empty list. `online` is local
+     * installation policy only — membership in `runnableAgents`.
+     */
+    vaultAgents?: string[] | undefined;
     /** Initial active agent. Defaults to the first runnable agent or null. */
     initialAgent?: string | undefined;
     /**
@@ -46,6 +55,7 @@ export declare class GatewayServer {
     private readonly streams;
     private readonly vaultRoot;
     private readonly runnableAgents;
+    private readonly vaultAgents;
     private currentAgent;
     private readonly targetBuilder;
     private readonly authToken;
@@ -140,6 +150,12 @@ export declare class GatewayServer {
     private handleRooms;
     private handleRoomCreate;
     private handleRoomList;
+    /**
+     * GET /api/room-agents (ADR-0041 R3b-2). Deterministic vault-agent roster
+     * where `online` is local installation policy only (membership in the
+     * resolved runnableAgents set) — never Pi/transport/provider presence.
+     */
+    private handleRoomAgents;
     private handleRoomRead;
     private handleRoomEvents;
     /**

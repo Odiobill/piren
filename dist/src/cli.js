@@ -141,6 +141,7 @@ try {
             target: { command: runCommand.command, args: runCommand.args, cwd: runCommand.cwd, env: runCommand.env },
             vaultRoot: context.vaultRoot,
             runnableAgents: agentsReport.runnableAgents,
+            vaultAgents: agentsReport.vaultAgents,
             initialAgent: context.agentName,
             targetBuilder,
             authToken: resolvedToken.token !== "" ? resolvedToken.token : undefined,
