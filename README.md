@@ -53,11 +53,11 @@ The gateway serves a React/Vite workbench shell built from `web/` and emitted to
 From a source checkout, build the workbench and start the gateway against your local config:
 
 ```bash
-npm run build                      # tsc -> dist/src + vite build -> dist/public
-piren gateway --port 7317          # uses your ~/.config/piren/config.yml vault and agents
+npm run build                                  # tsc -> dist/src + vite build -> dist/public
+node ./dist/src/cli.js gateway --port 7317     # this checkout; uses ~/.config/piren/config.yml
 ```
 
-Then open **http://127.0.0.1:7317/** in a browser. A source `piren gateway` requires the build to have run first (the vite build emits `dist/public`); until then static GETs return 404. If the gateway is bound to a non-localhost host, pass `--token <token>` or set `PIREN_TOKEN`; the token is kept in memory only and is never written to storage.
+Then open **http://127.0.0.1:7317/** in a browser. Use `node ./dist/src/cli.js`, not bare `piren`, to test this checkout: bare `piren` resolves the globally installed version. The build must run first because it emits `dist/public`. If the gateway is bound to a non-localhost host, pass `--token <token>` or set `PIREN_TOKEN`; the token is kept in memory only and is never written to storage.
 
 Acceptance checklist for the workbench shell:
 
