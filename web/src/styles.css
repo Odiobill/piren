@@ -440,7 +440,128 @@ code {
   padding-left: 20px;
 }
 
+/* App shell (R3b-2.5): sidebar + workspace + mobile drawer */
+.shell-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.sidebar-desktop {
+  width: 220px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  padding: 16px 12px;
+  background: var(--surface);
+}
+
+.sidebar-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.nav-item {
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.nav-item.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: var(--accent);
+}
+
+.nav-toggle {
+  display: none;
+  flex: none;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 40;
+}
+
+.mobile-drawer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: min(280px, 84vw);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 16px 12px;
+  overflow-y: auto;
+}
+
+.workspace-panel {
+  display: block;
+}
+
+.workspace-panel[hidden] {
+  display: none;
+}
+
+.workspace-panel .card + .card {
+  margin-top: 16px;
+}
+
+.about-list {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.about-row {
+  display: flex;
+  gap: 12px;
+}
+
+.about-row dt {
+  flex: none;
+  width: 130px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.about-row dd {
+  margin: 0;
+  word-break: break-word;
+}
+
 @media (max-width: 560px) {
+  .sidebar-desktop {
+    display: none;
+  }
+
+  .nav-toggle {
+    display: inline-flex;
+  }
+
+  .about-row {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .about-row dt {
+    width: auto;
+  }
+
   .shell-header {
     flex-wrap: wrap;
     padding: 12px 16px;

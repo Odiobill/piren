@@ -77,10 +77,14 @@ describe("web auth shell contract (R3b-1)", () => {
     });
 
     it("the shell copy is explicit that the token is not validated yet", async () => {
-      const app = await readFile(join(process.cwd(), "web", "src", "App.tsx"), "utf8");
-      expect(app).toContain("Token ready");
-      expect(app).toContain("Gateway reachable");
-      expect(app).toMatch(/not been validated/i);
+      const [app, shell] = await Promise.all([
+        readFile(join(process.cwd(), "web", "src", "App.tsx"), "utf8"),
+        readFile(join(process.cwd(), "web", "src", "AppShell.tsx"), "utf8"),
+      ]);
+      const combined = `${app}\n${shell}`;
+      expect(combined).toContain("Token ready");
+      expect(combined).toContain("Gateway reachable");
+      expect(combined).toMatch(/not been validated/i);
     });
 
     it("the shell calls only its authorized endpoints (auth-info + room-agents + rooms)", async () => {

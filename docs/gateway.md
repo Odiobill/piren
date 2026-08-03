@@ -48,15 +48,18 @@ Open:
 http://127.0.0.1:7317/
 ```
 
-The UI provides (room-navigator slice):
+The UI provides (app-shell slice):
 
+- a responsive app shell: persistent desktop sidebar (**Rooms → Agents → About**) and a mobile/portrait burger drawer (focus trap, Escape closes, focus returns)
 - public auth probe (`GET /api/auth/info`) with loading/error states
 - in-memory Bearer token entry when auth is required (never written to storage); the first protected request validates the token, and a rejected token returns to the entry without persistence
 - a room navigator: room list/create/select, with a vault-agent roster where **online** means runnable on this installation (local installation policy only, not a live presence or provider probe); **offline** agents are visible, labelled, and disabled, and the gateway also rejects offline participants on direct POST
 - participants chosen before creation only — they are immutable afterwards
+- a read-only **Agents** page (local-policy roster, non-interactive; direct chat is not available yet) and a read-only **About** page (connection/status only, no form controls)
+- switching views keeps the room navigator mounted: a view change never cancels a room run and never creates client-side delivery/approval/retry truth
 - the Piren logo and responsive, keyboard-usable semantic layout
 
-The timeline, structured dispatch, approvals, and abort arrive in later separately-gated slices; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
+The timeline, structured dispatch, approvals, abort, and direct chat arrive in later separately-gated slices; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
 
 The UI intentionally does not provide model selection, thinking controls, or configuration editing. Those belong in vault config and local config. API routes remain available for external integrations.
 

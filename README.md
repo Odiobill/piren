@@ -62,13 +62,14 @@ Then open **http://127.0.0.1:7317/** in a browser. Use `node ./dist/src/cli.js`,
 Acceptance checklist for the workbench shell:
 
 - [ ] `GET /` returns the workbench `index.html` with the Piren logo in the header.
-- [ ] The page shows "Checking gateway authentication…" then either the token form (non-localhost with token) or "Gateway reachable" plus the room navigator.
-- [ ] Entering the token shows "Token ready" (never "Authenticated"); the first protected request validates it and upgrades to "Token accepted"; a rejected token returns to the token entry, and nothing is persisted across a reload.
-- [ ] The roster lists every vault-defined agent; offline agents are labelled **Offline**, disabled, and explained as local policy (not a live probe).
-- [ ] An offline agent cannot be selected; creating a room with online participants succeeds and the room appears in the list; selecting a room shows its detail with immutable participants.
-- [ ] A direct API POST with an offline participant is rejected with 400, for example: `curl -i -X POST http://127.0.0.1:7317/api/rooms -H 'content-type: application/json' -d '{"title":"t","participants":["<offline-agent>"]}'` (add `-H "authorization: Bearer <token>"` when a token is configured).
+- [ ] The page shows "Checking gateway authentication…" then either the token form (non-localhost with token) or "Gateway reachable" plus the app shell.
+- [ ] Entering the token shows "Token ready" (never "Authenticated") with explicit "not been validated" copy; the first protected request validates it and upgrades to "Token accepted"; a rejected token returns to the token entry, and nothing is persisted across a reload.
+- [ ] The persistent sidebar navigates **Rooms → Agents → About**; switching views keeps the room navigator state (rooms list, selected room) intact and never cancels a room run.
+- [ ] On a narrow window (or a mobile viewport) the sidebar collapses into a burger drawer: the toggle has `aria-expanded`, opening moves focus inside, Tab cycles within it, **Escape** closes it and returns focus to the toggle.
+- [ ] The **Agents** page lists every vault-defined agent (online/offline per local policy) with non-interactive entries and a note that direct chat is not available yet; the **About** page is read-only connection/status information with no form controls.
+- [ ] The roster lists every vault-defined agent; offline agents are labelled **Offline**, disabled, and explained as local policy (not a live probe); creating a room with online participants succeeds; a direct API POST with an offline participant is rejected with 400.
 - [ ] The "Coming next" card lists the remaining gated slices (timeline, dispatch, approvals/abort, accessibility completion); no chat/vault API calls are made by the shell.
-- [ ] The page is keyboard-usable (Tab/Enter), shows visible focus, and reads sensibly with a screen reader.
+- [ ] The page is keyboard-usable (Tab/Enter), shows visible focus, has no horizontal overflow at 320px, and reads sensibly with a screen reader.
 
 
 ## Feature overview
@@ -80,7 +81,7 @@ Acceptance checklist for the workbench shell:
 - Agent groups and fallback: group-scoped skills (`shared < group < agent`), read-only fallback recommendation via `piren agents --fallback <agent>`, filtered by local runnable policy and same-group membership. No automatic rerouting.
 - Pi package extensibility: install extra Pi extensions through npm packages declared in local Piren config.
 - Gateway process isolation: web, Telegram, Discord, and OpenAI-compatible API surfaces drive Pi through RPC, not in-process embedding.
-- Minimal web UI: React/Vite workbench shell with a public auth probe, in-memory bearer-token entry, and a room navigator (room list/create/select with a local-policy agent roster where offline agents are visible but disabled); timeline, dispatch, and approval/abort controls arrive in later separately-gated slices. No model or configuration controls.
+- Minimal web UI: React/Vite workbench with a responsive app shell (sidebar Rooms → Agents roster → About, mobile burger drawer), public auth probe, in-memory bearer-token entry, and a room navigator (room list/create/select with a local-policy agent roster where offline agents are visible but disabled); timeline, dispatch, direct chat, and approval/abort controls arrive in later separately-gated slices; About is read-only connection/status only. No model or configuration controls.
 - Vault-backed cron: Markdown cron job files with active-device ownership, atomic claiming, and inspectable run records.
 - Scheduler: `piren scheduler --dry-run` plans inbox task and cron job claims with zero LLM calls; `piren scheduler --once` runs one bounded claim-first tick; `piren scheduler` runs the opt-in loop until SIGINT/SIGTERM. Uses device heartbeat priorities and active-device-priority ownership, with conservative one-at-a-time execution and no hidden state.
 - Service lifecycle: systemd user units with tmux plus `@reboot` cron fallback for gateway, Telegram, Discord, and the scheduler. Inspectable, reversible files under `~/.config/piren/services/`.
