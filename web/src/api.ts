@@ -7,6 +7,7 @@ import {
   type RoomListResponse,
   type RoomRecord,
 } from "./rooms";
+import { createSseParser, parseRoomEvents, type RoomEventRecord, type SseFrame } from "./timeline";
 
 /**
  * Typed fetch client for the existing gateway /api/* surface. R3b-2 consumes
@@ -79,4 +80,49 @@ export async function createRoom(token: string, title: string, participants: str
     throw new Error(reason);
   }
   return parseRoomEnvelope(await res.json());
+}
+
+/** GET /api/rooms/<id>/events — whole durable event history (no replay). */
+export async function fetchRoomEvents(id: string, token: string, signal?: AbortSignal): Promise<RoomEventRecord[]> {
+  const res = await authedFetch(`/api/rooms/${encodeURIComponent(id)}/events`, token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`room events HTTP ${res.status}`);
+  return parseRoomEvents(await res.json());
+}
+
+export interface RoomEventStreamHandlers {
+  onFrame: (frame: SseFrame) => void;
+  onOpen?: () => void;
+}
+
+/**
+ * GET /api/rooms/<id>/events/stream — scoped SSE read, consumed with fetch so
+ * the in-memory Bearer header is carried (the native SSE client cannot set
+ * headers). Resolves when the stream ends; the caller decides the reconnect
+ * policy (whole-history reread + re-subscription). Aborted via the signal.
+ */
+export async function streamRoomEvents(
+  id: string,
+  token: string,
+  handlers: RoomEventStreamHandlers,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await authedFetch(`/api/rooms/${encodeURIComponent(id)}/events/stream`, token, { signal });
+  if (!res.ok) throw new Error(`room stream HTTP ${res.status}`);
+  handlers.onOpen?.();
+  const body = res.body;
+  if (body === null) throw new Error("room stream has no body");
+  const reader = body.getReader();
+  const parser = createSseParser();
+  const decoder = new TextDecoder();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
+        handlers.onFrame(frame);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }

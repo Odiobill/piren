@@ -56,10 +56,11 @@ The UI provides (app-shell slice):
 - a room navigator: room list/create/select, with a vault-agent roster where **online** means runnable on this installation (local installation policy only, not a live presence or provider probe); **offline** agents are visible, labelled, and disabled, and the gateway also rejects offline participants on direct POST
 - participants chosen before creation only — they are immutable afterwards
 - a read-only **Agents** page (local-policy roster, non-interactive; direct chat is not available yet) and a read-only **About** page (connection/status only, no form controls)
+- an inspectable immutable room timeline: the durable historic event sequence plus the live scoped SSE stream rendered as one chronological display; on selection and after a disconnect the whole history is re-read (no replay) and a fresh subscription opens, with no render cache and no client-side delivery/approval/retry truth
 - switching views keeps the room navigator mounted: a view change never cancels a room run and never creates client-side delivery/approval/retry truth
 - the Piren logo and responsive, keyboard-usable semantic layout
 
-The timeline, structured dispatch, approvals, abort, and direct chat arrive in later separately-gated slices; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
+The structured dispatch, approvals, abort, and direct chat arrive in later separately-gated slices; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
 
 The UI intentionally does not provide model selection, thinking controls, or configuration editing. Those belong in vault config and local config. API routes remain available for external integrations.
 

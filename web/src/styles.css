@@ -440,6 +440,112 @@ code {
   padding-left: 20px;
 }
 
+/* Room timeline (R3b-3) */
+.timeline {
+  margin-top: 16px;
+}
+
+.timeline h3 {
+  margin: 0 0 8px;
+}
+
+.timeline-status {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 10px;
+}
+
+.timeline-status-connecting {
+  color: var(--warn);
+}
+
+.timeline-status-live {
+  color: var(--ok);
+}
+
+.timeline-status-disconnected {
+  color: var(--error);
+}
+
+.button-small {
+  padding: 4px 10px;
+  font-size: 0.8125rem;
+  margin-left: 6px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.timeline-entry {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  list-style: none;
+}
+
+.timeline-entry.timeline-steward_message {
+  border-left-color: var(--accent);
+}
+
+.timeline-entry.timeline-agent_message {
+  border-left-color: var(--ok);
+}
+
+.timeline-entry.timeline-run_started {
+  border-left-color: var(--warn);
+}
+
+.timeline-entry.timeline-run_finished,
+.timeline-entry.timeline-run_cancelled {
+  border-left-color: var(--muted);
+}
+
+.timeline-entry.timeline-approval {
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+
+.timeline-entry.timeline-error {
+  border-left-color: var(--error);
+  opacity: 0.8;
+}
+
+.timeline-kind {
+  display: block;
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+.timeline-time {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+.timeline-body {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.timeline-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  margin-top: 4px;
+}
+
 /* App shell (R3b-2.5): sidebar + workspace + mobile drawer */
 .shell-body {
   flex: 1;

@@ -141,10 +141,12 @@ describe("app shell source surface (static)", () => {
     expect(drawer).toContain('id="mobile-drawer"');
   });
 
-  it("the shell never calls chat endpoints, uses no storage, and has no timeline/SSE/approval/abort", async () => {
+  it("the shell never calls chat endpoints, uses no storage, and has no writes", async () => {
     const sources = await readSourceFiles();
     const shell = [...sources.values()].join("\n");
-    for (const forbidden of ["/api/chat", "EventSource", "/events", "/approve", "/abort", "/api/vault", "localStorage", "sessionStorage"]) {
+    // R3b-3 authorized room event + stream reads; writes and other surfaces
+    // stay forbidden across the whole workbench.
+    for (const forbidden of ["/api/chat", "new EventSource", "/messages", "/approve", "/abort", "/api/vault", "localStorage", "sessionStorage"]) {
       expect(shell, `${forbidden} must not appear in the shell surface`).not.toContain(forbidden);
     }
   });

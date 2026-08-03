@@ -99,9 +99,10 @@ describe("web room navigator contract (R3b-2)", () => {
       ) as string[];
       let combined = "";
       for (const f of tsFiles) combined += (await readFile(join(webSrc, f), "utf8")) + "\n";
+      // R3b-2 authorized the roster + room routes; R3b-3 authorized the
+      // room event + stream READS. Writes and other surfaces stay forbidden.
       for (const forbidden of [
-        "EventSource",
-        "/events",
+        "new EventSource",
         "/messages",
         "/approve",
         "/abort",

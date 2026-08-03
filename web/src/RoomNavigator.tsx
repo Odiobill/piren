@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { createRoom, fetchRoom, fetchRoomAgents, fetchRooms, UnauthorizedError } from "./api";
 import type { RoomAgentEntry, RoomRecord } from "./rooms";
 import { ParticipantPicker } from "./ParticipantPicker";
+import { RoomTimeline } from "./RoomTimeline";
 
 /**
  * Room navigator (ADR-0041 R3b-2): room list/create/select with the
@@ -163,10 +164,8 @@ export function RoomNavigator({
             ))}
           </ul>
         )}
-        <p className="muted">
-          Participants are immutable after creation. The room timeline arrives in the next gated
-          slice.
-        </p>
+        <p className="muted">Participants are immutable after creation.</p>
+        <RoomTimeline roomId={selectedRoom.id} token={token} onUnauthorized={onUnauthorized} />
       </section>
     );
   }
