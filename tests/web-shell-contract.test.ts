@@ -131,6 +131,16 @@ describe("app shell source surface (static)", () => {
     expect(drawer).toContain("active === drawer");
   });
 
+  it("the menu toggle's aria-controls targets a real drawer id", async () => {
+    const sources = await readSourceFiles();
+    const shell = sources.get("AppShell.tsx") ?? "";
+    const drawer = sources.get("MobileDrawer.tsx") ?? "";
+    // The toggle declares aria-controls="mobile-drawer"; the drawer region
+    // itself must carry the matching stable id (not the backdrop).
+    expect(shell).toContain('aria-controls="mobile-drawer"');
+    expect(drawer).toContain('id="mobile-drawer"');
+  });
+
   it("the shell never calls chat endpoints, uses no storage, and has no timeline/SSE/approval/abort", async () => {
     const sources = await readSourceFiles();
     const shell = [...sources.values()].join("\n");

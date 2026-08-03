@@ -72,6 +72,7 @@ export function MobileDrawer({
     <div className="drawer-backdrop" onClick={onClose}>
       <div
         ref={drawerRef}
+        id="mobile-drawer"
         className="mobile-drawer"
         role="region"
         aria-label={label}
