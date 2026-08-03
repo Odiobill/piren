@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import logoUrl from "./assets/piren-logo.png";
-import { closeDrawer, initialNavState, selectPage, toggleDrawer, type Page } from "./nav";
+import { closeDrawer, initialNavState, selectPage, shouldRestoreFocusAfterSelect, toggleDrawer, type Page } from "./nav";
 import { StatusBadge, type ShellPhase } from "./StatusBadge";
 import { Sidebar } from "./Sidebar";
 import { MobileDrawer } from "./MobileDrawer";
@@ -39,7 +39,11 @@ export function AppShell({
   const toggleRef = useRef<HTMLButtonElement>(null);
 
   function handleSelect(page: Page) {
+    // A selection made from the open mobile drawer closes it and must return
+    // focus to the menu toggle; desktop sidebar selections never move focus.
+    const restoreFocus = shouldRestoreFocusAfterSelect(nav);
     setNav((previous) => selectPage(previous, page));
+    if (restoreFocus) toggleRef.current?.focus();
   }
 
   function handleToggleDrawer() {

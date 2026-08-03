@@ -27,3 +27,12 @@ export function toggleDrawer(state: NavState): NavState {
 export function closeDrawer(state: NavState): NavState {
   return state.drawerOpen ? { ...state, drawerOpen: false } : state;
 }
+
+/**
+ * After a navigation selection, focus must return to the menu toggle iff the
+ * drawer was open (the selection closes it). Desktop sidebar selections
+ * never open the drawer, so they must not move focus.
+ */
+export function shouldRestoreFocusAfterSelect(state: NavState): boolean {
+  return state.drawerOpen;
+}

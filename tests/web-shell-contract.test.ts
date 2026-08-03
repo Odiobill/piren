@@ -5,6 +5,7 @@ import {
   closeDrawer,
   initialNavState,
   selectPage,
+  shouldRestoreFocusAfterSelect,
   toggleDrawer,
   type NavState,
   type Page,
@@ -45,6 +46,11 @@ describe("nav state model (pure)", () => {
   it("exposes exactly the three shell pages", () => {
     const pages: readonly Page[] = ["rooms", "agents", "about"];
     expect(pages).toEqual(["rooms", "agents", "about"]);
+  });
+
+  it("a nav selection must restore toggle focus exactly when the drawer was open", () => {
+    expect(shouldRestoreFocusAfterSelect({ page: "rooms", drawerOpen: true })).toBe(true);
+    expect(shouldRestoreFocusAfterSelect(initialNavState())).toBe(false);
   });
 });
 
@@ -109,6 +115,20 @@ describe("app shell source surface (static)", () => {
     const shell = sources.get("AppShell.tsx") ?? "";
     expect(shell).toContain("RoomNavigator");
     expect(shell).toContain("hidden");
+  });
+
+  it("drawer nav selection restores focus to the menu toggle via the pure decision", async () => {
+    const sources = await readSourceFiles();
+    const shell = sources.get("AppShell.tsx") ?? "";
+    expect(shell).toContain("shouldRestoreFocusAfterSelect");
+    expect(shell).toContain("toggleRef.current?.focus()");
+  });
+
+  it("the drawer container is programmatically focusable and the Tab trap covers drawer focus", async () => {
+    const sources = await readSourceFiles();
+    const drawer = sources.get("MobileDrawer.tsx") ?? "";
+    expect(drawer).toContain("tabIndex={-1}");
+    expect(drawer).toContain("active === drawer");
   });
 
   it("the shell never calls chat endpoints, uses no storage, and has no timeline/SSE/approval/abort", async () => {

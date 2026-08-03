@@ -47,10 +47,15 @@ export function MobileDrawer({
         const firstEl = list[0] as HTMLElement;
         const lastEl = list[list.length - 1] as HTMLElement;
         const active = document.activeElement;
-        if (event.shiftKey && (active === firstEl || !drawer.contains(active))) {
+        // The drawer itself is programmatically focusable (tabIndex={-1});
+        // when focus rests on it (or escaped outside), wrap to an edge so
+        // focus can never leave the drawer while it is open.
+        const onDrawer = active === drawer;
+        const outside = !drawer.contains(active);
+        if (event.shiftKey && (active === firstEl || onDrawer || outside)) {
           event.preventDefault();
           lastEl.focus();
-        } else if (!event.shiftKey && active === lastEl) {
+        } else if (!event.shiftKey && (active === lastEl || onDrawer || outside)) {
           event.preventDefault();
           firstEl.focus();
         }
@@ -70,6 +75,7 @@ export function MobileDrawer({
         className="mobile-drawer"
         role="region"
         aria-label={label}
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         {children}
