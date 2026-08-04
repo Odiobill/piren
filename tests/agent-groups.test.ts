@@ -31,6 +31,20 @@ async function writeGroupConfig(
   await writeFile(join(dir, "config.yml"), yaml, "utf8");
 }
 
+/** Minimal Dirent-shaped entry for injected-readdir determinism tests. */
+function fakeDirent(name: string, isDir = true): import("node:fs").Dirent {
+  return {
+    name,
+    isDirectory: () => isDir,
+    isFile: () => !isDir,
+    isBlockDevice: () => false,
+    isCharacterDevice: () => false,
+    isFIFO: () => false,
+    isSocket: () => false,
+    isSymbolicLink: () => false,
+  } as import("node:fs").Dirent;
+}
+
 describe("parseGroupConfigs", () => {
   it("returns an empty map when agent-groups/ does not exist", async () => {
     const { vault, cleanup } = await makeVault();
@@ -160,6 +174,41 @@ describe("parseGroupConfigs", () => {
       );
       const groups = await parseGroupConfigs(vault);
       expect([...groups.keys()]).toEqual(["developers"]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("returns groups in deterministic ascending name order regardless of enumeration order", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "zeta",
+        ["agents:", "  - dipu"].join("\n"),
+      );
+      await writeGroupConfig(
+        vault,
+        "alpha",
+        ["agents:", "  - dipu"].join("\n"),
+      );
+      await writeGroupConfig(
+        vault,
+        "mike",
+        ["agents:", "  - dipu"].join("\n"),
+      );
+      // A deliberately non-sorted enumeration order: the parser must still
+      // produce groups in deterministic ascending name order, so group-skill
+      // precedence (later = alphabetically later) is stable across filesystems.
+      const deps = {
+        readdir: async () => [
+          fakeDirent("zeta"),
+          fakeDirent("mike"),
+          fakeDirent("alpha"),
+        ],
+      };
+      const groups = await parseGroupConfigs(vault, deps);
+      expect([...groups.keys()]).toEqual(["alpha", "mike", "zeta"]);
     } finally {
       await cleanup();
     }

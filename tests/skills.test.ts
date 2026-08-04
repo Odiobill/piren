@@ -507,4 +507,44 @@ describe("loadVaultSkills with groups", () => {
       await cleanup();
     }
   });
+
+  it("tolerates a group without a skills/ directory", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      // The developers group directory exists in the scaffold, but has no
+      // skills/ subdirectory: group scanning must degrade to empty, not crash.
+      await rm(join(vault, "agent-groups", "developers", "skills"), {
+        recursive: true,
+        force: true,
+      });
+      await writeFile(
+        join(vault, "skills", "shared-a.md"),
+        [
+          "---",
+          "name: shared-a",
+          'description: "Shared A."',
+          "---",
+          "",
+          "# A",
+        ].join("\n"),
+      );
+      const result = await loadVaultSkills(vault, "thor", ["developers"]);
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0]?.name).toBe("shared-a");
+      expect(result.skills[0]?.source).toBe("shared");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("tolerates an empty group skills/ directory", async () => {
+    const { vault, cleanup } = await makeVaultWithGroups();
+    try {
+      // Group skills dir exists but contains no skill files.
+      const result = await loadVaultSkills(vault, "thor", ["developers"]);
+      expect(result.skills).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
 });

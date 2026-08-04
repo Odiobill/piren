@@ -157,7 +157,10 @@ async function scanSkillsDir(dir: string, relBase: string): Promise<RawSkill[]> 
  * Optional group-scoped skills (ADR-0028) come from
  * `agent-groups/<group>/skills/` for each group the agent belongs to, in the
  * order the groups are passed. Later groups override earlier groups for
- * same-name skills.
+ * same-name skills. The caller resolves an agent's groups via
+ * `resolveAgentGroups`, which returns groups in deterministic ascending
+ * group-name order, so same-name collisions between groups resolve the same
+ * way on every filesystem.
  * Agent-specific skills come from `team/<agent>/skills/` (available only to
  * that agent). Agent-specific skills override shared and group skills with
  * the same name.

@@ -16,6 +16,16 @@ interface GroupConfig {
 }
 /** A parsed group keyed by group name. */
 type GroupConfigs = Map<string, GroupConfig>;
+/**
+ * Injected filesystem operations for {@link parseGroupConfigs}. Tests inject a
+ * fake `readdir` so enumeration order is controllable; production uses the
+ * real `node:fs/promises` adapter.
+ */
+export interface GroupConfigDeps {
+    readdir(path: string, options: {
+        withFileTypes: true;
+    }): Promise<import("node:fs").Dirent[]>;
+}
 /** A read-only fallback candidate with its recommending group names. */
 export interface FallbackRecommendation {
     agent: string;
@@ -30,16 +40,23 @@ export interface FallbackRecommendation {
  * `config.yml` is skipped silently. Malformed YAML is surfaced as a thrown
  * error that names the offending group so it is easy to locate.
  *
+ * Groups are processed in deterministic ascending name order regardless of
+ * directory enumeration order (the optional injected `deps` seam lets tests
+ * control enumeration). Because ADR-0028 group-skill precedence treats later
+ * groups as overriding earlier groups for same-name skills, this stable order
+ * is what makes multi-group skill resolution deterministic.
+ *
  * Dotfiles and non-directory entries under `agent-groups/` are ignored.
  *
  * This function touches the real filesystem; it is intentionally pure with
  * respect to side effects beyond reads (no writes, no state mutation).
  */
-export declare function parseGroupConfigs(vaultRoot: string): Promise<GroupConfigs>;
+export declare function parseGroupConfigs(vaultRoot: string, deps?: GroupConfigDeps): Promise<GroupConfigs>;
 /**
- * Resolve the set of group names an agent belongs to, in the order groups are
- * discovered on disk. Returns an empty array when `agent-groups/` is missing
- * or the agent is not a declared member of any group.
+ * Resolve the set of group names an agent belongs to, in deterministic
+ * ascending group-name order (the order produced by
+ * {@link parseGroupConfigs}). Returns an empty array when `agent-groups/` is
+ * missing or the agent is not a declared member of any group.
  */
 export declare function resolveAgentGroups(vaultRoot: string, agentName: string): Promise<string[]>;
 /**

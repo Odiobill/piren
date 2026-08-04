@@ -699,6 +699,161 @@ describe("Pi extension", () => {
   });
 });
 
+describe("Pi extension group-scoped skills (ADR-0028 S1)", () => {
+  async function bootWithGroups(): Promise<ReturnType<typeof fakePi>> {
+    const pi = fakePi();
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: {},
+      configPath: join(root, "missing-config.yml"),
+    });
+    return pi;
+  }
+
+  async function startupContext(pi: ReturnType<typeof fakePi>): Promise<string> {
+    const beforeStart = pi.events.before_agent_start?.[0];
+    expect(beforeStart).toBeDefined();
+    const result = await beforeStart?.();
+    expect(result).toBeDefined();
+    return (result as { message: { content: string } }).message.content;
+  }
+
+  async function writeGroupSkill(group: string, fileName: string, name: string, description: string): Promise<void> {
+    await mkdir(join(root, "vault", "agent-groups", group, "skills"), { recursive: true });
+    await writeFile(
+      join(root, "vault", "agent-groups", group, "skills", fileName),
+      [
+        "---",
+        `name: ${name}`,
+        `description: "${description}"`,
+        "---",
+        "",
+        `# ${name}`,
+      ].join("\n"),
+    );
+  }
+
+  it("injects group-scoped skills into the startup catalog with truthful source and path", async () => {
+    const vault = join(root, "vault");
+    await mkdir(join(vault, "agent-groups", "developers"), { recursive: true });
+    await writeFile(
+      join(vault, "agent-groups", "developers", "config.yml"),
+      "agents:\n  - thor\nfallback_order: {}\n",
+    );
+    await writeGroupSkill("developers", "code-review.md", "code-review", "Review pull requests.");
+
+    const pi = await bootWithGroups();
+    const content = await startupContext(pi);
+    expect(content).toContain("Available Skills");
+    expect(content).toContain("code-review");
+    expect(content).toContain("Review pull requests.");
+    expect(content).toContain("Source: group");
+    expect(content).toContain("Path: agent-groups/developers/skills/code-review.md");
+    // Catalog only, never the full skill body.
+    expect(content).not.toContain("# code-review");
+  });
+
+  it("skill_list and skill_read expose group skills with provenance", async () => {
+    const vault = join(root, "vault");
+    await mkdir(join(vault, "agent-groups", "developers"), { recursive: true });
+    await writeFile(
+      join(vault, "agent-groups", "developers", "config.yml"),
+      "agents:\n  - thor\nfallback_order: {}\n",
+    );
+    await writeGroupSkill("developers", "code-review.md", "code-review", "Review pull requests.");
+
+    const pi = await bootWithGroups();
+    const list = await pi.tools.skill_list.execute("call-skill-list", {});
+    expect(list.isError).toBeUndefined();
+    expect(list.details.skills).toEqual([
+      {
+        name: "code-review",
+        description: "Review pull requests.",
+        source: "group",
+        path: "agent-groups/developers/skills/code-review.md",
+      },
+    ]);
+
+    const read = await pi.tools.skill_read.execute("call-skill-read", { name: "code-review" });
+    expect(read.isError).toBeUndefined();
+    expect(read.content[0].text).toContain("# code-review");
+    expect(read.details.source).toBe("group");
+    expect(read.details.path).toBe("agent-groups/developers/skills/code-review.md");
+  });
+
+  it("resolves multi-group skill precedence deterministically through the real seam", async () => {
+    const vault = join(root, "vault");
+    // Shared layer.
+    await mkdir(join(vault, "skills"), { recursive: true });
+    await writeFile(
+      join(vault, "skills", "common.md"),
+      [
+        "---",
+        "name: common",
+        'description: "Shared common."',
+        "---",
+        "",
+        "# Shared",
+      ].join("\n"),
+    );
+    // Thor is a member of both groups; both define the same-named skill.
+    for (const [group, description] of [
+      ["developers", "Developer common."],
+      ["reviewers", "Reviewer common."],
+    ] as const) {
+      await mkdir(join(vault, "agent-groups", group), { recursive: true });
+      await writeFile(
+        join(vault, "agent-groups", group, "config.yml"),
+        "agents:\n  - thor\nfallback_order: {}\n",
+      );
+      await writeGroupSkill(group, "common.md", "common", description);
+    }
+
+    const pi = await bootWithGroups();
+    const content = await startupContext(pi);
+    // Deterministic resolution order is ascending group-name order, so the
+    // alphabetically later group (reviewers) wins the same-name collision.
+    expect(content).toContain("common: Reviewer common. Source: group. Path: agent-groups/reviewers/skills/common.md");
+    expect(content).not.toContain("Developer common.");
+    expect(content).not.toContain("Shared common.");
+  });
+
+  it("does not load group skills for an agent that is not a group member", async () => {
+    const vault = join(root, "vault");
+    await mkdir(join(vault, "agent-groups", "developers"), { recursive: true });
+    await writeFile(
+      join(vault, "agent-groups", "developers", "config.yml"),
+      "agents:\n  - loki\nfallback_order: {}\n",
+    );
+    await writeGroupSkill("developers", "code-review.md", "code-review", "Review pull requests.");
+
+    const pi = await bootWithGroups();
+    const content = await startupContext(pi);
+    expect(content).not.toContain("code-review");
+    expect(content).not.toContain("Source: group");
+
+    const list = await pi.tools.skill_list.execute("call-skill-list", {});
+    expect(list.details.skills).toEqual([]);
+  });
+
+  it("tolerates a group with config but no skills/ directory at the seam", async () => {
+    const vault = join(root, "vault");
+    await mkdir(join(vault, "agent-groups", "developers"), { recursive: true });
+    await writeFile(
+      join(vault, "agent-groups", "developers", "config.yml"),
+      "agents:\n  - thor\nfallback_order: {}\n",
+    );
+
+    const pi = await bootWithGroups();
+    const content = await startupContext(pi);
+    expect(content).not.toContain("Available Skills");
+    expect(pi.tools.skill_list).toBeDefined();
+    const list = await pi.tools.skill_list.execute("call-skill-list", {});
+    expect(list.isError).toBeUndefined();
+    expect(list.details.skills).toEqual([]);
+  });
+});
+
 describe("Pi extension cron tools (ADR-0019)", () => {
   async function loadCronExtension(env: Record<string, string | undefined> = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" }) {
     const pi = fakePi();
