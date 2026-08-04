@@ -8,6 +8,7 @@ import {
   type RoomRecord,
 } from "./rooms";
 import { createSseParser, parseRoomEvents, type RoomEventRecord, type SseFrame } from "./timeline";
+import { parseDispatchOutcome, parseMessageError } from "./composer";
 
 /**
  * Typed fetch client for the existing gateway /api/* surface. R3b-2 consumes
@@ -125,4 +126,30 @@ export async function streamRoomEvents(
   } finally {
     reader.releaseLock();
   }
+}
+
+/** POST /api/rooms/<id>/messages — structured dispatch (R3b-4/W1). */
+export async function sendRoomMessage(
+  roomId: string,
+  agent: string,
+  text: string,
+  token: string,
+): Promise<import("./composer.js").RoomDispatchOutcome> {
+  const res = await authedFetch(`/api/rooms/${encodeURIComponent(roomId)}/messages`, token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent, text }),
+  });
+  if (!res.ok) {
+    let reason = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as unknown;
+      const message = parseMessageError(body);
+      if (message !== null) reason = message;
+    } catch {
+      // keep the HTTP status reason
+    }
+    throw new Error(reason);
+  }
+  return parseDispatchOutcome(await res.json());
 }

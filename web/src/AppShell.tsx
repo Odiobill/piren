@@ -9,8 +9,6 @@ import { AgentsView } from "./AgentsView";
 import { AboutView } from "./AboutView";
 
 const COMING_NEXT = [
-  { label: "Room timeline", bullet: "R3b-3", note: "historic events plus live SSE, immutable rendering, reconnect re-read" },
-  { label: "Structured dispatch", bullet: "R3b-4", note: "the video-ready \u201cPiren building itself\u201d demonstration" },
   { label: "Approval + abort controls", bullet: "R3b-5", note: "scoped approval cards and room-agent abort" },
   { label: "Accessibility completion", bullet: "R3b-6", note: "focused WCAG 2.2 AA verification" },
 ] as const;

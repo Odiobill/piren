@@ -3,6 +3,7 @@ import { createRoom, fetchRoom, fetchRoomAgents, fetchRooms, UnauthorizedError }
 import type { RoomAgentEntry, RoomRecord } from "./rooms";
 import { ParticipantPicker } from "./ParticipantPicker";
 import { RoomTimeline } from "./RoomTimeline";
+import { RoomComposer } from "./RoomComposer";
 
 /**
  * Room navigator (ADR-0041 R3b-2): room list/create/select with the
@@ -166,6 +167,13 @@ export function RoomNavigator({
         )}
         <p className="muted">Participants are immutable after creation.</p>
         <RoomTimeline roomId={selectedRoom.id} token={token} onUnauthorized={onUnauthorized} />
+        <RoomComposer
+          roomId={selectedRoom.id}
+          participants={selectedRoom.participants}
+          token={token}
+          onUnauthorized={onUnauthorized}
+          onAnnounce={setAnnouncement}
+        />
       </section>
     );
   }

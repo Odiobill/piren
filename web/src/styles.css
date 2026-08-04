@@ -199,6 +199,36 @@ code {
   font-size: 0.8125rem;
 }
 
+.composer {
+  margin-top: 16px;
+}
+
+.composer-field {
+  margin: 10px 0;
+}
+
+.composer-field label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.composer-field select,
+.composer-field textarea {
+  width: 100%;
+  max-width: 560px;
+  padding: 9px 12px;
+  font-size: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.composer-field textarea {
+  resize: vertical;
+}
+
 .error-message {
   margin: 8px 0 0;
   color: var(--error);

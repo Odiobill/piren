@@ -189,7 +189,9 @@ describe("timeline source surface (static)", () => {
     expect(combined).toContain("/events");
     expect(combined).toContain("/events/stream");
     // Forbidden in R3b-3: writes, other API surfaces, storage, native SSE client.
-    for (const forbidden of ["/messages", "/approve", "/abort", "/api/vault", "/api/chat", "new EventSource", "localStorage", "sessionStorage", "thinking"]) {
+    // (R3b-4 authorized the structured messages POST in the composer; the
+    // timeline itself stays read-only.)
+    for (const forbidden of ["/approve", "/abort", "/api/vault", "/api/chat", "new EventSource", "localStorage", "sessionStorage", "thinking"]) {
       expect(combined, `${forbidden} must not appear in the R3b-3 surface`).not.toContain(forbidden);
     }
   });

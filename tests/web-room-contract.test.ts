@@ -100,18 +100,21 @@ describe("web room navigator contract (R3b-2)", () => {
       let combined = "";
       for (const f of tsFiles) combined += (await readFile(join(webSrc, f), "utf8")) + "\n";
       // R3b-2 authorized the roster + room routes; R3b-3 authorized the
-      // room event + stream READS. Writes and other surfaces stay forbidden.
-      for (const forbidden of [
+      // room event + stream READS; R3b-4 authorized the structured
+      // {agent, text} messages POST (composer). Writes and other surfaces
+      // stay forbidden.
+      for (const forbiddenOfR3b2 of [
         "new EventSource",
-        "/messages",
         "/approve",
         "/abort",
         "/api/vault",
         "/api/chat",
         "thinking",
       ]) {
-        expect(combined, `${forbidden} must not appear in the R3b-2 navigator surface`).not.toContain(forbidden);
+        expect(combined, `${forbiddenOfR3b2} must not appear in the R3b-2 navigator surface`).not.toContain(forbiddenOfR3b2);
       }
+      // R3b-4 composer: messages POST is the ONLY write surface.
+      expect(combined).toContain("/messages");
     });
   });
 });
