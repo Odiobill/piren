@@ -8,7 +8,7 @@
  * profile through the S3 core before writing: a template failing the manifest
  * identity/digest contract is a package build error, never shipped.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRealStarterSkillsDeps, listStarterProfiles, parseStarterManifest, validateProfileTemplates, } from "../src/starter-skills.js";
@@ -24,6 +24,9 @@ if (profiles.length === 0) {
     console.error(`copy-templates: no starter-skill profiles found under ${templatesDir}`);
     process.exit(1);
 }
+// Replace the output tree rather than overlaying it, so removed or renamed
+// source profiles/files cannot survive as stale package artifacts.
+await rm(outDir, { recursive: true, force: true });
 for (const profile of profiles) {
     const manifestYaml = await deps.readFile(join(templatesDir, profile, "manifest.yml"));
     const manifest = parseStarterManifest(manifestYaml);

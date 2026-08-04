@@ -185,7 +185,8 @@ function makeFakeDeps(): { deps: StarterSkillsDeps; files: Map<string, string> }
       if (content === undefined) throw new Error(`ENOENT: ${p}`);
       return content;
     },
-    writeFile: async (p, c) => {
+    writeFile: async (p, c, options) => {
+      if (options?.flag === "wx" && files.has(p)) throw new Error(`EEXIST: ${p}`);
       files.set(p, c);
     },
     mkdir: async (p) => {
@@ -425,6 +426,23 @@ describe("doctor classification (S3 §5 total, fail-closed)", () => {
     expect(result.duplicateOverlay).toBe(true);
     expect(result.state.kind).toBe("duplicate");
   });
+
+  it("reports a blocking duplicate when the same template id is copied under another name", async () => {
+    const { deps, files, vault, manifest } = vaultWithEntry("absent");
+    files.set(
+      "/vault/team/thor/skills/renamed/SKILL.md",
+      buildSeededContent(templateSkill("renamed", "Copied template.", "# Renamed\n"), {
+        id: ENTRY.id,
+        profile: manifest.profile,
+        version: manifest.version,
+        content_sha256: manifest.entries[0]!.content_sha256,
+      }),
+    );
+    const result = await classifyStarterEntry(deps, vault, manifest, manifest.entries[0]!);
+    expect(result.duplicateOverlay).toBe(true);
+    expect(result.state.kind).toBe("duplicate");
+    expect(result.state.kind === "duplicate" ? result.state.reason : "").toMatch(/template id/i);
+  });
 });
 
 describe("planStarterSeed (S3 §5 only absent is seedable)", () => {
@@ -504,6 +522,26 @@ describe("applyStarterSeed (S3 §5)", () => {
     expect(result.created).toHaveLength(0);
     expect(result.skippedConflicts).toHaveLength(1);
     expect(files.get("/vault/skills/okf-authoring/SKILL.md")).toBe("# steward-owned content without provenance\n");
+  });
+
+  it("uses exclusive creation when an absent target appears after planning", async () => {
+    const base = makeFakeDeps();
+    const { deps: baseDeps, files } = base;
+    const vault = "/vault";
+    files.set("/vault/.piren-vault", "");
+    const manifest = makeManifest([ENTRY]);
+    writeTemplateTree(files, manifest, [ENTRY]);
+    const deps: StarterSkillsDeps = {
+      ...baseDeps,
+      writeFile: async (path, content, options) => {
+        if (path === "/vault/skills/okf-authoring/SKILL.md" && !(await baseDeps.exists(path))) {
+          files.set(path, "race-owned content");
+        }
+        await baseDeps.writeFile(path, content, options);
+      },
+    };
+    await expect(applyStarterSeed(deps, "/templates", vault, manifest)).rejects.toThrow(/EEXIST/);
+    expect(files.get("/vault/skills/okf-authoring/SKILL.md")).toBe("race-owned content");
   });
 });
 

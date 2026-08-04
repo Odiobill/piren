@@ -4,8 +4,8 @@ import { readFile, writeFile, mkdir, stat, readdir } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
 const realDeps = {
     readFile: (path) => readFile(path, "utf8"),
-    writeFile: async (path, content) => {
-        await writeFile(path, content, "utf8");
+    writeFile: async (path, content, options) => {
+        await writeFile(path, content, { encoding: "utf8", ...options });
     },
     mkdir: async (path, options) => {
         await mkdir(path, options ?? {});
@@ -266,7 +266,7 @@ function derivedNameFor(filePath, doc) {
     return fileName.endsWith(".md") ? fileName.slice(0, -3) : null;
 }
 /** Enumerate every skill file in one scope directory and its effective name. */
-async function scanScopeFiles(deps, dir, scopeLabel, name) {
+async function scanScopeFiles(deps, dir, scopeLabel) {
     if (!(await deps.exists(dir)))
         return [];
     const entries = await deps.readdir(dir);
@@ -285,10 +285,35 @@ async function scanScopeFiles(deps, dir, scopeLabel, name) {
         }
         if (candidate === null)
             continue;
-        const doc = parseSkillDocument(await deps.readFile(candidate));
-        const effective = derivedNameFor(candidate, doc);
-        if (effective === name)
-            found.push({ path: candidate, scope: scopeLabel });
+        const content = await deps.readFile(candidate);
+        const doc = parseSkillDocument(content);
+        const raw = parseFrontmatterYaml(content);
+        const template = raw?.template;
+        const templateId = isRecord(template) && typeof template.id === "string" && template.id.trim() !== ""
+            ? template.id.trim()
+            : null;
+        found.push({ path: candidate, scope: scopeLabel, effectiveName: derivedNameFor(candidate, doc), templateId });
+    }
+    return found;
+}
+async function scanAllSkillFiles(deps, vaultRoot) {
+    const found = [];
+    found.push(...(await scanScopeFiles(deps, join(vaultRoot, "skills"), "shared")));
+    const groupsDir = join(vaultRoot, "agent-groups");
+    if (await deps.exists(groupsDir)) {
+        for (const group of await deps.readdir(groupsDir)) {
+            if (!group.isDirectory() || group.name.startsWith("."))
+                continue;
+            found.push(...(await scanScopeFiles(deps, join(groupsDir, group.name, "skills"), `group:${group.name}`)));
+        }
+    }
+    const teamDir = join(vaultRoot, "team");
+    if (await deps.exists(teamDir)) {
+        for (const agent of await deps.readdir(teamDir)) {
+            if (!agent.isDirectory() || agent.name.startsWith("."))
+                continue;
+            found.push(...(await scanScopeFiles(deps, join(teamDir, agent.name, "skills"), `agent:${agent.name}`)));
+        }
     }
     return found;
 }
@@ -297,25 +322,15 @@ async function scanScopeFiles(deps, dir, scopeLabel, name) {
  * scopes (the loader's precedence layers) without needing a runnable agent.
  */
 export async function findSkillOccurrences(deps, vaultRoot, name) {
-    const found = [];
-    found.push(...(await scanScopeFiles(deps, join(vaultRoot, "skills"), "shared", name)));
-    const groupsDir = join(vaultRoot, "agent-groups");
-    if (await deps.exists(groupsDir)) {
-        for (const group of await deps.readdir(groupsDir)) {
-            if (!group.isDirectory() || group.name.startsWith("."))
-                continue;
-            found.push(...(await scanScopeFiles(deps, join(groupsDir, group.name, "skills"), `group:${group.name}`, name)));
-        }
-    }
-    const teamDir = join(vaultRoot, "team");
-    if (await deps.exists(teamDir)) {
-        for (const agent of await deps.readdir(teamDir)) {
-            if (!agent.isDirectory() || agent.name.startsWith("."))
-                continue;
-            found.push(...(await scanScopeFiles(deps, join(teamDir, agent.name, "skills"), `agent:${agent.name}`, name)));
-        }
-    }
-    return found;
+    const occurrences = await scanAllSkillFiles(deps, vaultRoot);
+    return occurrences
+        .filter((occurrence) => occurrence.effectiveName === name)
+        .map(({ path, scope }) => ({ path, scope }));
+}
+function findTemplateIdOccurrences(occurrences, templateId) {
+    return occurrences
+        .filter((occurrence) => occurrence.templateId === templateId)
+        .map(({ path, scope }) => ({ path, scope }));
 }
 /** Parse and identity-validate the `template` provenance block. */
 function parseProvenance(manifest, entry, raw) {
@@ -357,12 +372,17 @@ function parseProvenance(manifest, entry, raw) {
  */
 export async function classifyStarterEntry(deps, vaultRoot, manifest, entry) {
     const targetPath = entryTargetPath(vaultRoot, entry.name);
-    const occurrences = await findSkillOccurrences(deps, vaultRoot, entry.name);
+    const allOccurrences = await scanAllSkillFiles(deps, vaultRoot);
+    const occurrences = allOccurrences.filter((occ) => occ.effectiveName === entry.name);
     const targetPresent = occurrences.some((occ) => occ.path === targetPath);
-    const otherOccurrences = occurrences.filter((occ) => occ.path !== targetPath);
-    const duplicateReason = otherOccurrences.length > 0
-        ? `name '${entry.name}' is already active outside the target path (${otherOccurrences.map((o) => `${o.scope}:${o.path}`).join(", ")})`
-        : null;
+    const otherNameOccurrences = occurrences.filter((occ) => occ.path !== targetPath);
+    const idOccurrences = findTemplateIdOccurrences(allOccurrences, entry.id);
+    const otherIdOccurrences = idOccurrences.filter((occ) => occ.path !== targetPath);
+    const duplicateReason = otherNameOccurrences.length > 0
+        ? `name '${entry.name}' is already active outside the target path (${otherNameOccurrences.map((o) => `${o.scope}:${o.path}`).join(", ")})`
+        : otherIdOccurrences.length > 0
+            ? `template id '${entry.id}' is already seeded outside the target path (${otherIdOccurrences.map((o) => `${o.scope}:${o.path}`).join(", ")})`
+            : null;
     if (duplicateReason !== null) {
         return {
             entry,
@@ -526,7 +546,7 @@ export async function applyStarterSeed(deps, templatesDir, vaultRoot, manifest) 
                 version: manifest.version,
                 content_sha256: item.entry.content_sha256,
             });
-            await deps.writeFile(item.targetPath, seeded);
+            await deps.writeFile(item.targetPath, seeded, { flag: "wx" });
             created.push({ path: item.targetPath, name: item.entry.name, id: item.entry.id });
         }
         else if (item.action === "conflict") {

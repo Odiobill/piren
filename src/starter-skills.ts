@@ -45,7 +45,7 @@ export interface StarterProfileManifest {
 /** Injected filesystem operations (structurally compatible with node:fs/promises). */
 export interface StarterSkillsDeps {
   readFile(path: string): Promise<string>;
-  writeFile(path: string, content: string): Promise<void>;
+  writeFile(path: string, content: string, options?: { flag?: string }): Promise<void>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   /** True when the path exists (file or directory). */
   exists(path: string): Promise<boolean>;
@@ -55,8 +55,8 @@ export interface StarterSkillsDeps {
 
 const realDeps: StarterSkillsDeps = {
   readFile: (path) => readFile(path, "utf8"),
-  writeFile: async (path, content) => {
-    await writeFile(path, content, "utf8");
+  writeFile: async (path, content, options) => {
+    await writeFile(path, content, { encoding: "utf8", ...options });
   },
   mkdir: async (path, options) => {
     await mkdir(path, options ?? {});
@@ -376,6 +376,11 @@ export interface SkillOccurrence {
   scope: string;
 }
 
+interface ScannedSkillOccurrence extends SkillOccurrence {
+  effectiveName: string | null;
+  templateId: string | null;
+}
+
 function derivedNameFor(filePath: string, doc: ParsedSkillDocument): string | null {
   if (doc.name !== null) return doc.name;
   const fileName = basename(filePath);
@@ -391,11 +396,10 @@ async function scanScopeFiles(
   deps: StarterSkillsDeps,
   dir: string,
   scopeLabel: string,
-  name: string,
-): Promise<SkillOccurrence[]> {
+): Promise<ScannedSkillOccurrence[]> {
   if (!(await deps.exists(dir))) return [];
   const entries = await deps.readdir(dir);
-  const found: SkillOccurrence[] = [];
+  const found: ScannedSkillOccurrence[] = [];
   for (const entry of entries) {
     if (entry.name.startsWith(".")) continue;
     let candidate: string | null = null;
@@ -406,9 +410,36 @@ async function scanScopeFiles(
       candidate = join(dir, entry.name);
     }
     if (candidate === null) continue;
-    const doc = parseSkillDocument(await deps.readFile(candidate));
-    const effective = derivedNameFor(candidate, doc);
-    if (effective === name) found.push({ path: candidate, scope: scopeLabel });
+    const content = await deps.readFile(candidate);
+    const doc = parseSkillDocument(content);
+    const raw = parseFrontmatterYaml(content);
+    const template = raw?.template;
+    const templateId = isRecord(template) && typeof template.id === "string" && template.id.trim() !== ""
+      ? template.id.trim()
+      : null;
+    found.push({ path: candidate, scope: scopeLabel, effectiveName: derivedNameFor(candidate, doc), templateId });
+  }
+  return found;
+}
+
+async function scanAllSkillFiles(deps: StarterSkillsDeps, vaultRoot: string): Promise<ScannedSkillOccurrence[]> {
+  const found: ScannedSkillOccurrence[] = [];
+  found.push(...(await scanScopeFiles(deps, join(vaultRoot, "skills"), "shared")));
+
+  const groupsDir = join(vaultRoot, "agent-groups");
+  if (await deps.exists(groupsDir)) {
+    for (const group of await deps.readdir(groupsDir)) {
+      if (!group.isDirectory() || group.name.startsWith(".")) continue;
+      found.push(...(await scanScopeFiles(deps, join(groupsDir, group.name, "skills"), `group:${group.name}`)));
+    }
+  }
+
+  const teamDir = join(vaultRoot, "team");
+  if (await deps.exists(teamDir)) {
+    for (const agent of await deps.readdir(teamDir)) {
+      if (!agent.isDirectory() || agent.name.startsWith(".")) continue;
+      found.push(...(await scanScopeFiles(deps, join(teamDir, agent.name, "skills"), `agent:${agent.name}`)));
+    }
   }
   return found;
 }
@@ -422,27 +453,19 @@ export async function findSkillOccurrences(
   vaultRoot: string,
   name: string,
 ): Promise<SkillOccurrence[]> {
-  const found: SkillOccurrence[] = [];
-  found.push(...(await scanScopeFiles(deps, join(vaultRoot, "skills"), "shared", name)));
+  const occurrences = await scanAllSkillFiles(deps, vaultRoot);
+  return occurrences
+    .filter((occurrence) => occurrence.effectiveName === name)
+    .map(({ path, scope }) => ({ path, scope }));
+}
 
-  const groupsDir = join(vaultRoot, "agent-groups");
-  if (await deps.exists(groupsDir)) {
-    for (const group of await deps.readdir(groupsDir)) {
-      if (!group.isDirectory() || group.name.startsWith(".")) continue;
-      found.push(
-        ...(await scanScopeFiles(deps, join(groupsDir, group.name, "skills"), `group:${group.name}`, name)),
-      );
-    }
-  }
-
-  const teamDir = join(vaultRoot, "team");
-  if (await deps.exists(teamDir)) {
-    for (const agent of await deps.readdir(teamDir)) {
-      if (!agent.isDirectory() || agent.name.startsWith(".")) continue;
-      found.push(...(await scanScopeFiles(deps, join(teamDir, agent.name, "skills"), `agent:${agent.name}`, name)));
-    }
-  }
-  return found;
+function findTemplateIdOccurrences(
+  occurrences: ScannedSkillOccurrence[],
+  templateId: string,
+): SkillOccurrence[] {
+  return occurrences
+    .filter((occurrence) => occurrence.templateId === templateId)
+    .map(({ path, scope }) => ({ path, scope }));
 }
 
 // ---------------------------------------------------------------------------
@@ -518,14 +541,19 @@ export async function classifyStarterEntry(
   entry: StarterTemplateEntry,
 ): Promise<DoctorEntry> {
   const targetPath = entryTargetPath(vaultRoot, entry.name);
-  const occurrences = await findSkillOccurrences(deps, vaultRoot, entry.name);
+  const allOccurrences = await scanAllSkillFiles(deps, vaultRoot);
+  const occurrences = allOccurrences.filter((occ) => occ.effectiveName === entry.name);
   const targetPresent = occurrences.some((occ) => occ.path === targetPath);
-  const otherOccurrences = occurrences.filter((occ) => occ.path !== targetPath);
+  const otherNameOccurrences = occurrences.filter((occ) => occ.path !== targetPath);
+  const idOccurrences = findTemplateIdOccurrences(allOccurrences, entry.id);
+  const otherIdOccurrences = idOccurrences.filter((occ) => occ.path !== targetPath);
 
   const duplicateReason =
-    otherOccurrences.length > 0
-      ? `name '${entry.name}' is already active outside the target path (${otherOccurrences.map((o) => `${o.scope}:${o.path}`).join(", ")})`
-      : null;
+    otherNameOccurrences.length > 0
+      ? `name '${entry.name}' is already active outside the target path (${otherNameOccurrences.map((o) => `${o.scope}:${o.path}`).join(", ")})`
+      : otherIdOccurrences.length > 0
+        ? `template id '${entry.id}' is already seeded outside the target path (${otherIdOccurrences.map((o) => `${o.scope}:${o.path}`).join(", ")})`
+        : null;
 
   if (duplicateReason !== null) {
     return {
@@ -746,7 +774,7 @@ export async function applyStarterSeed(
           content_sha256: item.entry.content_sha256,
         },
       );
-      await deps.writeFile(item.targetPath, seeded);
+      await deps.writeFile(item.targetPath, seeded, { flag: "wx" });
       created.push({ path: item.targetPath, name: item.entry.name, id: item.entry.id });
     } else if (item.action === "conflict") {
       skippedConflicts.push({ path: item.targetPath, name: item.entry.name, state: item.state });

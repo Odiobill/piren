@@ -32,7 +32,9 @@ export interface StarterProfileManifest {
 /** Injected filesystem operations (structurally compatible with node:fs/promises). */
 export interface StarterSkillsDeps {
     readFile(path: string): Promise<string>;
-    writeFile(path: string, content: string): Promise<void>;
+    writeFile(path: string, content: string, options?: {
+        flag?: string;
+    }): Promise<void>;
     mkdir(path: string, options?: {
         recursive?: boolean;
     }): Promise<void>;
