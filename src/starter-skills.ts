@@ -567,7 +567,9 @@ export async function classifyStarterEntry(
   const targetPath = entryTargetPath(vaultRoot, entry.name);
   const allOccurrences = await scanAllSkillFiles(deps, vaultRoot);
   const occurrences = allOccurrences.filter((occ) => occ.effectiveName === entry.name);
-  const targetPresent = occurrences.some((occ) => occ.path === targetPath);
+  // Presence is path-based: a target whose frontmatter name was edited still
+  // exists and must receive an underlying integrity/provenance classification.
+  const targetPresent = allOccurrences.some((occ) => occ.path === targetPath);
   const otherNameOccurrences = occurrences.filter((occ) => occ.path !== targetPath);
   const idOccurrences = findTemplateIdOccurrences(allOccurrences, entry.id);
   const otherIdOccurrences = idOccurrences.filter((occ) => occ.path !== targetPath);

@@ -486,6 +486,17 @@ describe("doctor classification (S3 §5 total, fail-closed)", () => {
     expect(result.state).toEqual({ kind: "seeded-current", path: "/vault/skills/okf-authoring/SKILL.md" });
   });
 
+  it("classifies an existing target by path even when its frontmatter name was changed", async () => {
+    const { deps, files, vault, manifest } = vaultWithEntry("absent");
+    files.set(
+      "/vault/skills/okf-authoring/SKILL.md",
+      ["---", "name: renamed", 'description: "Changed target."', "type: Skill", "---", "", "# Changed"].join("\n"),
+    );
+    const result = await classifyStarterEntry(deps, vault, manifest, manifest.entries[0]!);
+    expect(result.state.kind).toBe("provenance-invalid");
+    expect(result.state.kind === "provenance-invalid" ? result.state.reason : "").toMatch(/template block/i);
+  });
+
   it("reports a template-id-only conflict as a duplicate overlay", async () => {
     const { deps, files, vault, manifest } = vaultWithEntry("absent");
     // A file under a DIFFERENT name that carries the same template id in its
