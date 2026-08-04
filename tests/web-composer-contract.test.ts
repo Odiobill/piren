@@ -111,8 +111,14 @@ describe("web composer static contract (R3b-4)", () => {
     const composer = sources.get("RoomComposer.tsx");
     expect(composer).toBeDefined();
     // The composer is wired into the selected-room view.
-    expect(sources.get("RoomNavigator.tsx")).toContain("RoomComposer");
-    expect(sources.get("RoomNavigator.tsx")).toContain("participants={selectedRoom.participants}");
+    const navigator = sources.get("RoomNavigator.tsx") ?? "";
+    expect(navigator).toContain("RoomComposer");
+    expect(navigator).toContain("participants={selectedRoom.participants}");
+    // The composer announces dispatch success through onAnnounce, so the
+    // navigator must render its live region in the selected-room (detail)
+    // view too — not only the list view. Pin at least two live regions.
+    const liveMatches = navigator.match(/aria-live="polite"/g) ?? [];
+    expect(liveMatches.length).toBeGreaterThanOrEqual(2);
   });
 
   it("sends only through the authenticated structured messages endpoint", async () => {

@@ -146,6 +146,9 @@ export function RoomNavigator({
   if (selectedRoom) {
     return (
       <section className="card" aria-labelledby="room-detail-heading">
+        <p className="sr-only" role="status" aria-live="polite">
+          {announcement}
+        </p>
         <button type="button" className="button" onClick={handleBack}>
           ← All rooms
         </button>
