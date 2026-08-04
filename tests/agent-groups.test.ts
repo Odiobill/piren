@@ -213,6 +213,33 @@ describe("parseGroupConfigs", () => {
       await cleanup();
     }
   });
+
+  it("orders groups by locale-independent UTF-16 code-unit order, not locale collation", async () => {
+    const { vault, cleanup } = await makeVault();
+    try {
+      await writeGroupConfig(
+        vault,
+        "Alpha",
+        ["agents:", "  - dipu"].join("\n"),
+      );
+      await writeGroupConfig(
+        vault,
+        "alpha",
+        ["agents:", "  - dipu"].join("\n"),
+      );
+      const deps = {
+        readdir: async () => [fakeDirent("alpha"), fakeDirent("Alpha")],
+      };
+      // Default locale collation (e.g. en-US) orders lowercase-first
+      // ("alpha", "Alpha"). The required stable order is a fixed lexical
+      // UTF-16 code-unit comparison: uppercase-first ("Alpha", "alpha"),
+      // identical on every host regardless of locale.
+      const groups = await parseGroupConfigs(vault, deps);
+      expect([...groups.keys()]).toEqual(["Alpha", "alpha"]);
+    } finally {
+      await cleanup();
+    }
+  });
 });
 
 describe("resolveAgentGroups", () => {

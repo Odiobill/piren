@@ -80,11 +80,14 @@ function toGroupConfig(raw: unknown): GroupConfig {
  * `config.yml` is skipped silently. Malformed YAML is surfaced as a thrown
  * error that names the offending group so it is easy to locate.
  *
- * Groups are processed in deterministic ascending name order regardless of
- * directory enumeration order (the optional injected `deps` seam lets tests
- * control enumeration). Because ADR-0028 group-skill precedence treats later
- * groups as overriding earlier groups for same-name skills, this stable order
- * is what makes multi-group skill resolution deterministic.
+ * Groups are processed in a deterministic ascending UTF-16 code-unit
+ * (lexical) name order regardless of directory enumeration order (the
+ * optional injected `deps` seam lets tests control enumeration). The
+ * comparator is locale-independent: `localeCompare` depends on the host
+ * locale, and because ADR-0028 group-skill precedence treats later groups as
+ * overriding earlier groups for same-name skills, a locale-dependent order
+ * could change skill resolution between hosts. This stable fixed order is
+ * what makes multi-group skill resolution deterministic everywhere.
  *
  * Dotfiles and non-directory entries under `agent-groups/` are ignored.
  *
@@ -109,11 +112,12 @@ export async function parseGroupConfigs(
   }
 
   const groups: GroupConfigs = new Map();
-  // Deterministic processing order: ascending group-name order. The skill
-  // loader (ADR-0028) resolves group precedence from this order (later groups
-  // override earlier same-name skills), so it must be stable across
-  // filesystems instead of depending on directory enumeration order.
-  entries.sort((a, b) => a.name.localeCompare(b.name));
+  // Deterministic processing order: ascending UTF-16 code-unit (lexical)
+  // group-name order. The skill loader (ADR-0028) resolves group precedence
+  // from this order (later groups override earlier same-name skills), so it
+  // must be stable across filesystems AND host locales instead of depending
+  // on directory enumeration order or `localeCompare` collation.
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const entry of entries) {
     if (entry.name.startsWith(".")) continue;
     if (!entry.isDirectory()) continue;
@@ -142,7 +146,7 @@ export async function parseGroupConfigs(
 
 /**
  * Resolve the set of group names an agent belongs to, in deterministic
- * ascending group-name order (the order produced by
+ * ascending UTF-16 code-unit (lexical) order (the order produced by
  * {@link parseGroupConfigs}). Returns an empty array when `agent-groups/` is
  * missing or the agent is not a declared member of any group.
  */
