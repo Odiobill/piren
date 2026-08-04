@@ -121,6 +121,20 @@ describe("web composer static contract (R3b-4)", () => {
     expect(liveMatches.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("makes no stale pre-timeline/pre-composer claims (rework regression)", async () => {
+    const sources = await readWebSources();
+    const navigator = sources.get("RoomNavigator.tsx") ?? "";
+    const composer = sources.get("RoomComposer.tsx") ?? "";
+    // The navigator comment must not deny the delivered timeline/composer
+    // surfaces; only the real non-goals remain.
+    expect(navigator).not.toMatch(/No timeline, composer, dispatch/i);
+    expect(navigator).toContain("No approval, abort, vault browser, graph, model controls, cache, or");
+    expect(navigator).toContain("service worker");
+    // The composer must not claim the timeline is below it (it renders above).
+    expect(composer).not.toMatch(/timeline below/i);
+    expect(composer).toMatch(/The room timeline shows/i);
+  });
+
   it("sends only through the authenticated structured messages endpoint", async () => {
     const sources = await readWebSources();
     const api = sources.get("api.ts") ?? "";

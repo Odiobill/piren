@@ -104,7 +104,7 @@ export function RoomComposer({
         </p>
       )}
       <p className="muted">
-        The room timeline below shows the durable causal sequence: your message, the lead run, and the
+        The room timeline shows the durable causal sequence: your message, the lead run, and the
         terminal outcome.
       </p>
     </form>

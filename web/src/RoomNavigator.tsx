@@ -6,11 +6,13 @@ import { RoomTimeline } from "./RoomTimeline";
 import { RoomComposer } from "./RoomComposer";
 
 /**
- * Room navigator (ADR-0041 R3b-2): room list/create/select with the
- * local-policy agent roster. No timeline, composer, dispatch, approval,
- * abort, vault browser, graph, model controls, cache, or service worker.
- * The first protected request with a supplied token validates it; a 401 is
- * surfaced truthfully via onUnauthorized (back to token entry).
+ * Room navigator (ADR-0041 R3b-2, extended by R3b-3/R3b-4): room
+ * list/create/select with the local-policy agent roster, plus the immutable
+ * room timeline and the structured-dispatch composer for the selected room.
+ * No approval, abort, vault browser, graph, model controls, cache, or
+ * service worker. The first protected request with a supplied token
+ * validates it; a 401 is surfaced truthfully via onUnauthorized (back to
+ * token entry).
  */
 
 type LoadState =
