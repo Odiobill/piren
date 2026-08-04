@@ -25,7 +25,7 @@ See [vault layout](vault-layout.md) for the full directory reference.
 
 ## The OKF starter graph
 
-A fresh vault starts nearly empty, with a small starter graph of concept documents under `wiki/concepts/` and `wiki/entities/` to orient new agents and stewards. The starter graph includes:
+A fresh vault starts nearly empty, with a small starter graph of concept documents under `wiki/concepts/` and `wiki/entities/` to orient new agents and stewards. No **skills** are seeded by `piren init`: the `skills/` and `templates/` directories are created empty. Bundled starter skills are available as an explicit opt-in through the package `okf` profile (`piren skills seed --profile okf`); see [Skills](skills.md). The starter graph includes:
 
 - `wiki/entities/piren.md` - what Piren is.
 - `wiki/concepts/open-knowledge-format.md` - the OKF rule.

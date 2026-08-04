@@ -1,0 +1,22 @@
+# Bundled starter-skill profile manifest (S3 contract).
+# Identity and digest are authoritative and bound to the package: the seeded
+# `template` block copies these values verbatim. A release that changes any
+# template content MUST bump `version`.
+profile: okf
+version: "1.0.0"
+entries:
+  - id: okf-authoring
+    name: okf-authoring
+    scope: shared
+    source: shared/okf-authoring/SKILL.md
+    content_sha256: 0272b0353c7fb547d80a8f866d79762a094d41162ff9335519c6b98356ce4709
+  - id: piren-vault-operations
+    name: piren-vault-operations
+    scope: shared
+    source: shared/piren-vault-operations/SKILL.md
+    content_sha256: 4ed95cab5d5f93f97c232a82edba837b0eda55bac1ede5ee154b5395a806c46b
+  - id: piren-knowledge-lifecycle
+    name: piren-knowledge-lifecycle
+    scope: shared
+    source: shared/piren-knowledge-lifecycle/SKILL.md
+    content_sha256: f07c051f0e7a28995010f36f3cc89ce806a4b52891aac92abbaee1d0d0408583

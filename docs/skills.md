@@ -24,6 +24,28 @@ team/<agent>/skills/
 
 Precedence is: shared skills, then group-scoped skills, then agent-specific skills. Agent-specific skills override lower scopes with the same name. Fresh scaffolds create the `agent-groups/` parent so vaults are ready for group-scoped skills.
 
+## Bundled starter skills (`piren skills`)
+
+Piren ships a small package-owned starter profile, `okf`, with three shared starter procedures (`okf-authoring`, `piren-vault-operations`, `piren-knowledge-lifecycle`). Starter skills are **templates copied deliberately into a vault**: once seeded, they are ordinary steward-owned vault skills with normal precedence. They are never hidden prompt text and never loaded at runtime from the package.
+
+Fresh `piren init` stays **unseeded**: no starter skill is placed automatically. Seeding is explicit and opt-in:
+
+```bash
+# Plan only (never writes)
+piren skills seed --profile okf --dry-run --vault-root /path/to/vault
+# Apply (creates only absent files)
+piren skills seed --profile okf --yes --vault-root /path/to/vault
+# Read-only drift/conflict report
+piren skills doctor --profile okf --vault-root /path/to/vault
+```
+
+Limits:
+
+- Seed creates **only absent** files; it never overwrites, deletes, or renames anything. There is no force flag.
+- Package install, upgrade, `piren skills doctor`, and unchanged `piren init` never automatically add or change starter-skill content in an existing vault.
+- A duplicate active skill name (shared/group/agent) blocks seeding entirely.
+- Seeded copies carry a `template` provenance block (`id`, `profile`, `version`, `content_sha256`) bound to the package manifest; `doctor` classifies each copy as `absent`, `seeded-current`, `seeded-outdated-unmodified`, `user-modified`, `provenance-invalid`, or a blocking `duplicate` overlay.
+
 ## File formats
 
 A skill can be a loose Markdown file:

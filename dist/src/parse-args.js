@@ -23,6 +23,7 @@ export const KNOWN_COMMANDS = [
     "group",
     "cron",
     "skill",
+    "skills",
     "task",
 ];
 /**

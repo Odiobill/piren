@@ -63,18 +63,20 @@ describe("checkPackedArtifacts", () => {
       "dist/src/cli.js",
       "dist/public/index.html",
       "dist/src/pi-extension.js",
+      "dist/templates/okf/manifest.yml",
       "docs/getting-started.md",
     ]);
     expect(result.ok).toBe(true);
     expect(result.missing).toEqual([]);
   });
 
-  it("fails and lists missing artifacts (runtime and docs)", () => {
+  it("fails and lists missing artifacts (runtime, starter templates, and docs)", () => {
     const result = checkPackedArtifacts(["dist/src/cli.js", "README.md"]);
     expect(result.ok).toBe(false);
     expect(result.missing).toEqual([
       "dist/public/index.html",
       "dist/src/pi-extension.js",
+      "dist/templates/okf/manifest.yml",
       "docs/getting-started.md",
     ]);
   });
@@ -84,16 +86,18 @@ describe("checkPackedArtifacts", () => {
       "package/dist/src/cli.js",
       "package/dist/public/index.html",
       "package/dist/src/pi-extension.js",
+      "package/dist/templates/okf/manifest.yml",
       "package/docs/getting-started.md",
     ]);
     expect(result.ok).toBe(true);
   });
 
-  it("declares the packed-surface contract: runtime artifacts plus a stable docs file", () => {
+  it("declares the packed-surface contract: runtime artifacts plus the okf starter manifest and a stable docs file", () => {
     expect([...REQUIRED_PACKED_ARTIFACTS]).toEqual([
       "dist/src/cli.js",
       "dist/public/index.html",
       "dist/src/pi-extension.js",
+      "dist/templates/okf/manifest.yml",
       "docs/getting-started.md",
     ]);
   });
@@ -113,6 +117,7 @@ const SAMPLE_OBJECT_KEYED = JSON.stringify({
       { path: "dist/src/cli.js", size: 10, mode: 420 },
       { path: "dist/public/index.html", size: 10, mode: 420 },
       { path: "dist/src/pi-extension.js", size: 10, mode: 420 },
+      { path: "dist/templates/okf/manifest.yml", size: 10, mode: 420 },
       { path: "docs/getting-started.md", size: 10, mode: 420 },
     ],
   },
@@ -178,7 +183,7 @@ describe("buildLocalTarball", () => {
     expect(outcome.packageName).toBe("piren");
     expect(outcome.packageVersion).toBe("0.1.0");
     expect(outcome.missing).toEqual([]);
-    expect(outcome.packedFiles.length).toBe(4);
+    expect(outcome.packedFiles.length).toBe(5);
   });
 
   it("fails when npm pack exits non-zero, without producing a tarball path", async () => {
@@ -206,6 +211,7 @@ describe("buildLocalTarball", () => {
     expect(outcome.missing).toEqual([
       "dist/public/index.html",
       "dist/src/pi-extension.js",
+      "dist/templates/okf/manifest.yml",
       "docs/getting-started.md",
     ]);
   });
@@ -397,6 +403,7 @@ const TAR_SURFACE_OK =
   "package/dist/src/cli.js\n" +
   "package/dist/public/index.html\n" +
   "package/dist/src/pi-extension.js\n" +
+  "package/dist/templates/okf/manifest.yml\n" +
   "package/docs/getting-started.md\n";
 
 const TAR_SURFACE_MISSING_DOCS =

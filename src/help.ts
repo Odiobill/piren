@@ -143,6 +143,12 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
     example: "piren skill import ./external.md --staged && piren skill staged promote external --to shared",
   },
   {
+    command: "skills",
+    short: "Bundled starter skills: explicitly seed the package 'okf' profile into a vault, or run the read-only doctor (no auto-mutation, no overwrite).",
+    flags: ["seed --profile <name> [--vault-root <path>] [--dry-run] [--yes]", "doctor [--profile <name>] [--vault-root <path>]"],
+    example: "piren skills seed --profile okf --dry-run && piren skills doctor --profile okf",
+  },
+  {
     command: "task",
     short: "Human-facing inbox task CLI: list, send, show, claim, complete, cancel. No polling, no scheduler changes.",
     flags: ["<list|send|show|claim|complete|cancel>", "<agent>", "<title>", "<path-or-id>", "--agent <agent>", "--body <vault-file>", "--result <vault-file>", "--priority normal|high|urgent", "--device <id>"],

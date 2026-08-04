@@ -43,7 +43,7 @@ export interface ParsedArgs {
     piArgs: string[];
 }
 /** Commands the CLI recognizes as the first non-flag positional. */
-export declare const KNOWN_COMMANDS: readonly ["status", "agents", "doctor", "init", "run", "worker", "setup", "gateway", "web", "telegram", "discord", "ask", "chat", "service", "agent", "clean", "version", "update", "scheduler", "package", "group", "cron", "skill", "task"];
+export declare const KNOWN_COMMANDS: readonly ["status", "agents", "doctor", "init", "run", "worker", "setup", "gateway", "web", "telegram", "discord", "ask", "chat", "service", "agent", "clean", "version", "update", "scheduler", "package", "group", "cron", "skill", "skills", "task"];
 /**
  * Parse Piren CLI arguments (typically `process.argv.slice(2)`).
  *

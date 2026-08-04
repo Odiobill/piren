@@ -696,6 +696,13 @@ try {
       forceCliAgent: agentName,
       force,
     });
+  } else if (command === "skills") {
+    await runSkillsCommand({
+      positionals,
+      explicitVaultRoot: vaultRoot,
+      dryRun: parsed.dryRun,
+      yes: parsed.yes,
+    });
   } else if (command === "task") {
     await runTaskCommand({
       positionals,
@@ -1930,6 +1937,165 @@ async function runSkillCommand(args: RunSkillCommandArgs): Promise<void> {
   // Unknown subcommand
   console.error("Usage: piren skill <list|show|explain|create|move|promote|demote|conflicts|validate|import|staged> [args]");
   process.exit(2);
+}
+
+// ---------------------------------------------------------------------------
+// Starter skills CLI (S3a, plural surface distinct from `piren skill`)
+// ---------------------------------------------------------------------------
+
+interface RunSkillsCommandArgs {
+  positionals: string[];
+  explicitVaultRoot: string | undefined;
+  dryRun: boolean;
+  yes: boolean;
+}
+
+const STARTER_SKILLS_USAGE =
+  "Usage: piren skills seed --profile <name> [--vault-root <path>] [--dry-run] [--yes] | piren skills doctor [--profile <name>] [--vault-root <path>]";
+
+function stateLabel(state: import("./starter-skills.js").DoctorState): string {
+  switch (state.kind) {
+    case "absent":
+      return "absent";
+    case "seeded-current":
+      return "seeded-current";
+    case "seeded-outdated-unmodified":
+      return "seeded-outdated-unmodified";
+    case "user-modified":
+      return "user-modified";
+    case "provenance-invalid":
+      return `provenance-invalid (${state.reason})`;
+    case "duplicate":
+      return `duplicate (${state.reason})`;
+  }
+}
+
+async function runSkillsCommand(args: RunSkillsCommandArgs): Promise<void> {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { parse: parseYaml } = await import("yaml");
+  const {
+    assertVaultRoot,
+    applyStarterSeed,
+    createRealStarterSkillsDeps,
+    listStarterProfiles,
+    parseStarterManifest,
+    planStarterSeed,
+    resolveStarterTemplatesDir,
+    runStarterDoctor,
+    validateProfileTemplates,
+  } = await import("./starter-skills.js");
+
+  const sub = args.positionals[0];
+  if (sub !== "seed" && sub !== "doctor") {
+    console.error(STARTER_SKILLS_USAGE);
+    process.exit(2);
+  }
+
+  // Resolve vault root from explicit flag or local config (same as skill/group).
+  const configPath = join(homedir(), ".config", "piren", "config.yml");
+  let existingConfig = "";
+  try {
+    existingConfig = await readFile(configPath, "utf8");
+  } catch {
+    existingConfig = "";
+  }
+  let vaultRoot = args.explicitVaultRoot;
+  if (!vaultRoot) {
+    try {
+      const parsedCfg = parseYaml(existingConfig) as Record<string, unknown> | null;
+      const root = parsedCfg?.vault_root;
+      if (typeof root === "string" && root.trim() !== "") vaultRoot = root;
+    } catch {
+      // Ignore malformed config.
+    }
+  }
+  if (!vaultRoot) {
+    console.error("Could not resolve vault root. Pass --vault-root or set vault_root in " + configPath + ".");
+    process.exit(2);
+  }
+
+  const rawArgv = process.argv.slice(2);
+  const profileFlagIndex = rawArgv.indexOf("--profile");
+  const profileFlag = profileFlagIndex !== -1 ? rawArgv[profileFlagIndex + 1] : undefined;
+
+  const deps = createRealStarterSkillsDeps();
+  const templatesDir = resolveStarterTemplatesDir(dirname(fileURLToPath(import.meta.url)));
+  const profiles = await listStarterProfiles(deps, templatesDir);
+
+  async function loadManifest(profile: string) {
+    if (profiles.length === 0) {
+      console.error(`Bundled starter-skill templates are not present at ${templatesDir}. Rebuild the package (npm run build) and retry.`);
+      process.exit(2);
+    }
+    if (!profiles.includes(profile)) {
+      console.error(`Unknown starter-skill profile '${profile}'. Available profiles: ${profiles.join(", ")}.`);
+      process.exit(2);
+    }
+    const manifestYaml = await readFile(join(templatesDir, profile, "manifest.yml"), "utf8");
+    const manifest = parseStarterManifest(manifestYaml);
+    await validateProfileTemplates(deps, templatesDir, manifest);
+    return manifest;
+  }
+
+  try {
+    await assertVaultRoot(deps, vaultRoot);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(2);
+  }
+
+  if (sub === "doctor") {
+    const selected = profileFlag === undefined ? profiles : [profileFlag];
+    for (const profile of selected) {
+      const manifest = await loadManifest(profile);
+      const entries = await runStarterDoctor(deps, vaultRoot, manifest);
+      console.log(`[piren skills doctor] profile: ${manifest.profile} v${manifest.version}`);
+      for (const entry of entries) {
+        console.log(`  ${entry.entry.name}: ${stateLabel(entry.state)} (${entry.targetPath})`);
+      }
+    }
+    return;
+  }
+
+  // seed
+  if (profileFlag === undefined) {
+    console.error("piren skills seed requires --profile <name>.");
+    console.error(STARTER_SKILLS_USAGE);
+    process.exit(2);
+  }
+  const manifest = await loadManifest(profileFlag);
+  const plan = await planStarterSeed(deps, vaultRoot, manifest);
+
+  if (plan.blockedByDuplicate) {
+    for (const item of plan.items) {
+      if (item.state.kind === "duplicate") console.error(`  blocked: ${item.state.reason}`);
+    }
+    console.error("[piren skills seed] blocked by duplicate active skill names; nothing was written.");
+    process.exit(1);
+  }
+
+  const creates = plan.items.filter((item) => item.action === "create");
+  const conflicts = plan.items.filter((item) => item.action === "conflict");
+  console.log(`[piren skills seed] profile: ${manifest.profile} v${manifest.version}`);
+  for (const item of creates) console.log(`  create  ${item.targetPath}`);
+  for (const item of conflicts) console.log(`  conflict (${stateLabel(item.state)}): ${item.targetPath}`);
+
+  if (!args.yes || args.dryRun) {
+    if (creates.length === 0) {
+      console.log("[piren skills seed] nothing to seed.");
+    } else {
+      console.log("[piren skills seed] plan only. Run with --yes to apply the seed.");
+    }
+    return;
+  }
+
+  const result = await applyStarterSeed(deps, templatesDir, vaultRoot, manifest);
+  for (const created of result.created) console.log(`  created  ${created.path}`);
+  for (const skipped of result.skippedConflicts) {
+    console.log(`  skipped (${stateLabel(skipped.state)}): ${skipped.path}`);
+  }
+  if (result.created.length === 0) console.log("[piren skills seed] nothing to seed.");
 }
 
 // ---------------------------------------------------------------------------

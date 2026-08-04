@@ -108,6 +108,7 @@ export const REQUIRED_PACKED_ARTIFACTS = [
     "dist/src/cli.js",
     "dist/public/index.html",
     "dist/src/pi-extension.js",
+    "dist/templates/okf/manifest.yml",
     "docs/getting-started.md",
 ];
 /** Whether a spec string denotes a local prepacked npm tarball file. */

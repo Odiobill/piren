@@ -48,7 +48,7 @@ export declare function formatCleanInstallReport(report: CleanInstallReportResul
  * (`assessCleanInstall`) stays scoped to the three dist runtime files; this
  * constant governs the pack surface only.
  */
-export declare const REQUIRED_PACKED_ARTIFACTS: readonly ["dist/src/cli.js", "dist/public/index.html", "dist/src/pi-extension.js", "docs/getting-started.md"];
+export declare const REQUIRED_PACKED_ARTIFACTS: readonly ["dist/src/cli.js", "dist/public/index.html", "dist/src/pi-extension.js", "dist/templates/okf/manifest.yml", "docs/getting-started.md"];
 /** Discriminated install-spec resolved from CLI args. */
 export type InstallSpec = {
     kind: "packed-tarball";
