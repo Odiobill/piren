@@ -5,6 +5,7 @@ import {
   canonicalSkillDigest,
   createRealStarterSkillsDeps,
   parseSkillDocument,
+  parseSkillFrontmatter,
   parseStarterManifest,
   validateProfileTemplates,
   validateStarterManifest,
@@ -64,6 +65,9 @@ describe("templates/okf manifest and templates (S3a contract)", () => {
       expect(doc.description).not.toBeNull();
       // The committed digest is the canonical digest of the parsed fields.
       expect(template.entry.content_sha256).toBe(canonicalSkillDigest(doc.name!, doc.description!, doc.body));
+      // Every shipped template carries valid `type: Skill` frontmatter.
+      const raw = parseSkillFrontmatter(content);
+      expect(raw === null ? undefined : raw.type).toBe("Skill");
     }
   });
 

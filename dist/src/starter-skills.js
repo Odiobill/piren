@@ -52,6 +52,14 @@ export async function listStarterProfiles(deps, templatesDir) {
     }
     return profiles.sort((a, b) => a.localeCompare(b));
 }
+/**
+ * Parse the raw frontmatter YAML record of a skill document (or null when
+ * there is no frontmatter, no closing fence, or the YAML is malformed). Used
+ * by template validation to enforce `type: Skill` deterministically.
+ */
+export function parseSkillFrontmatter(content) {
+    return parseFrontmatterYaml(content);
+}
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
@@ -215,6 +223,11 @@ export async function validateProfileTemplates(deps, templatesDir, manifest) {
         if (doc.name === null || doc.description === null) {
             throw new Error(`Template validation failed for '${manifest.profile}/${entry.id}': frontmatter must have non-empty 'name' and 'description'.`);
         }
+        const raw = parseSkillFrontmatter(content);
+        const type = raw === null || raw.type === undefined ? null : typeof raw.type === "string" ? raw.type : null;
+        if (type !== "Skill") {
+            throw new Error(`Template validation failed for '${manifest.profile}/${entry.id}': frontmatter 'type' must be 'Skill' (found ${JSON.stringify(type)}).`);
+        }
         const frontmatterName = doc.name;
         const dirName = basename(dirname(path));
         if (frontmatterName !== entry.name || dirName !== entry.name) {
@@ -367,8 +380,9 @@ function parseProvenance(manifest, entry, raw) {
 }
 /**
  * Classify one expected template entry at its vault path per the total S3 §5
- * precedence: absent / duplicate overlay / provenance gate (identity-bound) /
- * integrity-first current-vs-stale-vs-modified split.
+ * precedence. A duplicate name/template-id conflict is a BLOCKING OVERLAY:
+ * the underlying integrity state (rules 3-4) is always computed and reported
+ * alongside it, never replaced by it.
  */
 export async function classifyStarterEntry(deps, vaultRoot, manifest, entry) {
     const targetPath = entryTargetPath(vaultRoot, entry.name);
@@ -378,22 +392,23 @@ export async function classifyStarterEntry(deps, vaultRoot, manifest, entry) {
     const otherNameOccurrences = occurrences.filter((occ) => occ.path !== targetPath);
     const idOccurrences = findTemplateIdOccurrences(allOccurrences, entry.id);
     const otherIdOccurrences = idOccurrences.filter((occ) => occ.path !== targetPath);
-    const duplicateReason = otherNameOccurrences.length > 0
-        ? `name '${entry.name}' is already active outside the target path (${otherNameOccurrences.map((o) => `${o.scope}:${o.path}`).join(", ")})`
-        : otherIdOccurrences.length > 0
-            ? `template id '${entry.id}' is already seeded outside the target path (${otherIdOccurrences.map((o) => `${o.scope}:${o.path}`).join(", ")})`
-            : null;
-    if (duplicateReason !== null) {
-        return {
-            entry,
-            targetPath,
-            state: { kind: "duplicate", paths: occurrences.map((o) => o.path), reason: duplicateReason },
-            duplicateOverlay: true,
-        };
-    }
-    if (!targetPresent) {
-        return { entry, targetPath, state: { kind: "absent" }, duplicateOverlay: false };
-    }
+    const conflictPaths = [
+        ...new Set([...otherNameOccurrences.map((o) => o.path), ...otherIdOccurrences.map((o) => o.path)]),
+    ];
+    const duplicateOverlay = conflictPaths.length > 0
+        ? {
+            reason: `name '${entry.name}' / template id '${entry.id}' is already active outside the target path (${conflictPaths.join(", ")})`,
+            paths: conflictPaths,
+        }
+        : null;
+    // Underlying integrity state, always computed fail-closed beneath the overlay.
+    const state = targetPresent
+        ? await classifyTargetFile(deps, manifest, entry, targetPath)
+        : { kind: "absent" };
+    return { entry, targetPath, state, duplicateOverlay };
+}
+/** Classify the file present at the exact target path (S3 §5 rules 3-4). */
+async function classifyTargetFile(deps, manifest, entry, targetPath) {
     const content = await deps.readFile(targetPath);
     const doc = parseSkillDocument(content);
     const rawYaml = parseFrontmatterYaml(content);
@@ -403,14 +418,13 @@ export async function classifyStarterEntry(deps, vaultRoot, manifest, entry) {
     }
     catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
-        return { entry, targetPath, state: { kind: "provenance-invalid", path: targetPath, reason }, duplicateOverlay: false };
+        return { kind: "provenance-invalid", path: targetPath, reason };
     }
     if (doc.name === null || doc.description === null) {
         return {
-            entry,
-            targetPath,
-            state: { kind: "provenance-invalid", path: targetPath, reason: "frontmatter missing non-empty name/description" },
-            duplicateOverlay: false,
+            kind: "provenance-invalid",
+            path: targetPath,
+            reason: "frontmatter missing non-empty name/description",
         };
     }
     const fileDigest = canonicalSkillDigest(doc.name, doc.description, doc.body);
@@ -418,28 +432,18 @@ export async function classifyStarterEntry(deps, vaultRoot, manifest, entry) {
     const manifestDigest = entry.content_sha256;
     if (fileDigest === recorded) {
         if (recorded === manifestDigest && provenance.version === manifest.version) {
-            return { entry, targetPath, state: { kind: "seeded-current", path: targetPath }, duplicateOverlay: false };
+            return { kind: "seeded-current", path: targetPath };
         }
-        return {
-            entry,
-            targetPath,
-            state: { kind: "seeded-outdated-unmodified", path: targetPath, recordedVersion: provenance.version },
-            duplicateOverlay: false,
-        };
+        return { kind: "seeded-outdated-unmodified", path: targetPath, recordedVersion: provenance.version };
     }
     if (fileDigest === manifestDigest) {
         return {
-            entry,
-            targetPath,
-            state: {
-                kind: "provenance-invalid",
-                path: targetPath,
-                reason: "content matches the current manifest digest but the recorded digest does not match the content (integrity-inconsistent provenance)",
-            },
-            duplicateOverlay: false,
+            kind: "provenance-invalid",
+            path: targetPath,
+            reason: "content matches the current manifest digest but the recorded digest does not match the content (integrity-inconsistent provenance)",
         };
     }
-    return { entry, targetPath, state: { kind: "user-modified", path: targetPath }, duplicateOverlay: false };
+    return { kind: "user-modified", path: targetPath };
 }
 /** Extract the raw frontmatter YAML object of a skill document (or null). */
 function parseFrontmatterYaml(content) {
@@ -487,9 +491,9 @@ export async function planStarterSeed(deps, vaultRoot, manifest) {
                 action = "conflict";
                 break;
         }
-        return { entry: entry.entry, targetPath: entry.targetPath, action, state: entry.state };
+        return { entry: entry.entry, targetPath: entry.targetPath, action, state: entry.state, duplicateOverlay: entry.duplicateOverlay };
     });
-    const blockedByDuplicate = doctor.some((entry) => entry.duplicateOverlay);
+    const blockedByDuplicate = doctor.some((entry) => entry.duplicateOverlay !== null);
     const canApply = !blockedByDuplicate && items.some((item) => item.action === "create");
     return { items, blockedByDuplicate, canApply };
 }
@@ -526,8 +530,10 @@ export async function applyStarterSeed(deps, templatesDir, vaultRoot, manifest) 
     await assertVaultRoot(deps, vaultRoot);
     const plan = await planStarterSeed(deps, vaultRoot, manifest);
     if (plan.blockedByDuplicate) {
-        const duplicates = plan.items.filter((item) => item.state.kind === "duplicate");
-        throw new Error(`Seed blocked by duplicate active skill names: ${duplicates.map((d) => (d.state.kind === "duplicate" ? d.state.reason : "")).join("; ")}`);
+        const overlays = plan.items
+            .map((item) => item.duplicateOverlay)
+            .filter((overlay) => overlay !== null);
+        throw new Error(`Seed blocked by duplicate active skill name/template id: ${overlays.map((o) => o.reason).join("; ")}`);
     }
     const validation = await validateProfileTemplates(deps, templatesDir, manifest);
     const created = [];

@@ -316,6 +316,51 @@ describe("validateProfileTemplates (S3 §2/§3)", () => {
     files.set("/templates/okf/shared/okf-authoring/SKILL.md", ["---", "type: Skill", "---", "", "body"].join("\n"));
     await expect(validateProfileTemplates(deps, "/templates", manifest)).rejects.toThrow(/name.*description/);
   });
+
+  it("rejects a template whose frontmatter type is missing, non-string, or not 'Skill'", async () => {
+    const manifest = makeManifest([ENTRY]);
+
+    // Missing type.
+    {
+      const { deps, files } = makeFakeDeps();
+      writeTemplateTree(files, manifest, [ENTRY]);
+      files.set(
+        "/templates/okf/shared/okf-authoring/SKILL.md",
+        ["---", "name: okf-authoring", 'description: "Author OKF."', "---", "", "# Body"].join("\n"),
+      );
+      await expect(validateProfileTemplates(deps, "/templates", manifest)).rejects.toThrow(/type.*Skill/i);
+    }
+
+    // Non-string type.
+    {
+      const { deps, files } = makeFakeDeps();
+      writeTemplateTree(files, manifest, [ENTRY]);
+      files.set(
+        "/templates/okf/shared/okf-authoring/SKILL.md",
+        ["---", "name: okf-authoring", 'description: "Author OKF."', "type: 42", "---", "", "# Body"].join("\n"),
+      );
+      await expect(validateProfileTemplates(deps, "/templates", manifest)).rejects.toThrow(/type.*Skill/i);
+    }
+
+    // Wrong type.
+    {
+      const { deps, files } = makeFakeDeps();
+      writeTemplateTree(files, manifest, [ENTRY]);
+      files.set(
+        "/templates/okf/shared/okf-authoring/SKILL.md",
+        ["---", "name: okf-authoring", 'description: "Author OKF."', "type: Concept", "---", "", "# Body"].join("\n"),
+      );
+      await expect(validateProfileTemplates(deps, "/templates", manifest)).rejects.toThrow(/type.*Skill/i);
+    }
+  });
+
+  it("accepts a template with valid type: Skill frontmatter", async () => {
+    const manifest = makeManifest([ENTRY]);
+    const { deps, files } = makeFakeDeps();
+    writeTemplateTree(files, manifest, [ENTRY]);
+    const result = await validateProfileTemplates(deps, "/templates", manifest);
+    expect(result.templates[0]?.entry.id).toBe("okf-authoring");
+  });
 });
 
 describe("doctor classification (S3 §5 total, fail-closed)", () => {
@@ -367,7 +412,7 @@ describe("doctor classification (S3 §5 total, fail-closed)", () => {
     const { deps, vault, manifest } = vaultWithEntry("absent");
     const result = await classifyStarterEntry(deps, vault, manifest, manifest.entries[0]!);
     expect(result.state.kind).toBe("absent");
-    expect(result.duplicateOverlay).toBe(false);
+    expect(result.duplicateOverlay).toBeNull();
   });
 
   it("classifies an exact seeded copy as seeded-current (full triple match)", async () => {
@@ -408,23 +453,57 @@ describe("doctor classification (S3 §5 total, fail-closed)", () => {
     expect(result.state.kind === "provenance-invalid" ? result.state.reason : "").toMatch(/integrity-inconsistent/);
   });
 
-  it("reports a blocking duplicate overlay when the name is active in another scope", async () => {
+  it("reports a blocking duplicate overlay when the name is active in another scope, with the underlying state beneath it", async () => {
     const { deps, files, vault, manifest } = vaultWithEntry("absent");
     files.set(
       "/vault/agent-groups/developers/skills/okf-authoring/SKILL.md",
       templateSkill("okf-authoring", "Group variant.", "# Group\n"),
     );
     const result = await classifyStarterEntry(deps, vault, manifest, manifest.entries[0]!);
-    expect(result.duplicateOverlay).toBe(true);
-    expect(result.state.kind).toBe("duplicate");
+    expect(result.duplicateOverlay).not.toBeNull();
+    expect(result.duplicateOverlay!.paths).toContain("/vault/agent-groups/developers/skills/okf-authoring/SKILL.md");
+    // The overlay does NOT replace the underlying integrity state: the target
+    // file is absent, so the underlying state is `absent` (never seedable here).
+    expect(result.state.kind).toBe("absent");
   });
 
   it("reports a blocking duplicate overlay for a loose shared file with the same name", async () => {
     const { deps, files, vault, manifest } = vaultWithEntry("absent");
     files.set("/vault/skills/okf-authoring.md", templateSkill("okf-authoring", "Loose shared.", "# Loose\n"));
     const result = await classifyStarterEntry(deps, vault, manifest, manifest.entries[0]!);
-    expect(result.duplicateOverlay).toBe(true);
-    expect(result.state.kind).toBe("duplicate");
+    expect(result.duplicateOverlay).not.toBeNull();
+    expect(result.state.kind).toBe("absent");
+  });
+
+  it("preserves a seeded-current underlying state beneath a duplicate overlay", async () => {
+    const { deps, files, vault, manifest } = vaultWithEntry("seeded-current");
+    files.set(
+      "/vault/team/thor/skills/okf-authoring/SKILL.md",
+      templateSkill("okf-authoring", "Agent variant.", "# Agent\n"),
+    );
+    const result = await classifyStarterEntry(deps, vault, manifest, manifest.entries[0]!);
+    expect(result.duplicateOverlay).not.toBeNull();
+    expect(result.state).toEqual({ kind: "seeded-current", path: "/vault/skills/okf-authoring/SKILL.md" });
+  });
+
+  it("reports a template-id-only conflict as a duplicate overlay", async () => {
+    const { deps, files, vault, manifest } = vaultWithEntry("absent");
+    // A file under a DIFFERENT name that carries the same template id in its
+    // provenance block: the name scan misses it, the template-id scan must not.
+    const digest = manifest.entries[0]!.content_sha256;
+    files.set(
+      "/vault/skills/renamed-copy/SKILL.md",
+      buildSeededContent(templateSkill("renamed-copy", "Renamed copy.", "# Copy\n"), {
+        id: "okf-authoring",
+        profile: "okf",
+        version: "1.0.0",
+        content_sha256: digest,
+      }),
+    );
+    const result = await classifyStarterEntry(deps, vault, manifest, manifest.entries[0]!);
+    expect(result.duplicateOverlay).not.toBeNull();
+    expect(result.duplicateOverlay!.paths).toContain("/vault/skills/renamed-copy/SKILL.md");
+    expect(result.state.kind).toBe("absent");
   });
 
   it("reports a blocking duplicate when the same template id is copied under another name", async () => {
@@ -439,9 +518,11 @@ describe("doctor classification (S3 §5 total, fail-closed)", () => {
       }),
     );
     const result = await classifyStarterEntry(deps, vault, manifest, manifest.entries[0]!);
-    expect(result.duplicateOverlay).toBe(true);
-    expect(result.state.kind).toBe("duplicate");
-    expect(result.state.kind === "duplicate" ? result.state.reason : "").toMatch(/template id/i);
+    expect(result.duplicateOverlay).not.toBeNull();
+    expect(result.duplicateOverlay!.paths).toContain("/vault/team/thor/skills/renamed/SKILL.md");
+    expect(result.duplicateOverlay!.reason).toMatch(/template id/i);
+    // Underlying state preserved beneath the overlay.
+    expect(result.state.kind).toBe("absent");
   });
 });
 

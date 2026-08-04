@@ -105,6 +105,12 @@ describe("piren skills (CLI dispatch)", () => {
     expect(run.status).toBe(1);
     expect(run.stderr.toLowerCase()).toContain("duplicate");
     await expect(access(join(vault, "skills", "okf-authoring", "SKILL.md"))).rejects.toThrow();
+
+    // Doctor reports the underlying state AND the duplicate overlay together.
+    const doctor = runPirenSkills(["doctor", "--profile", "okf", "--vault-root", vault], home);
+    expect(doctor.status).toBe(0);
+    expect(doctor.stdout).toContain("absent");
+    expect(doctor.stdout).toContain("[duplicate overlay:");
   });
 
   it("rejects an unknown profile and a non-vault root", async () => {

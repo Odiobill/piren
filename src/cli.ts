@@ -1965,8 +1965,6 @@ function stateLabel(state: import("./starter-skills.js").DoctorState): string {
       return "user-modified";
     case "provenance-invalid":
       return `provenance-invalid (${state.reason})`;
-    case "duplicate":
-      return `duplicate (${state.reason})`;
   }
 }
 
@@ -2052,7 +2050,8 @@ async function runSkillsCommand(args: RunSkillsCommandArgs): Promise<void> {
       const entries = await runStarterDoctor(deps, vaultRoot, manifest);
       console.log(`[piren skills doctor] profile: ${manifest.profile} v${manifest.version}`);
       for (const entry of entries) {
-        console.log(`  ${entry.entry.name}: ${stateLabel(entry.state)} (${entry.targetPath})`);
+        const overlay = entry.duplicateOverlay === null ? "" : ` [duplicate overlay: ${entry.duplicateOverlay.reason}]`;
+        console.log(`  ${entry.entry.name}: ${stateLabel(entry.state)} (${entry.targetPath})${overlay}`);
       }
     }
     return;
@@ -2069,9 +2068,9 @@ async function runSkillsCommand(args: RunSkillsCommandArgs): Promise<void> {
 
   if (plan.blockedByDuplicate) {
     for (const item of plan.items) {
-      if (item.state.kind === "duplicate") console.error(`  blocked: ${item.state.reason}`);
+      if (item.duplicateOverlay !== null) console.error(`  blocked: ${item.duplicateOverlay.reason}`);
     }
-    console.error("[piren skills seed] blocked by duplicate active skill names; nothing was written.");
+    console.error("[piren skills seed] blocked by duplicate active skill name/template id; nothing was written.");
     process.exit(1);
   }
 

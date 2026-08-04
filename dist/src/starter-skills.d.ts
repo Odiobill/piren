@@ -63,6 +63,12 @@ export interface ParsedSkillDocument {
     body: string;
 }
 /**
+ * Parse the raw frontmatter YAML record of a skill document (or null when
+ * there is no frontmatter, no closing fence, or the YAML is malformed). Used
+ * by template validation to enforce `type: Skill` deterministically.
+ */
+export declare function parseSkillFrontmatter(content: string): Record<string, unknown> | null;
+/**
  * Parse YAML frontmatter (between leading `---` fences) with exactly the same
  * semantics as `src/skills.ts`: name/description from frontmatter, body after
  * the closing fence with leading blank lines trimmed. Tolerant: no frontmatter
@@ -140,17 +146,20 @@ export type DoctorState = {
     kind: "provenance-invalid";
     path: string;
     reason: string;
-} | {
-    kind: "duplicate";
-    paths: string[];
-    reason: string;
 };
+/** Blocking duplicate overlay per S3 §5 rule 2 (name and/or template-id conflicts). */
+export interface DuplicateOverlay {
+    reason: string;
+    /** All conflict paths outside the target path (name and/or template-id). */
+    paths: string[];
+}
 export interface DoctorEntry {
     entry: StarterTemplateEntry;
     targetPath: string;
+    /** Underlying integrity state (S3 §5 rules 3-4), always computed fail-closed. */
     state: DoctorState;
-    /** True when the entry is under a blocking duplicate overlay. */
-    duplicateOverlay: boolean;
+    /** Blocking duplicate overlay; null when no name/template-id conflict exists. */
+    duplicateOverlay: DuplicateOverlay | null;
 }
 export interface ParsedProvenance {
     id: string;
@@ -160,8 +169,9 @@ export interface ParsedProvenance {
 }
 /**
  * Classify one expected template entry at its vault path per the total S3 §5
- * precedence: absent / duplicate overlay / provenance gate (identity-bound) /
- * integrity-first current-vs-stale-vs-modified split.
+ * precedence. A duplicate name/template-id conflict is a BLOCKING OVERLAY:
+ * the underlying integrity state (rules 3-4) is always computed and reported
+ * alongside it, never replaced by it.
  */
 export declare function classifyStarterEntry(deps: StarterSkillsDeps, vaultRoot: string, manifest: StarterProfileManifest, entry: StarterTemplateEntry): Promise<DoctorEntry>;
 /** Read-only doctor report: every entry, its state, and duplicate overlays. */
@@ -172,6 +182,8 @@ export interface SeedPlanItem {
     targetPath: string;
     action: SeedPlanAction;
     state: DoctorState;
+    /** Blocking duplicate overlay, when present (plan never applies such items). */
+    duplicateOverlay: DuplicateOverlay | null;
 }
 export interface SeedPlan {
     items: SeedPlanItem[];
