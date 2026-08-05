@@ -222,6 +222,79 @@ describe("updateConversationAudience (additive later-mention membership, C2 rewo
     });
     expect(updated.audience).toEqual(["dipu", "zai"]);
   });
+
+  it("preserves the original created timestamp across multiple audience updates (immutable created)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Hello @zai", audience: ["zai"], now: () => NOW });
+    const dipu = resolveStewardMentions("@dipu", ["dipu", "zai"]);
+    const sam = resolveStewardMentions("@sam", ["dipu", "sam", "zai"]);
+    expect(dipu.ok && sam.ok).toBe(true);
+    if (!dipu.ok || !sam.ok) throw new Error("test setup");
+
+    await updateConversationAudience({
+      vaultRoot: root,
+      conversationId: conversation.id,
+      additions: dipu.validated,
+      now: () => new Date("2026-08-05T14:00:01.000Z"),
+    });
+    await updateConversationAudience({
+      vaultRoot: root,
+      conversationId: conversation.id,
+      additions: sam.validated,
+      now: () => new Date("2026-08-05T14:00:02.000Z"),
+    });
+
+    const final = await readConversation({ vaultRoot: root, conversationId: conversation.id });
+    // created is byte-for-byte the original activation timestamp.
+    expect(final.created).toBe("2026-08-05T13:15:30.000Z");
+    expect(final.updated).toBe("2026-08-05T14:00:02.000Z");
+    expect(final.audience).toEqual(["zai", "dipu", "sam"]);
+    expect(final.id).toBe(conversation.id);
+    expect(final.status).toBe("open");
+  });
+});
+
+describe("event sequence allocation (atomic, race-safe durable order)", () => {
+  it("allocates unique contiguous sequences atomically under concurrent same-ms appends", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Go", audience: [], now: () => NOW });
+    await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        appendConversationEvent({
+          vaultRoot: root,
+          conversationId: conversation.id,
+          kind: "steward_message",
+          authorKind: "steward",
+          author: "steward",
+          body: `msg-${i}`,
+          now: () => NOW,
+          nonce: () => `n${i}`,
+        }),
+      ),
+    );
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events).toHaveLength(5);
+    // Strictly increasing, contiguous, unique sequences in durable read order.
+    expect(events.map((e) => e.sequence)).toEqual([1, 2, 3, 4, 5]);
+    expect(new Set(events.map((e) => e.sequence)).size).toBe(5);
+  });
+
+  it("uses sequence (not created) as the authoritative durable order under clock skew", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Go", audience: [], now: () => NOW });
+    const later = new Date("2026-08-05T14:00:05.000Z");
+    const earlier = new Date("2026-08-05T13:00:00.000Z");
+    const first = await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "steward_message", authorKind: "steward", author: "steward",
+      body: "first", now: () => later, nonce: () => "a",
+    });
+    const second = await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "steward_message", authorKind: "steward", author: "steward",
+      body: "second", now: () => earlier, nonce: () => "b",
+    });
+    expect(first.sequence).toBeLessThan(second.sequence);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    // Sequence is primary: the first-appended event comes first even though
+    // its wall clock is later than the second event's.
+    expect(events.map((e) => e.body)).toEqual(["first", "second"]);
+  });
 });
 
 describe("ConversationEventRecord shape", () => {

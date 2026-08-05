@@ -181,6 +181,8 @@ function renderConversationManifest(options: {
   title: string;
   audience: readonly string[];
   timestamp: string;
+  /** Original activation timestamp; preserved byte-for-byte by audience updates. */
+  created?: string | undefined;
 }): string {
   const audienceYaml =
     options.audience.length === 0
@@ -194,7 +196,7 @@ function renderConversationManifest(options: {
     audienceYaml,
     "status: open",
     "created_by: steward",
-    `created: ${options.timestamp}`,
+    `created: ${options.created ?? options.timestamp}`,
     `updated: ${options.timestamp}`,
     "---",
     "",
@@ -326,9 +328,19 @@ export interface UpdateConversationAudienceOptions {
  * C2 additive later-mention membership seam: grow the durable manifest
  * `audience` with validated steward recipients only, preserving existing
  * first-mention order with no removals/reordering (C1 `applyMembershipChange`
- * steward path), and bump `updated`. The write is an atomic temp + rename
- * replace of the manifest; invalid mentions are never passed here (the
- * gateway resolves ALL mentions before any durable effect).
+ * steward path), preserve the original `created` byte-for-byte, and bump only
+ * `updated`. The write is an atomic temp + rename replace of the manifest;
+ * invalid mentions are never passed here (the gateway resolves ALL mentions
+ * before any durable effect).
+ *
+ * Coordination limitation (explicit, not silently claimed as atomic): the
+ * audience update is a read-modify-write over the manifest. Within one
+ * process the gateway serializes updates; concurrent CROSS-PROCESS updates
+ * to the same conversation's audience are last-writer-wins on the whole
+ * `audience` array (no merge), consistent with C2's no-hidden-state and no
+ * cross-process lock boundary. Membership is only ever additive, so a lost
+ * update can never remove a member; a re-reading steward sees the latest
+ * persisted audience.
  */
 export async function updateConversationAudience(
   options: UpdateConversationAudienceOptions,
@@ -348,6 +360,7 @@ export async function updateConversationAudience(
     title: current.title,
     audience,
     timestamp: updatedStamp,
+    created: current.created,
   });
   // Atomic replace: temp file in the same directory, then rename over the
   // existing manifest (POSIX rename replaces atomically). Never a partial
@@ -400,6 +413,8 @@ export interface AppendConversationEventResult {
   conversationId: string;
   kind: ConversationEventKind;
   created: string;
+  /** Atomic durable append sequence (1-based, strictly increasing). */
+  sequence: number;
   bytes: number;
 }
 
@@ -470,13 +485,20 @@ function assertValidRunOutcome(
   }
 }
 
+/** Zero-padded event-sequence filename width: `00000001.md` ... `99999999.md`. */
+const EVENT_SEQUENCE_WIDTH = 8;
+const EVENT_SEQUENCE_FILENAME = /^(\d+)\.md$/;
+
 /**
- * Next 1-based monotonic sequence for a conversation's events: count existing
- * `.md` event files + 1. Used as the durable-order tiebreak so events sharing
- * the same millisecond stay in append order. A missing/empty directory yields
- * 1; any unexpected error fails closed (the caller surfaces it).
+ * Next strictly-increasing positive event sequence: the maximum existing
+ * zero-padded sequence filename + 1 (1 when the directory is empty). The
+ * allocation is NOT atomic by itself — the append loop pairs it with the
+ * no-clobber (`wx`) event write and retries on EEXIST, so the sequence slot
+ * and the event file are allocated at the SAME boundary. Files that do not
+ * match the sequence pattern (legacy/hand-written) are skipped defensively;
+ * an unexpected read error fails closed (the caller surfaces it).
  */
-async function nextConversationSequence(eventsDir: string): Promise<number> {
+async function nextEventSequence(eventsDir: string): Promise<number> {
   let entries;
   try {
     entries = await readdir(eventsDir, { withFileTypes: true });
@@ -486,8 +508,15 @@ async function nextConversationSequence(eventsDir: string): Promise<number> {
     }
     throw error;
   }
-  const count = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
-  return count + 1;
+  let max = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = EVENT_SEQUENCE_FILENAME.exec(entry.name);
+    if (match === null) continue;
+    const value = Number(match[1]);
+    if (Number.isSafeInteger(value) && value > max) max = value;
+  }
+  return max + 1;
 }
 
 /** Append one immutable Conversation event (no-clobber). */
@@ -508,39 +537,56 @@ export async function appendConversationEvent(
   const id = `${compactConversationTimestamp(new Date(created))}${options.nonce !== undefined ? `-${options.nonce()}` : ""}`;
   const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
   const eventsDir = join(conversationDir, "events");
-  const absolutePath = join(eventsDir, `${id}.md`);
-  assertInside(root, absolutePath);
+  assertInside(root, conversationDir);
 
-  // Monotonic per-conversation sequence: 1-based count of existing event
-  // files + 1. This is the durable-order tiebreak so events appended within
-  // the same millisecond (a fast run's run_started/agent_message/run_finished)
-  // are read back in append order, never a random-nonce id order.
-  const sequence = options.sequence ?? ((await nextConversationSequence(eventsDir)));
-
-  const content = renderConversationEvent({
-    id,
-    conversationId: options.conversationId,
-    kind: options.kind,
-    authorKind: options.authorKind,
-    author: options.author,
-    created,
-    sequence,
-    ...(options.mentions !== undefined ? { mentions: options.mentions } : {}),
-    ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}),
-    ...(options.addressedAgent !== undefined ? { addressedAgent: options.addressedAgent } : {}),
-    ...(options.runStatus !== undefined ? { runStatus: options.runStatus } : {}),
-    ...(options.failureKind !== undefined ? { failureKind: options.failureKind } : {}),
-    ...(options.contextMetadata !== undefined ? { contextMetadata: options.contextMetadata } : {}),
-    body: options.body,
-  });
-  let bytes: number;
-  try {
-    bytes = await atomicCreateNoClobber(absolutePath, content, options.io ?? NODE_CONVERSATION_WRITE_IO, options.now ?? (() => new Date()), undefined);
-  } catch (error) {
-    if (isEexist(error)) {
-      throw new Error(`Conversation event already exists: ${id}. Refusing to overwrite immutable evidence.`);
+  // Race-safe sequence allocation: the zero-padded `<seq>.md` filename is
+  // created with the same no-clobber boundary as the event write, and a
+  // concurrent appender that loses the EEXIST race re-allocates the next
+  // free sequence. Sequence is the authoritative durable append order; the
+  // compact-nonce `id` remains the correlation key.
+  let sequence = options.sequence;
+  let absolutePath = "";
+  let bytes = 0;
+  for (;;) {
+    if (sequence === undefined) {
+      sequence = await nextEventSequence(eventsDir);
     }
-    throw error;
+    const filename = `${String(sequence).padStart(EVENT_SEQUENCE_WIDTH, "0")}.md`;
+    const candidate = join(eventsDir, filename);
+    assertInside(root, candidate);
+    const content = renderConversationEvent({
+      id,
+      conversationId: options.conversationId,
+      kind: options.kind,
+      authorKind: options.authorKind,
+      author: options.author,
+      created,
+      sequence,
+      ...(options.mentions !== undefined ? { mentions: options.mentions } : {}),
+      ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}),
+      ...(options.addressedAgent !== undefined ? { addressedAgent: options.addressedAgent } : {}),
+      ...(options.runStatus !== undefined ? { runStatus: options.runStatus } : {}),
+      ...(options.failureKind !== undefined ? { failureKind: options.failureKind } : {}),
+      ...(options.contextMetadata !== undefined ? { contextMetadata: options.contextMetadata } : {}),
+      body: options.body,
+    });
+    try {
+      bytes = await atomicCreateNoClobber(candidate, content, options.io ?? NODE_CONVERSATION_WRITE_IO, options.now ?? (() => new Date()), undefined);
+      absolutePath = candidate;
+      break;
+    } catch (error) {
+      if (isEexist(error) && options.sequence === undefined) {
+        // Another appender won this sequence slot: re-allocate and retry.
+        // Bounded by the event file count; every successful write is
+        // no-clobber and never overwrites/deletes event evidence.
+        sequence = undefined;
+        continue;
+      }
+      if (isEexist(error)) {
+        throw new Error(`Conversation event sequence ${String(sequence)} already exists (${id}). Refusing to overwrite immutable evidence.`);
+      }
+      throw error;
+    }
   }
   return {
     id,
@@ -549,6 +595,7 @@ export async function appendConversationEvent(
     conversationId: options.conversationId,
     kind: options.kind,
     created,
+    sequence,
     bytes,
   };
 }
@@ -629,7 +676,7 @@ export interface ConversationEventRecord {
   path: string;
 }
 
-/** Read durable Conversation events in chronological order (created asc, then monotonic sequence). */
+/** Read durable Conversation events in strict append order (sequence primary, created/id defensive tiebreak). */
 export async function readConversationEvents(
   options: ReadConversationEventsOptions,
 ): Promise<ConversationEventRecord[]> {
@@ -655,7 +702,12 @@ export async function readConversationEvents(
     const content = await readFile(absolutePath, "utf8");
     events.push(parseConversationEvent(content, relative(root, absolutePath), options.conversationId));
   }
-  return events.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : a.sequence - b.sequence));
+  // Sequence is the authoritative durable append order; (created, id) is only
+  // a defensive tiebreak for corrupt/hand-written records, never directory
+  // enumeration, nonce, or wall-clock order.
+  return events.sort(
+    (a, b) => (a.sequence < b.sequence ? -1 : a.sequence > b.sequence ? 1 : a.created < b.created ? -1 : a.created > b.created ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
 }
 
 function requireString(fields: Record<string, unknown>, key: string, path: string): string {
