@@ -62,7 +62,7 @@ export async function askAgentClassified(target, message, options = {}) {
                     failure: {
                         kind: "ambiguous",
                         milestone: sawAgentEvent ? "mid_stream" : "post_ack",
-                        detail: "agent process terminated before agent_end",
+                        detail: "agent process terminated before agent_settled",
                     },
                 });
             });

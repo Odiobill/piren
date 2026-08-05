@@ -64,7 +64,7 @@ describe("PiRpcClient prompt flow against a fake Pi process", () => {
           if (event.type === "agent_end") resolve();
         });
       });
-      // prompt resolves after the ack response, before agent_end arrives.
+      // prompt resolves after the ack response, before agent_settled arrives.
       await client.prompt("Hello");
       await agentEnded;
     } finally {
