@@ -6,7 +6,7 @@ import { createConversation, appendConversationEvent, readConversationEvents } f
 import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse } from "../src/gateway-rpc.js";
 import { ConversationBroker, type ConversationRpcClient, type ConversationDispatchOutcome } from "../src/conversation-broker.js";
 
-type FakeBehavior = "complete" | "empty" | "hang" | "prompt-fail" | "start-fail" | "exit-mid-run";
+type FakeBehavior = "complete" | "empty" | "hang" | "prompt-fail" | "start-fail" | "exit-mid-run" | "with-text";
 
 class FakeConversationClient implements ConversationRpcClient {
   started = 0;
@@ -58,6 +58,12 @@ class FakeConversationClient implements ConversationRpcClient {
     if (this.behavior === "exit-mid-run") {
       for (const listener of [...this.exitListeners]) listener();
       return;
+    }
+    if (this.behavior === "with-text") {
+      this.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "Visible agent reply." },
+      });
     }
     this.emit({ type: "agent_end", messages: [] });
   }
@@ -263,6 +269,56 @@ describe("ConversationBroker dispatch outcomes", () => {
     expect(outcome?.status).toBe("timed_out");
     const events = await readConversationEvents({ vaultRoot: root, conversationId });
     expect(events.at(-1)?.runStatus).toBe("timed_out");
+    await broker.close();
+  });
+
+  it("persists exactly one correlated agent_message for visible assistant output before terminal evidence", async () => {
+    const { broker } = makeBroker({ behaviors: ["with-text"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const outcome = await broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [],
+    });
+    expect(outcome.status).toBe("completed");
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
+    const agentEvent = events.find((e) => e.kind === "agent_message");
+    expect(agentEvent?.author).toBe("zai");
+    expect(agentEvent?.body).toBe("Visible agent reply.");
+    expect(agentEvent?.correlationId).toBe(stewardEventId);
+    expect(events.at(-1)?.kind).toBe("run_finished");
+    await broker.close();
+  });
+
+  it("creates no agent_message when the assistant output is empty", async () => {
+    const { broker } = makeBroker({ behaviors: ["complete"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    await broker.close();
+  });
+
+  it("replays a persisted agent_message in the later dispatch context in durable order", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["with-text"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "First");
+    await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "First", stewardEventId, priorEvents: [] });
+
+    const stewardEvent2 = await makeStewardEvent(conversationId, "Second");
+    const prior = await priorEvents(conversationId);
+    const priorExcludingCurrent = prior.filter((e) => e.id !== stewardEvent2);
+    await broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Second", stewardEventId: stewardEvent2, priorEvents: priorExcludingCurrent,
+    });
+
+    // The second dispatch reuses the same isolated conversation×agent client.
+    const secondPrompt = clients[0]?.prompts[1] as string;
+    expect(secondPrompt).toContain("agent zai: Visible agent reply.");
+    // The prior context appears before the current steward request, and the
+    // current request is never duplicated as prior context.
+    expect(secondPrompt.indexOf("Visible agent reply.")).toBeLessThan(secondPrompt.indexOf("Steward request:"));
     await broker.close();
   });
 

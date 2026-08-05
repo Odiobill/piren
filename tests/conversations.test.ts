@@ -8,10 +8,12 @@ import {
   readConversation,
   listConversations,
   readConversationEvents,
+  updateConversationAudience,
   conversationIdFromText,
   conversationTitleFromText,
   type ConversationEventRecord,
 } from "../src/conversations.js";
+import { resolveStewardMentions } from "../src/conversation-contract.js";
 
 let root: string;
 
@@ -182,6 +184,43 @@ describe("readConversation / listConversations", () => {
     const id = "20260805T131530000Z-hi";
     await writeFile(join(root, "collaboration", "conversations", id, "index.md"), "---\nnot: a manifest\n---\n", "utf8");
     await expect(readConversation({ vaultRoot: root, conversationId: id })).rejects.toThrow(/Conversation Manifest/);
+  });
+});
+
+describe("updateConversationAudience (additive later-mention membership, C2 rework)", () => {
+  it("grows the audience additively in C1 first-mention order and bumps updated", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Hello @zai", audience: ["zai"], now: () => NOW });
+    const later = new Date("2026-08-05T14:00:01.000Z");
+    const validated = resolveStewardMentions("please @dipu @sam", ["dipu", "sam", "zai"]);
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) throw new Error("test setup");
+
+    const updated = await updateConversationAudience({
+      vaultRoot: root,
+      conversationId: conversation.id,
+      additions: validated.validated,
+      now: () => later,
+    });
+
+    expect(updated.audience).toEqual(["zai", "dipu", "sam"]);
+    expect(updated.updated).toBe("2026-08-05T14:00:01.000Z");
+    const reread = await readConversation({ vaultRoot: root, conversationId: conversation.id });
+    expect(reread.audience).toEqual(["zai", "dipu", "sam"]);
+    expect(reread.updated).toBe("2026-08-05T14:00:01.000Z");
+  });
+
+  it("never removes or reorders existing members and no-ops on duplicates", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Hi @dipu", audience: ["dipu"], now: () => NOW });
+    const validated = resolveStewardMentions("@zai @dipu @zai", ["dipu", "zai"]);
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) throw new Error("test setup");
+    const updated = await updateConversationAudience({
+      vaultRoot: root,
+      conversationId: conversation.id,
+      additions: validated.validated,
+      now: () => new Date("2026-08-05T14:00:02.000Z"),
+    });
+    expect(updated.audience).toEqual(["dipu", "zai"]);
   });
 });
 

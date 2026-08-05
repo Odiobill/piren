@@ -18,9 +18,10 @@
  * unit-testable without Pi auth or a real filesystem beyond the caller's io.
  */
 
-import { link, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, open, readdir, readFile, rm, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { applyMembershipChange, type ValidatedRecipients } from "./conversation-contract.js";
 
 export const CONVERSATION_STATUSES = ["open", "archived"] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
@@ -311,6 +312,51 @@ export async function createConversation(options: CreateConversationOptions): Pr
     absolutePath,
     bytes,
   };
+}
+
+export interface UpdateConversationAudienceOptions {
+  vaultRoot: string;
+  conversationId: string;
+  /** C1-validated steward recipients (first-mention order); the ONLY membership-growing act. */
+  additions: ValidatedRecipients;
+  now?: () => Date;
+}
+
+/**
+ * C2 additive later-mention membership seam: grow the durable manifest
+ * `audience` with validated steward recipients only, preserving existing
+ * first-mention order with no removals/reordering (C1 `applyMembershipChange`
+ * steward path), and bump `updated`. The write is an atomic temp + rename
+ * replace of the manifest; invalid mentions are never passed here (the
+ * gateway resolves ALL mentions before any durable effect).
+ */
+export async function updateConversationAudience(
+  options: UpdateConversationAudienceOptions,
+): Promise<ConversationManifest> {
+  assertValidConversationId(options.conversationId);
+  const root = resolve(options.vaultRoot);
+  const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
+  const absolutePath = join(conversationDir, "index.md");
+  assertInside(root, conversationDir);
+
+  const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
+  const audience = applyMembershipChange(current.audience, { kind: "steward", recipients: options.additions });
+  const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
+
+  const content = renderConversationManifest({
+    id: current.id,
+    title: current.title,
+    audience,
+    timestamp: updatedStamp,
+  });
+  // Atomic replace: temp file in the same directory, then rename over the
+  // existing manifest (POSIX rename replaces atomically). Never a partial
+  // manifest; the file stays inspectable at every step.
+  const tempPath = resolve(conversationDir, `.audience-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
+  await writeFile(tempPath, content, { encoding: "utf8", flag: "wx" });
+  await rename(tempPath, absolutePath);
+
+  return readConversation({ vaultRoot: root, conversationId: options.conversationId });
 }
 
 export interface AppendConversationEventOptions {

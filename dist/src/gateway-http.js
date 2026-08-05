@@ -14,7 +14,7 @@ import { createRoom, listRoomEvents, listRooms, readRoom } from "./rooms.js";
 import { buildRoomAgentsResponse } from "./room-agents.js";
 import { resolveStewardMentions } from "./conversation-contract.js";
 import { ConversationBroker, } from "./conversation-broker.js";
-import { appendConversationEvent, createConversation, listConversations, readConversation, readConversationEvents, } from "./conversations.js";
+import { appendConversationEvent, createConversation, listConversations, readConversation, readConversationEvents, updateConversationAudience, } from "./conversations.js";
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const MIME_TYPES = {
@@ -1331,11 +1331,11 @@ export class GatewayServer {
             this.writeJson(res, 404, { error: message });
         }
         else if (message.startsWith("Conversation already exists") ||
-            message.includes("is archived")) {
+            message.includes("is archived") ||
+            message.includes("already active")) {
             this.writeJson(res, 409, { error: message });
         }
         else if (message.includes("text is required") ||
-            message.includes("already active") ||
             message.includes("not in the runnable set") ||
             message.includes("not a member of conversation") ||
             message.includes("Unrecognized agent") ||
@@ -1351,10 +1351,11 @@ export class GatewayServer {
         if (!resolution.ok) {
             return { ok: false, message: resolution.message };
         }
-        return { ok: true, recipients: [...resolution.validated.recipients] };
+        return { ok: true, recipients: [...resolution.validated.recipients], validated: resolution.validated };
     }
     async dispatchConversationRecipients(conversationId, recipients, text, stewardEventId, priorEvents) {
-        const outcomes = [];
+        const entries = [];
+        let conflictAgent = null;
         for (const agent of recipients) {
             try {
                 const outcome = await this.conversationBroker.dispatchConversationMention({
@@ -1364,15 +1365,23 @@ export class GatewayServer {
                     stewardEventId,
                     priorEvents,
                 });
-                outcomes.push({ agent, status: outcome.status });
+                entries.push({ agent, status: outcome.status });
             }
             catch (error) {
-                // Explicit per-recipient conflict/failure: the durable message and
-                // membership are never rolled back; no queue/retry/fallback/reroute.
-                outcomes.push({ agent, status: "conflict" });
+                // Only an explicit active-run conflict is a 409; launch/ambiguous
+                // outcomes are normal typed broker results and never land here.
+                const message = error instanceof Error ? error.message : String(error);
+                if (message.includes("already active")) {
+                    conflictAgent = conflictAgent ?? agent;
+                }
+                else {
+                    // Bounded per-recipient failure; the durable message and membership
+                    // are never rolled back; no queue/retry/fallback/reroute.
+                    entries.push({ agent, status: "conflict" });
+                }
             }
         }
-        return outcomes;
+        return { entries, conflictAgent };
     }
     async handleConversations(req, res, url) {
         if (!this.conversationBroker || !this.vaultRoot) {
@@ -1457,10 +1466,17 @@ export class GatewayServer {
         const dispatch = resolved.recipients.length > 0
             ? await this.dispatchConversationRecipients(conversation.id, resolved.recipients, text, event.id, [])
             : undefined;
+        if (dispatch?.conflictAgent !== null && dispatch !== undefined) {
+            // Explicit active-run conflict: the message is durable; surface 409.
+            this.writeJson(res, 409, {
+                error: `A run is already active for conversation '${conversation.id}' and agent '${dispatch.conflictAgent}'.`,
+            });
+            return;
+        }
         this.writeJson(res, 201, {
             conversation: this.safeConversation(conversation),
             event: this.safeConversationEvent(event),
-            ...(dispatch !== undefined ? { dispatch } : {}),
+            ...(dispatch !== undefined ? { dispatch: dispatch.entries } : {}),
         });
     }
     async handleConversationList(res) {
@@ -1512,6 +1528,16 @@ export class GatewayServer {
         // Prior durable transcript is read BEFORE the new event is appended, so
         // the current message is never part of the replayed context.
         const prior = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+        // Additive later-mention membership (C1): validated recipients grow the
+        // durable manifest audience (first-mention order, no removals) and are
+        // visible BEFORE dispatch. Invalid mentions never reach this point.
+        if (resolved.recipients.length > 0) {
+            await updateConversationAudience({
+                vaultRoot: this.vaultRoot,
+                conversationId,
+                additions: resolved.validated,
+            });
+        }
         const event = await appendConversationEvent({
             vaultRoot: this.vaultRoot,
             conversationId,
@@ -1525,9 +1551,15 @@ export class GatewayServer {
         const dispatch = resolved.recipients.length > 0
             ? await this.dispatchConversationRecipients(conversationId, resolved.recipients, text, event.id, prior)
             : undefined;
+        if (dispatch?.conflictAgent !== null && dispatch !== undefined) {
+            this.writeJson(res, 409, {
+                error: `A run is already active for conversation '${conversationId}' and agent '${dispatch.conflictAgent}'.`,
+            });
+            return;
+        }
         this.writeJson(res, 200, {
             event: this.safeConversationEvent(event),
-            ...(dispatch !== undefined ? { dispatch } : {}),
+            ...(dispatch !== undefined ? { dispatch: dispatch.entries } : {}),
         });
     }
     async handleConversationEvents(res, conversationId) {

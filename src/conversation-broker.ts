@@ -37,7 +37,7 @@ import {
 } from "./conversation-contract.js";
 import { TransportSessionManager, type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
-import type { ExtensionUiResponse, RpcEvent, RpcSpawnTarget } from "./gateway-rpc.js";
+import { extractAssistantText, type ExtensionUiResponse, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 
 /** C2 committed context budget (contract §5). */
 export const CONVERSATION_CONTEXT_MAX_ITEMS = 8;
@@ -482,6 +482,20 @@ export class ConversationBroker {
   private async finalizeRun(run: ActiveRun): Promise<ConversationDispatchOutcome> {
     const kind = run.settleKind ?? "cancel";
     if (kind === "completed") {
+      const text = extractAssistantText(run.events).trim();
+      // Bounded visible agent evidence (mirrors the room broker): exactly one
+      // `agent_message` is persisted/published for non-empty assistant output
+      // BEFORE the terminal evidence, correlated to the steward event. Empty
+      // output creates none; no hidden transcript/cache is kept.
+      if (text !== "") {
+        await this.appendAndPublish(run.conversationId, {
+          kind: "agent_message",
+          authorKind: "agent",
+          author: run.agent,
+          body: text,
+          correlationId: run.stewardEventId,
+        });
+      }
       const terminal = await this.appendAndPublish(run.conversationId, {
         kind: "run_finished",
         authorKind: "system",

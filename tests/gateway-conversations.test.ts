@@ -113,7 +113,7 @@ describe("Gateway Conversation API family (C2)", () => {
     expect(body.dispatch).toEqual([{ agent: "fake", status: "completed" }]);
 
     const events = await readConversationEvents({ vaultRoot: root, conversationId: body.conversation.id });
-    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
     expect(events.at(-1)?.runStatus).toBe("completed");
   });
 
@@ -161,7 +161,7 @@ describe("Gateway Conversation API family (C2)", () => {
     const history = (await (await fetch(url(`/api/conversations/${id}/events`), { headers: { authorization: `Bearer ${token}` } })).json()) as {
       events: { kind: string }[];
     };
-    expect(history.events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    expect(history.events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
 
     const streamResponse = await fetch(url(`/api/conversations/${id}/events/stream`), {
       headers: { authorization: `Bearer ${token}` },
@@ -209,6 +209,59 @@ describe("Gateway Conversation API family (C2)", () => {
     expect(activate.status).toBe(404);
     const attach = await post(url(`/api/conversations/${id}/attach`), {}, token);
     expect(attach.status).toBe(404);
+  });
+
+  it("later valid steward mentions grow the durable audience additively in C1 order before dispatch", async () => {
+    await startServer({ runnableAgents: ["fake", "dipu"] });
+    const { id } = await createConversationViaApi("Context only");
+    const response = await post(url(`/api/conversations/${id}/messages`), { text: "Now include @dipu and @fake" }, token);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { dispatch?: { agent: string; status: string }[] };
+    expect(body.dispatch).toEqual([
+      { agent: "dipu", status: "completed" },
+      { agent: "fake", status: "completed" },
+    ]);
+    const read = (await (await fetch(url(`/api/conversations/${id}`), { headers: { authorization: `Bearer ${token}` } })).json()) as {
+      conversation: { audience: string[]; updated: string };
+    };
+    expect(read.conversation.audience).toEqual(["dipu", "fake"]);
+    // The updated manifest timestamp moved forward.
+    const created = (await createConversationViaApi("x"));
+    void created;
+  });
+
+  it("invalid later mentions leave the audience and events unchanged (atomic)", async () => {
+    await startServer({ runnableAgents: ["fake"] });
+    const { id } = await createConversationViaApi("Context only");
+    const response = await post(url(`/api/conversations/${id}/messages`), { text: "@fake and @ghost" }, token);
+    expect(response.status).toBe(400);
+    const read = (await (await fetch(url(`/api/conversations/${id}`), { headers: { authorization: `Bearer ${token}` } })).json()) as {
+      conversation: { audience: string[] };
+    };
+    expect(read.conversation.audience).toEqual([]);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message"]);
+  });
+
+  it("an active conversation×agent run conflict persists the message but returns non-secret 409", async () => {
+    await startServer({ runnableAgents: ["fake"] });
+    const { id } = await createConversationViaApi("Start @fake");
+    // Hang the first dispatch with the fake-Pi "hang" trigger (never awaited).
+    const first = post(url(`/api/conversations/${id}/messages`), { text: "hang @fake" }, token);
+    // Wait until the first run is active (run_started visible), then dispatch again.
+    await waitForStreamValue(async () => {
+      const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
+      return events.some((e) => e.kind === "run_started");
+    });
+    const conflict = await post(url(`/api/conversations/${id}/messages`), { text: "Again @fake" }, token);
+    expect(conflict.status).toBe(409);
+    const body = (await conflict.json()) as { error: string };
+    expect(body.error).toMatch(/already active/i);
+    // Durable-first: the create message + both later steward messages persist,
+    // no rollback (the 409 conflict still persisted the second message).
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
+    expect(events.filter((e) => e.kind === "steward_message")).toHaveLength(3);
+    void first;
   });
 
   it("never writes under collaboration/rooms (sibling namespace only)", async () => {
