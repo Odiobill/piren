@@ -64,6 +64,8 @@ describe("checkPackedArtifacts", () => {
       "dist/public/index.html",
       "dist/src/pi-extension.js",
       "dist/templates/okf/manifest.yml",
+      "dist/templates/baseline/manifest.yml",
+      "dist/templates/baseline/shared/piren-inbox-task-lifecycle/SKILL.md",
       "docs/getting-started.md",
     ]);
     expect(result.ok).toBe(true);
@@ -77,6 +79,8 @@ describe("checkPackedArtifacts", () => {
       "dist/public/index.html",
       "dist/src/pi-extension.js",
       "dist/templates/okf/manifest.yml",
+      "dist/templates/baseline/manifest.yml",
+      "dist/templates/baseline/shared/piren-inbox-task-lifecycle/SKILL.md",
       "docs/getting-started.md",
     ]);
   });
@@ -87,17 +91,21 @@ describe("checkPackedArtifacts", () => {
       "package/dist/public/index.html",
       "package/dist/src/pi-extension.js",
       "package/dist/templates/okf/manifest.yml",
+      "package/dist/templates/baseline/manifest.yml",
+      "package/dist/templates/baseline/shared/piren-inbox-task-lifecycle/SKILL.md",
       "package/docs/getting-started.md",
     ]);
     expect(result.ok).toBe(true);
   });
 
-  it("declares the packed-surface contract: runtime artifacts plus the okf starter manifest and a stable docs file", () => {
+  it("declares the packed-surface contract: runtime artifacts plus the starter manifests/skills and a stable docs file", () => {
     expect([...REQUIRED_PACKED_ARTIFACTS]).toEqual([
       "dist/src/cli.js",
       "dist/public/index.html",
       "dist/src/pi-extension.js",
       "dist/templates/okf/manifest.yml",
+      "dist/templates/baseline/manifest.yml",
+      "dist/templates/baseline/shared/piren-inbox-task-lifecycle/SKILL.md",
       "docs/getting-started.md",
     ]);
   });
@@ -118,6 +126,8 @@ const SAMPLE_OBJECT_KEYED = JSON.stringify({
       { path: "dist/public/index.html", size: 10, mode: 420 },
       { path: "dist/src/pi-extension.js", size: 10, mode: 420 },
       { path: "dist/templates/okf/manifest.yml", size: 10, mode: 420 },
+      { path: "dist/templates/baseline/manifest.yml", size: 10, mode: 420 },
+      { path: "dist/templates/baseline/shared/piren-inbox-task-lifecycle/SKILL.md", size: 10, mode: 420 },
       { path: "docs/getting-started.md", size: 10, mode: 420 },
     ],
   },
@@ -183,7 +193,7 @@ describe("buildLocalTarball", () => {
     expect(outcome.packageName).toBe("piren");
     expect(outcome.packageVersion).toBe("0.1.0");
     expect(outcome.missing).toEqual([]);
-    expect(outcome.packedFiles.length).toBe(5);
+    expect(outcome.packedFiles.length).toBe(7);
   });
 
   it("fails when npm pack exits non-zero, without producing a tarball path", async () => {
@@ -212,6 +222,8 @@ describe("buildLocalTarball", () => {
       "dist/public/index.html",
       "dist/src/pi-extension.js",
       "dist/templates/okf/manifest.yml",
+      "dist/templates/baseline/manifest.yml",
+      "dist/templates/baseline/shared/piren-inbox-task-lifecycle/SKILL.md",
       "docs/getting-started.md",
     ]);
   });
@@ -404,6 +416,8 @@ const TAR_SURFACE_OK =
   "package/dist/public/index.html\n" +
   "package/dist/src/pi-extension.js\n" +
   "package/dist/templates/okf/manifest.yml\n" +
+  "package/dist/templates/baseline/manifest.yml\n" +
+  "package/dist/templates/baseline/shared/piren-inbox-task-lifecycle/SKILL.md\n" +
   "package/docs/getting-started.md\n";
 
 const TAR_SURFACE_MISSING_DOCS =

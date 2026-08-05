@@ -28,9 +28,7 @@ Precedence is: shared skills, then group-scoped skills, then agent-specific skil
 
 Piren ships a small package-owned starter profile, `okf`, with three shared starter procedures (`okf-authoring`, `piren-vault-operations`, `piren-knowledge-lifecycle`). Starter skills are **templates copied deliberately into a vault**: once seeded, they are ordinary steward-owned vault skills with normal precedence. They are never hidden prompt text and never loaded at runtime from the package.
 
-Fresh `piren init` stays **unseeded today**: no starter skill is placed automatically. Seeding is explicit and opt-in:
-
-> **Amended decision (2026-08-05, docs-only):** the fresh-vault inbox-lifecycle baseline is decided — a future slice will have fresh `piren init` place the shared `piren-inbox-task-lifecycle` skill (plus a mandatory inbox-task-lifecycle rule in the generated `steward-directives.md`) in genuinely new vaults only. `okf` and all other profiles stay explicit opt-in; current behavior is unchanged until that slice lands, and recognized existing vaults never gain the baseline implicitly.
+Fresh `piren init` places exactly one skill automatically: the shared `piren-inbox-task-lifecycle` procedure (the fresh-vault inbox-lifecycle baseline), plus a mandatory `## Inbox task lifecycle (mandatory)` rule in the generated `steward-directives.md`. Both are created only for genuinely new vaults; a recognized existing vault never gains or overwrites them, even with `--force`. All other starter skills (the `okf` profile) stay explicit opt-in:
 
 ```bash
 # Plan only (never writes)

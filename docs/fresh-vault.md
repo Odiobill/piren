@@ -25,9 +25,7 @@ See [vault layout](vault-layout.md) for the full directory reference.
 
 ## The OKF starter graph
 
-A fresh vault starts nearly empty, with a small starter graph of concept documents under `wiki/concepts/` and `wiki/entities/` to orient new agents and stewards. No **skills** are seeded by `piren init` today: the `skills/` and `templates/` directories are created empty. Bundled starter skills are available as an explicit opt-in through the package `okf` profile (`piren skills seed --profile okf`); see [Skills](skills.md).
-
-> **Amended decision (2026-08-05, docs-only):** a fresh-vault inbox-lifecycle baseline is decided — a future slice will have fresh `piren init` create a concise mandatory inbox-task-lifecycle rule in `steward-directives.md` plus the shared `piren-inbox-task-lifecycle` skill, for genuinely new vaults only. Current behavior is unchanged until that slice lands; recognized existing vaults never gain the baseline implicitly.
+A fresh vault starts nearly empty, with a small starter graph of concept documents under `wiki/concepts/` and `wiki/entities/` to orient new agents and stewards, plus the **inbox-lifecycle baseline**: a concise mandatory `## Inbox task lifecycle (mandatory)` rule in `steward-directives.md` and the shared `piren-inbox-task-lifecycle` skill under `skills/` (carrying a manifest-bound `template` provenance block). The baseline is created for genuinely new vaults only: running `piren init` against a recognized existing vault (`.piren-vault` marker, existing `steward-directives.md`, or any `team/<agent>/SOUL.md`) never adds or overwrites it, even with `--force`. All other starter skills stay explicit opt-in through the package `okf` profile (`piren skills seed --profile okf`); see [Skills](skills.md).
 
 The starter graph includes:
 

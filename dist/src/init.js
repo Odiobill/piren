@@ -1,5 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { BASELINE_DIRECTIVE_SECTION, createBaselineSkill, loadBaselineAssets, probeRecognizedVault, } from "./init-baseline.js";
+import { createRealStarterSkillsDeps, resolveStarterTemplatesDir } from "./starter-skills.js";
+/** Module-location-based package templates dir (source vs compiled runtime). */
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 async function writeNewFile(path, content, force, created) {
     await writeFile(path, content, { encoding: "utf8", flag: force ? "w" : "wx" });
@@ -223,6 +228,33 @@ function defaultOkfKnowledgeBundleConceptContent() {
         "",
     ].join("\n");
 }
+/** The generated steward-directives.md body (S3 §12 baseline section appended when included). */
+function buildStewardDirectivesContent(includeBaseline) {
+    const lines = [
+        "# Steward Directives",
+        "",
+        "This Piren vault is initialized for local-first agent operation.",
+        "Keep actions explicit, inspectable, and boring.",
+        "Use vault_read and vault_write for vault access.",
+        "Use OKF frontmatter with a non-empty type field for durable Markdown knowledge.",
+        "Use wiki_update_concept and wiki_update_entity when project material contains reusable concepts or named systems that should appear in the Knowledge Graph.",
+        "",
+        "## Vault layout",
+        "",
+        "Top-level directories use lowercase/kebab-case when Piren owns them",
+        "(`team/`, `wiki/`, `cron/`, `skills/`, `templates/`, `steward-inbox/`).",
+        "The one deliberate exception is `Projects/`: it is title-case because it is the",
+        "steward-facing human workspace for project-local OKF bundles",
+        "(`Projects/<Project>/index.md`, decisions, runbooks, logs). It is an intentional",
+        "choice, not an inconsistency — everything under it is project knowledge you",
+        "curate, while the lowercase directories are Piren-owned operational state.",
+        "",
+    ];
+    if (includeBaseline) {
+        lines.push("", BASELINE_DIRECTIVE_SECTION);
+    }
+    return lines.join("\n");
+}
 export async function initVault(options) {
     const vaultRoot = resolve(options.vaultRoot);
     const agentName = options.agentName ?? "piren";
@@ -233,6 +265,25 @@ export async function initVault(options) {
     const agentTitle = titleCaseAgentName(agentName);
     const agentDir = join(vaultRoot, "team", agentName);
     const created = [];
+    // S3 §12.5: the recognition boundary is captured BEFORE any filesystem
+    // mutation. Fail-closed: probe errors count as recognized, so a genuinely
+    // fresh target is the only case that may create baseline artifacts.
+    const baselineDeps = options.baselineDeps ?? createRealStarterSkillsDeps();
+    const baselineTemplatesDir = options.baselineTemplatesDir ?? resolveStarterTemplatesDir(MODULE_DIR);
+    const recognized = await probeRecognizedVault(baselineDeps, vaultRoot);
+    const baseline = { directiveIncluded: false, skillCreated: false, warning: null };
+    let baselineAssets = { ok: false, reason: "recognized existing vault" };
+    if (!recognized) {
+        baselineAssets = await loadBaselineAssets(baselineDeps, baselineTemplatesDir);
+        if (baselineAssets.ok) {
+            baseline.directiveIncluded = true;
+        }
+        else {
+            // Skip BOTH baseline artifacts with a deterministic non-secret warning
+            // when the package-owned baseline assets are unavailable/invalid.
+            baseline.warning = `baseline inbox lifecycle not created: ${baselineAssets.reason}`;
+        }
+    }
     await mkdir(vaultRoot, { recursive: true });
     await mkdir(join(vaultRoot, "Projects"), { recursive: true });
     await mkdir(join(vaultRoot, "steward-inbox", "alerts"), { recursive: true });
@@ -258,26 +309,7 @@ export async function initVault(options) {
     await mkdir(join(agentDir, "cron", "runs"), { recursive: true });
     try {
         await writeNewFile(join(vaultRoot, ".piren-vault"), "", force, created);
-        await writeNewFile(join(vaultRoot, "steward-directives.md"), [
-            "# Steward Directives",
-            "",
-            "This Piren vault is initialized for local-first agent operation.",
-            "Keep actions explicit, inspectable, and boring.",
-            "Use vault_read and vault_write for vault access.",
-            "Use OKF frontmatter with a non-empty type field for durable Markdown knowledge.",
-            "Use wiki_update_concept and wiki_update_entity when project material contains reusable concepts or named systems that should appear in the Knowledge Graph.",
-            "",
-            "## Vault layout",
-            "",
-            "Top-level directories use lowercase/kebab-case when Piren owns them",
-            "(`team/`, `wiki/`, `cron/`, `skills/`, `templates/`, `steward-inbox/`).",
-            "The one deliberate exception is `Projects/`: it is title-case because it is the",
-            "steward-facing human workspace for project-local OKF bundles",
-            "(`Projects/<Project>/index.md`, decisions, runbooks, logs). It is an intentional",
-            "choice, not an inconsistency — everything under it is project knowledge you",
-            "curate, while the lowercase directories are Piren-owned operational state.",
-            "",
-        ].join("\n"), force, created);
+        await writeNewFile(join(vaultRoot, "steward-directives.md"), buildStewardDirectivesContent(baseline.directiveIncluded), force, created);
         await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
         await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
         await writeNewFile(join(agentDir, "config.yml"), options.agentConfigContent ?? defaultAgentConfigContent(), force, created);
@@ -294,7 +326,18 @@ export async function initVault(options) {
         }
         throw error;
     }
-    return { vaultRoot, agentName, agentDir, created };
+    // S3 §12: create the baseline skill only for a genuinely fresh target whose
+    // package-owned baseline assets validated. Dedicated no-clobber (`wx`) is
+    // independent of `--force`; a collision or unexpected failure surfaces a
+    // deterministic non-secret warning and never overwrites/deletes the file.
+    if (baseline.directiveIncluded && baselineAssets.ok) {
+        const skillResult = await createBaselineSkill(baselineDeps, vaultRoot, baselineAssets);
+        baseline.skillCreated = skillResult.created;
+        if (skillResult.warning !== null) {
+            baseline.warning = skillResult.warning;
+        }
+    }
+    return { vaultRoot, agentName, agentDir, created, baseline };
 }
 /**
  * Scaffold a single agent directory (team/<agent>/) inside an EXISTING vault,
@@ -328,6 +371,14 @@ export async function scaffoldAgentDirectory(options) {
     await writeNewFile(join(agentDir, "SOUL.md"), defaultSoulContent(agentTitle), force, created);
     await writeNewFile(join(agentDir, "MEMORY.md"), `# ${agentTitle} Memory\n\nNo durable memories yet.\n`, force, created);
     await writeNewFile(join(agentDir, "config.yml"), options.agentConfigContent ?? defaultAgentConfigContent(), force, created);
-    return { vaultRoot, agentName, agentDir, created };
+    // `piren agent add` targets an EXISTING vault: the S3 §12 baseline is never
+    // created here (recognized existing vaults never gain baseline artifacts).
+    return {
+        vaultRoot,
+        agentName,
+        agentDir,
+        created,
+        baseline: { directiveIncluded: false, skillCreated: false, warning: null },
+    };
 }
 //# sourceMappingURL=init.js.map

@@ -109,6 +109,8 @@ export const REQUIRED_PACKED_ARTIFACTS = [
     "dist/public/index.html",
     "dist/src/pi-extension.js",
     "dist/templates/okf/manifest.yml",
+    "dist/templates/baseline/manifest.yml",
+    "dist/templates/baseline/shared/piren-inbox-task-lifecycle/SKILL.md",
     "docs/getting-started.md",
 ];
 /** Whether a spec string denotes a local prepacked npm tarball file. */

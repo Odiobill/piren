@@ -1,14 +1,29 @@
+import { type StarterSkillsDeps } from "./starter-skills.js";
+export interface InitBaselineOutcome {
+    /** True when the mandatory Inbox task lifecycle rule was included in steward-directives.md. */
+    directiveIncluded: boolean;
+    /** True when skills/piren-inbox-task-lifecycle/SKILL.md was created. */
+    skillCreated: boolean;
+    /** Deterministic non-secret warning; null when the baseline completed cleanly or was skipped as an existing vault. */
+    warning: string | null;
+}
 export interface InitVaultOptions {
     vaultRoot: string;
     agentName?: string;
     force?: boolean;
     agentConfigContent?: string;
+    /** Injected fs seam for the S3 §12 baseline probe/assets/skill (defaults to real fs). */
+    baselineDeps?: StarterSkillsDeps;
+    /** Package templates dir (defaults to the bundled templates tree via module location). */
+    baselineTemplatesDir?: string;
 }
 export interface InitVaultResult {
     vaultRoot: string;
     agentName: string;
     agentDir: string;
     created: string[];
+    /** S3 §12 fresh-vault inbox lifecycle baseline outcome. */
+    baseline: InitBaselineOutcome;
 }
 export declare function initVault(options: InitVaultOptions): Promise<InitVaultResult>;
 /**

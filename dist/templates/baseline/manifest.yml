@@ -1,0 +1,8 @@
+profile: baseline
+version: 1.0.0
+entries:
+  - id: piren-inbox-task-lifecycle
+    name: piren-inbox-task-lifecycle
+    scope: shared
+    source: shared/piren-inbox-task-lifecycle/SKILL.md
+    content_sha256: 78499c993ff0e646d9765438186803dfbd8d28f572cebe6bc5c22136eff6e701

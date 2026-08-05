@@ -88,6 +88,12 @@ try {
         console.log(`vault_root: ${result.vaultRoot}`);
         console.log(`agent_name: ${result.agentName}`);
         console.log(`agent_dir: ${result.agentDir}`);
+        if (result.baseline.directiveIncluded) {
+            console.log("baseline: inbox task lifecycle directive + piren-inbox-task-lifecycle skill created");
+        }
+        if (result.baseline.warning !== null) {
+            console.error(`warning: ${result.baseline.warning}`);
+        }
         console.log("");
         console.log("Configure ~/.config/piren/config.yml:");
         console.log("vault_root: " + result.vaultRoot);
