@@ -273,12 +273,24 @@ describe("updateConversationAudience (additive later-mention membership, C2 rewo
     const dipu = resolveStewardMentions("@dipu", ["dipu", "zai"]);
     expect(dipu.ok).toBe(true);
     if (!dipu.ok) throw new Error("test setup");
-    await expect(
-      updateConversationAudience({
-        vaultRoot: root, conversationId: conversation.id, additions: dipu.validated,
-        holdBarrier: Promise.reject(new Error("boom")),
-      }),
-    ).rejects.toThrow(/boom/);
+    // Deterministic deferred-reject barrier: reject after the lock is held so
+    // the update fails inside the locked section (no leaked unhandled rejection).
+    let failBarrier!: (error: unknown) => void;
+    const gate = new Promise<void>((_resolve, reject) => {
+      failBarrier = reject;
+    });
+    const lockPath = join(root, "collaboration", "conversations", conversation.id, ".audience.lock");
+    const update = updateConversationAudience({
+      vaultRoot: root, conversationId: conversation.id, additions: dipu.validated,
+      now: () => new Date("2026-08-05T14:04:00.000Z"), holdBarrier: gate,
+    });
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      try { await stat(lockPath); break; } catch { await new Promise((r) => setTimeout(r, 5)); }
+    }
+    await expect(stat(lockPath)).resolves.toBeDefined();
+    failBarrier(new Error("boom"));
+    await expect(update).rejects.toThrow(/boom/);
     // The lock was released in the finally: a subsequent update succeeds.
     const second = await updateConversationAudience({
       vaultRoot: root, conversationId: conversation.id, additions: dipu.validated,

@@ -248,10 +248,12 @@ describe("Gateway Conversation API family (C2)", () => {
     const { id } = await createConversationViaApi("Start @fake");
     // Hang the first dispatch with the fake-Pi "hang" trigger (never awaited).
     const first = post(url(`/api/conversations/${id}/messages`), { text: "hang @fake" }, token);
-    // Wait until the first run is active (run_started visible), then dispatch again.
+    // Wait until the SECOND run_started is visible: the create dispatched @fake
+    // (first run_started), so we must wait for the hang POST's run_started to
+    // know the hang dispatch is the active run (its steward_message persists first).
     await waitForStreamValue(async () => {
       const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
-      return events.some((e) => e.kind === "run_started");
+      return events.filter((e) => e.kind === "run_started").length >= 2;
     });
     const conflict = await post(url(`/api/conversations/${id}/messages`), { text: "Again @fake" }, token);
     expect(conflict.status).toBe(409);
