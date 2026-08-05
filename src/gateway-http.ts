@@ -421,7 +421,9 @@ export class GatewayServer {
       if (sse) {
         enqueue(stream, sse);
       }
-      if (event.type === "agent_end") {
+      // TB0/G1: the stream closes only when the logical run fully settles
+      // (agent_settled). An agent_end alone is never terminal.
+      if (event.type === "agent_settled") {
         unsubscribe();
         closeStream(stream);
       }
@@ -607,7 +609,7 @@ export class GatewayServer {
             choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
           })}\n\n`);
         }
-        if (event.type === "agent_end") {
+        if (event.type === "agent_settled") {
           res.write(`data: ${JSON.stringify({
             id,
             object: "chat.completion.chunk",
@@ -757,9 +759,10 @@ export class GatewayServer {
   }
 
   /**
-   * Abort the current turn mid-stream. The abort RPC command emits agent_end,
-   * which drains any active SSE streams so they close cleanly. There is no
-   * dedicated stream for the abort itself: the outcome is observed on the
+   * Abort the current turn mid-stream. The abort RPC command emits agent_end
+   * then agent_settled (an aborted run is fully settled), which drains any
+   * active SSE streams so they close cleanly on the settled boundary. There is
+   * no dedicated stream for the abort itself: the outcome is observed on the
    * existing stream bound to the active turn.
    */
   private async handleAbort(res: ServerResponse): Promise<void> {

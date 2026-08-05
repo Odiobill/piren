@@ -47,6 +47,48 @@ function handle(cmd) {
     emit({ type: "response", command: "prompt", success: true, id: cmd.id });
     emit({ type: "agent_start" });
 
+    // TB0 deterministic settlement scripts (trigger words avoid "fail"/"approve"/
+    // "hang"/"waitapprove"/"roomhandoff"/"steer"/"follow_up" substrings).
+
+    // (a) Multiple agent_end where the first has willRetry:true: Pi announces an
+    // automatic retry, re-runs, and only then fully settles.
+    if (typeof cmd.message === "string" && cmd.message.includes("willretry")) {
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Hel" } });
+      emit({ type: "agent_end", messages: [], willRetry: true });
+      emit({ type: "agent_start" });
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "lo" } });
+      emit({ type: "agent_end", messages: [], willRetry: false });
+      emit({ type: "agent_settled" });
+      return;
+    }
+
+    // (b) Overflow compaction with willRetry:true, resumed normal completion,
+    // then agent_settled. Compaction lifecycle traffic must never be terminal.
+    if (typeof cmd.message === "string" && cmd.message.includes("overflowcompact")) {
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Pre" } });
+      emit({ type: "compaction_start", reason: "overflow" });
+      emit({ type: "compaction_end", reason: "overflow", result: { summary: "compacted" }, aborted: false, willRetry: true });
+      emit({ type: "agent_start" });
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Post" } });
+      emit({ type: "agent_end", messages: [], willRetry: false });
+      emit({ type: "agent_settled" });
+      return;
+    }
+
+    // (c) Failed/aborted compaction and summarization-retry traffic that NEVER
+    // reaches agent_settled: maintenance signals are never terminal and the run
+    // stays active (conservative path = bounded timeout / exit / abort).
+    if (typeof cmd.message === "string" && cmd.message.includes("compactbreak")) {
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Partial" } });
+      emit({ type: "compaction_start", reason: "threshold" });
+      emit({ type: "compaction_end", reason: "threshold", result: null, aborted: false, errorMessage: "quota exceeded" });
+      emit({ type: "summarization_retry_scheduled", attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: "quota exceeded" });
+      emit({ type: "summarization_retry_attempt_start", source: "compaction" });
+      emit({ type: "summarization_retry_finished" });
+      emit({ type: "agent_end", messages: [], willRetry: false });
+      return; // deliberately no agent_settled
+    }
+
     // Reserved R2b room_mention handoff: emit the exact reserved input
     // envelope (deterministic id, reserved title, versioned placeholder with
     // only to/text) and hold agent_end until the matching
@@ -107,6 +149,10 @@ function handle(cmd) {
     // Emit a queue_update so the steering bridge path is exercised.
     emit({ type: "queue_update", steering: [], followUp: [] });
     emit({ type: "agent_end", messages: [] });
+    // TB0/G1: agent_end alone is never terminal; the run completes only on
+    // agent_settled (proves no retry, compaction retry, or queued continuation
+    // remains per docs/rpc.md).
+    emit({ type: "agent_settled" });
     return;
   }
   if (cmd.type === "steer") {
@@ -125,6 +171,7 @@ function handle(cmd) {
       emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Lead done." } });
       emit({ type: "queue_update", steering: [], followUp: [] });
       emit({ type: "agent_end", messages: [] });
+      emit({ type: "agent_settled" });
       return;
     }
     // A response for a blocking waitapprove request completes the held turn.
@@ -132,6 +179,7 @@ function handle(cmd) {
       waitingApprovalId = null;
       emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Approved." } });
       emit({ type: "agent_end", messages: [] });
+      emit({ type: "agent_settled" });
     }
     return;
   }
@@ -170,11 +218,14 @@ function handle(cmd) {
   }
   if (cmd.type === "abort") {
     emit({ type: "response", command: "abort", success: true, id: cmd.id });
-    // Model the real behavior: aborting a turn emits agent_end so the stream
-    // drains and active SSE streams close cleanly.
+    // Model the real behavior: aborting a turn emits agent_end and then
+    // agent_settled (an aborted run is fully settled), so active SSE streams
+    // close cleanly. Brokers that already settled the run as cancelled treat
+    // both events as stale and ignore them.
     waitingApprovalId = null;
     waitingHandoffId = null;
     emit({ type: "agent_end", messages: [] });
+    emit({ type: "agent_settled" });
     return;
   }
   if (cmd.type === "get_messages") {

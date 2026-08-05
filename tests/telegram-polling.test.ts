@@ -15,6 +15,7 @@ class FakeTelegramClient {
     return [
       { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: message } },
       { type: "agent_end" },
+      { type: "agent_settled" },
     ];
   }
 }

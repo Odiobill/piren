@@ -720,15 +720,15 @@ async function main() {
             const rpcEvents = await rpcClient.promptAndWait("Hello");
             const lastType = rpcEvents[rpcEvents.length - 1]?.type;
             const rpcText = extractAssistantText(rpcEvents);
-            if (lastType !== "agent_end")
-                throw new Error(`RPC stream did not end with agent_end: ${lastType}`);
+            if (lastType !== "agent_settled")
+                throw new Error(`RPC stream did not end with agent_settled: ${lastType}`);
             if (rpcText !== "Hello")
                 throw new Error(`RPC streamed text mismatch: ${rpcText}`);
         }
         finally {
             await rpcClient.stop();
         }
-        console.log("gateway rpc prompt->agent_end streamed text: ok");
+        console.log("gateway rpc prompt->agent_settled streamed text: ok");
         // Phase 3 tracer bullet 2: a real HTTP/SSE round trip on the proven RPC
         // client. POST /api/chat/start kicks off the turn; GET /api/chat/stream
         // drains bridge-translated SSE events until done. A fake Pi process stands

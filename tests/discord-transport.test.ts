@@ -26,6 +26,7 @@ class FakeDiscordClient {
     return [
       { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "pong" } },
       { type: "agent_end" },
+      { type: "agent_settled" },
     ];
   }
 }
@@ -230,6 +231,7 @@ describe("DiscordTransport", () => {
         return [
           { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: longText.trim() } },
           { type: "agent_end" },
+          { type: "agent_settled" },
         ];
       }
     }

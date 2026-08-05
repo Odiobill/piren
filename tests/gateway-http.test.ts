@@ -66,6 +66,36 @@ describe("GatewayServer HTTP/SSE transport against a fake Pi process", () => {
     }
   });
 
+  it("emits exactly one done only after agent_settled across an automatic retry (willretry script)", async () => {
+    const server = new GatewayServer({ target: fakePiTarget() });
+    try {
+      const handle = await server.start();
+
+      const start = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "willretry please" }),
+      });
+      expect(start.status).toBe(200);
+      const { stream_id } = (await start.json()) as { stream_id: string };
+
+      const stream = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/stream?stream_id=${stream_id}`);
+      const frames = parseSse(await stream.text());
+      const tokenText = frames
+        .filter((frame) => frame.event === "token")
+        .map((frame) => (JSON.parse(frame.data) as { text: string }).text)
+        .join("");
+      const doneFrames = frames.filter((frame) => frame.event === "done");
+      // No early/duplicate completion: agent_end events are non-terminal and
+      // only agent_settled produces the single done, as the last frame.
+      expect(doneFrames).toHaveLength(1);
+      expect(frames[frames.length - 1]?.event).toBe("done");
+      expect(tokenText).toBe("Hello");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("rejects a start request without a message with 400", async () => {
     const server = new GatewayServer({ target: fakePiTarget() });
     try {

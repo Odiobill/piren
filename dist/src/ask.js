@@ -47,7 +47,10 @@ export async function askAgentClassified(target, message, options = {}) {
                         options.onToken?.(inner.delta);
                     }
                 }
-                if (event.type === "agent_end") {
+                // TB0/G1: only agent_settled is terminal. An agent_end (regardless of
+                // willRetry, including false/absent) is never a completion: Pi may still
+                // auto-retry, retry compaction, or drain queued follow-ups.
+                if (event.type === "agent_settled") {
                     finish({ ok: true, text });
                 }
             });

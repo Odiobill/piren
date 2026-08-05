@@ -61,17 +61,27 @@ describe("piEventToSse bridge translation", () => {
     });
   });
 
-  it("translates agent_end into a done event carrying messages", () => {
+  it("does NOT translate agent_end into done: agent_end alone is never terminal (TB0/G1)", () => {
     const messages = [{ role: "user", content: "hi" }];
-    const event: RpcEvent = { type: "agent_end", messages };
+    const event: RpcEvent = { type: "agent_end", messages, willRetry: false };
 
-    expect(piEventToSse(event)).toEqual({ type: "done", data: { messages } });
+    expect(piEventToSse(event)).toBeNull();
+  });
+
+  it("translates agent_settled into the single done event", () => {
+    const event: RpcEvent = { type: "agent_settled" };
+
+    expect(piEventToSse(event)).toEqual({ type: "done", data: {} });
   });
 
   it("returns null for internal and untranslated events", () => {
     const cases: RpcEvent[] = [
       { type: "agent_start" },
+      { type: "agent_end", messages: [] },
       { type: "extension_ui_request", id: "x", method: "notify", message: "hi" },
+      { type: "compaction_start", reason: "threshold" },
+      { type: "compaction_end", reason: "threshold", aborted: true },
+      { type: "summarization_retry_scheduled", attempt: 1, maxAttempts: 3 },
       { type: "something_unknown" },
     ];
 
@@ -157,10 +167,10 @@ describe("piEventToSse bridge translation", () => {
     expect(result?.data).toMatchObject({ id: "req-3", method: "input", placeholder: "..." });
   });
 
-  it("ensures agent_end without messages still yields an array", () => {
+  it("keeps agent_end evidence non-terminal even without messages", () => {
     const event: RpcEvent = { type: "agent_end" };
     const result: SseEvent | null = piEventToSse(event);
 
-    expect(result).toEqual({ type: "done", data: { messages: [] } });
+    expect(result).toBeNull();
   });
 });

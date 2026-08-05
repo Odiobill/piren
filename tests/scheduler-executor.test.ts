@@ -451,6 +451,7 @@ describe("createAskRunner", () => {
           events: [
             { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "done" } },
             { type: "agent_end" },
+            { type: "agent_settled" },
           ],
         }),
     });

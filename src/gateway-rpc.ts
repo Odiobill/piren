@@ -304,7 +304,7 @@ export class PiRpcClient {
   /**
    * Send a prompt and resolve once Pi acknowledges it. The ack response arrives
    * after preflight; it is NOT completion. Streaming events continue to arrive
-   * through `onEvent` until `agent_end`. Use this (rather than `promptAndWait`)
+   * through `onEvent` until `agent_settled`. Use this (rather than `promptAndWait`)
    * when you need to forward events live instead of collecting them.
    */
   async prompt(message: string): Promise<void> {
@@ -478,10 +478,15 @@ export class PiRpcClient {
   }
 
   /**
-   * Send a prompt and wait for the turn to finish, returning every event
-   * streamed until `agent_end`. The prompt is async: the client subscribes for
-   * events before sending so the first streaming events are never missed, and
-   * completion is the `agent_end` event (not the prompt ack response).
+   * Send a prompt and wait for the turn to fully settle, returning every event
+   * streamed until `agent_settled`. The prompt is async: the client subscribes
+   * for events before sending so the first streaming events are never missed.
+   *
+   * TB0/G1: completion is ONLY `agent_settled` — an `agent_end` (regardless of
+   * `willRetry`, including false/absent) is never terminal by itself: Pi may
+   * still auto-retry, retry compaction, or drain queued follow-up messages
+   * (docs/rpc.md). The 30s timeout remains the conservative bound for a
+   * process that dies or a run that never settles.
    */
   async promptAndWait(message: string, timeoutMs = 30000): Promise<RpcEvent[]> {
     return new Promise<RpcEvent[]>((resolve, reject) => {
@@ -495,13 +500,13 @@ export class PiRpcClient {
       };
 
       const timer = setTimeout(
-        () => finish(() => reject(new Error(`Timed out waiting for agent_end. Stderr: ${this.stderr}`))),
+        () => finish(() => reject(new Error(`Timed out waiting for agent_settled. Stderr: ${this.stderr}`))),
         timeoutMs,
       );
 
       const unsubscribe = this.onEvent((event) => {
         events.push(event);
-        if (event.type === "agent_end") {
+        if (event.type === "agent_settled") {
           finish(() => {
             clearTimeout(timer);
             unsubscribe();

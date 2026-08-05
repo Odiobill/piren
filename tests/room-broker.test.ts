@@ -13,7 +13,7 @@ import {
   parseHandoffResultValue,
 } from "../src/room-handoff-protocol.js";
 
-type FakeBehavior = "complete" | "empty" | "hang" | "prompt-fail" | "start-fail" | "exit-mid-run" | "approval" | "handoff" | "handoff-hang";
+type FakeBehavior = "complete" | "empty" | "hang" | "end-only" | "maintenance-settle" | "prompt-fail" | "start-fail" | "exit-mid-run" | "approval" | "handoff" | "handoff-hang";
 
 class FakeRoomClient implements RoomRpcClient {
   started = 0;
@@ -83,9 +83,11 @@ class FakeRoomClient implements RoomRpcClient {
 
   async abort(): Promise<void> {
     this.aborted += 1;
-    // Real Pi emits agent_end on abort; for the broker this is a STALE event
-    // arriving after the run already settled and must be ignored.
+    // Real Pi emits agent_end (then agent_settled) on abort; for the broker
+    // these are STALE events arriving after the run already settled and must
+    // be ignored.
     this.emit({ type: "agent_end", messages: [] });
+    this.emit({ type: "agent_settled" });
   }
 
   async newSession(): Promise<{ cancelled: boolean }> {
@@ -132,9 +134,30 @@ class FakeRoomClient implements RoomRpcClient {
         this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hello " } });
         this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "room." } });
         this.emit({ type: "agent_end", messages: [] });
+        this.emit({ type: "agent_settled" });
         break;
       case "empty":
         this.emit({ type: "agent_end", messages: [] });
+        this.emit({ type: "agent_settled" });
+        break;
+      case "end-only":
+        // TB0/G1: an agent_end alone is NEVER terminal; the run stays active
+        // until agent_settled arrives or the broker times out conservatively.
+        this.emit({ type: "agent_start" });
+        this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Partial " } });
+        this.emit({ type: "agent_end", messages: [] });
+        break;
+      case "maintenance-settle":
+        // Compaction/summarization maintenance traffic must never create a
+        // completion; the run completes exactly once at agent_settled.
+        this.emit({ type: "compaction_start", reason: "overflow" });
+        this.emit({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: true });
+        this.emit({ type: "agent_start" });
+        this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Settled." } });
+        this.emit({ type: "summarization_retry_scheduled", attempt: 1, maxAttempts: 3 });
+        this.emit({ type: "summarization_retry_finished" });
+        this.emit({ type: "agent_end", messages: [] });
+        this.emit({ type: "agent_settled" });
         break;
       case "exit-mid-run":
         this.emitExit();
@@ -183,12 +206,14 @@ class FakeRoomClient implements RoomRpcClient {
         } else {
           this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Lead continued." } });
           this.emit({ type: "agent_end", messages: [] });
+          this.emit({ type: "agent_settled" });
         }
         return;
       }
     }
     this.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Done." } });
     this.emit({ type: "agent_end", messages: [] });
+    this.emit({ type: "agent_settled" });
   }
 }
 
@@ -610,6 +635,55 @@ describe("RoomBroker terminal paths", () => {
     expect(byKind(events, "agent_message")).toBeUndefined();
     expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
     expect(timers.pending).toBe(0);
+    await broker.close();
+  });
+
+  it("does not complete on agent_end alone: an end-only run stays active and times out conservatively", async () => {
+    const broker = makeBroker({ behaviors: ["end-only"] });
+    const roomId = await makeRoom();
+
+    const dispatch = broker.dispatchRoomMention({ roomId, agent: "kimi", text: "End only." });
+    await waitFor(() => clients.length === 1 && (clients[0]?.prompts.length ?? 0) === 1);
+    expect(timers.pending).toBe(1);
+
+    // The agent_end (and its partial text) must NOT have settled the run:
+    // no terminal event may have been written yet.
+    const eventsSoFar = await readEvents(root, roomId);
+    expect(eventsSoFar).toHaveLength(2); // steward_message + run_started only
+    expect(byKind(eventsSoFar, "run_finished")).toBeUndefined();
+    expect(byKind(eventsSoFar, "agent_message")).toBeUndefined();
+    expect(broker.hasActiveRun(roomId, "kimi")).toBe(true);
+
+    timers.fireAll();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("timed_out");
+
+    const events = await readEvents(root, roomId);
+    expect(events).toHaveLength(3); // steward + run_started + run_finished(timed_out)
+    const finished = byKind(events, "run_finished") ?? "";
+    expect(finished).toContain("run_status: timed_out");
+    expect(byKind(events, "agent_message")).toBeUndefined();
+    expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
+    await broker.close();
+  });
+
+  it("completes exactly once at agent_settled across compaction/summarization maintenance traffic", async () => {
+    const broker = makeBroker({ behaviors: ["maintenance-settle"] });
+    const roomId = await makeRoom();
+
+    const outcome = await broker.dispatchRoomMention({ roomId, agent: "kimi", text: "Maintenance." });
+    expect(outcome.status).toBe("completed");
+
+    const events = await readEvents(root, roomId);
+    expect(events).toHaveLength(4); // steward + run_started + agent_message + run_finished
+    const agentMessage = byKind(events, "agent_message") ?? "";
+    expect(agentMessage).toContain("Settled.");
+    const finished = byKind(events, "run_finished") ?? "";
+    expect(finished).toContain("run_status: completed");
+    // Exactly one completion: the maintenance lifecycle events never created an
+    // extra terminal record.
+    expect(events.filter((entry) => entry.content.includes("kind: run_finished"))).toHaveLength(1);
+    expect(broker.hasActiveRun(roomId, "kimi")).toBe(false);
     await broker.close();
   });
 
@@ -2180,6 +2254,7 @@ describe("RoomBroker handoff malformed protocol and isolation", () => {
         lead.handoffResults.push({ id, status: parsed.ok ? parsed.result.status : "malformed" });
       }
       lead.emit({ type: "agent_end", messages: [] });
+      lead.emit({ type: "agent_settled" });
     };
 
     const outcome = await broker2.dispatchRoomMention({ roomId, agent: "kimi", text: "Lead." });
@@ -2508,6 +2583,7 @@ describe("RoomBroker handoff bounded reply and budget lifecycle (R2a review)", (
             client.prompts.push(message);
             client.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: oversized } });
             client.emit({ type: "agent_end", messages: [] });
+            client.emit({ type: "agent_settled" });
           };
         }
         clients.push(client);

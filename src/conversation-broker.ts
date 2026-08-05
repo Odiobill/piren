@@ -462,6 +462,12 @@ export class ConversationBroker {
     if (run.settled) return;
     run.events.push(event);
     if (event.type === "agent_end") {
+      // TB0/G1: agent_end alone is never terminal (Pi may still auto-retry,
+      // retry compaction, or drain queued follow-ups). Only agent_settled
+      // proves the run is fully settled.
+      return;
+    }
+    if (event.type === "agent_settled") {
       this.settle(run, "completed");
     }
   }

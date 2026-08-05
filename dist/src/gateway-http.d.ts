@@ -94,9 +94,10 @@ export declare class GatewayServer {
     private readJsonBody;
     private handleApprove;
     /**
-     * Abort the current turn mid-stream. The abort RPC command emits agent_end,
-     * which drains any active SSE streams so they close cleanly. There is no
-     * dedicated stream for the abort itself: the outcome is observed on the
+     * Abort the current turn mid-stream. The abort RPC command emits agent_end
+     * then agent_settled (an aborted run is fully settled), which drains any
+     * active SSE streams so they close cleanly on the settled boundary. There is
+     * no dedicated stream for the abort itself: the outcome is observed on the
      * existing stream bound to the active turn.
      */
     private handleAbort;

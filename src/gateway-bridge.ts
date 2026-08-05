@@ -58,10 +58,15 @@ export function piEventToSse(event: RpcEvent): SseEvent | null {
         data: { phase: "end", result: event.result, isError: event.isError },
       };
     }
-    case "agent_end": {
-      const messages = Array.isArray(event.messages) ? event.messages : [];
-      return { type: "done", data: { messages } };
-    }
+    case "agent_end":
+      // TB0/G1: agent_end alone is never terminal (Pi may still auto-retry,
+      // retry compaction, or drain queued follow-ups). The run completes only
+      // on agent_settled; agent_end stays an internal lifecycle event (like
+      // agent_start) and is never translated to the browser-facing done.
+      return null;
+    case "agent_settled":
+      // The single terminal SSE marker: the logical run is fully settled.
+      return { type: "done", data: {} };
     case "model_changed": {
       return { type: "model_changed", data: { model: event.model } };
     }

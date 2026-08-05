@@ -14,7 +14,7 @@ function fakePiTarget(): RpcSpawnTarget {
 }
 
 describe("PiRpcClient prompt flow against a fake Pi process", () => {
-  it("drains streaming events until agent_end after sending a prompt", async () => {
+  it("drains streaming events until agent_settled after sending a prompt (agent_end alone is not terminal)", async () => {
     const client = new PiRpcClient(fakePiTarget());
     try {
       await client.start();
@@ -23,7 +23,8 @@ describe("PiRpcClient prompt flow against a fake Pi process", () => {
       const types = events.map((event) => event.type);
       expect(types).toContain("agent_start");
       expect(types).toContain("agent_end");
-      expect(types[types.length - 1]).toBe("agent_end");
+      // TB0/G1: only agent_settled proves the run is fully terminal.
+      expect(types[types.length - 1]).toBe("agent_settled");
     } finally {
       await client.stop();
     }
@@ -66,6 +67,60 @@ describe("PiRpcClient prompt flow against a fake Pi process", () => {
       // prompt resolves after the ack response, before agent_end arrives.
       await client.prompt("Hello");
       await agentEnded;
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("does NOT complete on an agent_end with willRetry:true; resolves once at agent_settled (retry script)", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    try {
+      await client.start();
+      const events = await client.promptAndWait("willretry please");
+
+      const types = events.map((event) => event.type);
+      // Two low-level agent_end events: the first announces an automatic retry.
+      const ends = events.filter((event) => event.type === "agent_end");
+      expect(ends).toHaveLength(2);
+      expect(ends[0]?.willRetry).toBe(true);
+      expect(ends[1]?.willRetry).toBe(false);
+      // No early completion: the resolved array contains both agent_end events
+      // and ends only at agent_settled.
+      expect(types[types.length - 1]).toBe("agent_settled");
+      // Evidence is not discarded: text from both low-level runs is assembled.
+      expect(extractAssistantText(events)).toBe("Hello");
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("maintenance compaction traffic does not complete the run; completion only at agent_settled (overflow script)", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    try {
+      await client.start();
+      const events = await client.promptAndWait("overflowcompact please");
+
+      const types = events.map((event) => event.type);
+      // Compaction lifecycle events are visible but never terminal.
+      expect(types).toContain("compaction_start");
+      expect(types).toContain("compaction_end");
+      expect(types[types.length - 1]).toBe("agent_settled");
+      expect(extractAssistantText(events)).toBe("PrePost");
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("failed/aborted compaction and summarization-retry traffic never reaches agent_settled: promptAndWait stays conservative (bounded timeout)", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    try {
+      await client.start();
+      // The compactbreak script emits compaction failure + summarization retry
+      // traffic and then an agent_end, but NO agent_settled. The wait must not
+      // complete on that traffic; the bounded timeout is the conservative path.
+      await expect(client.promptAndWait("compactbreak please", 800)).rejects.toThrow(
+        "Timed out waiting for agent_settled",
+      );
     } finally {
       await client.stop();
     }

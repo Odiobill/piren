@@ -6,7 +6,7 @@ import { createConversation, appendConversationEvent, readConversationEvents } f
 import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse } from "../src/gateway-rpc.js";
 import { ConversationBroker, type ConversationRpcClient, type ConversationDispatchOutcome } from "../src/conversation-broker.js";
 
-type FakeBehavior = "complete" | "empty" | "hang" | "prompt-fail" | "start-fail" | "exit-mid-run" | "with-text";
+type FakeBehavior = "complete" | "empty" | "hang" | "end-only" | "maintenance-settle" | "prompt-fail" | "start-fail" | "exit-mid-run" | "with-text";
 
 class FakeConversationClient implements ConversationRpcClient {
   started = 0;
@@ -53,7 +53,7 @@ class FakeConversationClient implements ConversationRpcClient {
       throw new Error("prompt failed (fake)");
     }
     if (this.behavior === "hang") {
-      return; // never emits agent_end; timeout settles the run
+      return; // never emits agent_settled; timeout settles the run
     }
     if (this.behavior === "exit-mid-run") {
       for (const listener of [...this.exitListeners]) listener();
@@ -65,7 +65,30 @@ class FakeConversationClient implements ConversationRpcClient {
         assistantMessageEvent: { type: "text_delta", delta: "Visible agent reply." },
       });
     }
+    if (this.behavior === "end-only") {
+      // TB0/G1: agent_end alone is NEVER terminal; the run stays active until
+      // agent_settled arrives or the broker timeout settles it conservatively.
+      this.emit({ type: "agent_end", messages: [] });
+      return;
+    }
+    if (this.behavior === "maintenance-settle") {
+      // Compaction/summarization maintenance traffic must never create a
+      // completion; the run completes exactly once at agent_settled.
+      this.emit({ type: "compaction_start", reason: "overflow" });
+      this.emit({ type: "compaction_end", reason: "overflow", aborted: false, willRetry: true });
+      this.emit({ type: "agent_start" });
+      this.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "Settled." },
+      });
+      this.emit({ type: "summarization_retry_scheduled", attempt: 1, maxAttempts: 3 });
+      this.emit({ type: "summarization_retry_finished" });
+      this.emit({ type: "agent_end", messages: [] });
+      this.emit({ type: "agent_settled" });
+      return;
+    }
     this.emit({ type: "agent_end", messages: [] });
+    this.emit({ type: "agent_settled" });
   }
 
   async newSession(): Promise<{ cancelled: boolean }> {
@@ -269,6 +292,55 @@ describe("ConversationBroker dispatch outcomes", () => {
     expect(outcome?.status).toBe("timed_out");
     const events = await readConversationEvents({ vaultRoot: root, conversationId });
     expect(events.at(-1)?.runStatus).toBe("timed_out");
+    await broker.close();
+  });
+
+  it("does not complete on agent_end alone: an end-only run stays active and times out conservatively", async () => {
+    const timers = makeTimers();
+    const { broker, clients } = makeBroker({ behaviors: ["end-only"], timers });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    let outcome: ConversationDispatchOutcome | undefined;
+    const pending = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [],
+    }).then((value) => {
+      outcome = value;
+    });
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      if ((clients[0]?.prompts.length ?? 0) === 1 && timers.pending.size > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(clients[0]?.prompts.length).toBe(1);
+    // The agent_end (and its partial text) must NOT have settled the run:
+    // no terminal event may have been written yet.
+    const eventsSoFar = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(eventsSoFar.map((e) => e.kind)).toEqual(["steward_message", "run_started"]);
+    for (const handle of [...timers.pending.keys()]) timers.fire(handle);
+    await pending;
+    expect(outcome?.status).toBe("timed_out");
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.at(-1)?.runStatus).toBe("timed_out");
+    expect(events.filter((e) => e.kind === "agent_message")).toHaveLength(0);
+    await broker.close();
+  });
+
+  it("completes exactly once at agent_settled across compaction/summarization maintenance traffic", async () => {
+    const { broker } = makeBroker({ behaviors: ["maintenance-settle"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const outcome = await broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [],
+    });
+    expect(outcome.status).toBe("completed");
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
+    const agentEvent = events.find((e) => e.kind === "agent_message");
+    expect(agentEvent?.body).toBe("Settled.");
+    expect(events.at(-1)?.runStatus).toBe("completed");
+    // Exactly one completion: maintenance lifecycle events never created an
+    // extra terminal record.
+    expect(events.filter((e) => e.kind === "run_finished")).toHaveLength(1);
     await broker.close();
   });
 

@@ -60,7 +60,8 @@ class FakeRpcClient implements PiRpcClientLike {
     this.promptMessages.push(message);
     if (this.promptError !== undefined) throw this.promptError;
     // Ack received. Now stream the scripted events, then either terminate or
-    // complete (the caller's script must include agent_end for completion).
+    // complete (the caller's script must include agent_settled for completion;
+    // agent_end alone is never terminal under TB0/G1).
     for (const event of this.events) {
       for (const listener of [...this.eventListeners]) listener(event);
     }
@@ -81,9 +82,9 @@ function textEvent(delta: string): RpcEvent {
 }
 
 describe("askAgentClassified", () => {
-  it("returns ok with assembled text and streams tokens on agent_end", async () => {
+  it("returns ok with assembled text and streams tokens on agent_settled", async () => {
     const client = new FakeRpcClient();
-    client.events = [textEvent("Hel"), textEvent("lo"), { type: "agent_end" }];
+    client.events = [textEvent("Hel"), textEvent("lo"), { type: "agent_end" }, { type: "agent_settled" }];
     const tokens: string[] = [];
     const outcome = await askAgentClassified(TARGET, "hi", {
       clientFactory: factory(client),
@@ -91,6 +92,55 @@ describe("askAgentClassified", () => {
     });
     expect(outcome).toEqual({ ok: true, text: "Hello" });
     expect(tokens.join("")).toBe("Hello");
+    expect(client.stopCalled).toBe(true);
+  });
+
+  it("does NOT complete on an agent_end with willRetry:true; ok only at agent_settled", async () => {
+    const client = new FakeRpcClient();
+    client.events = [
+      textEvent("Hel"),
+      { type: "agent_end", willRetry: true },
+      textEvent("lo"),
+      { type: "agent_end", willRetry: false },
+      { type: "agent_settled" },
+    ];
+    const outcome = await askAgentClassified(TARGET, "hi", { clientFactory: factory(client) });
+    // If the ask resolved at the first agent_end it would have returned "Hel".
+    expect(outcome).toEqual({ ok: true, text: "Hello" });
+    expect(client.stopCalled).toBe(true);
+  });
+
+  it("maintenance compaction/summarization traffic does not create an extra completion; ok once at agent_settled", async () => {
+    const client = new FakeRpcClient();
+    client.events = [
+      { type: "compaction_start", reason: "overflow" },
+      { type: "compaction_end", reason: "overflow", aborted: false, willRetry: true },
+      textEvent("Hel"),
+      textEvent("lo"),
+      { type: "summarization_retry_scheduled", attempt: 1, maxAttempts: 3 },
+      { type: "summarization_retry_finished" },
+      { type: "agent_end" },
+      { type: "agent_settled" },
+    ];
+    const outcome = await askAgentClassified(TARGET, "hi", { clientFactory: factory(client) });
+    expect(outcome).toEqual({ ok: true, text: "Hello" });
+    expect(client.stopCalled).toBe(true);
+  });
+
+  it("maintenance traffic without agent_settled stays conservative: process termination is ambiguous, never ok", async () => {
+    const client = new FakeRpcClient();
+    client.events = [
+      { type: "compaction_start", reason: "threshold" },
+      { type: "compaction_end", reason: "threshold", aborted: false, result: null },
+      { type: "summarization_retry_scheduled", attempt: 1, maxAttempts: 3 },
+      { type: "summarization_retry_finished" },
+      { type: "agent_end" },
+    ];
+    client.terminate = "exit";
+    const outcome = await askAgentClassified(TARGET, "hi", { clientFactory: factory(client) });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.failure.kind).toBe("ambiguous");
     expect(client.stopCalled).toBe(true);
   });
 
