@@ -322,6 +322,70 @@ export interface UpdateConversationAudienceOptions {
   /** C1-validated steward recipients (first-mention order); the ONLY membership-growing act. */
   additions: ValidatedRecipients;
   now?: () => Date;
+  /** Deterministic test seam: a barrier awaited while holding the audience lock. */
+  holdBarrier?: Promise<void> | undefined;
+  /** Deterministic test seam for the lock token. */
+  lockToken?: () => string;
+}
+
+/** Vault-visible per-conversation audience coordination lock file. */
+const AUDIENCE_LOCK_FILENAME = ".audience.lock";
+
+/**
+ * Acquire the per-conversation audience-update lock (vault-visible,
+ * no-clobber, cross-process safe): an atomic no-clobber create of
+ * `collaboration/conversations/<id>/.audience.lock`. A held/contended lock
+ * rejects with a deterministic non-secret conflict — the CALLER surfaces it
+ * as 409 BEFORE creating any steward event or dispatch (no false delivery
+ * claim). There is NO automatic stale recovery; a crashed holder's lock is
+ * recovered manually (see the C2 contract): inspect the lock content, then
+ * remove the file after triage. The release removes ONLY our own lock
+ * (token-verified) so a manually replaced lock is never deleted by a stale
+ * holder. No hidden DB, queue, retry, or fallback.
+ */
+async function acquireAudienceLock(options: {
+  vaultRoot: string;
+  conversationId: string;
+  now?: () => Date;
+  token?: () => string;
+}): Promise<{ release: () => Promise<void> }> {
+  const root = resolve(options.vaultRoot);
+  const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
+  const lockPath = join(conversationDir, AUDIENCE_LOCK_FILENAME);
+  assertInside(root, conversationDir);
+  const token =
+    options.token !== undefined
+      ? options.token()
+      : `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const acquiredAt = (options.now ?? (() => new Date()))().toISOString();
+  const content = JSON.stringify({ token, pid: process.pid, conversationId: options.conversationId, acquiredAt });
+  try {
+    await atomicCreateNoClobber(lockPath, content, NODE_CONVERSATION_WRITE_IO, options.now ?? (() => new Date()), undefined);
+  } catch (error) {
+    if (isEexist(error)) {
+      throw new Error(
+        `Conversation '${options.conversationId}' audience update is busy (another update holds the lock); retry after it completes.`,
+      );
+    }
+    throw error;
+  }
+  let released = false;
+  return {
+    release: async () => {
+      if (released) return;
+      released = true;
+      try {
+        const current = await readFile(lockPath, "utf8");
+        // Remove ONLY our own lock (token-verified).
+        if (current.includes(token)) {
+          await rm(lockPath, { force: true });
+        }
+      } catch {
+        // Already-released/missing lock is fine; an unreadable lock is left
+        // for manual triage rather than deleting another writer's state.
+      }
+    },
+  };
 }
 
 /**
@@ -329,18 +393,16 @@ export interface UpdateConversationAudienceOptions {
  * `audience` with validated steward recipients only, preserving existing
  * first-mention order with no removals/reordering (C1 `applyMembershipChange`
  * steward path), preserve the original `created` byte-for-byte, and bump only
- * `updated`. The write is an atomic temp + rename replace of the manifest;
- * invalid mentions are never passed here (the gateway resolves ALL mentions
- * before any durable effect).
+ * `updated`.
  *
- * Coordination limitation (explicit, not silently claimed as atomic): the
- * audience update is a read-modify-write over the manifest. Within one
- * process the gateway serializes updates; concurrent CROSS-PROCESS updates
- * to the same conversation's audience are last-writer-wins on the whole
- * `audience` array (no merge), consistent with C2's no-hidden-state and no
- * cross-process lock boundary. Membership is only ever additive, so a lost
- * update can never remove a member; a re-reading steward sees the latest
- * persisted audience.
+ * Concurrency safety: the read -> C1 union -> atomic manifest replacement is
+ * guarded by the per-conversation vault-visible `.audience.lock` (acquired
+ * before any read; released in a `finally`, token-verified). A contended lock
+ * rejects with a deterministic non-secret conflict that the gateway surfaces
+ * as 409 BEFORE creating the steward event or dispatching, so concurrent
+ * additions can never silently lose a member. There is no automatic stale
+ * recovery (manual recovery of a crashed holder is documented in the C2
+ * contract); no hidden DB, queue, retry, or fallback.
  */
 export async function updateConversationAudience(
   options: UpdateConversationAudienceOptions,
@@ -351,25 +413,44 @@ export async function updateConversationAudience(
   const absolutePath = join(conversationDir, "index.md");
   assertInside(root, conversationDir);
 
-  const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
-  const audience = applyMembershipChange(current.audience, { kind: "steward", recipients: options.additions });
-  const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
+  // Cross-process-safe coordination: acquire the vault-visible lock BEFORE any
+  // read, hold it through the read -> C1 union -> atomic manifest replacement,
+  // and release it in a finally (token-verified). A contended lock rejects
+  // with a deterministic non-secret conflict surfaced as 409 by the gateway
+  // before any steward event or dispatch.
+  const lockOptions: { vaultRoot: string; conversationId: string; now?: () => Date; token?: () => string } = {
+    vaultRoot: root,
+    conversationId: options.conversationId,
+  };
+  if (options.now !== undefined) lockOptions.now = options.now;
+  if (options.lockToken !== undefined) lockOptions.token = options.lockToken;
+  const lock = await acquireAudienceLock(lockOptions);
+  try {
+    if (options.holdBarrier !== undefined) {
+      await options.holdBarrier;
+    }
+    const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
+    const audience = applyMembershipChange(current.audience, { kind: "steward", recipients: options.additions });
+    const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
 
-  const content = renderConversationManifest({
-    id: current.id,
-    title: current.title,
-    audience,
-    timestamp: updatedStamp,
-    created: current.created,
-  });
-  // Atomic replace: temp file in the same directory, then rename over the
-  // existing manifest (POSIX rename replaces atomically). Never a partial
-  // manifest; the file stays inspectable at every step.
-  const tempPath = resolve(conversationDir, `.audience-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
-  await writeFile(tempPath, content, { encoding: "utf8", flag: "wx" });
-  await rename(tempPath, absolutePath);
+    const content = renderConversationManifest({
+      id: current.id,
+      title: current.title,
+      audience,
+      timestamp: updatedStamp,
+      created: current.created,
+    });
+    // Atomic replace: temp file in the same directory, then rename over the
+    // existing manifest (POSIX rename replaces atomically). Never a partial
+    // manifest; the file stays inspectable at every step.
+    const tempPath = resolve(conversationDir, `.audience-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
+    await writeFile(tempPath, content, { encoding: "utf8", flag: "wx" });
+    await rename(tempPath, absolutePath);
 
-  return readConversation({ vaultRoot: root, conversationId: options.conversationId });
+    return readConversation({ vaultRoot: root, conversationId: options.conversationId });
+  } finally {
+    await lock.release();
+  }
 }
 
 export interface AppendConversationEventOptions {

@@ -1332,7 +1332,8 @@ export class GatewayServer {
         }
         else if (message.startsWith("Conversation already exists") ||
             message.includes("is archived") ||
-            message.includes("already active")) {
+            message.includes("already active") ||
+            message.includes("audience update is busy")) {
             this.writeJson(res, 409, { error: message });
         }
         else if (message.includes("text is required") ||
@@ -1530,13 +1531,21 @@ export class GatewayServer {
         const prior = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
         // Additive later-mention membership (C1): validated recipients grow the
         // durable manifest audience (first-mention order, no removals) and are
-        // visible BEFORE dispatch. Invalid mentions never reach this point.
-        if (resolved.recipients.length > 0) {
-            await updateConversationAudience({
-                vaultRoot: this.vaultRoot,
-                conversationId,
-                additions: resolved.validated,
-            });
+        // visible BEFORE dispatch. Invalid mentions never reach this point. A
+        // held/contended audience lock fails closed with 409 BEFORE any steward
+        // event or dispatch (no false delivery claim).
+        try {
+            if (resolved.recipients.length > 0) {
+                await updateConversationAudience({
+                    vaultRoot: this.vaultRoot,
+                    conversationId,
+                    additions: resolved.validated,
+                });
+            }
+        }
+        catch (error) {
+            this.conversationError(res, error);
+            return;
         }
         const event = await appendConversationEvent({
             vaultRoot: this.vaultRoot,

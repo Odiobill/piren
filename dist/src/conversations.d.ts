@@ -73,24 +73,26 @@ export interface UpdateConversationAudienceOptions {
     /** C1-validated steward recipients (first-mention order); the ONLY membership-growing act. */
     additions: ValidatedRecipients;
     now?: () => Date;
+    /** Deterministic test seam: a barrier awaited while holding the audience lock. */
+    holdBarrier?: Promise<void> | undefined;
+    /** Deterministic test seam for the lock token. */
+    lockToken?: () => string;
 }
 /**
  * C2 additive later-mention membership seam: grow the durable manifest
  * `audience` with validated steward recipients only, preserving existing
  * first-mention order with no removals/reordering (C1 `applyMembershipChange`
  * steward path), preserve the original `created` byte-for-byte, and bump only
- * `updated`. The write is an atomic temp + rename replace of the manifest;
- * invalid mentions are never passed here (the gateway resolves ALL mentions
- * before any durable effect).
+ * `updated`.
  *
- * Coordination limitation (explicit, not silently claimed as atomic): the
- * audience update is a read-modify-write over the manifest. Within one
- * process the gateway serializes updates; concurrent CROSS-PROCESS updates
- * to the same conversation's audience are last-writer-wins on the whole
- * `audience` array (no merge), consistent with C2's no-hidden-state and no
- * cross-process lock boundary. Membership is only ever additive, so a lost
- * update can never remove a member; a re-reading steward sees the latest
- * persisted audience.
+ * Concurrency safety: the read -> C1 union -> atomic manifest replacement is
+ * guarded by the per-conversation vault-visible `.audience.lock` (acquired
+ * before any read; released in a `finally`, token-verified). A contended lock
+ * rejects with a deterministic non-secret conflict that the gateway surfaces
+ * as 409 BEFORE creating the steward event or dispatching, so concurrent
+ * additions can never silently lose a member. There is no automatic stale
+ * recovery (manual recovery of a crashed holder is documented in the C2
+ * contract); no hidden DB, queue, retry, or fallback.
  */
 export declare function updateConversationAudience(options: UpdateConversationAudienceOptions): Promise<ConversationManifest>;
 export interface AppendConversationEventOptions {

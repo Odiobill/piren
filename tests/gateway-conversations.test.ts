@@ -256,12 +256,44 @@ describe("Gateway Conversation API family (C2)", () => {
     const conflict = await post(url(`/api/conversations/${id}/messages`), { text: "Again @fake" }, token);
     expect(conflict.status).toBe(409);
     const body = (await conflict.json()) as { error: string };
-    expect(body.error).toMatch(/already active/i);
-    // Durable-first: the create message + both later steward messages persist,
-    // no rollback (the 409 conflict still persisted the second message).
+    // Either non-secret conflict is a valid fail-closed 409: the run-conflict
+    // case or the audience-lock contention case (both before any delivery).
+    expect(body.error).toMatch(/(already active|audience update is busy)/i);
+    // Durable-first invariant: the create message and the first POST message
+    // are always persisted. The second message's steward record exists ONLY
+    // in the run-conflict path (count 3); in the audience-lock contention path
+    // the contract requires NO steward_message (count 2). Either is honest;
+    // nothing durably written is ever rolled back.
     const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
-    expect(events.filter((e) => e.kind === "steward_message")).toHaveLength(3);
+    const stewardCount = events.filter((e) => e.kind === "steward_message").length;
+    expect(stewardCount).toBeGreaterThanOrEqual(2);
+    expect(stewardCount).toBeLessThanOrEqual(3);
     void first;
+  });
+
+  it("a held audience lock returns 409 before creating any event, audience change, or dispatch", async () => {
+    await startServer({ runnableAgents: ["fake"] });
+    const { id } = await createConversationViaApi("Context only");
+    // Deterministically hold the vault-visible coordination lock.
+    const lockPath = join(root, "collaboration", "conversations", id, ".audience.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({ token: "held", pid: 0, conversationId: id, acquiredAt: "2026-08-05T00:00:00.000Z" }),
+      { flag: "wx" },
+    );
+
+    const response = await post(url(`/api/conversations/${id}/messages`), { text: "Now include @fake" }, token);
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/busy/i);
+
+    // No new steward event, no audience change, no dispatch side effect.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message"]);
+    const read = (await (await fetch(url(`/api/conversations/${id}`), { headers: { authorization: `Bearer ${token}` } })).json()) as {
+      conversation: { audience: string[] };
+    };
+    expect(read.conversation.audience).toEqual([]);
   });
 
   it("never writes under collaboration/rooms (sibling namespace only)", async () => {

@@ -223,6 +223,71 @@ describe("updateConversationAudience (additive later-mention membership, C2 rewo
     expect(updated.audience).toEqual(["dipu", "zai"]);
   });
 
+  it("serializes concurrent audience updates via the vault-visible lock: a contended update fails closed and the union is never lost", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Hello @zai", audience: ["zai"], now: () => NOW });
+    const dipu = resolveStewardMentions("@dipu", ["dipu", "zai"]);
+    const sam = resolveStewardMentions("@sam", ["dipu", "sam", "zai"]);
+    expect(dipu.ok && sam.ok).toBe(true);
+    if (!dipu.ok || !sam.ok) throw new Error("test setup");
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lockPath = join(root, "collaboration", "conversations", conversation.id, ".audience.lock");
+    const first = updateConversationAudience({
+      vaultRoot: root, conversationId: conversation.id, additions: dipu.validated,
+      now: () => new Date("2026-08-05T14:01:00.000Z"), holdBarrier: gate,
+    });
+    // Deterministic barrier: wait for the first update to hold the visible lock.
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      try {
+        await stat(lockPath);
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    await expect(stat(lockPath)).resolves.toBeDefined();
+
+    // The contended update fails closed (no silent last-writer-wins loss).
+    const contended = updateConversationAudience({
+      vaultRoot: root, conversationId: conversation.id, additions: sam.validated,
+      now: () => new Date("2026-08-05T14:02:00.000Z"),
+    });
+    await expect(contended).rejects.toThrow(/busy/i);
+
+    release();
+    const result = await first;
+    expect(result.audience).toEqual(["zai", "dipu"]);
+    const final = await readConversation({ vaultRoot: root, conversationId: conversation.id });
+    expect(final.audience).toEqual(["zai", "dipu"]);
+    expect(final.created).toBe("2026-08-05T13:15:30.000Z");
+    // The winner released the lock on completion.
+    await expect(stat(lockPath)).rejects.toThrow();
+  });
+
+  it("releases the lock on an expected failure so a later update succeeds", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Hello @zai", audience: ["zai"], now: () => NOW });
+    const dipu = resolveStewardMentions("@dipu", ["dipu", "zai"]);
+    expect(dipu.ok).toBe(true);
+    if (!dipu.ok) throw new Error("test setup");
+    await expect(
+      updateConversationAudience({
+        vaultRoot: root, conversationId: conversation.id, additions: dipu.validated,
+        holdBarrier: Promise.reject(new Error("boom")),
+      }),
+    ).rejects.toThrow(/boom/);
+    // The lock was released in the finally: a subsequent update succeeds.
+    const second = await updateConversationAudience({
+      vaultRoot: root, conversationId: conversation.id, additions: dipu.validated,
+      now: () => new Date("2026-08-05T14:03:00.000Z"),
+    });
+    expect(second.audience).toEqual(["zai", "dipu"]);
+    await expect(stat(join(root, "collaboration", "conversations", conversation.id, ".audience.lock"))).rejects.toThrow();
+  });
+
   it("preserves the original created timestamp across multiple audience updates (immutable created)", async () => {
     const conversation = await createConversation({ vaultRoot: root, text: "Hello @zai", audience: ["zai"], now: () => NOW });
     const dipu = resolveStewardMentions("@dipu", ["dipu", "zai"]);
