@@ -32,6 +32,20 @@ export declare const BASELINE_SKILL_NAME = "piren-inbox-task-lifecycle";
  */
 export declare const BASELINE_DIRECTIVE_SECTION = "## Inbox task lifecycle (mandatory)\n\n- Never poll an inbox automatically in a direct session.\n- When the steward explicitly assigns an inbox task: claim it atomically\n  before work, mark it in progress, execute only that claimed task, record\n  the Result, and reach its terminal status under the delivery/review\n  procedure.\n- Directly completed work stays claimed; scheduler R3 completion release is\n  scheduler-only. Accepted work is never left pending or in_progress.\n- Procedure: skills/piren-inbox-task-lifecycle/SKILL.md\n";
 /**
+ * Preflight outcome for the baseline skill target on a genuinely fresh
+ * target (S3 §12.4/§12.6 rework). The baseline is TWO artifacts: a collision
+ * on the skill path must create NEITHER (no directive section, no generated
+ * skill), so the directive inclusion is decided from the SAME observation
+ * that guards the skill write — before either artifact is written.
+ */
+export type BaselineSkillPreflight = "absent" | "collision" | "unreadable";
+/**
+ * Deterministic collision preflight: ENOENT -> absent (proceed); file present
+ * -> collision (skip both baseline artifacts); any other read error ->
+ * unreadable (fail closed, skip both). No raw filesystem error is leaked.
+ */
+export declare function preflightBaselineSkill(deps: StarterSkillsDeps, vaultRoot: string): Promise<BaselineSkillPreflight>;
+/**
  * Recognition boundary captured BEFORE init mutates the filesystem (S3
  * §12.5). `deps.exists` is deliberately NOT used because it swallows every
  * error: existence is checked by readFile/readdir so that non-ENOENT failures

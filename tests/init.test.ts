@@ -303,16 +303,21 @@ describe("S3 §12 fresh-init inbox lifecycle baseline", () => {
     await expect(stat(baselineSkillPath())).rejects.toThrow();
   });
 
-  it("never overwrites a colliding baseline skill and surfaces a deterministic warning", async () => {
+  it("collision on an otherwise-fresh target creates NEITHER baseline artifact (atomic boundary)", async () => {
     await mkdir(join(root, "skills", "piren-inbox-task-lifecycle"), { recursive: true });
     await writeFile(baselineSkillPath(), "user-owned skill content\n");
 
     const result = await initVault({ vaultRoot: root, agentName: "thor" });
-    expect(result.baseline.directiveIncluded).toBe(true);
+    expect(result.baseline.directiveIncluded).toBe(false);
     expect(result.baseline.skillCreated).toBe(false);
     expect(result.baseline.warning).toMatch(/already exists/i);
 
+    // No directive lifecycle section: the user-owned file is preserved
+    // byte-for-byte and neither baseline artifact is created.
+    const directives = await readFile(join(root, "steward-directives.md"), "utf8");
+    expect(directives).not.toContain("## Inbox task lifecycle (mandatory)");
     await expect(readFile(baselineSkillPath(), "utf8")).resolves.toBe("user-owned skill content\n");
+    await expect(readdir(join(root, "skills"))).resolves.toEqual(["piren-inbox-task-lifecycle"]);
   });
 
   it("skips BOTH baseline artifacts with a warning when baseline package assets are unavailable", async () => {

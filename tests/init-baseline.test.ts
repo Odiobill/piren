@@ -7,6 +7,7 @@ import {
   BASELINE_SKILL_NAME,
   createBaselineSkill,
   loadBaselineAssets,
+  preflightBaselineSkill,
   probeRecognizedVault,
 } from "../src/init-baseline.js";
 import {
@@ -299,5 +300,25 @@ describe("BASELINE_DIRECTIVE_SECTION", () => {
     // Reference-check the exact manifest profile/id constants.
     expect(parseStarterManifest).toBeTypeOf("function");
     void BASELINE_SKILL_NAME;
+  });
+});
+
+describe("preflightBaselineSkill (collision preflight, S3 §12.4/§12.6)", () => {
+  it("reports absent for a fresh target with no baseline skill path", async () => {
+    const fs = freshFs();
+    await expect(preflightBaselineSkill(fakeDeps(fs), V)).resolves.toBe("absent");
+  });
+
+  it("reports collision when the baseline skill file already exists", async () => {
+    const fs = freshFs();
+    fs.dirs.add(join(V, "skills", BASELINE_SKILL_NAME));
+    fs.files.set(join(V, "skills", BASELINE_SKILL_NAME, "SKILL.md"), "user-owned\n");
+    await expect(preflightBaselineSkill(fakeDeps(fs), V)).resolves.toBe("collision");
+  });
+
+  it("fails closed (unreadable) on a non-ENOENT read error", async () => {
+    const fs = freshFs();
+    fs.failRead.push(join(V, "skills", BASELINE_SKILL_NAME, "SKILL.md"));
+    await expect(preflightBaselineSkill(fakeDeps(fs), V)).resolves.toBe("unreadable");
   });
 });

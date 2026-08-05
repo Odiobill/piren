@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BASELINE_DIRECTIVE_SECTION, createBaselineSkill, loadBaselineAssets, probeRecognizedVault, } from "./init-baseline.js";
+import { BASELINE_DIRECTIVE_SECTION, BASELINE_SKILL_NAME, createBaselineSkill, loadBaselineAssets, preflightBaselineSkill, probeRecognizedVault, } from "./init-baseline.js";
 import { createRealStarterSkillsDeps, resolveStarterTemplatesDir } from "./starter-skills.js";
 /** Module-location-based package templates dir (source vs compiled runtime). */
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -276,7 +276,20 @@ export async function initVault(options) {
     if (!recognized) {
         baselineAssets = await loadBaselineAssets(baselineDeps, baselineTemplatesDir);
         if (baselineAssets.ok) {
-            baseline.directiveIncluded = true;
+            // Collision preflight: the baseline is TWO artifacts. If the skill path
+            // already exists on this otherwise-fresh target, create NEITHER — the
+            // directive section is only included when the skill write is expected
+            // to succeed. Fail-closed: an unreadable target also skips both.
+            const preflight = await preflightBaselineSkill(baselineDeps, vaultRoot);
+            if (preflight === "absent") {
+                baseline.directiveIncluded = true;
+            }
+            else if (preflight === "collision") {
+                baseline.warning = `baseline skill already exists at skills/${BASELINE_SKILL_NAME}/SKILL.md; baseline not created (no-clobber)`;
+            }
+            else {
+                baseline.warning = `baseline skill target unreadable; baseline not created`;
+            }
         }
         else {
             // Skip BOTH baseline artifacts with a deterministic non-secret warning

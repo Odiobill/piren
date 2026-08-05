@@ -68,6 +68,33 @@ function isEeexist(error: unknown): boolean {
 }
 
 /**
+ * Preflight outcome for the baseline skill target on a genuinely fresh
+ * target (S3 §12.4/§12.6 rework). The baseline is TWO artifacts: a collision
+ * on the skill path must create NEITHER (no directive section, no generated
+ * skill), so the directive inclusion is decided from the SAME observation
+ * that guards the skill write — before either artifact is written.
+ */
+export type BaselineSkillPreflight = "absent" | "collision" | "unreadable";
+
+/**
+ * Deterministic collision preflight: ENOENT -> absent (proceed); file present
+ * -> collision (skip both baseline artifacts); any other read error ->
+ * unreadable (fail closed, skip both). No raw filesystem error is leaked.
+ */
+export async function preflightBaselineSkill(
+  deps: StarterSkillsDeps,
+  vaultRoot: string,
+): Promise<BaselineSkillPreflight> {
+  try {
+    await deps.readFile(join(vaultRoot, "skills", BASELINE_SKILL_NAME, "SKILL.md"));
+    return "collision";
+  } catch (error) {
+    if (isEnoent(error)) return "absent";
+    return "unreadable";
+  }
+}
+
+/**
  * Recognition boundary captured BEFORE init mutates the filesystem (S3
  * §12.5). `deps.exists` is deliberately NOT used because it swallows every
  * error: existence is checked by readFile/readdir so that non-ENOENT failures

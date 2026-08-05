@@ -121,6 +121,21 @@ describe("templates/baseline manifest and template (S3 §12 contract)", () => {
     }
   });
 
+  it("baseline template carries the corrected policy wording (default visible policy, not technical enforcement)", async () => {
+    const content = await readFile(
+      join(templatesDir, "baseline", "shared", "piren-inbox-task-lifecycle", "SKILL.md"),
+      "utf8",
+    );
+    // The directive makes the rule default visible startup policy; a lazy
+    // skill is not a technical enforcement boundary and the atomic claim is
+    // the concurrency boundary (S3 §12.2/§12.3 rework).
+    expect(content).toContain("default visible startup policy");
+    expect(content).toContain("concurrency boundary");
+    expect(content).not.toContain("never enforces the policy");
+    expect(content).not.toContain("startup-injected directive does");
+    expect(content).not.toMatch(/enforcement layer/i);
+  });
+
   it("baseline template contains no secrets, credentials, or absolute local paths", async () => {
     const manifestYaml = await readFile(join(templatesDir, "baseline", "manifest.yml"), "utf8");
     const manifest = parseStarterManifest(manifestYaml);

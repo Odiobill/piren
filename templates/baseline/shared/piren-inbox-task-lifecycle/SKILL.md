@@ -10,8 +10,9 @@ tags: [piren, inbox, tasks, claims, lifecycle]
 
 How a Piren agent handles inbox tasks. The mandatory policy rule lives in
 `steward-directives.md` under "Inbox task lifecycle"; this skill is the detailed
-procedure. A lazy-loaded skill alone never enforces the policy — the
-startup-injected directive does.
+procedure. A lazy-loaded skill alone is never a technical enforcement boundary. The
+directive makes the rule the default visible startup policy; the atomic task claim
+remains the concurrency boundary.
 
 ## Rules
 
