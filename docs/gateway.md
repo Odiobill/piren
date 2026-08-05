@@ -88,6 +88,10 @@ Room runs execute through the room broker on isolated room × agent Pi RPC clien
 
 A broker-spawned room run may also use the gated `room_mention(to, text)` extension tool to ask one permitted room participant for bounded help (room handoff, slice R2). The tool is registered only inside broker-spawned flagged room runs (leads and workers) — ordinary gateway/transport/ask/worker/review processes never expose it — and dispatch is driven by the reserved Pi RPC input envelope, never by rendered `@text`. Limits are fixed: one accepted handoff per steward root, depth one, no repeated source → target pair. The lead→worker chain is immutable: the handoff `agent_message` correlates to the steward root, and the worker's start/reply/terminal records correlate to the handoff, never directly to the root. There is no queue, retry, or fallback. The internal handoff request is not an approval: it never appears on the room SSE stream as `approval` and is not answerable through `POST /api/rooms/<roomId>/approve`. A room workbench UI remains a later slice (R3).
 
+## Conversations
+
+When the gateway is wired with a vault root, the local runnable-agent set, and an agent target builder, it also serves the Conversation API documented in [API reference](api.md): conversation list/read, first-message activation, raw-text send, durable event reads, and a scoped per-conversation SSE stream. A conversation is activated by its first sent message (even with zero mentions); a steward adds members by `@`-mentioning locally runnable agents, which the gateway alone parses and validates. Durable conversation state lives under `collaboration/conversations/`, a sibling of the room tree, and run evidence is recorded as immutable events. The active-conversation workbench surface is a later, separately gated slice and is not implemented yet.
+
 ## Session management
 
 Routes:

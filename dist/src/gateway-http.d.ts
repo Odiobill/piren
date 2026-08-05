@@ -61,8 +61,11 @@ export declare class GatewayServer {
     private readonly authToken;
     private readonly publicDir;
     private readonly roomBroker;
+    private readonly conversationBroker;
     /** Idempotent cleanup callbacks for live room SSE handlers. */
     private readonly roomStreamCleanups;
+    /** Idempotent cleanup callbacks for live conversation SSE handlers. */
+    private readonly conversationStreamCleanups;
     private shuttingDown;
     constructor(options: GatewayServerOptions);
     start(port?: number, hostname?: string): Promise<GatewayHandle>;
@@ -179,6 +182,18 @@ export declare class GatewayServer {
      * polling and not a replay. Heartbeat + disconnect cleanup required.
      */
     private handleRoomEventStream;
+    private safeConversation;
+    private safeConversationEvent;
+    private conversationError;
+    private resolveConversationMentions;
+    private dispatchConversationRecipients;
+    private handleConversations;
+    private handleConversationCreate;
+    private handleConversationList;
+    private handleConversationRead;
+    private handleConversationMessage;
+    private handleConversationEvents;
+    private handleConversationEventStream;
     private writeJson;
     private writeSse;
 }

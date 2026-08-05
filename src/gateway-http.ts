@@ -12,6 +12,22 @@ import { buildOkfGraph } from "./okf-graph.js";
 import { RoomBroker, type RoomApprovalInput } from "./room-broker.js";
 import { createRoom, listRoomEvents, listRooms, readRoom, type RoomRecord } from "./rooms.js";
 import { buildRoomAgentsResponse } from "./room-agents.js";
+import { resolveStewardMentions } from "./conversation-contract.js";
+import {
+  ConversationBroker,
+  type ConversationDispatchOutcome,
+  type ConversationEventNotification,
+} from "./conversation-broker.js";
+import {
+  appendConversationEvent,
+  createConversation,
+  listConversations,
+  readConversation,
+  readConversationEvents,
+  type AppendConversationEventResult,
+  type ConversationEventRecord,
+  type ConversationManifest,
+} from "./conversations.js";
 import type { VaultDirReader } from "./okf.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -148,8 +164,11 @@ export class GatewayServer {
   private readonly authToken: string;
   private readonly publicDir: string | undefined;
   private readonly roomBroker: RoomBroker | undefined;
+  private readonly conversationBroker: ConversationBroker | undefined;
   /** Idempotent cleanup callbacks for live room SSE handlers. */
   private readonly roomStreamCleanups = new Set<() => void>();
+  /** Idempotent cleanup callbacks for live conversation SSE handlers. */
+  private readonly conversationStreamCleanups = new Set<() => void>();
   private shuttingDown = false;
 
   constructor(options: GatewayServerOptions) {
@@ -169,6 +188,15 @@ export class GatewayServer {
         vaultRoot: options.vaultRoot,
         runnableAgents: this.runnableAgents,
         targetBuilder: options.targetBuilder,
+      });
+      // C2: the conversation broker is a sibling capability wired with the
+      // same runtime options; conversation runs use isolated conversation ×
+      // agent clients, never the global gateway chat client.
+      this.conversationBroker = new ConversationBroker({
+        vaultRoot: options.vaultRoot,
+        runnableAgents: this.runnableAgents,
+        targetBuilder: options.targetBuilder,
+        nonce: () => randomUUID().slice(0, 8),
       });
     }
     if (options.initialAgent !== undefined) {
@@ -203,10 +231,16 @@ export class GatewayServer {
     if (this.roomBroker) {
       await this.roomBroker.close();
     }
+    if (this.conversationBroker) {
+      await this.conversationBroker.close();
+    }
     // Persistent room SSE connections would otherwise keep server.close()
     // waiting forever: wake/end every live room stream, unsubscribe its
     // broker listeners, and stop its heartbeat. Cleanups are idempotent.
     for (const cleanup of [...this.roomStreamCleanups]) {
+      cleanup();
+    }
+    for (const cleanup of [...this.conversationStreamCleanups]) {
       cleanup();
     }
     await this.client.stop();
@@ -295,6 +329,8 @@ export class GatewayServer {
       await this.handleVaultInbox(req, res);
     } else if (url.pathname === "/api/rooms" || url.pathname.startsWith("/api/rooms/")) {
       await this.handleRooms(req, res, url);
+    } else if (url.pathname === "/api/conversations" || url.pathname.startsWith("/api/conversations/")) {
+      await this.handleConversations(req, res, url);
     } else if (req.method === "GET" && this.publicDir) {
       await this.handleStatic(res, url.pathname);
     } else {
@@ -1317,6 +1353,315 @@ export class GatewayServer {
     };
     let cleaned = false;
     this.roomStreamCleanups.add(cleanup);
+    req.on("close", cleanup);
+
+    try {
+      while (true) {
+        while (stream.queue.length > 0) {
+          const event = stream.queue.shift();
+          if (!event) break;
+          this.writeSse(res, event);
+        }
+        if (stream.closed) {
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          stream.waiters.push(resolve);
+        });
+      }
+    } finally {
+      cleanup();
+      res.end();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // C2 — Conversation API family (ADR-0042, accepted C2 contract §3)
+  // -------------------------------------------------------------------------
+
+  private safeConversation(conversation: ConversationManifest): Record<string, unknown> {
+    return {
+      id: conversation.id,
+      path: conversation.path,
+      title: conversation.title,
+      createdBy: conversation.createdBy,
+      audience: conversation.audience,
+      status: conversation.status,
+      created: conversation.created,
+      updated: conversation.updated,
+    };
+  }
+
+  private safeConversationEvent(event: AppendConversationEventResult): Record<string, unknown> {
+    return {
+      id: event.id,
+      conversationId: event.conversationId,
+      kind: event.kind,
+      created: event.created,
+    };
+  }
+
+  private conversationError(res: ServerResponse, error: unknown): void {
+    if (error instanceof Error && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+      this.writeJson(res, 404, { error: "conversation not found" });
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith("Conversation not found") || message.startsWith("Invalid conversation id")) {
+      this.writeJson(res, 404, { error: message });
+    } else if (
+      message.startsWith("Conversation already exists") ||
+      message.includes("is archived")
+    ) {
+      this.writeJson(res, 409, { error: message });
+    } else if (
+      message.includes("text is required") ||
+      message.includes("already active") ||
+      message.includes("not in the runnable set") ||
+      message.includes("not a member of conversation") ||
+      message.includes("Unrecognized agent") ||
+      message.includes("Invalid conversation audience")
+    ) {
+      this.writeJson(res, 400, { error: message });
+    } else {
+      this.writeJson(res, 500, { error: "internal error" });
+    }
+  }
+
+  private resolveConversationMentions(text: string): { ok: true; recipients: string[] } | { ok: false; message: string } {
+    const resolution = resolveStewardMentions(text, this.runnableAgents);
+    if (!resolution.ok) {
+      return { ok: false, message: resolution.message };
+    }
+    return { ok: true, recipients: [...resolution.validated.recipients] };
+  }
+
+  private async dispatchConversationRecipients(
+    conversationId: string,
+    recipients: readonly string[],
+    text: string,
+    stewardEventId: string,
+    priorEvents: readonly ConversationEventRecord[],
+  ): Promise<{ agent: string; status: string }[]> {
+    const outcomes: { agent: string; status: string }[] = [];
+    for (const agent of recipients) {
+      try {
+        const outcome = await (this.conversationBroker as ConversationBroker).dispatchConversationMention({
+          conversationId,
+          agent,
+          text,
+          stewardEventId,
+          priorEvents,
+        });
+        outcomes.push({ agent, status: outcome.status });
+      } catch (error) {
+        // Explicit per-recipient conflict/failure: the durable message and
+        // membership are never rolled back; no queue/retry/fallback/reroute.
+        outcomes.push({ agent, status: "conflict" });
+      }
+    }
+    return outcomes;
+  }
+
+  private async handleConversations(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    if (!this.conversationBroker || !this.vaultRoot) {
+      this.writeJson(res, 404, { error: "not found" });
+      return;
+    }
+    const segments = url.pathname.split("/").filter((segment) => segment !== "");
+    // segments: ["api", "conversations", id?, ...rest]
+    let conversationId = "";
+    if (segments.length >= 3) {
+      try {
+        conversationId = decodeURIComponent(segments[2] ?? "");
+      } catch {
+        this.writeJson(res, 400, { error: "malformed conversation id" });
+        return;
+      }
+    }
+    const rest = segments.slice(3);
+
+    if (segments.length === 2 && req.method === "POST") {
+      await this.handleConversationCreate(req, res);
+    } else if (segments.length === 2 && req.method === "GET") {
+      await this.handleConversationList(res);
+    } else if (segments.length === 3 && req.method === "GET") {
+      await this.handleConversationRead(res, conversationId);
+    } else if (rest[0] === "events" && rest.length === 2 && rest[1] === "stream" && req.method === "GET") {
+      await this.handleConversationEventStream(req, res, conversationId);
+    } else if (rest[0] === "events" && rest.length === 1 && req.method === "GET") {
+      await this.handleConversationEvents(res, conversationId);
+    } else if (rest[0] === "messages" && rest.length === 1 && req.method === "POST") {
+      await this.handleConversationMessage(req, res, conversationId);
+    } else {
+      this.writeJson(res, 404, { error: "not found" });
+    }
+  }
+
+  private async handleConversationCreate(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const text = parsed.value.text;
+    if (typeof text !== "string" || text.trim() === "") {
+      this.writeJson(res, 400, { error: "conversation message text is required" });
+      return;
+    }
+    // Gateway-only mention authority (C1): resolve ALL mentions BEFORE any
+    // durable conversation/event/membership/broker write. Atomic 400.
+    const resolved = this.resolveConversationMentions(text);
+    if (!resolved.ok) {
+      this.writeJson(res, 400, { error: resolved.message });
+      return;
+    }
+
+    let conversation: ConversationManifest;
+    try {
+      conversation = await createConversation({
+        vaultRoot: this.vaultRoot as string,
+        text,
+        audience: resolved.recipients,
+      });
+    } catch (error) {
+      this.conversationError(res, error);
+      return;
+    }
+    const event = await appendConversationEvent({
+      vaultRoot: this.vaultRoot as string,
+      conversationId: conversation.id,
+      kind: "steward_message",
+      authorKind: "steward",
+      author: "steward",
+      body: text,
+      mentions: resolved.recipients,
+      nonce: () => randomUUID().slice(0, 8),
+    });
+    const dispatch =
+      resolved.recipients.length > 0
+        ? await this.dispatchConversationRecipients(conversation.id, resolved.recipients, text, event.id, [])
+        : undefined;
+    this.writeJson(res, 201, {
+      conversation: this.safeConversation(conversation),
+      event: this.safeConversationEvent(event),
+      ...(dispatch !== undefined ? { dispatch } : {}),
+    });
+  }
+
+  private async handleConversationList(res: ServerResponse): Promise<void> {
+    try {
+      const conversations = await listConversations({ vaultRoot: this.vaultRoot as string });
+      this.writeJson(res, 200, { conversations: conversations.map((conversation) => this.safeConversation(conversation)) });
+    } catch (error) {
+      this.conversationError(res, error);
+    }
+  }
+
+  private async handleConversationRead(res: ServerResponse, conversationId: string): Promise<void> {
+    try {
+      const conversation = await readConversation({ vaultRoot: this.vaultRoot as string, conversationId });
+      this.writeJson(res, 200, { conversation: this.safeConversation(conversation) });
+    } catch (error) {
+      this.conversationError(res, error);
+    }
+  }
+
+  private async handleConversationMessage(req: IncomingMessage, res: ServerResponse, conversationId: string): Promise<void> {
+    let conversation: ConversationManifest;
+    try {
+      conversation = await readConversation({ vaultRoot: this.vaultRoot as string, conversationId });
+    } catch (error) {
+      this.conversationError(res, error);
+      return;
+    }
+    if (conversation.status !== "open") {
+      this.writeJson(res, 409, { error: `Conversation '${conversationId}' is archived.` });
+      return;
+    }
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const text = parsed.value.text;
+    if (typeof text !== "string" || text.trim() === "") {
+      this.writeJson(res, 400, { error: "conversation message text is required" });
+      return;
+    }
+    const resolved = this.resolveConversationMentions(text);
+    if (!resolved.ok) {
+      this.writeJson(res, 400, { error: resolved.message });
+      return;
+    }
+    // Prior durable transcript is read BEFORE the new event is appended, so
+    // the current message is never part of the replayed context.
+    const prior = await readConversationEvents({ vaultRoot: this.vaultRoot as string, conversationId });
+    const event = await appendConversationEvent({
+      vaultRoot: this.vaultRoot as string,
+      conversationId,
+      kind: "steward_message",
+      authorKind: "steward",
+      author: "steward",
+      body: text,
+      mentions: resolved.recipients,
+      nonce: () => randomUUID().slice(0, 8),
+    });
+    const dispatch =
+      resolved.recipients.length > 0
+        ? await this.dispatchConversationRecipients(conversationId, resolved.recipients, text, event.id, prior)
+        : undefined;
+    this.writeJson(res, 200, {
+      event: this.safeConversationEvent(event),
+      ...(dispatch !== undefined ? { dispatch } : {}),
+    });
+  }
+
+  private async handleConversationEvents(res: ServerResponse, conversationId: string): Promise<void> {
+    try {
+      const events = await readConversationEvents({ vaultRoot: this.vaultRoot as string, conversationId });
+      this.writeJson(res, 200, { events });
+    } catch (error) {
+      this.conversationError(res, error);
+    }
+  }
+
+  private async handleConversationEventStream(req: IncomingMessage, res: ServerResponse, conversationId: string): Promise<void> {
+    // Validate the conversation exists before opening the stream.
+    try {
+      await readConversation({ vaultRoot: this.vaultRoot as string, conversationId });
+    } catch (error) {
+      this.conversationError(res, error);
+      return;
+    }
+
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    res.flushHeaders?.();
+
+    const stream: ChatStream = { queue: [], closed: false, waiters: [] };
+    const broker = this.conversationBroker as ConversationBroker;
+    const unsubscribe = broker.onConversationEvent(conversationId, (event: ConversationEventNotification) => {
+      enqueue(stream, { type: "conversation_event", data: event as unknown as Record<string, unknown> });
+    });
+
+    const heartbeat = setInterval(() => {
+      res.write(": heartbeat\n\n");
+    }, HEARTBEAT_INTERVAL_MS);
+
+    let cleaned = false;
+    const cleanup = (): void => {
+      if (cleaned) return;
+      cleaned = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+      this.conversationStreamCleanups.delete(cleanup);
+      closeStream(stream);
+    };
+    this.conversationStreamCleanups.add(cleanup);
     req.on("close", cleanup);
 
     try {
