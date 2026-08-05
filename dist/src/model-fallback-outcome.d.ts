@@ -40,8 +40,12 @@
  *   are NEVER treated as conflicts: an earlier retry error followed by a later
  *   final normal stop remains `completed`.
  * - If no `agent_end` exists (or its messages are empty), the single fallback
- *   terminal record is the last assistant record from `message_start` /
- *   `message_end` / `turn_end` (they all carry the terminal message).
+ *   terminal record is the last ASSISTANT record from `message_start` /
+ *   `message_end` / `turn_end` (they all carry the terminal message). The
+ *   assistant-role check is a runtime requirement on every carrier because
+ *   `RpcEvent` is deliberately loose: a `turn_end` whose `message` is not an
+ *   assistant record is malformed terminal evidence and fails closed as
+ *   `ambiguous` (never `completed`, never eligible).
  * - WITHIN the authoritative final run, if any assistant record has
  *   `stopReason:"error"` (with a structured `errorMessage`) alongside ANY other
  *   assistant record, the run is `ambiguous` (conflicting terminal records fail

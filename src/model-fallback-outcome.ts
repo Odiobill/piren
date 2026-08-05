@@ -40,8 +40,12 @@
  *   are NEVER treated as conflicts: an earlier retry error followed by a later
  *   final normal stop remains `completed`.
  * - If no `agent_end` exists (or its messages are empty), the single fallback
- *   terminal record is the last assistant record from `message_start` /
- *   `message_end` / `turn_end` (they all carry the terminal message).
+ *   terminal record is the last ASSISTANT record from `message_start` /
+ *   `message_end` / `turn_end` (they all carry the terminal message). The
+ *   assistant-role check is a runtime requirement on every carrier because
+ *   `RpcEvent` is deliberately loose: a `turn_end` whose `message` is not an
+ *   assistant record is malformed terminal evidence and fails closed as
+ *   `ambiguous` (never `completed`, never eligible).
  * - WITHIN the authoritative final run, if any assistant record has
  *   `stopReason:"error"` (with a structured `errorMessage`) alongside ANY other
  *   assistant record, the run is `ambiguous` (conflicting terminal records fail
@@ -110,6 +114,8 @@ export function classifyRunOutcome(events: readonly RpcEvent[]): RunOutcome {
   let lastAgentEndMessages: unknown;
   /** Last assistant record from message events; used only when the final run has none. */
   let fallbackTerminalMessage: Record<string, unknown> | undefined;
+  /** A turn_end carried a non-assistant/malformed terminal record. */
+  let sawMalformedTerminal = false;
 
   for (const event of events) {
     switch (event.type) {
@@ -139,8 +145,18 @@ export function classifyRunOutcome(events: readonly RpcEvent[]): RunOutcome {
         break;
       }
       case "turn_end": {
-        // turn_end.message is the terminal assistant message record.
-        if (isRecord(event.message)) fallbackTerminalMessage = event.message;
+        // turn_end.message is protocol-defined as the terminal assistant
+        // message record. RpcEvent is deliberately loose (raw JSONL is cast
+        // into it), so the assistant-role check is a runtime requirement here
+        // exactly as for message_start/message_end: a non-assistant or
+        // malformed turn_end message is malformed terminal evidence and must
+        // never satisfy the structured assistant-message requirement.
+        const message = event.message;
+        if (isAssistantRecord(message)) {
+          fallbackTerminalMessage = message;
+        } else if ("message" in event) {
+          sawMalformedTerminal = true;
+        }
         break;
       }
       case "agent_end":
@@ -172,8 +188,13 @@ export function classifyRunOutcome(events: readonly RpcEvent[]): RunOutcome {
   }
 
   if (authoritativeRecords.length === 0) {
-    // Settled run with no terminal assistant message: normal completion
-    // (the TB0 ordinary fixture shape, or a side-effect-bearing run).
+    // Settled run with no terminal assistant message. A malformed non-assistant
+    // turn_end terminal record is conservative ambiguous (never completed, so
+    // never eligible); otherwise this is a normal completion (the TB0 ordinary
+    // fixture shape, or a side-effect-bearing run).
+    if (sawMalformedTerminal) {
+      return { category: "ambiguous", detail: "a malformed non-assistant turn_end terminal record is present." };
+    }
     return { category: "completed", detail: "the run settled with no terminal assistant error." };
   }
 

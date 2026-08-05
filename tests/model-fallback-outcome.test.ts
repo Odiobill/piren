@@ -276,6 +276,57 @@ describe("classifyRunOutcome", () => {
     expect(outcome).toMatchObject({ category: "completed" });
   });
 
+  it("regression: a non-assistant turn_end record cannot become provider-error/eligible; fails closed as ambiguous", () => {
+    // RpcEvent is deliberately loose and raw JSONL is cast into it. A malformed
+    // terminal turn_end record with role:"user" must never satisfy the
+    // structured assistant-message requirement.
+    const malformedUser = {
+      type: "turn_end",
+      message: { role: "user", stopReason: "error", errorMessage: "x" },
+      toolResults: [],
+    } as unknown as RpcEvent;
+    const outcome = classifyRunOutcome([malformedUser, { type: "agent_settled" }]);
+    expect(outcome).toMatchObject({ category: "ambiguous" });
+    expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  });
+
+  it("regression: a non-record turn_end message is malformed terminal evidence and fails closed as ambiguous", () => {
+    const malformed = { type: "turn_end", message: "not-a-record", toolResults: [] } as unknown as RpcEvent;
+    const outcome = classifyRunOutcome([malformed, { type: "agent_settled" }]);
+    expect(outcome).toMatchObject({ category: "ambiguous" });
+    expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  });
+
+  it("regression: a malformed non-assistant turn_end with an empty final agent_end stays ambiguous, never completed", () => {
+    const malformedUser = {
+      type: "turn_end",
+      message: { role: "user", stopReason: "error", errorMessage: "x" },
+      toolResults: [],
+    } as unknown as RpcEvent;
+    const outcome = classifyRunOutcome([
+      malformedUser,
+      { type: "agent_end", messages: [], willRetry: false },
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "ambiguous" });
+    expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  });
+
+  it("keeps valid assistant turn_end-only provider-error and normal cases unchanged", () => {
+    const errorOutcome = classifyRunOutcome([
+      { type: "turn_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "x" }, toolResults: [] },
+      { type: "agent_settled" },
+    ]);
+    expect(errorOutcome).toMatchObject({ category: "provider_error_other" });
+    expect(isFallbackEligibleOutcome(errorOutcome)).toBe(true);
+
+    const normalOutcome = classifyRunOutcome([
+      { type: "turn_end", message: { role: "assistant", content: ["ok"], stopReason: "stop" }, toolResults: [] },
+      { type: "agent_settled" },
+    ]);
+    expect(normalOutcome).toMatchObject({ category: "completed" });
+  });
+
   it("side-effect contamination wins over the exhaustion marker: ambiguous, never transient_exhausted", () => {
     const outcome = classifyRunOutcome(
       errEvents([
