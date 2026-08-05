@@ -234,4 +234,17 @@ describe("ConversationEventRecord shape", () => {
     const events: ConversationEventRecord[] = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
     expect(events[0]?.mentions).toEqual(["zai"]);
   });
+
+  it("preserves append order for events sharing the same millisecond (run_started, agent_message, run_finished)", async () => {
+    // A fast (fake-Pi) run appends run_started -> agent_message -> run_finished
+    // back-to-back, all in the same millisecond. The durable read must return
+    // them in append order, not a random-nonce id tiebreak.
+    const conversation = await createConversation({ vaultRoot: root, text: "Run", audience: ["zai"], now: () => NOW });
+    const sameMs = () => NOW;
+    await appendConversationEvent({ vaultRoot: root, conversationId: conversation.id, kind: "run_started", authorKind: "system", author: "system", body: "started", runStatus: "running", now: sameMs, nonce: () => "aaa" });
+    await appendConversationEvent({ vaultRoot: root, conversationId: conversation.id, kind: "agent_message", authorKind: "agent", author: "zai", body: "visible reply", now: sameMs, nonce: () => "zzz" });
+    await appendConversationEvent({ vaultRoot: root, conversationId: conversation.id, kind: "run_finished", authorKind: "system", author: "system", body: "finished", runStatus: "completed", now: sameMs, nonce: () => "mmm" });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events.map((e) => e.kind)).toEqual(["run_started", "agent_message", "run_finished"]);
+  });
 });

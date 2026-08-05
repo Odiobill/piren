@@ -377,6 +377,8 @@ export interface AppendConversationEventOptions {
   now?: () => Date;
   nonce?: () => string;
   io?: ConversationWriteIo | undefined;
+  /** Injected sequence counter (testable); production derives it from the event count. */
+  sequence?: number | undefined;
 }
 
 /** C2 context-handoff selection metadata (shape mirrors C1 selection metadata). */
@@ -408,6 +410,7 @@ function renderConversationEvent(options: {
   authorKind: ConversationAuthorKind;
   author: string;
   created: string;
+  sequence: number;
   mentions?: readonly string[] | undefined;
   correlationId?: string | undefined;
   addressedAgent?: string | undefined;
@@ -425,6 +428,7 @@ function renderConversationEvent(options: {
     `authorKind: ${options.authorKind}`,
     `author: ${options.author}`,
     `created: ${options.created}`,
+    `sequence: ${options.sequence}`,
   ];
   if (options.mentions !== undefined && options.mentions.length > 0) {
     fields.push("mentions:");
@@ -466,6 +470,26 @@ function assertValidRunOutcome(
   }
 }
 
+/**
+ * Next 1-based monotonic sequence for a conversation's events: count existing
+ * `.md` event files + 1. Used as the durable-order tiebreak so events sharing
+ * the same millisecond stay in append order. A missing/empty directory yields
+ * 1; any unexpected error fails closed (the caller surfaces it).
+ */
+async function nextConversationSequence(eventsDir: string): Promise<number> {
+  let entries;
+  try {
+    entries = await readdir(eventsDir, { withFileTypes: true });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+      return 1;
+    }
+    throw error;
+  }
+  const count = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
+  return count + 1;
+}
+
 /** Append one immutable Conversation event (no-clobber). */
 export async function appendConversationEvent(
   options: AppendConversationEventOptions,
@@ -483,8 +507,15 @@ export async function appendConversationEvent(
   const created = (options.now ?? (() => new Date()))().toISOString();
   const id = `${compactConversationTimestamp(new Date(created))}${options.nonce !== undefined ? `-${options.nonce()}` : ""}`;
   const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
-  const absolutePath = join(conversationDir, "events", `${id}.md`);
+  const eventsDir = join(conversationDir, "events");
+  const absolutePath = join(eventsDir, `${id}.md`);
   assertInside(root, absolutePath);
+
+  // Monotonic per-conversation sequence: 1-based count of existing event
+  // files + 1. This is the durable-order tiebreak so events appended within
+  // the same millisecond (a fast run's run_started/agent_message/run_finished)
+  // are read back in append order, never a random-nonce id order.
+  const sequence = options.sequence ?? ((await nextConversationSequence(eventsDir)));
 
   const content = renderConversationEvent({
     id,
@@ -493,6 +524,7 @@ export async function appendConversationEvent(
     authorKind: options.authorKind,
     author: options.author,
     created,
+    sequence,
     ...(options.mentions !== undefined ? { mentions: options.mentions } : {}),
     ...(options.correlationId !== undefined ? { correlationId: options.correlationId } : {}),
     ...(options.addressedAgent !== undefined ? { addressedAgent: options.addressedAgent } : {}),
@@ -585,6 +617,8 @@ export interface ConversationEventRecord {
   authorKind: ConversationAuthorKind;
   author: string;
   created: string;
+  /** Monotonic per-conversation append order (1-based); the durable-order tiebreak. */
+  sequence: number;
   mentions: readonly string[];
   correlationId?: string | undefined;
   addressedAgent?: string | undefined;
@@ -595,7 +629,7 @@ export interface ConversationEventRecord {
   path: string;
 }
 
-/** Read durable Conversation events in chronological order (created asc, id asc). */
+/** Read durable Conversation events in chronological order (created asc, then monotonic sequence). */
 export async function readConversationEvents(
   options: ReadConversationEventsOptions,
 ): Promise<ConversationEventRecord[]> {
@@ -621,7 +655,7 @@ export async function readConversationEvents(
     const content = await readFile(absolutePath, "utf8");
     events.push(parseConversationEvent(content, relative(root, absolutePath), options.conversationId));
   }
-  return events.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return events.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : a.sequence - b.sequence));
 }
 
 function requireString(fields: Record<string, unknown>, key: string, path: string): string {
@@ -663,6 +697,11 @@ function parseConversationEvent(content: string, path: string, expectedConversat
   const authorKind: ConversationAuthorKind = authorKindValue as ConversationAuthorKind;
   const author = requireString(fields, "author", path);
   const created = requireString(fields, "created", path);
+  const sequenceRaw = fields.sequence;
+  if (typeof sequenceRaw !== "number" || !Number.isInteger(sequenceRaw) || sequenceRaw < 1) {
+    throw new Error(`Invalid conversation event at ${path}: sequence must be a positive integer`);
+  }
+  const sequence: number = sequenceRaw;
   const mentionsRaw = fields.mentions;
   if (mentionsRaw !== undefined && (!Array.isArray(mentionsRaw) || mentionsRaw.some((m) => typeof m !== "string"))) {
     throw new Error(`Invalid conversation event at ${path}: mentions must be an array of strings`);
@@ -675,6 +714,7 @@ function parseConversationEvent(content: string, path: string, expectedConversat
     authorKind,
     author,
     created,
+    sequence,
     mentions: mentionsRaw === undefined ? [] : (mentionsRaw as string[]),
     body,
     path,
