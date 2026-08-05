@@ -27,8 +27,8 @@ import {
  * Scanner semantics under test are the documented deterministic rules of
  * `scanStewardMentions`:
  *  - `@<lowercase-kebab-agent>` is recognized only at a token boundary
- *    (start of text, or preceded by a character that is not an ASCII letter
- *    or digit).
+ *    (start of text, or preceded by a character that is not a Unicode letter
+ *    or number).
  *  - Mentions inside inline code spans (backtick-delimited), fenced code
  *    blocks (``` or ~~~ lines), and blockquote lines (`>` lines) are never
  *    recognized.
@@ -64,6 +64,7 @@ describe("scanStewardMentions", () => {
   it("does not recognize an @ glued to a word character", () => {
     expect(scanStewardMentions("a@dipu").mentions).toEqual([]);
     expect(scanStewardMentions("foo1@dipu").mentions).toEqual([]);
+    expect(scanStewardMentions("é@dipu").mentions).toEqual([]);
   });
 
   it("does not recognize a second mention glued to a first mention", () => {
@@ -120,6 +121,10 @@ describe("scanStewardMentions", () => {
   it("never recognizes mentions inside fenced code blocks", () => {
     const fenced = "```\n@dipu\n```\n@zai";
     expect(scanStewardMentions(fenced).mentions).toEqual(["zai"]);
+  });
+
+  it("closes a fenced block under CRLF input before recognizing a later mention", () => {
+    expect(scanStewardMentions("```\r\n@dipu\r\n```\r\n@zai").mentions).toEqual(["zai"]);
   });
 
   it("recognizes a fence with an info string and tilde fences", () => {

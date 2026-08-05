@@ -25,8 +25,8 @@
  * Grammar (canonical, server-authoritative; deliberately minimal, no Markdown
  * renderer): a steward mention is `@` followed by a lowercase-kebab agent name
  * (`^[a-z][a-z0-9-]*$`, the existing Piren agent-name pattern), recognized ONLY
- * at a token boundary (start of text, or preceded by a character that is not an
- * ASCII letter or digit). Mentions inside inline code spans, fenced code blocks,
+ * at a token boundary (start of text, or preceded by a character that is not a
+ * Unicode letter or number). Mentions inside inline code spans, fenced code blocks,
  * and quoted (blockquote) lines are never recognized. A doubled `@@` is an
  * escaped literal `@` at any position and never a mention. After a boundary
  * `@`, the scanner consumes the maximal run of `[A-Za-z0-9_-]`; if the full
@@ -46,6 +46,8 @@
  *  - Blockquote lines start with at most 3 leading spaces then `>`; the whole
  *    line is quoted text and never opens/closes fences (documented
  *    simplification: fence markers inside quote lines are not interpreted).
+ *  - CRLF and legacy CR line endings are normalized to LF before region
+ *    recognition, so line-oriented fence and quote behavior is deterministic.
  */
 
 /** The lowercase-kebab agent-name pattern (mirrors the Piren agent pattern). */
@@ -98,7 +100,6 @@ function isClosingFenceLine(line: string, fence: FenceState): boolean {
 interface AgentToken {
   readonly name: string;
   readonly end: number;
-  readonly lastChar: string;
 }
 
 /** Consume the maximal run of name-ish chars at `start`; null when invalid. */
@@ -107,18 +108,26 @@ function scanAgentToken(line: string, start: number): AgentToken | null {
   while (end < line.length && NAME_TOKEN_PATTERN.test(line[end] as string)) end += 1;
   const token = line.slice(start, end);
   if (token === "" || !isValidConversationAgentName(token)) return null;
-  return { name: token, end, lastChar: token[token.length - 1] as string };
+  return { name: token, end };
+}
+
+const UNICODE_LETTER_OR_NUMBER = /[\p{L}\p{N}]/u;
+
+/** True when `at` is at the start or follows a non-word Unicode code point. */
+function hasMentionBoundary(line: string, at: number): boolean {
+  if (at === 0) return true;
+  const previous = Array.from(line.slice(0, at)).at(-1);
+  return previous === undefined || !UNICODE_LETTER_OR_NUMBER.test(previous);
 }
 
 /**
  * Scan one line in text/code-span region. Toggles `state.codeSpanLength` for
  * backtick runs and collects mentions only while not inside a code span.
- * A token boundary is start of text (newline-adjacent) or a preceding
- * character that is not an ASCII letter or digit.
+ * A token boundary is start of text (newline-adjacent) or follows a character
+ * that is not a Unicode letter or number.
  */
 function scanLine(line: string, state: ScanState, mentions: string[]): void {
   let i = 0;
-  let prev = "";
   while (i < line.length) {
     const ch = line[i] as string;
     if (ch === "`") {
@@ -129,36 +138,30 @@ function scanLine(line: string, state: ScanState, mentions: string[]): void {
       } else if (run === state.codeSpanLength) {
         state.codeSpanLength = null;
       }
-      prev = "`";
       i += run;
       continue;
     }
     if (state.codeSpanLength !== null) {
-      prev = ch;
       i += 1;
       continue;
     }
     if (ch === "@") {
       if (line[i + 1] === "@") {
         // Doubled @@ is an escaped literal @ at any position; never a mention.
-        prev = "@";
         i += 2;
         continue;
       }
-      if (prev === "" || !/[A-Za-z0-9]/.test(prev)) {
+      if (hasMentionBoundary(line, i)) {
         const token = scanAgentToken(line, i + 1);
         if (token !== null) {
           mentions.push(token.name);
-          prev = token.lastChar;
           i = token.end;
           continue;
         }
       }
-      prev = "@";
       i += 1;
       continue;
     }
-    prev = ch;
     i += 1;
   }
 }
@@ -171,7 +174,8 @@ export function scanStewardMentions(text: string): MentionScan {
   const mentions: string[] = [];
   const state: ScanState = { codeSpanLength: null };
   let fence: FenceState | null = null;
-  for (const line of text.split("\n")) {
+  const normalizedText = text.replace(/\r\n?/g, "\n");
+  for (const line of normalizedText.split("\n")) {
     if (fence !== null) {
       if (isClosingFenceLine(line, fence)) fence = null;
       continue;
