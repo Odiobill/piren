@@ -376,13 +376,24 @@ async function acquireAudienceLock(options: {
       released = true;
       try {
         const current = await readFile(lockPath, "utf8");
-        // Remove ONLY our own lock (token-verified).
-        if (current.includes(token)) {
-          await rm(lockPath, { force: true });
+        // Exact token-verified ownership: parse the lock JSON fail-closed and
+        // release ONLY when BOTH the parsed token equals the held token AND
+        // the conversationId equals the held conversation id. A malformed,
+        // unreadable, replaced, substring-containing, or wrong-conversation
+        // lock remains untouched for manual triage.
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(current) as unknown;
+        } catch {
+          return; // malformed lock: left for manual triage
         }
+        if (typeof parsed !== "object" || parsed === null) return;
+        const record = parsed as Record<string, unknown>;
+        if (record.token !== token || record.conversationId !== options.conversationId) return;
+        await rm(lockPath, { force: true });
       } catch {
-        // Already-released/missing lock is fine; an unreadable lock is left
-        // for manual triage rather than deleting another writer's state.
+        // Unreadable/missing lock is left for manual triage; never delete
+        // another writer's state.
       }
     },
   };

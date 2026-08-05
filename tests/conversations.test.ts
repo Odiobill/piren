@@ -300,6 +300,93 @@ describe("updateConversationAudience (additive later-mention membership, C2 rewo
     await expect(stat(join(root, "collaboration", "conversations", conversation.id, ".audience.lock"))).rejects.toThrow();
   });
 
+  it("exact lock ownership: a replaced lock with a substring/different token or wrong conversationId is never deleted by the stale holder", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Hello @zai", audience: ["zai"], now: () => NOW });
+    const dipu = resolveStewardMentions("@dipu", ["dipu", "zai"]);
+    expect(dipu.ok).toBe(true);
+    if (!dipu.ok) throw new Error("test setup");
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lockPath = join(root, "collaboration", "conversations", conversation.id, ".audience.lock");
+    let heldToken = "";
+    const first = updateConversationAudience({
+      vaultRoot: root, conversationId: conversation.id, additions: dipu.validated,
+      holdBarrier: gate,
+      lockToken: () => {
+        heldToken = "owner-token-abc";
+        return heldToken;
+      },
+    });
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      try {
+        await stat(lockPath);
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    await expect(stat(lockPath)).resolves.toBeDefined();
+    expect(heldToken).toBe("owner-token-abc");
+
+    // Manual replacement: a DIFFERENT token that CONTAINS the stale token as
+    // a substring (the old `includes` check would wrongly delete it).
+    const replacement = JSON.stringify({
+      token: `prefix-${heldToken}-suffix`,
+      pid: 99,
+      conversationId: conversation.id,
+      acquiredAt: "2026-08-05T15:00:00.000Z",
+    });
+    await writeFile(lockPath, replacement, { encoding: "utf8" });
+    release();
+    await first;
+
+    // The replaced lock remains byte-for-byte for manual triage.
+    await expect(readFile(lockPath, "utf8")).resolves.toBe(replacement);
+  });
+
+  it("exact lock ownership: a malformed lock and a wrong conversationId are left untouched by the stale holder", async () => {
+    for (const [label, content] of [
+      ["malformed", "not json at all"],
+      ["wrong conversationId", JSON.stringify({ token: "other", pid: 1, conversationId: "other-conversation", acquiredAt: "2026-08-05T00:00:00.000Z" })],
+    ] as const) {
+      // Fresh conversation per case: the intentionally-replaced lock persists
+      // (that is the point), so a later acquire would correctly fail busy.
+      const conversation = await createConversation({
+        vaultRoot: root, text: `Lock ${label}`, audience: ["zai"], now: () => NOW,
+      });
+      const dipu = resolveStewardMentions("@dipu", ["dipu", "zai"]);
+      expect(dipu.ok).toBe(true);
+      if (!dipu.ok) throw new Error("test setup");
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const lockPath = join(root, "collaboration", "conversations", conversation.id, ".audience.lock");
+      const first = updateConversationAudience({
+        vaultRoot: root, conversationId: conversation.id, additions: dipu.validated,
+        holdBarrier: gate,
+        lockToken: () => `owner-${label}`,
+      });
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        try {
+          await stat(lockPath);
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }
+      await writeFile(lockPath, content, { encoding: "utf8" });
+      release();
+      await first;
+      await expect(readFile(lockPath, "utf8")).resolves.toBe(content);
+    }
+  });
+
   it("preserves the original created timestamp across multiple audience updates (immutable created)", async () => {
     const conversation = await createConversation({ vaultRoot: root, text: "Hello @zai", audience: ["zai"], now: () => NOW });
     const dipu = resolveStewardMentions("@dipu", ["dipu", "zai"]);
