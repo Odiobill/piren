@@ -9,6 +9,7 @@ import {
   parseStarterManifest,
   planStarterSeed,
   runStarterDoctor,
+  type StarterSkillsDeps,
 } from "../src/starter-skills.js";
 
 let root: string;
@@ -318,6 +319,34 @@ describe("S3 §12 fresh-init inbox lifecycle baseline", () => {
     expect(directives).not.toContain("## Inbox task lifecycle (mandatory)");
     await expect(readFile(baselineSkillPath(), "utf8")).resolves.toBe("user-owned skill content\n");
     await expect(readdir(join(root, "skills"))).resolves.toEqual(["piren-inbox-task-lifecycle"]);
+  });
+
+  it("TOCTOU: a concurrent writer between preflight and wx creates NEITHER baseline artifact", async () => {
+    const real = createRealStarterSkillsDeps();
+    const targetSuffix = join("skills", "piren-inbox-task-lifecycle", "SKILL.md");
+    const racing: StarterSkillsDeps = {
+      ...real,
+      async writeFile(path: string, content: string, options?: { flag?: string }): Promise<void> {
+        if (options?.flag === "wx" && path.endsWith(targetSuffix)) {
+          // Simulate the concurrent writer winning the race: create exact
+          // user content immediately before the delegated wx write, so the
+          // delegated write returns EEXIST.
+          await real.writeFile(path, "concurrent user-owned content\n", { flag: "wx" });
+        }
+        return real.writeFile(path, content, options);
+      },
+    };
+
+    const result = await initVault({ vaultRoot: root, agentName: "thor", baselineDeps: racing });
+
+    // The wx write is the authoritative gate: its refusal means the directive
+    // section must NOT be included (skill success is the prerequisite).
+    expect(result.baseline.directiveIncluded).toBe(false);
+    expect(result.baseline.skillCreated).toBe(false);
+    expect(result.baseline.warning).toMatch(/already exists/i);
+    const directives = await readFile(join(root, "steward-directives.md"), "utf8");
+    expect(directives).not.toContain("## Inbox task lifecycle (mandatory)");
+    await expect(readFile(baselineSkillPath(), "utf8")).resolves.toBe("concurrent user-owned content\n");
   });
 
   it("skips BOTH baseline artifacts with a warning when baseline package assets are unavailable", async () => {

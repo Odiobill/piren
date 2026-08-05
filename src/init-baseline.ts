@@ -68,11 +68,14 @@ function isEeexist(error: unknown): boolean {
 }
 
 /**
- * Preflight outcome for the baseline skill target on a genuinely fresh
- * target (S3 §12.4/§12.6 rework). The baseline is TWO artifacts: a collision
- * on the skill path must create NEITHER (no directive section, no generated
- * skill), so the directive inclusion is decided from the SAME observation
- * that guards the skill write — before either artifact is written.
+ * Deterministic collision preflight fast-path for the baseline skill target
+ * on a genuinely fresh target (S3 §12.4/§12.6 rework): ENOENT -> absent
+ * (proceed to the dedicated `wx` write); file present -> collision (skip
+ * both baseline artifacts immediately); any other read error -> unreadable
+ * (fail closed, skip both). The preflight observation alone does NOT decide
+ * directive inclusion — the `wx` write result is the authoritative no-clobber
+ * gate, so a raced concurrent writer between preflight and `wx` also leaves
+ * NEITHER baseline artifact. No raw filesystem error is leaked.
  */
 export type BaselineSkillPreflight = "absent" | "collision" | "unreadable";
 

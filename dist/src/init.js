@@ -273,16 +273,20 @@ export async function initVault(options) {
     const recognized = await probeRecognizedVault(baselineDeps, vaultRoot);
     const baseline = { directiveIncluded: false, skillCreated: false, warning: null };
     let baselineAssets = { ok: false, reason: "recognized existing vault" };
+    // Only a genuinely fresh target with valid package assets and an absent
+    // skill path proceeds to the dedicated `wx` skill write; the wx RESULT is
+    // the authoritative no-clobber gate for the two-artifact baseline.
+    let attemptBaselineSkill = false;
     if (!recognized) {
         baselineAssets = await loadBaselineAssets(baselineDeps, baselineTemplatesDir);
         if (baselineAssets.ok) {
-            // Collision preflight: the baseline is TWO artifacts. If the skill path
-            // already exists on this otherwise-fresh target, create NEITHER — the
-            // directive section is only included when the skill write is expected
-            // to succeed. Fail-closed: an unreadable target also skips both.
+            // Deterministic fail-closed preflight fast-path: a pre-existing skill on
+            // this otherwise-fresh target skips BOTH baseline artifacts immediately;
+            // an unreadable target also skips both. The preflight observation alone
+            // does NOT decide directive inclusion — the `wx` write below does.
             const preflight = await preflightBaselineSkill(baselineDeps, vaultRoot);
             if (preflight === "absent") {
-                baseline.directiveIncluded = true;
+                attemptBaselineSkill = true;
             }
             else if (preflight === "collision") {
                 baseline.warning = `baseline skill already exists at skills/${BASELINE_SKILL_NAME}/SKILL.md; baseline not created (no-clobber)`;
@@ -320,6 +324,23 @@ export async function initVault(options) {
     await mkdir(join(agentDir, "skills"), { recursive: true });
     await mkdir(join(agentDir, "cron", "jobs"), { recursive: true });
     await mkdir(join(agentDir, "cron", "runs"), { recursive: true });
+    // S3 §12: create the baseline skill BEFORE any directive content is written.
+    // A successful `wx` creation is the prerequisite for including the lifecycle
+    // directive section in steward-directives.md: a pre-existing file, a raced
+    // concurrent writer, or any unexpected write failure leaves
+    // directiveIncluded=false (deterministic non-secret warning, no partial
+    // two-artifact baseline, never overwrites/deletes). Dedicated no-clobber
+    // `wx` is independent of `--force`.
+    if (attemptBaselineSkill && baselineAssets.ok) {
+        const skillResult = await createBaselineSkill(baselineDeps, vaultRoot, baselineAssets);
+        baseline.skillCreated = skillResult.created;
+        if (skillResult.created) {
+            baseline.directiveIncluded = true;
+        }
+        else {
+            baseline.warning = skillResult.warning ?? "baseline skill could not be created; baseline not created";
+        }
+    }
     try {
         await writeNewFile(join(vaultRoot, ".piren-vault"), "", force, created);
         await writeNewFile(join(vaultRoot, "steward-directives.md"), buildStewardDirectivesContent(baseline.directiveIncluded), force, created);
@@ -338,17 +359,6 @@ export async function initVault(options) {
             throw new Error("Piren vault file already exists. Re-run with --force to overwrite generated files.");
         }
         throw error;
-    }
-    // S3 §12: create the baseline skill only for a genuinely fresh target whose
-    // package-owned baseline assets validated. Dedicated no-clobber (`wx`) is
-    // independent of `--force`; a collision or unexpected failure surfaces a
-    // deterministic non-secret warning and never overwrites/deletes the file.
-    if (baseline.directiveIncluded && baselineAssets.ok) {
-        const skillResult = await createBaselineSkill(baselineDeps, vaultRoot, baselineAssets);
-        baseline.skillCreated = skillResult.created;
-        if (skillResult.warning !== null) {
-            baseline.warning = skillResult.warning;
-        }
     }
     return { vaultRoot, agentName, agentDir, created, baseline };
 }
