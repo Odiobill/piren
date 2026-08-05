@@ -32,6 +32,22 @@
  *   structured `stopReason: "aborted"`. Unknown/malformed/conflicting final
  *   messages, missing `errorMessage`, and maintenance failure fail closed as
  *   `ambiguous`.
+ *
+ * Authoritative final-record scope (conflict policy):
+ * - The authoritative terminal assistant records come from the messages array
+ *   of the LAST `agent_end` event — the final low-level run. Earlier `agent_end`
+ *   events (`willRetry:true` retries) are historical earlier low-level runs and
+ *   are NEVER treated as conflicts: an earlier retry error followed by a later
+ *   final normal stop remains `completed`.
+ * - If no `agent_end` exists (or its messages are empty), the single fallback
+ *   terminal record is the last assistant record from `message_start` /
+ *   `message_end` / `turn_end` (they all carry the terminal message).
+ * - WITHIN the authoritative final run, if any assistant record has
+ *   `stopReason:"error"` (with a structured `errorMessage`) alongside ANY other
+ *   assistant record, the run is `ambiguous` (conflicting terminal records fail
+ *   closed — never `completed`, never fallback-eligible). Multiple consistent
+ *   error records are NOT a conflict. A normal `toolUse`->`stop` sequence in a
+ *   final run with no error record is NOT a conflict and stays `completed`.
  * - Compaction and `summarization_retry_*` are maintenance-only: never
  *   provider-error proof and never an independent trigger. Settled normal
  *   completion after overflow compaction remains `completed`.
@@ -55,6 +71,8 @@ function isAssistantRecord(value) {
  * (the design's `provider_error_zero_side_effect` eligibility predicate).
  * `completed`, `aborted`, `ambiguous`, and the ADR-0038 `launch_failure`
  * concept can never pass: they are distinct categories outside this set.
+ * Narrows a `RunOutcome` to the genuine `ProviderErrorOutcome` discriminated
+ * subtype (never `never`).
  */
 export function isFallbackEligibleOutcome(outcome) {
     return outcome.category === "provider_error_transient_exhausted" || outcome.category === "provider_error_other";
@@ -69,7 +87,10 @@ export function classifyRunOutcome(events) {
     let sawTool = false;
     let sawUiRequest = false;
     let sawRetryExhausted = false;
-    let lastAssistantMessage;
+    /** messages array of the LAST agent_end event (the authoritative final run). */
+    let lastAgentEndMessages;
+    /** Last assistant record from message events; used only when the final run has none. */
+    let fallbackTerminalMessage;
     for (const event of events) {
         switch (event.type) {
             case "agent_settled":
@@ -97,26 +118,20 @@ export function classifyRunOutcome(events) {
             case "message_end": {
                 const message = event.message;
                 if (isAssistantRecord(message))
-                    lastAssistantMessage = message;
+                    fallbackTerminalMessage = message;
                 break;
             }
             case "turn_end": {
                 // turn_end.message is the terminal assistant message record.
                 if (isRecord(event.message))
-                    lastAssistantMessage = event.message;
+                    fallbackTerminalMessage = event.message;
                 break;
             }
-            case "agent_end": {
-                // Keep the last assistant record in Pi's per-run messages array.
-                const messages = event.messages;
-                if (Array.isArray(messages)) {
-                    for (const message of messages) {
-                        if (isAssistantRecord(message))
-                            lastAssistantMessage = message;
-                    }
-                }
+            case "agent_end":
+                // Keep ONLY the last agent_end: earlier low-level runs (willRetry:true)
+                // are historical and never authoritative for the conflict policy.
+                lastAgentEndMessages = event.messages;
                 break;
-            }
             default:
                 // agent_start, compaction_*, summarization_retry_*, queue_update,
                 // model_changed, extension responses, etc. are non-terminal and
@@ -127,18 +142,34 @@ export function classifyRunOutcome(events) {
     if (!sawSettled) {
         return { category: "ambiguous", detail: "the run did not settle (no agent_settled event)." };
     }
-    if (lastAssistantMessage === undefined) {
-        // Settled run with no structured assistant terminal message: normal
-        // completion (the TB0 ordinary fixture shape, or a side-effect-bearing run).
+    // Authoritative final-run assistant records.
+    const authoritativeRecords = [];
+    if (Array.isArray(lastAgentEndMessages)) {
+        for (const message of lastAgentEndMessages) {
+            if (isAssistantRecord(message))
+                authoritativeRecords.push(message);
+        }
+    }
+    if (authoritativeRecords.length === 0 && fallbackTerminalMessage !== undefined) {
+        authoritativeRecords.push(fallbackTerminalMessage);
+    }
+    if (authoritativeRecords.length === 0) {
+        // Settled run with no terminal assistant message: normal completion
+        // (the TB0 ordinary fixture shape, or a side-effect-bearing run).
         return { category: "completed", detail: "the run settled with no terminal assistant error." };
     }
-    const stopReason = lastAssistantMessage.stopReason;
-    if (typeof stopReason !== "string") {
-        return { category: "ambiguous", detail: "the final assistant message has no structured stop reason." };
-    }
-    if (stopReason === "error") {
-        if (typeof lastAssistantMessage.errorMessage !== "string") {
+    const errorRecords = authoritativeRecords.filter((record) => record.stopReason === "error");
+    if (errorRecords.length > 0) {
+        if (!errorRecords.every((record) => typeof record.errorMessage === "string")) {
             return { category: "ambiguous", detail: "the provider error run has no structured errorMessage field." };
+        }
+        // Conflict fail-closed: any other assistant record in the same authoritative
+        // final run contradicts the provider error (normal or aborted terminal).
+        if (authoritativeRecords.length > errorRecords.length) {
+            return {
+                category: "ambiguous",
+                detail: "the authoritative final run mixes a provider error with conflicting terminal records.",
+            };
         }
         if (sawTextDelta || sawTool || sawUiRequest) {
             return {
@@ -156,6 +187,14 @@ export function classifyRunOutcome(events) {
             category: "provider_error_other",
             detail: "provider error with zero side effects and no observed transient-retry exhaustion.",
         };
+    }
+    const terminal = authoritativeRecords[authoritativeRecords.length - 1];
+    if (terminal === undefined) {
+        return { category: "ambiguous", detail: "the authoritative final run has no terminal assistant record." };
+    }
+    const stopReason = terminal.stopReason;
+    if (typeof stopReason !== "string") {
+        return { category: "ambiguous", detail: "the final assistant message has no structured stop reason." };
     }
     if (stopReason === "aborted") {
         return { category: "aborted", detail: "the run settled with an aborted terminal stop reason." };

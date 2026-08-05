@@ -2,9 +2,31 @@ import { describe, expect, it } from "vitest";
 import {
   classifyRunOutcome,
   isFallbackEligibleOutcome,
+  type ProviderErrorOutcome,
   type RunOutcome,
 } from "../src/model-fallback-outcome.js";
 import type { RpcEvent } from "../src/gateway-rpc.js";
+
+// Compile-time guards (checked by tsc in typecheck/build):
+// - RunOutcome is a genuine discriminated union (each member's category is a
+//   distinct literal), so a category check narrows the record.
+// - ProviderErrorOutcome["category"] is EXACTLY the two eligible literals
+//   (never `never`), so isFallbackEligibleOutcome narrows to a usable subtype.
+type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2) ? true : false;
+type Assert<T extends true> = T;
+type _RunOutcomeIsDiscriminatedUnion = Assert<
+  Equal<
+    RunOutcome,
+    | { category: "completed"; detail: string }
+    | { category: "aborted"; detail: string }
+    | { category: "ambiguous"; detail: string }
+    | { category: "provider_error_transient_exhausted"; detail: string }
+    | { category: "provider_error_other"; detail: string }
+  >
+>;
+type _ProviderErrorCategoryEquals = Assert<
+  Equal<ProviderErrorOutcome["category"], "provider_error_transient_exhausted" | "provider_error_other">
+>;
 
 // TB2 pure event-stream classifier (Projects/Piren/model-fallbacks-design.md
 // §3.1). agent_settled is mandatory for any normal terminal classification;
@@ -199,6 +221,61 @@ describe("classifyRunOutcome", () => {
     expect(outcome.detail).not.toMatch(/401|403|429|5\d\d/i);
   });
 
+  it("fails closed when the authoritative final agent_end.messages mixes stopReason:error with a normal terminal record", () => {
+    const error = { role: "assistant", content: [], stopReason: "error", errorMessage: "x" };
+    const normal = { role: "assistant", content: ["done"], stopReason: "stop" };
+    const outcome = classifyRunOutcome([
+      { type: "agent_start" },
+      { type: "agent_end", messages: [error, normal], willRetry: false },
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "ambiguous" });
+    expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  });
+
+  it("fails closed when the authoritative final agent_end.messages mixes stopReason:error with aborted", () => {
+    const error = { role: "assistant", content: [], stopReason: "error", errorMessage: "x" };
+    const aborted = { role: "assistant", content: [], stopReason: "aborted" };
+    const outcome = classifyRunOutcome([
+      { type: "agent_end", messages: [error, aborted], willRetry: false },
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "ambiguous" });
+    expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  });
+
+  it("does NOT treat multiple consistent error records in the final run as a conflict", () => {
+    const errorA = { role: "assistant", content: [], stopReason: "error", errorMessage: "x" };
+    const errorB = { role: "assistant", content: [], stopReason: "error", errorMessage: "y" };
+    const outcome = classifyRunOutcome([
+      { type: "agent_end", messages: [errorA, errorB], willRetry: false },
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "provider_error_other" });
+  });
+
+  it("keeps an earlier willRetry:true error followed by a later final normal stop as completed (conflict scope is the final low-level run only)", () => {
+    const outcome = classifyRunOutcome([
+      { type: "agent_start" },
+      { type: "agent_end", messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "x" }], willRetry: true },
+      { type: "agent_start" },
+      { type: "agent_end", messages: [{ role: "assistant", content: ["ok"], stopReason: "stop" }], willRetry: false },
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "completed" });
+  });
+
+  it("keeps a normal toolUse->stop sequence in the final run as completed (not a conflict)", () => {
+    const outcome = classifyRunOutcome([
+      { type: "agent_end", messages: [
+        { role: "assistant", content: [], stopReason: "toolUse" },
+        { role: "assistant", content: ["done"], stopReason: "stop" },
+      ], willRetry: false },
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "completed" });
+  });
+
   it("side-effect contamination wins over the exhaustion marker: ambiguous, never transient_exhausted", () => {
     const outcome = classifyRunOutcome(
       errEvents([
@@ -245,5 +322,22 @@ describe("isFallbackEligibleOutcome", () => {
     ];
     for (const outcome of eligible) expect(isFallbackEligibleOutcome(outcome)).toBe(true);
     for (const outcome of notEligible) expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  });
+
+  it("narrows to a genuine provider-error discriminated subtype, never `never` (type-level)", () => {
+    // Compile-time equality guards at the top of this file prove
+    // ProviderErrorOutcome["category"] is exactly the two eligible literals.
+    // Runtime: the narrowed branch is reachable and its category is restricted
+    // to the two eligible values.
+    const outcome: RunOutcome = { category: "provider_error_other", detail: "d" };
+    if (isFallbackEligibleOutcome(outcome)) {
+      expect(["provider_error_other", "provider_error_transient_exhausted"]).toContain(outcome.category);
+      expect(outcome.detail.length).toBeGreaterThan(0);
+    } else {
+      throw new Error("narrowing should have held");
+    }
+    // And a completed outcome can never pass the predicate.
+    const completed: RunOutcome = { category: "completed", detail: "d" };
+    expect(isFallbackEligibleOutcome(completed)).toBe(false);
   });
 });

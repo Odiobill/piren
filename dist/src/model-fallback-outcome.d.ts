@@ -32,6 +32,22 @@
  *   structured `stopReason: "aborted"`. Unknown/malformed/conflicting final
  *   messages, missing `errorMessage`, and maintenance failure fail closed as
  *   `ambiguous`.
+ *
+ * Authoritative final-record scope (conflict policy):
+ * - The authoritative terminal assistant records come from the messages array
+ *   of the LAST `agent_end` event — the final low-level run. Earlier `agent_end`
+ *   events (`willRetry:true` retries) are historical earlier low-level runs and
+ *   are NEVER treated as conflicts: an earlier retry error followed by a later
+ *   final normal stop remains `completed`.
+ * - If no `agent_end` exists (or its messages are empty), the single fallback
+ *   terminal record is the last assistant record from `message_start` /
+ *   `message_end` / `turn_end` (they all carry the terminal message).
+ * - WITHIN the authoritative final run, if any assistant record has
+ *   `stopReason:"error"` (with a structured `errorMessage`) alongside ANY other
+ *   assistant record, the run is `ambiguous` (conflicting terminal records fail
+ *   closed — never `completed`, never fallback-eligible). Multiple consistent
+ *   error records are NOT a conflict. A normal `toolUse`->`stop` sequence in a
+ *   final run with no error record is NOT a conflict and stays `completed`.
  * - Compaction and `summarization_retry_*` are maintenance-only: never
  *   provider-error proof and never an independent trigger. Settled normal
  *   completion after overflow compaction remains `completed`.
@@ -44,21 +60,37 @@
  * IDs.
  */
 import type { RpcEvent } from "./gateway-rpc.js";
-export type RunOutcomeCategory = "completed" | "aborted" | "ambiguous" | "provider_error_transient_exhausted" | "provider_error_other";
-export interface RunOutcome {
-    category: RunOutcomeCategory;
-    /** Deterministic non-secret detail; never raw error text or model ids. */
+export type RunOutcome = {
+    category: "completed";
     detail: string;
-}
+} | {
+    category: "aborted";
+    detail: string;
+} | {
+    category: "ambiguous";
+    detail: string;
+} | {
+    category: "provider_error_transient_exhausted";
+    detail: string;
+} | {
+    category: "provider_error_other";
+    detail: string;
+};
 /** The two fully-settled zero-side-effect provider-error categories. */
-export type ProviderErrorOutcome = Extract<RunOutcome, {
-    category: "provider_error_transient_exhausted" | "provider_error_other";
-}>;
+export type ProviderErrorOutcome = {
+    category: "provider_error_transient_exhausted";
+    detail: string;
+} | {
+    category: "provider_error_other";
+    detail: string;
+};
 /**
  * True ONLY for fully settled zero-side-effect provider-error categories
  * (the design's `provider_error_zero_side_effect` eligibility predicate).
  * `completed`, `aborted`, `ambiguous`, and the ADR-0038 `launch_failure`
  * concept can never pass: they are distinct categories outside this set.
+ * Narrows a `RunOutcome` to the genuine `ProviderErrorOutcome` discriminated
+ * subtype (never `never`).
  */
 export declare function isFallbackEligibleOutcome(outcome: RunOutcome): outcome is ProviderErrorOutcome;
 /**
