@@ -44,8 +44,12 @@
  *   `message_end` / `turn_end` (they all carry the terminal message). The
  *   assistant-role check is a runtime requirement on every carrier because
  *   `RpcEvent` is deliberately loose: a `turn_end` whose `message` is not an
- *   assistant record is malformed terminal evidence and fails closed as
- *   `ambiguous` (never `completed`, never eligible).
+ *   assistant record is malformed terminal evidence that taints the ENTIRE
+ *   fallback path — when the final `agent_end` has no assistant records, the
+ *   result is `ambiguous` (never `completed`, never eligible) even if an
+ *   earlier `message_start`/`message_end` carried an assistant record. When
+ *   the final `agent_end` HAS assistant records, they are authoritative and a
+ *   malformed `turn_end` is irrelevant as designed.
  * - WITHIN the authoritative final run, if any assistant record has
  *   `stopReason:"error"` (with a structured `errorMessage`) alongside ANY other
  *   assistant record, the run is `ambiguous` (conflicting terminal records fail

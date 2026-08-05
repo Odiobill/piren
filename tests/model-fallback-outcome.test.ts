@@ -327,6 +327,55 @@ describe("classifyRunOutcome", () => {
     expect(normalOutcome).toMatchObject({ category: "completed" });
   });
 
+  it("regression: a malformed turn_end taints the ENTIRE fallback path even when an earlier message_end carried an assistant error", () => {
+    // No final agent_end evidence: the message-event fallback applies. The
+    // later malformed non-assistant turn_end is terminal corruption and must
+    // make the result ambiguous BEFORE the earlier assistant message_end error
+    // record can classify provider_error_other / become eligible.
+    const malformedUser = {
+      type: "turn_end",
+      message: { role: "user", stopReason: "error", errorMessage: "x" },
+      toolResults: [],
+    } as unknown as RpcEvent;
+    const outcome = classifyRunOutcome([
+      { type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "x" } },
+      malformedUser,
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "ambiguous" });
+    expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  });
+
+  it("regression: malformed turn_end taints the fallback path even with an empty final agent_end", () => {
+    const malformedUser = {
+      type: "turn_end",
+      message: { role: "user", stopReason: "error", errorMessage: "x" },
+      toolResults: [],
+    } as unknown as RpcEvent;
+    const outcome = classifyRunOutcome([
+      { type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "x" } },
+      malformedUser,
+      { type: "agent_end", messages: [], willRetry: false },
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "ambiguous" });
+    expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  });
+
+  it("pin: a malformed turn_end is irrelevant when the final agent_end has valid assistant records (authoritative)", () => {
+    const malformedUser = {
+      type: "turn_end",
+      message: { role: "user", stopReason: "error", errorMessage: "x" },
+      toolResults: [],
+    } as unknown as RpcEvent;
+    const outcome = classifyRunOutcome([
+      malformedUser,
+      { type: "agent_end", messages: [{ role: "assistant", content: ["ok"], stopReason: "stop" }], willRetry: false },
+      { type: "agent_settled" },
+    ]);
+    expect(outcome).toMatchObject({ category: "completed" });
+  });
+
   it("side-effect contamination wins over the exhaustion marker: ambiguous, never transient_exhausted", () => {
     const outcome = classifyRunOutcome(
       errEvents([

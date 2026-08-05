@@ -44,8 +44,12 @@
  *   `message_end` / `turn_end` (they all carry the terminal message). The
  *   assistant-role check is a runtime requirement on every carrier because
  *   `RpcEvent` is deliberately loose: a `turn_end` whose `message` is not an
- *   assistant record is malformed terminal evidence and fails closed as
- *   `ambiguous` (never `completed`, never eligible).
+ *   assistant record is malformed terminal evidence that taints the ENTIRE
+ *   fallback path — when the final `agent_end` has no assistant records, the
+ *   result is `ambiguous` (never `completed`, never eligible) even if an
+ *   earlier `message_start`/`message_end` carried an assistant record. When
+ *   the final `agent_end` HAS assistant records, they are authoritative and a
+ *   malformed `turn_end` is irrelevant as designed.
  * - WITHIN the authoritative final run, if any assistant record has
  *   `stopReason:"error"` (with a structured `errorMessage`) alongside ANY other
  *   assistant record, the run is `ambiguous` (conflicting terminal records fail
@@ -166,17 +170,25 @@ export function classifyRunOutcome(events) {
                 authoritativeRecords.push(message);
         }
     }
-    if (authoritativeRecords.length === 0 && fallbackTerminalMessage !== undefined) {
-        authoritativeRecords.push(fallbackTerminalMessage);
+    if (authoritativeRecords.length === 0) {
+        // No assistant records in the final agent_end: the message-event fallback
+        // path applies. A malformed/non-assistant turn_end taints the ENTIRE
+        // fallback path — fail closed BEFORE any earlier assistant
+        // message_start/message_end record can classify (terminal corruption is
+        // never overridden by prior fallback evidence). When the final agent_end
+        // has assistant records, it remains authoritative and the malformed
+        // turn_end is irrelevant as designed.
+        if (sawMalformedTerminal) {
+            return { category: "ambiguous", detail: "a malformed non-assistant turn_end terminal record taints the fallback path." };
+        }
+        if (fallbackTerminalMessage !== undefined) {
+            authoritativeRecords.push(fallbackTerminalMessage);
+        }
     }
     if (authoritativeRecords.length === 0) {
-        // Settled run with no terminal assistant message. A malformed non-assistant
-        // turn_end terminal record is conservative ambiguous (never completed, so
-        // never eligible); otherwise this is a normal completion (the TB0 ordinary
-        // fixture shape, or a side-effect-bearing run).
-        if (sawMalformedTerminal) {
-            return { category: "ambiguous", detail: "a malformed non-assistant turn_end terminal record is present." };
-        }
+        // Settled run with no terminal assistant message and no malformed
+        // terminal: normal completion (the TB0 ordinary fixture shape, or a
+        // side-effect-bearing run).
         return { category: "completed", detail: "the run settled with no terminal assistant error." };
     }
     const errorRecords = authoritativeRecords.filter((record) => record.stopReason === "error");
