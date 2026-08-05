@@ -38,6 +38,19 @@ export type PiRuntimeChecker = (env?: NodeJS.ProcessEnv | Record<string, string 
  * present-but-invalid block or mode warns with the resolver's exact reason.
  */
 export declare function checkContextInjectionConfig(config: Record<string, unknown> | null, id?: string): DoctorCheck | null;
+/**
+ * Validate an agent-local `model.fallback` block for `piren doctor` (TB1).
+ *
+ * Assesses the raw agent config mapping only. Absent fallback (or a missing
+ * `model` block, or a missing/malformed whole config) stays quiet (null). A
+ * valid block reports count-only ok (never model ids); `auto_switch: false` is
+ * valid and inspectable. A present-but-invalid block warns with the parser's
+ * deterministic cause plus the fixed Authority/Next guidance. A valid fallback
+ * that duplicates the configured primary `model.id` warns (a doctor-level note,
+ * never a parser error). No catalog/provider probe is performed: availability
+ * validation is a later gated bullet (U2).
+ */
+export declare function checkModelFallbackConfig(config: Record<string, unknown> | null, id?: string): DoctorCheck | null;
 export declare function checkAlertMirrorConfig(config: LocalPirenConfig): DoctorCheck | null;
 /**
  * Validate Telegram transport config for `piren doctor`.

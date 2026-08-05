@@ -11,6 +11,7 @@ import { parseGroupConfigs, resolveAgentGroups } from "./agent-groups.js";
 import { readAgentConfigFileBestEffort } from "./agent-config.js";
 import { resolveContextInjectionMode } from "./context-injection.js";
 import { resolveAlertMirrorConfig } from "./alert-mirror.js";
+import { parseModelFallbackConfig } from "./model-fallback-config.js";
 /**
  * Fixed non-action authority boundaries for WARN guidance (ADR-0039 E2-S2).
  * Each states what is local-only / not inferable / read-only; none instructs a
@@ -21,7 +22,10 @@ const AUTHORITY_TRANSPORT = "transport credentials and routing live only in loca
 const AUTHORITY_MIRROR = "mirror destinations and credentials live only in local config and are not inferable from the vault.";
 const AUTHORITY_SERVICES = "service supervision is machine-local and doctor is read-only.";
 const AUTHORITY_CONTEXT_INJECTION = "a valid context_injection.mode is not inferred from a malformed declaration; the documented default applies.";
+const AUTHORITY_MODEL_FALLBACK = "model fallback is an agent-local preference and doctor is read-only; doctor never switches models.";
 const LOCAL_CONFIG_PATH = "~/.config/piren/config.yml";
+/** Single non-mutating inspection target for model-fallback WARN guidance. */
+const MODEL_FALLBACK_NEXT = "inspect model.fallback in team/<agent>/config.yml.";
 /**
  * Compose a WARN message as `<condition>. Authority: <boundary> Next: <one
  * inspection action>.` The next step is exactly one inspection action (a named
@@ -174,6 +178,58 @@ export function checkContextInjectionConfig(config, id = "context-injection") {
         return { id, status: "warn", message: withWarnGuidance(resolved.warnings.join(" "), AUTHORITY_CONTEXT_INJECTION, `inspect ${nextKey} in team/<agent>/config.yml.`) };
     }
     return { id, status: "ok", message: `context_injection.mode: ${resolved.mode}.` };
+}
+/**
+ * Validate an agent-local `model.fallback` block for `piren doctor` (TB1).
+ *
+ * Assesses the raw agent config mapping only. Absent fallback (or a missing
+ * `model` block, or a missing/malformed whole config) stays quiet (null). A
+ * valid block reports count-only ok (never model ids); `auto_switch: false` is
+ * valid and inspectable. A present-but-invalid block warns with the parser's
+ * deterministic cause plus the fixed Authority/Next guidance. A valid fallback
+ * that duplicates the configured primary `model.id` warns (a doctor-level note,
+ * never a parser error). No catalog/provider probe is performed: availability
+ * validation is a later gated bullet (U2).
+ */
+export function checkModelFallbackConfig(config, id = "model-fallback") {
+    if (config === null)
+        return null;
+    const modelBlock = config.model;
+    if (typeof modelBlock !== "object" || modelBlock === null || Array.isArray(modelBlock))
+        return null;
+    const modelRecord = modelBlock;
+    if (!("fallback" in modelRecord))
+        return null;
+    const parsed = parseModelFallbackConfig(modelRecord.fallback);
+    if (!parsed.ok) {
+        return { id, status: "warn", message: withWarnGuidance(parsed.reason, AUTHORITY_MODEL_FALLBACK, MODEL_FALLBACK_NEXT) };
+    }
+    if (!parsed.present)
+        return null; // unreachable after the "in" guard; defensive
+    // Primary-duplication note: the configured model.id (and the provider/id
+    // composite form) is compared without echoing any id in the message.
+    const primaries = [];
+    if (typeof modelRecord.id === "string" && modelRecord.id.trim() !== "") {
+        primaries.push(modelRecord.id.trim());
+    }
+    if (typeof modelRecord.provider === "string" &&
+        modelRecord.provider.trim() !== "" &&
+        typeof modelRecord.id === "string" &&
+        modelRecord.id.trim() !== "" &&
+        !modelRecord.id.includes("/")) {
+        primaries.push(`${modelRecord.provider.trim()}/${modelRecord.id.trim()}`);
+    }
+    if (primaries.some((primary) => parsed.config.models.includes(primary))) {
+        return {
+            id,
+            status: "warn",
+            message: withWarnGuidance("model.fallback.models includes the configured primary model.id; rotation would simply re-attempt the primary.", AUTHORITY_MODEL_FALLBACK, MODEL_FALLBACK_NEXT),
+        };
+    }
+    const count = parsed.config.models.length;
+    const base = `model.fallback configured with ${count} fallback model(s).`;
+    const message = parsed.config.autoSwitch ? base : `${base} auto_switch is false; automatic switching is disabled.`;
+    return { id, status: "ok", message };
 }
 /**
  * Validate the opt-in steward alert mirror config (ADR-0039 E1, M2).
@@ -726,9 +782,13 @@ export async function doctorPiren(options = {}) {
             for (const agent of enabledAgents) {
                 const agentDir = resolve(vaultRoot, "team", agent);
                 checks.push(await checkRequiredPaths(`agent-files:${agent}`, agentDir, ["SOUL.md", "MEMORY.md", "config.yml", "inbox", "outbox", "logs", "sessions"]));
-                const contextInjectionCheck = checkContextInjectionConfig(await readAgentConfigFileBestEffort(join(agentDir, "config.yml")), `context-injection:${agent}`);
+                const agentConfig = await readAgentConfigFileBestEffort(join(agentDir, "config.yml"));
+                const contextInjectionCheck = checkContextInjectionConfig(agentConfig, `context-injection:${agent}`);
                 if (contextInjectionCheck)
                     checks.push(contextInjectionCheck);
+                const modelFallbackCheck = checkModelFallbackConfig(agentConfig, `model-fallback:${agent}`);
+                if (modelFallbackCheck)
+                    checks.push(modelFallbackCheck);
             }
         }
         catch (error) {
@@ -772,9 +832,13 @@ export async function doctorPiren(options = {}) {
         if (skillConflictCheck)
             checks.push(skillConflictCheck);
         checks.push(await checkRequiredPaths("agent-files", agentDir, ["SOUL.md", "MEMORY.md", "config.yml", "inbox", "outbox", "logs", "sessions"]));
-        const contextInjectionCheck = checkContextInjectionConfig(await readAgentConfigFileBestEffort(join(agentDir, "config.yml")));
+        const agentConfig = await readAgentConfigFileBestEffort(join(agentDir, "config.yml"));
+        const contextInjectionCheck = checkContextInjectionConfig(agentConfig);
         if (contextInjectionCheck)
             checks.push(contextInjectionCheck);
+        const modelFallbackCheck = checkModelFallbackConfig(agentConfig);
+        if (modelFallbackCheck)
+            checks.push(modelFallbackCheck);
         const staleCheck = await checkStaleAllowed(allowedAgents, vaultRoot);
         if (staleCheck)
             checks.push(staleCheck);

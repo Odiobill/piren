@@ -96,6 +96,21 @@ Piren translates this to Pi-native `--model` and `--models` flags. Provider cred
 
 Freshly scaffolded agent configs created by `piren setup` or `piren agent add` use Pi's native defaults from `~/.pi/agent/settings.json` when `defaultProvider` and `defaultModel` are present, plus `defaultThinkingLevel` when available. If Pi defaults are unavailable, Piren writes only the worker polling defaults and does not include an empty `model: {}` block. If no model block is present, Piren does not pass `--model` and Pi falls back to its native defaults.
 
+Model fallback declarations are validated but not yet executed:
+
+```yaml
+model:
+  id: kimi-coding/k3
+  thinking: high
+  fallback:
+    auto_switch: true   # optional boolean, default true
+    models:             # ordered list of exact Pi provider/modelId strings
+      - opencode-go/kimi-k3
+      - openrouter/kimi-k3
+```
+
+An absent `model.fallback` block is inert and does nothing. A present block must be a mapping with a non-empty ordered `models` array of exact lowercase `provider/modelId` strings (colon-bearing ids such as `ollama/llama3.1:8b` are preserved), at most five entries, no duplicates, and an optional boolean `auto_switch` (default true). `piren doctor` validates the declared block per agent: a valid block reports a count-only `model-fallback` ok check, `auto_switch: false` stays valid and inspectable, a malformed block or one duplicating the configured `model.id` reports a `model-fallback` warning with guidance, and no model IDs or secrets ever appear in doctor output. **As of this release the declaration has no runtime effect: no automatic model switching, classifier, rotation, or provider lookup is implemented.** Provider credentials and availability remain Pi-native under `~/.pi/agent/`; this vault configuration only names model IDs.
+
 Inspectable self-improvement is configured per agent and defaults to off:
 
 ```yaml
