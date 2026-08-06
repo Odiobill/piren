@@ -295,12 +295,10 @@ describe("TelegramTransport TB7 model fallback", () => {
     const { transport, clients, messages } = makeTelegram();
     const client = clients[0]!;
     client.scripts = [];
-    const original = client.promptAndWait.bind(client);
     client.promptAndWait = async (message: string) => {
       client.prompts.push(message);
       throw new Error("Timed out waiting for agent_settled.");
     };
-    void original;
     await expect(transport.handleUpdate(tgUpdate("review"))).rejects.toThrow("Timed out");
     expect(client.setModelCalls).toEqual([]);
     expect(messages).toEqual([]);
