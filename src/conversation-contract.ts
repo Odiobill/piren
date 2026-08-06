@@ -459,11 +459,6 @@ export interface ActiveGateResult {
 }
 
 /**
- * Active open/switch/attach gate: allowed ONLY when every durable member is in
- * the injected local runnable set. A malformed member fails closed. Empty
- * durable membership is deterministic and openable (a draft has no members).
- */
-/**
  * Deterministic non-secret rejection message for a failed active attach gate
  * (C3-A). Names the conversation and the durable member problem categories;
  * never echoes local config paths, tokens, or machine details.
@@ -481,6 +476,10 @@ export function formatActiveGateRejection(conversationId: string, gate: ActiveGa
 
 /**
  * Open/switch/attach gate result for the active surface.
+ *
+ * Active open/switch/attach gate: allowed ONLY when every durable member is in
+ * the injected local runnable set. A malformed member fails closed. Empty
+ * durable membership is deterministic and openable (a draft has no members).
  *
  * `checkActiveGate`/`canOpenActive` and the exact UI/API action terms
  * (`inspect` vs `open as active`/`attach`/`switch`) follow below.
