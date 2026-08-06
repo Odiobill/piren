@@ -48,6 +48,13 @@ describe("conversation lifecycle operator docs (L4)", () => {
       expect(API).toMatch(/immutable/);
     });
 
+    it("does not imply that a later lifecycle request repairs a missing event", () => {
+      // After L1's manifest-first event-append failure, the target state is
+      // already durable. A target-state repeat is the documented idempotent
+      // no-op, not a hidden or manual event-repair mechanism.
+      expect(API).toMatch(/cannot repair a missing lifecycle event/i);
+    });
+
     it("no longer claims archive/reopen are deferred", () => {
       expect(API).not.toMatch(/Archive\/reopen[^\n]*remain later/);
       expect(API).not.toMatch(/archive\/reopen[^\n]*deferred/i);
