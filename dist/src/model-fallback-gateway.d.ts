@@ -72,14 +72,14 @@ export interface ModelFallbackNotice {
     kind: "model_fallback";
     from: string;
     to: string;
-    category: "provider_error_other" | "provider_error_transient_exhausted";
+    category: "provider_error_other" | "provider_error_transient_exhausted" | "unavailable";
     attempt: number;
     exhausted: boolean;
 }
 export declare function buildModelFallbackNotice(input: {
     from: string | null;
     to: string | null;
-    category: "provider_error_other" | "provider_error_transient_exhausted";
+    category: "provider_error_other" | "provider_error_transient_exhausted" | "unavailable";
     attempt: number;
     exhausted: boolean;
 }): ModelFallbackNotice;

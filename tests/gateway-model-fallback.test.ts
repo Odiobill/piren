@@ -247,6 +247,14 @@ describe("TB4 gateway chat SSE model fallback", () => {
         {
           kind: "model_fallback",
           from: "anthropic/claude-sonnet-4-20250514",
+          to: "bogus/x",
+          category: "unavailable",
+          attempt: 1,
+          exhausted: false,
+        },
+        {
+          kind: "model_fallback",
+          from: "anthropic/claude-sonnet-4-20250514",
           to: "openai/gpt-4.1",
           category: "provider_error_other",
           attempt: 2,
@@ -279,7 +287,9 @@ describe("TB4 gateway chat SSE model fallback", () => {
       const fallbacks = framesByEvent(frames, "model_fallback").map((frame) => JSON.parse(frame.data));
       expect(fallbacks).toEqual([
         { kind: "model_fallback", from: "anthropic/claude-sonnet-4-20250514", to: "bogus/x", category: "provider_error_other", attempt: 1, exhausted: false },
+        { kind: "model_fallback", from: "anthropic/claude-sonnet-4-20250514", to: "bogus/x", category: "unavailable", attempt: 1, exhausted: false },
         { kind: "model_fallback", from: "anthropic/claude-sonnet-4-20250514", to: "bogus/y", category: "provider_error_other", attempt: 2, exhausted: false },
+        { kind: "model_fallback", from: "anthropic/claude-sonnet-4-20250514", to: "bogus/y", category: "unavailable", attempt: 2, exhausted: false },
         { kind: "model_fallback", from: "anthropic/claude-sonnet-4-20250514", to: "", category: "provider_error_other", attempt: 2, exhausted: true },
       ]);
       // No fallback text ever arrived; exactly one terminal done.

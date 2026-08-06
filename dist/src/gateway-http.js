@@ -597,8 +597,19 @@ export class GatewayServer {
                     break;
                 }
                 if (!switched) {
-                    // Unavailable fallback: keep the pending outcome so the next
-                    // iteration plans the next configured model without a re-prompt.
+                    // The pre-switch notice records the planned bounded attempt. Record
+                    // the actual rejection separately and explicitly so the visible
+                    // evidence never presents an unavailable model as a successful
+                    // provider-error continuation (design §7).
+                    notify(buildModelFallbackNotice({
+                        from: this.currentModelId,
+                        to: plan.modelId,
+                        category: "unavailable",
+                        attempt: plan.attemptNumber,
+                        exhausted: false,
+                    }));
+                    // Keep the pending outcome so the next iteration plans the next
+                    // configured model without a re-prompt.
                     continue;
                 }
                 currentPrompt = buildFallbackHandoffPrompt(prompt, plan.modelId, outcome.category);
