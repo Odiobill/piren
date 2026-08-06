@@ -28,6 +28,10 @@ let buffer = "";
 // TB4: the current model as last set via set_model (used to prove the
 // fallback re-prompt ran on the switched model).
 let currentModelId = null;
+// TB4 review: count accepted prompt commands so tests can prove the
+// bounded rotation never re-runs the request on the just-failed model
+// after a rejected set_model (surfaced via get_state messageCount).
+let promptCount = 0;
 // Blocking-approval state: set by a "waitapprove" prompt, cleared by the
 // matching extension_ui_response or by abort.
 let waitingApprovalId = null;
@@ -80,6 +84,7 @@ function handle(cmd) {
       emit({ type: "response", command: "prompt", success: false, id: cmd.id, error: "prompt rejected: fail trigger" });
       return;
     }
+    promptCount += 1;
     emit({ type: "response", command: "prompt", success: true, id: cmd.id });
     emit({ type: "agent_start" });
 
@@ -257,7 +262,7 @@ function handle(cmd) {
     return;
   }
   if (cmd.type === "get_state") {
-    emit({ type: "response", command: "get_state", success: true, id: cmd.id, data: { sessionId: "fake-session", isStreaming: false, thinkingLevel: "off", messageCount: 0, pendingMessageCount: 0 } });
+    emit({ type: "response", command: "get_state", success: true, id: cmd.id, data: { sessionId: "fake-session", isStreaming: false, thinkingLevel: "off", messageCount: promptCount, pendingMessageCount: 0 } });
     return;
   }
   if (cmd.type === "get_available_models") {
@@ -280,9 +285,19 @@ function handle(cmd) {
       emit({ type: "response", command: "set_model", success: false, id: cmd.id, error: "model not found" });
       return;
     }
-    currentModelId = cmd.provider + "/" + cmd.modelId;
-    emit({ type: "response", command: "set_model", success: true, id: cmd.id, data: { provider: cmd.provider, id: cmd.modelId } });
-    emit({ type: "model_changed", model: { provider: cmd.provider, id: cmd.modelId } });
+    // TB4 review: a modelId containing "slowmo" gets a delayed ack so tests
+    // can land a steward abort deterministically during the set_model
+    // round-trip (proves abort cancels the pending fallback re-prompt).
+    const finishSetModel = () => {
+      currentModelId = cmd.provider + "/" + cmd.modelId;
+      emit({ type: "response", command: "set_model", success: true, id: cmd.id, data: { provider: cmd.provider, id: cmd.modelId } });
+      emit({ type: "model_changed", model: { provider: cmd.provider, id: cmd.modelId } });
+    };
+    if (typeof cmd.modelId === "string" && cmd.modelId.includes("slowmo")) {
+      setTimeout(finishSetModel, 250);
+      return;
+    }
+    finishSetModel();
     return;
   }
   if (cmd.type === "set_thinking_level") {

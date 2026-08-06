@@ -439,6 +439,86 @@ describe("TB4 gateway chat SSE model fallback", () => {
       await server.close();
     }
   });
+
+  it("a rejected set_model skips directly to the next fallback without re-running the failed model", async () => {
+    const server = new GatewayServer({ target: fakePiTarget(), fallbackPolicyLoader: loader(MULTI) });
+    try {
+      const handle = await server.start();
+      const start = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "fallbackerr please" }),
+      });
+      const { stream_id } = (await start.json()) as { stream_id: string };
+      const stream = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/stream?stream_id=${stream_id}`);
+      const frames = parseSse(await stream.text());
+      expect(tokenText(frames)).toBe("Fbk openai/gpt-4.1");
+      expect(framesByEvent(frames, "done")).toHaveLength(1);
+
+      // Design §5.1/§7: a rejected set_model records the skip and tries the
+      // NEXT configured fallback directly. Exactly two prompt commands may
+      // reach the live client: the initial run plus the single handoff
+      // re-prompt. An extra prompt would mean the request was re-run on the
+      // just-failed primary between fallback attempts.
+      const state = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/state`);
+      const body = (await state.json()) as { messageCount?: number };
+      expect(body.messageCount).toBe(2);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("abort during the set_model exchange cancels the pending fallback re-prompt", async () => {
+    const slowPolicy = fallbackPolicy({
+      fallback: { ok: true, present: true, config: { autoSwitch: true, models: ["openai/slowmo"] } },
+    });
+    const server = new GatewayServer({ target: fakePiTarget(), fallbackPolicyLoader: loader(slowPolicy) });
+    try {
+      const handle = await server.start();
+      const start = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "fallbackerr please" }),
+      });
+      const { stream_id } = (await start.json()) as { stream_id: string };
+      const stream = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/stream?stream_id=${stream_id}`);
+      const streamBody = stream.body;
+      if (!streamBody) throw new Error("missing SSE body");
+
+      // Read the live stream until the model_fallback notice proves the
+      // set_model exchange is in flight (the fake delays the slowmo ack by
+      // 250ms), then land the steward abort inside that window.
+      const reader = streamBody.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      while (!text.includes("model_fallback")) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      expect(text).toContain("model_fallback");
+
+      const abort = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/abort`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(abort.status).toBe(200);
+
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      const frames = parseSse(text);
+      // Design §5.6: steward intent wins. Even though the delayed set_model
+      // eventually succeeded, the handoff re-prompt must never run.
+      expect(tokenText(frames)).toBe("");
+      expect(framesByEvent(frames, "done")).toHaveLength(1);
+    } finally {
+      await server.close();
+    }
+  });
 });
 
 describe("TB4 OpenAI-compatible route model fallback", () => {

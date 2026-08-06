@@ -520,13 +520,22 @@ export class GatewayServer {
             const config = policy.fallback.ok && policy.fallback.present ? policy.fallback.config : null;
             let currentPrompt = prompt;
             let terminal = null;
+            // The last settled run awaiting a rotation decision. A rejected
+            // set_model keeps this pending so the loop plans the NEXT configured
+            // fallback directly (design §5.1/§7: skip with evidence, try the
+            // next) instead of re-running the request on the just-failed model.
+            // Only a successful switch clears it, triggering the handoff re-prompt.
+            let pending = null;
             while (terminal === null) {
-                const events = await this.promptAndSettle(client, currentPrompt, timeoutMs);
-                if (incident.aborted) {
-                    terminal = events;
-                    break;
+                if (pending === null) {
+                    const events = await this.promptAndSettle(client, currentPrompt, timeoutMs);
+                    if (incident.aborted) {
+                        terminal = events;
+                        break;
+                    }
+                    pending = { events, outcome: classifyRunOutcome(events) };
                 }
-                const outcome = classifyRunOutcome(events);
+                const { events, outcome } = pending;
                 const plan = config === null
                     ? { kind: "no-attempt", reason: "not-eligible" }
                     : planFallbackAttempt({
@@ -581,10 +590,19 @@ export class GatewayServer {
                     // Unavailable fallback: skip with evidence already emitted.
                 }
                 incident.attemptedModelIds.push(plan.modelId);
+                // Steward abort during the set_model exchange cancels the pending
+                // re-prompt (design §5.6: abort during an attempt cancels the rest).
+                if (incident.aborted) {
+                    terminal = events;
+                    break;
+                }
                 if (!switched) {
+                    // Unavailable fallback: keep the pending outcome so the next
+                    // iteration plans the next configured model without a re-prompt.
                     continue;
                 }
                 currentPrompt = buildFallbackHandoffPrompt(prompt, plan.modelId, outcome.category);
+                pending = null;
             }
             return terminal ?? [];
         }
