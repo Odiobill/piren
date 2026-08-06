@@ -269,6 +269,26 @@ export declare class GatewayServer {
      * conversations stay visibly read-only inspection (C0 §8 exact terms).
      */
     private handleConversationAttach;
+    /**
+     * L2: authenticated POST /api/conversations/<id>/archive|reopen — the only
+     * mutating lifecycle routes besides first-message activation and message
+     * append. They call the accepted L1 `transitionConversationLifecycle` core;
+     * this handler only maps the typed result to the bounded HTTP vocabulary
+     * (contract §3/§9 L2, selected defaults):
+     *   - 200 {conversation, transitioned:true, event} for an actual transition;
+     *   - 200 {conversation, transitioned:false} for a same-target repeat (no
+     *     write, no event);
+     *   - 409 exact busy vocabulary for genuine L1 lock contention;
+     *   - 404 for absence (existing conversationError ENOENT mapping) — never
+     *     relabelled as contention;
+     *   - 500 {error:"internal error"} for an L1 event-append failure (the
+     *     transitioned manifest is authoritative; no rollback/retry/repair/
+     *     fabricated event, no raw error leakage).
+     * State-only: no dispatch, retry, reroute, abort, attach, SSE, broker/Pi
+     * client/session, audience/membership, or local-config side effect. Route
+     * bodies carry no lifecycle input.
+     */
+    private handleConversationLifecycle;
     private handleConversationEvents;
     private handleConversationEventStream;
     private writeJson;

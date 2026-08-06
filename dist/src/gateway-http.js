@@ -14,7 +14,7 @@ import { createRoom, listRoomEvents, listRooms, readRoom } from "./rooms.js";
 import { buildRoomAgentsResponse } from "./room-agents.js";
 import { checkActiveGate, formatActiveGateRejection, resolveStewardMentions } from "./conversation-contract.js";
 import { ConversationBroker, } from "./conversation-broker.js";
-import { appendConversationEvent, createConversation, listConversations, readConversation, readConversationEvents, updateConversationAudience, } from "./conversations.js";
+import { appendConversationEvent, createConversation, listConversations, readConversation, readConversationEvents, transitionConversationLifecycle, updateConversationAudience, } from "./conversations.js";
 import { classifyRunOutcome, isFallbackEligibleOutcome } from "./model-fallback-outcome.js";
 import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
 import { buildModelFallbackNotice, loadAgentFallbackPolicy, splitFallbackModelId, } from "./model-fallback-gateway.js";
@@ -1713,6 +1713,9 @@ export class GatewayServer {
         else if (rest[0] === "attach" && rest.length === 1 && req.method === "POST") {
             await this.handleConversationAttach(res, conversationId);
         }
+        else if ((rest[0] === "archive" || rest[0] === "reopen") && rest.length === 1 && req.method === "POST") {
+            await this.handleConversationLifecycle(res, conversationId, rest[0]);
+        }
         else {
             this.writeJson(res, 404, { error: "not found" });
         }
@@ -1906,6 +1909,67 @@ export class GatewayServer {
             conversation: this.safeConversation(conversation),
             attached: true,
             gate: { ok: true, missing: [], malformed: [] },
+        });
+    }
+    /**
+     * L2: authenticated POST /api/conversations/<id>/archive|reopen — the only
+     * mutating lifecycle routes besides first-message activation and message
+     * append. They call the accepted L1 `transitionConversationLifecycle` core;
+     * this handler only maps the typed result to the bounded HTTP vocabulary
+     * (contract §3/§9 L2, selected defaults):
+     *   - 200 {conversation, transitioned:true, event} for an actual transition;
+     *   - 200 {conversation, transitioned:false} for a same-target repeat (no
+     *     write, no event);
+     *   - 409 exact busy vocabulary for genuine L1 lock contention;
+     *   - 404 for absence (existing conversationError ENOENT mapping) — never
+     *     relabelled as contention;
+     *   - 500 {error:"internal error"} for an L1 event-append failure (the
+     *     transitioned manifest is authoritative; no rollback/retry/repair/
+     *     fabricated event, no raw error leakage).
+     * State-only: no dispatch, retry, reroute, abort, attach, SSE, broker/Pi
+     * client/session, audience/membership, or local-config side effect. Route
+     * bodies carry no lifecycle input.
+     */
+    async handleConversationLifecycle(res, conversationId, transition) {
+        let result;
+        try {
+            result = await transitionConversationLifecycle({
+                vaultRoot: this.vaultRoot,
+                conversationId,
+                transition,
+            });
+        }
+        catch (error) {
+            // L1 absence/filesystem failures propagate honestly through the existing
+            // conversationError mapping (ENOENT-coded -> 404 "conversation not
+            // found"; anything else -> the bounded 500). Never relabel absence as
+            // contention and never expose raw errors.
+            this.conversationError(res, error);
+            return;
+        }
+        if (!result.ok) {
+            if (result.kind === "lock-busy") {
+                this.writeJson(res, 409, {
+                    error: `Conversation '${conversationId}' is busy (another update holds the lock); retry after it completes.`,
+                });
+                return;
+            }
+            // event-append-failed: the transitioned manifest is authoritative; a
+            // bounded 500 with no raw filesystem/typed-name leakage.
+            this.writeJson(res, 500, { error: "internal error" });
+            return;
+        }
+        if (result.transitioned) {
+            this.writeJson(res, 200, {
+                conversation: this.safeConversation(result.conversation),
+                transitioned: true,
+                event: this.safeConversationEvent(result.event),
+            });
+            return;
+        }
+        this.writeJson(res, 200, {
+            conversation: this.safeConversation(result.conversation),
+            transitioned: false,
         });
     }
     async handleConversationEvents(res, conversationId) {
