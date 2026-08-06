@@ -21,7 +21,7 @@
 import { link, mkdir, open, readdir, readFile, rm, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { applyMembershipChange, type ValidatedRecipients } from "./conversation-contract.js";
+import { applyMembershipChange, transitionLifecycle, type ConversationLifecycleTransition, type ValidatedRecipients } from "./conversation-contract.js";
 
 export const CONVERSATION_STATUSES = ["open", "archived"] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
@@ -33,6 +33,11 @@ export const CONVERSATION_EVENT_KINDS = [
   "model_fallback",
   "run_finished",
   "run_cancelled",
+  // L1: additive lifecycle kind (accepted archive/reopen contract §4.5). The
+  // kind is additive and backwards-compatible: old events keep parsing, the
+  // strict parser recognizes it only on servers that ship it, and the web
+  // timeline renders it via its default branch.
+  "lifecycle_transition",
 ] as const;
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 
@@ -181,8 +186,10 @@ function renderConversationManifest(options: {
   id: string;
   title: string;
   audience: readonly string[];
+  /** Current durable status; REQUIRED so no rewrite silently reopens an archived manifest. */
+  status: ConversationStatus;
   timestamp: string;
-  /** Original activation timestamp; preserved byte-for-byte by audience updates. */
+  /** Original activation timestamp; preserved byte-for-byte by audience updates and transitions. */
   created?: string | undefined;
 }): string {
   const audienceYaml =
@@ -195,7 +202,7 @@ function renderConversationManifest(options: {
     `id: ${options.id}`,
     `title: "${options.title}"`,
     audienceYaml,
-    "status: open",
+    `status: ${options.status}`,
     "created_by: steward",
     `created: ${options.created ?? options.timestamp}`,
     `updated: ${options.timestamp}`,
@@ -291,7 +298,7 @@ export async function createConversation(options: CreateConversationOptions): Pr
   assertInside(root, conversationDir);
 
   await mkdir(join(conversationDir, "events"), { recursive: true });
-  const manifest = renderConversationManifest({ id, title: conversationTitleFromText(text, new Date(created)), audience, timestamp: created });
+  const manifest = renderConversationManifest({ id, title: conversationTitleFromText(text, new Date(created)), audience, status: "open", timestamp: created });
   const absolutePath = join(conversationDir, "index.md");
   let bytes: number;
   try {
@@ -315,6 +322,21 @@ export async function createConversation(options: CreateConversationOptions): Pr
     absolutePath,
     bytes,
   };
+}
+
+/**
+ * Atomic manifest replace shared by every manifest mutation (audience update
+ * and lifecycle transitions): a same-directory temp file (no-clobber `wx`),
+ * then a POSIX rename over the existing manifest. Never a partial manifest;
+ * the file stays inspectable at every step.
+ */
+async function atomicReplaceManifest(conversationDir: string, absolutePath: string, content: string): Promise<void> {
+  const tempPath = resolve(
+    conversationDir,
+    `.manifest-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`,
+  );
+  await writeFile(tempPath, content, { encoding: "utf8", flag: "wx" });
+  await rename(tempPath, absolutePath);
 }
 
 export interface UpdateConversationAudienceOptions {
@@ -449,17 +471,166 @@ export async function updateConversationAudience(
       id: current.id,
       title: current.title,
       audience,
+      // L1 status-safe rewrite: every manifest mutation preserves the parsed
+      // status, so an audience update never silently reopens an archived
+      // conversation (accepted archive/reopen contract §5.2).
+      status: current.status,
       timestamp: updatedStamp,
       created: current.created,
     });
-    // Atomic replace: temp file in the same directory, then rename over the
-    // existing manifest (POSIX rename replaces atomically). Never a partial
-    // manifest; the file stays inspectable at every step.
-    const tempPath = resolve(conversationDir, `.audience-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
-    await writeFile(tempPath, content, { encoding: "utf8", flag: "wx" });
-    await rename(tempPath, absolutePath);
+    await atomicReplaceManifest(conversationDir, absolutePath, content);
 
     return readConversation({ vaultRoot: root, conversationId: options.conversationId });
+  } finally {
+    await lock.release();
+  }
+}
+
+/**
+ * L1 — durable Conversation lifecycle transitions (accepted archive/reopen
+ * contract §4/§5, selected defaults).
+ *
+ * `transitionConversationLifecycle` performs the complete read → C1 state
+ * verify → manifest atomic rewrite → lifecycle-event append sequence under the
+ * existing per-conversation no-clobber lock. Only `open → archived` (archive)
+ * and `archived → open` (reopen) mutate; a request whose target state already
+ * matches the manifest returns a typed idempotent no-op with NO write and NO
+ * event. Exactly one immutable `lifecycle_transition` event (author steward,
+ * optional `lifecycleState` metadata) is appended for an actual transition.
+ *
+ * Failure boundaries (typed, no hidden state): a held lock fails closed as
+ * `lock-busy` before any manifest write or event; an event-append failure
+ * leaves the transitioned manifest authoritative (never rolled back,
+ * auto-repaired, or retried) and returns `event-append-failed` with the
+ * transitioned manifest — suitable for a later gateway slice to surface as the
+ * contract's bounded 500. The helper never creates a broker/Pi client/session,
+ * dispatches, retries, reroutes, aborts, attaches, streams, or changes
+ * membership.
+ */
+export type ConversationLifecycleTransitionKind = Extract<ConversationLifecycleTransition, "archive" | "reopen">;
+
+export interface TransitionConversationLifecycleOptions {
+  vaultRoot: string;
+  conversationId: string;
+  transition: ConversationLifecycleTransitionKind;
+  now?: () => Date;
+  nonce?: () => string;
+  io?: ConversationWriteIo | undefined;
+  /** Deterministic test seam for the lock token. */
+  lockToken?: () => string;
+  /** Deterministic test seam: a barrier awaited while holding the lock. */
+  holdBarrier?: Promise<void> | undefined;
+}
+
+export type ConversationLifecycleTransitionResult =
+  | { ok: true; transitioned: true; conversation: ConversationManifest; event: AppendConversationEventResult }
+  | { ok: true; transitioned: false; conversation: ConversationManifest }
+  | { ok: false; kind: "lock-busy"; conversationId: string }
+  | { ok: false; kind: "event-append-failed"; conversationId: string; conversation: ConversationManifest };
+
+const LIFECYCLE_EVENT_BODY: Record<ConversationLifecycleTransitionKind, string> = {
+  archive: "Archived by steward.",
+  reopen: "Reopened by steward.",
+};
+
+export async function transitionConversationLifecycle(
+  options: TransitionConversationLifecycleOptions,
+): Promise<ConversationLifecycleTransitionResult> {
+  assertValidConversationId(options.conversationId);
+  const root = resolve(options.vaultRoot);
+  const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
+  const absolutePath = join(conversationDir, "index.md");
+  assertInside(root, conversationDir);
+
+  // Same per-conversation no-clobber lock as audience updates: every manifest
+  // mutation in this slice serializes on it (contract §5.1). A held lock fails
+  // closed with a typed lock-busy result before ANY manifest write or event.
+  const lockOptions: { vaultRoot: string; conversationId: string; now?: () => Date; token?: () => string } = {
+    vaultRoot: root,
+    conversationId: options.conversationId,
+  };
+  if (options.now !== undefined) lockOptions.now = options.now;
+  if (options.lockToken !== undefined) lockOptions.token = options.lockToken;
+  let lock;
+  try {
+    lock = await acquireAudienceLock(lockOptions);
+  } catch {
+    return { ok: false, kind: "lock-busy", conversationId: options.conversationId };
+  }
+  try {
+    if (options.holdBarrier !== undefined) {
+      await options.holdBarrier;
+    }
+    const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
+
+    // C1 is the single state machine: with only the two durable states, the
+    // only possible rejections for archive/reopen ARE the already-in-target-
+    // state repeats (archive from archived, reopen from open), which the
+    // selected default turns into the typed idempotent no-op (no write, no
+    // event). Any other rejection would be a programming error surfaced as a
+    // thrown error (never silently swallowed).
+    const result = transitionLifecycle(current.status, options.transition);
+    if (!result.ok) {
+      const inTargetState =
+        (options.transition === "archive" && current.status === "archived") ||
+        (options.transition === "reopen" && current.status === "open");
+      if (!inTargetState) {
+        throw new Error(`Unexpected conversation lifecycle rejection: ${result.reason}`);
+      }
+      return { ok: true, transitioned: false, conversation: current };
+    }
+    // C1's durable outcomes for archive/reopen are exactly archived/open;
+    // anything else is a programming error (fail closed, never silently cast).
+    if (result.next !== "archived" && result.next !== "open") {
+      throw new Error(`Unexpected conversation lifecycle next state: ${result.next}`);
+    }
+    const newStatus: ConversationStatus = result.next;
+
+    // Manifest-first: the authoritative state is written before the lifecycle
+    // event (contract §4.2); created and audience are preserved byte-for-byte.
+    const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
+    const content = renderConversationManifest({
+      id: current.id,
+      title: current.title,
+      audience: current.audience,
+      status: newStatus,
+      timestamp: updatedStamp,
+      created: current.created,
+    });
+    await atomicReplaceManifest(conversationDir, absolutePath, content);
+    const transitionedManifest: ConversationManifest = {
+      id: current.id,
+      title: current.title,
+      audience: current.audience,
+      status: newStatus,
+      createdBy: current.createdBy,
+      created: current.created,
+      updated: updatedStamp,
+      path: current.path,
+      absolutePath: current.absolutePath,
+    };
+
+    // Exactly one immutable lifecycle event per actual transition. A failure
+    // here NEVER rolls back or auto-repairs the authoritative manifest; it is
+    // surfaced as the typed event-append-failed result with the transitioned
+    // manifest (contract §4.2/§5).
+    try {
+      const event = await appendConversationEvent({
+        vaultRoot: root,
+        conversationId: options.conversationId,
+        kind: "lifecycle_transition",
+        authorKind: "steward",
+        author: "steward",
+        body: LIFECYCLE_EVENT_BODY[options.transition],
+        lifecycleState: newStatus,
+        ...(options.now !== undefined ? { now: options.now } : {}),
+        ...(options.nonce !== undefined ? { nonce: options.nonce } : {}),
+        ...(options.io !== undefined ? { io: options.io } : {}),
+      });
+      return { ok: true, transitioned: true, conversation: transitionedManifest, event };
+    } catch {
+      return { ok: false, kind: "event-append-failed", conversationId: options.conversationId, conversation: transitionedManifest };
+    }
   } finally {
     await lock.release();
   }
@@ -480,6 +651,8 @@ export interface AppendConversationEventOptions {
   failureKind?: ConversationRunFailureKind | undefined;
   /** C2 context-handoff selection metadata (inspectable dispatch metadata). */
   contextMetadata?: ConversationContextMetadata | undefined;
+  /** L1 lifecycle-transition target state metadata (additive, optional). */
+  lifecycleState?: ConversationStatus | undefined;
   now?: () => Date;
   nonce?: () => string;
   io?: ConversationWriteIo | undefined;
@@ -525,6 +698,7 @@ function renderConversationEvent(options: {
   runStatus?: ConversationRunStatus | undefined;
   failureKind?: ConversationRunFailureKind | undefined;
   contextMetadata?: ConversationContextMetadata | undefined;
+  lifecycleState?: ConversationStatus | undefined;
   body: string;
 }): string {
   const fields: string[] = [
@@ -547,8 +721,15 @@ function renderConversationEvent(options: {
   if (options.runStatus !== undefined) fields.push(`runStatus: ${options.runStatus}`);
   if (options.failureKind !== undefined) fields.push(`failureKind: ${options.failureKind}`);
   if (options.contextMetadata !== undefined) fields.push(`contextMetadata: '${JSON.stringify(options.contextMetadata)}'`);
+  if (options.lifecycleState !== undefined) fields.push(`lifecycleState: ${options.lifecycleState}`);
   fields.push("---", "", options.body, "");
   return fields.join("\n");
+}
+
+function assertValidLifecycleMetadata(lifecycleState: ConversationStatus | undefined): void {
+  if (lifecycleState !== undefined && lifecycleState !== "open" && lifecycleState !== "archived") {
+    throw new Error(`Invalid conversation lifecycleState: '${String(lifecycleState)}'.`);
+  }
 }
 
 function assertValidRunOutcome(
@@ -624,6 +805,7 @@ export async function appendConversationEvent(
     throw new Error(`Invalid conversation author kind: ${options.authorKind}`);
   }
   assertValidRunOutcome(options.kind, options.runStatus, options.failureKind);
+  assertValidLifecycleMetadata(options.lifecycleState);
 
   const root = resolve(options.vaultRoot);
   const created = (options.now ?? (() => new Date()))().toISOString();
@@ -661,6 +843,7 @@ export async function appendConversationEvent(
       ...(options.runStatus !== undefined ? { runStatus: options.runStatus } : {}),
       ...(options.failureKind !== undefined ? { failureKind: options.failureKind } : {}),
       ...(options.contextMetadata !== undefined ? { contextMetadata: options.contextMetadata } : {}),
+      ...(options.lifecycleState !== undefined ? { lifecycleState: options.lifecycleState } : {}),
       body: options.body,
     });
     try {
@@ -765,6 +948,8 @@ export interface ConversationEventRecord {
   runStatus?: ConversationRunStatus | undefined;
   failureKind?: ConversationRunFailureKind | undefined;
   contextMetadata?: ConversationContextMetadata | undefined;
+  /** L1 lifecycle-transition target state metadata (additive, optional). */
+  lifecycleState?: ConversationStatus | undefined;
   body: string;
   path: string;
 }
@@ -886,6 +1071,15 @@ function parseConversationEvent(content: string, path: string, expectedConversat
     } catch {
       // Malformed stored metadata is tolerated as absent; the body stays authoritative.
     }
+  }
+  // L1 lifecycle metadata: fail-closed on a present-but-invalid value (a
+  // lifecycle event carrying an impossible state is contradictory evidence);
+  // absent stays absent so every existing event keeps parsing.
+  const lifecycleState = fields.lifecycleState;
+  if (lifecycleState === "open" || lifecycleState === "archived") {
+    record.lifecycleState = lifecycleState as ConversationStatus;
+  } else if (lifecycleState !== undefined) {
+    throw new Error(`Invalid conversation event at ${path}: lifecycleState must be open or archived`);
   }
   return record;
 }

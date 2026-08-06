@@ -17,10 +17,10 @@
  * This module is a pure core over an injected write seam: every behavior is
  * unit-testable without Pi auth or a real filesystem beyond the caller's io.
  */
-import { type ValidatedRecipients } from "./conversation-contract.js";
+import { type ConversationLifecycleTransition, type ValidatedRecipients } from "./conversation-contract.js";
 export declare const CONVERSATION_STATUSES: readonly ["open", "archived"];
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
-export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled"];
+export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition"];
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 export declare const CONVERSATION_AUTHOR_KINDS: readonly ["steward", "agent", "system"];
 export type ConversationAuthorKind = (typeof CONVERSATION_AUTHOR_KINDS)[number];
@@ -95,6 +95,60 @@ export interface UpdateConversationAudienceOptions {
  * contract); no hidden DB, queue, retry, or fallback.
  */
 export declare function updateConversationAudience(options: UpdateConversationAudienceOptions): Promise<ConversationManifest>;
+/**
+ * L1 — durable Conversation lifecycle transitions (accepted archive/reopen
+ * contract §4/§5, selected defaults).
+ *
+ * `transitionConversationLifecycle` performs the complete read → C1 state
+ * verify → manifest atomic rewrite → lifecycle-event append sequence under the
+ * existing per-conversation no-clobber lock. Only `open → archived` (archive)
+ * and `archived → open` (reopen) mutate; a request whose target state already
+ * matches the manifest returns a typed idempotent no-op with NO write and NO
+ * event. Exactly one immutable `lifecycle_transition` event (author steward,
+ * optional `lifecycleState` metadata) is appended for an actual transition.
+ *
+ * Failure boundaries (typed, no hidden state): a held lock fails closed as
+ * `lock-busy` before any manifest write or event; an event-append failure
+ * leaves the transitioned manifest authoritative (never rolled back,
+ * auto-repaired, or retried) and returns `event-append-failed` with the
+ * transitioned manifest — suitable for a later gateway slice to surface as the
+ * contract's bounded 500. The helper never creates a broker/Pi client/session,
+ * dispatches, retries, reroutes, aborts, attaches, streams, or changes
+ * membership.
+ */
+export type ConversationLifecycleTransitionKind = Extract<ConversationLifecycleTransition, "archive" | "reopen">;
+export interface TransitionConversationLifecycleOptions {
+    vaultRoot: string;
+    conversationId: string;
+    transition: ConversationLifecycleTransitionKind;
+    now?: () => Date;
+    nonce?: () => string;
+    io?: ConversationWriteIo | undefined;
+    /** Deterministic test seam for the lock token. */
+    lockToken?: () => string;
+    /** Deterministic test seam: a barrier awaited while holding the lock. */
+    holdBarrier?: Promise<void> | undefined;
+}
+export type ConversationLifecycleTransitionResult = {
+    ok: true;
+    transitioned: true;
+    conversation: ConversationManifest;
+    event: AppendConversationEventResult;
+} | {
+    ok: true;
+    transitioned: false;
+    conversation: ConversationManifest;
+} | {
+    ok: false;
+    kind: "lock-busy";
+    conversationId: string;
+} | {
+    ok: false;
+    kind: "event-append-failed";
+    conversationId: string;
+    conversation: ConversationManifest;
+};
+export declare function transitionConversationLifecycle(options: TransitionConversationLifecycleOptions): Promise<ConversationLifecycleTransitionResult>;
 export interface AppendConversationEventOptions {
     vaultRoot: string;
     conversationId: string;
@@ -110,6 +164,8 @@ export interface AppendConversationEventOptions {
     failureKind?: ConversationRunFailureKind | undefined;
     /** C2 context-handoff selection metadata (inspectable dispatch metadata). */
     contextMetadata?: ConversationContextMetadata | undefined;
+    /** L1 lifecycle-transition target state metadata (additive, optional). */
+    lifecycleState?: ConversationStatus | undefined;
     now?: () => Date;
     nonce?: () => string;
     io?: ConversationWriteIo | undefined;
@@ -169,6 +225,8 @@ export interface ConversationEventRecord {
     runStatus?: ConversationRunStatus | undefined;
     failureKind?: ConversationRunFailureKind | undefined;
     contextMetadata?: ConversationContextMetadata | undefined;
+    /** L1 lifecycle-transition target state metadata (additive, optional). */
+    lifecycleState?: ConversationStatus | undefined;
     body: string;
     path: string;
 }
