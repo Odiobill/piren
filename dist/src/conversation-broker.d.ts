@@ -22,6 +22,7 @@ import { type ConversationContextMetadata, type ConversationEventRecord, type Co
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import { type ExtensionUiResponse, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
+import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 /** C2 committed context budget (contract §5). */
 export declare const CONVERSATION_CONTEXT_MAX_ITEMS = 8;
 export declare const CONVERSATION_CONTEXT_MAX_CHARS = 16384;
@@ -30,11 +31,21 @@ export interface ConversationRpcClient extends TransportRpcClient {
     onExit(listener: () => void): () => void;
     prompt(message: string): Promise<void>;
     respondToUiRequest(id: string, response: ExtensionUiResponse): void;
+    /** TB6: switch the active model on the same live client (optional; a
+     * fallback attempt fails closed as an unavailable skip when absent). */
+    setModel?(provider: string, modelId: string): Promise<unknown>;
 }
 export interface ConversationBrokerTimers {
     setTimeout(callback: () => void, ms: number): unknown;
     clearTimeout(handle: unknown): void;
 }
+/**
+ * TB6: per-agent resolved fallback policy (mirrors the room broker). The
+ * production adapter reads `team/<agent>/config.yml` best-effort under the
+ * vault root; tests inject a fixed policy so the broker core stays
+ * fake-client/filesystem-testable.
+ */
+export type ConversationBrokerFallbackPolicyLoader = (agent: string) => Promise<GatewayFallbackPolicy>;
 export interface ConversationBrokerOptions {
     vaultRoot: string;
     runnableAgents: string[];
@@ -49,6 +60,13 @@ export interface ConversationBrokerOptions {
         vaultRoot: string;
         conversationId: string;
     }) => Promise<ConversationManifest>;
+    /**
+     * TB6: per-agent fallback policy loader (defaults to a best-effort
+     * `team/<agent>/config.yml` adapter over the vault root). Absent /
+     * malformed / disabled / no-primary policy is inert. The conversation
+     * broker gains NO approval/agent-address/handoff facility.
+     */
+    fallbackPolicyLoader?: ConversationBrokerFallbackPolicyLoader | undefined;
 }
 export interface ConversationMentionInput {
     conversationId: string;
@@ -127,6 +145,7 @@ export declare class ConversationBroker {
     private readonly runTimeoutMs;
     private readonly io;
     private readonly conversationReader;
+    private readonly fallbackPolicyLoader;
     private readonly activeRuns;
     private readonly eventListeners;
     private closed;
@@ -143,6 +162,20 @@ export declare class ConversationBroker {
     private reserveRun;
     private executeConversationRun;
     private handleClientEvent;
+    /**
+     * TB6 rotation decision after one logical attempt reaches agent_settled
+     * (mirrors the room broker). Continuation ONLY for a fully-settled
+     * zero-side-effect eligible provider error on the SAME live isolated
+     * client/session: durable `model_fallback` evidence is appended first
+     * (correlated to the steward event), then `set_model(next)` and a handoff
+     * re-prompt wrapping the ORIGINAL prompt verbatim. Declaration-order
+     * at-most-once; a rejected `set_model` is an attempted unavailable skip
+     * keeping the settled outcome pending (never re-runs the request on the
+     * just-failed model); exhaustion settles a visible `provider_error`
+     * terminal. Abort/close/timeout/exit settling the run at any await
+     * boundary (including during `set_model`) cancels remaining attempts.
+     */
+    private onSettledAttempt;
     private settle;
     private finalizeRun;
     close(): Promise<void>;

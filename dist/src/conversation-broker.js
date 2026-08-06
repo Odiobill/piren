@@ -22,6 +22,9 @@ import { appendConversationEvent, readConversation, } from "./conversations.js";
 import { selectDurableTranscript, validateTranscriptBudget, } from "./conversation-contract.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { extractAssistantText } from "./gateway-rpc.js";
+import { classifyRunOutcome, isFallbackEligibleOutcome, } from "./model-fallback-outcome.js";
+import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
+import { loadAgentFallbackPolicy, splitFallbackModelId, } from "./model-fallback-gateway.js";
 /** C2 committed context budget (contract §5). */
 export const CONVERSATION_CONTEXT_MAX_ITEMS = 8;
 export const CONVERSATION_CONTEXT_MAX_CHARS = 16384;
@@ -121,6 +124,7 @@ export class ConversationBroker {
     runTimeoutMs;
     io;
     conversationReader;
+    fallbackPolicyLoader;
     activeRuns = new Map();
     eventListeners = new Map();
     closed = false;
@@ -133,6 +137,9 @@ export class ConversationBroker {
         this.runTimeoutMs = options.runTimeoutMs ?? 120_000;
         this.io = options.io;
         this.conversationReader = options.conversationReader ?? readConversation;
+        // TB6: production default reads the agent-local config best-effort; an
+        // injected loader keeps the broker core fake-client/filesystem-testable.
+        this.fallbackPolicyLoader = options.fallbackPolicyLoader ?? ((agent) => loadAgentFallbackPolicy(this.vaultRoot, agent));
         this.sessions = new TransportSessionManager({
             runnableAgents: this.runnableAgents,
             targetBuilder: options.targetBuilder,
@@ -264,6 +271,12 @@ export class ConversationBroker {
             settled: false,
             settleKind: undefined,
             events: [],
+            attemptEvents: [],
+            attemptedModelIds: [],
+            currentModelId: null,
+            fallbackPolicy: undefined,
+            exhaustion: undefined,
+            originalPrompt: "",
             timeoutHandle: undefined,
             unsubscribeEvents: undefined,
             unsubscribeExit: undefined,
@@ -303,6 +316,9 @@ export class ConversationBroker {
             };
         }
         run.client = session.client;
+        // TB6: the ORIGINAL prompt is stored so every fallback handoff re-prompt
+        // wraps it verbatim (never a prior handoff, never a new request).
+        run.originalPrompt = prompt;
         await this.appendAndPublish(run.conversationId, {
             kind: "run_started",
             authorKind: "system",
@@ -334,6 +350,7 @@ export class ConversationBroker {
         if (run.settled)
             return;
         run.events.push(event);
+        run.attemptEvents.push(event);
         if (event.type === "agent_end") {
             // TB0/G1: agent_end alone is never terminal (Pi may still auto-retry,
             // retry compaction, or drain queued follow-ups). Only agent_settled
@@ -341,7 +358,146 @@ export class ConversationBroker {
             return;
         }
         if (event.type === "agent_settled") {
+            // TB6: agent_settled starts the rotation decision instead of an
+            // unconditional completed settle; an eligible zero-side-effect
+            // provider error may continue on the same client, otherwise the run
+            // settles with the existing completed semantics.
+            void this.onSettledAttempt(run);
+        }
+    }
+    /**
+     * TB6 rotation decision after one logical attempt reaches agent_settled
+     * (mirrors the room broker). Continuation ONLY for a fully-settled
+     * zero-side-effect eligible provider error on the SAME live isolated
+     * client/session: durable `model_fallback` evidence is appended first
+     * (correlated to the steward event), then `set_model(next)` and a handoff
+     * re-prompt wrapping the ORIGINAL prompt verbatim. Declaration-order
+     * at-most-once; a rejected `set_model` is an attempted unavailable skip
+     * keeping the settled outcome pending (never re-runs the request on the
+     * just-failed model); exhaustion settles a visible `provider_error`
+     * terminal. Abort/close/timeout/exit settling the run at any await
+     * boundary (including during `set_model`) cancels remaining attempts.
+     */
+    async onSettledAttempt(run) {
+        if (run.settled)
+            return;
+        if (run.fallbackPolicy === undefined) {
+            try {
+                run.fallbackPolicy = await this.fallbackPolicyLoader(run.agent);
+            }
+            catch {
+                run.fallbackPolicy = null;
+            }
+            if (run.settled)
+                return;
+        }
+        const policy = run.fallbackPolicy;
+        // Sam's dc81a41 guard: without a configured primary identity the broker
+        // cannot prove a fallback differs from the just-failed Pi model; stay
+        // inert (never risk a same-model re-prompt). Absent/malformed/disabled
+        // policy is equally inert.
+        if (policy === null || policy.primaryModelId === null || !policy.fallback.ok || !policy.fallback.present) {
             this.settle(run, "completed");
+            return;
+        }
+        const config = policy.fallback.config;
+        if (run.currentModelId === null) {
+            run.currentModelId = policy.primaryModelId;
+        }
+        let pendingOutcome = classifyRunOutcome(run.attemptEvents);
+        while (pendingOutcome !== null) {
+            if (run.settled)
+                return;
+            const plan = planFallbackAttempt({
+                configuredFallbacks: config.models,
+                autoSwitch: config.autoSwitch,
+                explicitModelSelected: false,
+                aborted: false,
+                outcome: pendingOutcome,
+                currentModelId: run.currentModelId ?? "",
+                attemptedModelIds: run.attemptedModelIds,
+            });
+            if (plan.kind === "no-attempt") {
+                this.settle(run, "completed");
+                return;
+            }
+            if (!isFallbackEligibleOutcome(pendingOutcome)) {
+                this.settle(run, "completed");
+                return;
+            }
+            if (plan.kind === "exhausted") {
+                run.exhaustion = {
+                    category: pendingOutcome.category,
+                    lastModelId: run.currentModelId ?? "",
+                    attemptedCount: plan.attemptedCount,
+                };
+                this.settle(run, "provider_error");
+                return;
+            }
+            // A planned attempt: durable evidence FIRST, then set_model on the
+            // same live client.
+            try {
+                await this.appendAndPublish(run.conversationId, {
+                    kind: "model_fallback",
+                    authorKind: "system",
+                    author: "system",
+                    body: `Model ${run.currentModelId ?? ""} failed (${pendingOutcome.category}) on attempt ${plan.attemptNumber}; switching to ${plan.modelId}`,
+                    correlationId: run.stewardEventId,
+                });
+            }
+            catch {
+                this.settle(run, "ambiguous");
+                return;
+            }
+            if (run.settled)
+                return;
+            const split = splitFallbackModelId(plan.modelId);
+            const client = run.client;
+            let switched = false;
+            try {
+                if (client === undefined || typeof client.setModel !== "function") {
+                    throw new Error("RPC client does not support set_model");
+                }
+                await client.setModel(split.provider, split.modelId);
+                run.currentModelId = plan.modelId;
+                switched = true;
+            }
+            catch {
+                // Unavailable fallback: bounded attempted skip.
+            }
+            run.attemptedModelIds.push(plan.modelId);
+            if (!switched) {
+                try {
+                    await this.appendAndPublish(run.conversationId, {
+                        kind: "model_fallback",
+                        authorKind: "system",
+                        author: "system",
+                        body: `Fallback model ${plan.modelId} unavailable on attempt ${plan.attemptNumber}; skipping`,
+                        correlationId: run.stewardEventId,
+                    });
+                }
+                catch {
+                    this.settle(run, "ambiguous");
+                    return;
+                }
+                if (run.settled)
+                    return;
+                continue;
+            }
+            if (run.settled)
+                return;
+            if (client === undefined) {
+                this.settle(run, "ambiguous");
+                return;
+            }
+            run.attemptEvents = [];
+            try {
+                await client.prompt(buildFallbackHandoffPrompt(run.originalPrompt, plan.modelId, pendingOutcome.category));
+            }
+            catch {
+                this.settle(run, "ambiguous");
+            }
+            pendingOutcome = null; // await the next agent_settled
         }
     }
     settle(run, kind) {
@@ -406,6 +562,26 @@ export class ConversationBroker {
                 correlationId: run.stewardEventId,
             });
             return { status: "failed", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id, failureKind: "ambiguous" };
+        }
+        if (kind === "provider_error") {
+            // TB6 terminal exhaustion: exactly one visible run_finished failed
+            // provider_error, distinct from ambiguous/launch_failure, with safe
+            // bounded evidence; the live client keeps the fallback model (session
+            // affinity); no further automatic action.
+            const exhaustion = run.exhaustion;
+            const body = exhaustion !== undefined
+                ? `Run ended with a provider error after ${exhaustion.attemptedCount} fallback attempt(s); last model ${exhaustion.lastModelId} (${exhaustion.category}).`
+                : "Run ended with a provider error.";
+            const terminal = await this.appendAndPublish(run.conversationId, {
+                kind: "run_finished",
+                authorKind: "system",
+                author: "system",
+                body,
+                runStatus: "failed",
+                failureKind: "provider_error",
+                correlationId: run.stewardEventId,
+            });
+            return { status: "failed", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id, failureKind: "provider_error" };
         }
         // cancel
         const terminal = await this.appendAndPublish(run.conversationId, {

@@ -23,6 +23,7 @@ export const ROOM_EVENT_KINDS = [
     "steward_message",
     "run_started",
     "agent_message",
+    "model_fallback",
     "run_finished",
     "run_cancelled",
 ];
@@ -276,11 +277,12 @@ const REQUIRED_AUTHOR_KIND = {
     steward_message: "steward",
     agent_message: "agent",
     run_started: "system",
+    model_fallback: "system",
     run_finished: "system",
     run_cancelled: "system",
 };
 export const ROOM_RUN_STATUSES = ["running", "completed", "failed", "timed_out", "cancelled"];
-export const ROOM_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous"];
+export const ROOM_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous", "provider_error"];
 function renderRoomEvent(options) {
     const lines = [
         "---",
@@ -317,7 +319,7 @@ function renderRoomEvent(options) {
  * narrowed values for record construction.
  */
 function validateRunOutcomeFields(kind, runStatus, failureKind) {
-    if (kind === "steward_message" || kind === "agent_message") {
+    if (kind === "steward_message" || kind === "agent_message" || kind === "model_fallback") {
         if (runStatus !== undefined || failureKind !== undefined) {
             throw new Error(`${kind} events must not carry run outcome fields.`);
         }

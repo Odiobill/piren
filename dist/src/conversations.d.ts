@@ -20,13 +20,13 @@
 import { type ValidatedRecipients } from "./conversation-contract.js";
 export declare const CONVERSATION_STATUSES: readonly ["open", "archived"];
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
-export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "run_finished", "run_cancelled"];
+export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled"];
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 export declare const CONVERSATION_AUTHOR_KINDS: readonly ["steward", "agent", "system"];
 export type ConversationAuthorKind = (typeof CONVERSATION_AUTHOR_KINDS)[number];
 export declare const CONVERSATION_RUN_STATUSES: readonly ["running", "completed", "failed", "timed_out", "cancelled"];
 export type ConversationRunStatus = (typeof CONVERSATION_RUN_STATUSES)[number];
-export declare const CONVERSATION_RUN_FAILURE_KINDS: readonly ["launch_failure", "ambiguous"];
+export declare const CONVERSATION_RUN_FAILURE_KINDS: readonly ["launch_failure", "ambiguous", "provider_error"];
 export type ConversationRunFailureKind = (typeof CONVERSATION_RUN_FAILURE_KINDS)[number];
 /** Deterministic compact-UTC timestamp: `20260805T131530000Z`. */
 export declare function compactConversationTimestamp(date: Date): string;

@@ -26,12 +26,13 @@ export const CONVERSATION_EVENT_KINDS = [
     "steward_message",
     "run_started",
     "agent_message",
+    "model_fallback",
     "run_finished",
     "run_cancelled",
 ];
 export const CONVERSATION_AUTHOR_KINDS = ["steward", "agent", "system"];
 export const CONVERSATION_RUN_STATUSES = ["running", "completed", "failed", "timed_out", "cancelled"];
-export const CONVERSATION_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous"];
+export const CONVERSATION_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous", "provider_error"];
 const CONVERSATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/i;
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 const CONVERSATION_TITLE_PREFIX_MAX = 48;

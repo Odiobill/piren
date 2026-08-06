@@ -30,6 +30,7 @@ export const CONVERSATION_EVENT_KINDS = [
   "steward_message",
   "run_started",
   "agent_message",
+  "model_fallback",
   "run_finished",
   "run_cancelled",
 ] as const;
@@ -41,7 +42,7 @@ export type ConversationAuthorKind = (typeof CONVERSATION_AUTHOR_KINDS)[number];
 export const CONVERSATION_RUN_STATUSES = ["running", "completed", "failed", "timed_out", "cancelled"] as const;
 export type ConversationRunStatus = (typeof CONVERSATION_RUN_STATUSES)[number];
 
-export const CONVERSATION_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous"] as const;
+export const CONVERSATION_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous", "provider_error"] as const;
 export type ConversationRunFailureKind = (typeof CONVERSATION_RUN_FAILURE_KINDS)[number];
 
 const CONVERSATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/i;

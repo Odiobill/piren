@@ -25,6 +25,7 @@ export const ROOM_EVENT_KINDS = [
   "steward_message",
   "run_started",
   "agent_message",
+  "model_fallback",
   "run_finished",
   "run_cancelled",
 ] as const;
@@ -349,6 +350,7 @@ const REQUIRED_AUTHOR_KIND: Record<RoomEventKind, RoomAuthorKind> = {
   steward_message: "steward",
   agent_message: "agent",
   run_started: "system",
+  model_fallback: "system",
   run_finished: "system",
   run_cancelled: "system",
 };
@@ -356,7 +358,7 @@ const REQUIRED_AUTHOR_KIND: Record<RoomEventKind, RoomAuthorKind> = {
 export const ROOM_RUN_STATUSES = ["running", "completed", "failed", "timed_out", "cancelled"] as const;
 export type RoomRunStatus = (typeof ROOM_RUN_STATUSES)[number];
 
-export const ROOM_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous"] as const;
+export const ROOM_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous", "provider_error"] as const;
 export type RoomRunFailureKind = (typeof ROOM_RUN_FAILURE_KINDS)[number];
 
 export interface AppendRoomEventOptions {
@@ -441,7 +443,7 @@ function validateRunOutcomeFields(
   runStatus: unknown,
   failureKind: unknown,
 ): { runStatus?: RoomRunStatus; failureKind?: RoomRunFailureKind } {
-  if (kind === "steward_message" || kind === "agent_message") {
+  if (kind === "steward_message" || kind === "agent_message" || kind === "model_fallback") {
     if (runStatus !== undefined || failureKind !== undefined) {
       throw new Error(`${kind} events must not carry run outcome fields.`);
     }
