@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -268,6 +268,24 @@ describe("lifecycle event kind/metadata validation (fail-closed, additive)", () 
 });
 
 describe("locking and races (L1)", () => {
+  it("a missing conversation is NOT lock-busy: the honest absence error propagates (Kimi review fix)", async () => {
+    // The typed lock-busy boundary covers ONLY contention on a held lock. A
+    // lock-acquisition I/O failure for an absent conversation (ENOENT) must
+    // propagate so the later L2 gateway slice can map it to the contract's
+    // 404 (absent is not contention; conversationError maps ENOENT to 404).
+    await mkdir(join(root, "collaboration", "conversations"), { recursive: true });
+    let caught: unknown;
+    try {
+      await transitionConversationLifecycle({
+        vaultRoot: root, conversationId: "20260806T000000000Z-missing", transition: "archive", now: () => LATER,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as { code?: unknown }).code).toBe("ENOENT");
+  });
+
   it("a held lock fails closed before any manifest write or lifecycle event", async () => {
     const conversation = await openConversation();
     let release!: () => void;

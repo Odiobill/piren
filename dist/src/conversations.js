@@ -408,8 +408,16 @@ export async function transitionConversationLifecycle(options) {
     try {
         lock = await acquireAudienceLock(lockOptions);
     }
-    catch {
-        return { ok: false, kind: "lock-busy", conversationId: options.conversationId };
+    catch (error) {
+        // Only genuine lock CONTENTION is the typed lock-busy boundary. Any other
+        // acquisition failure (an absent conversation's ENOENT, permissions, I/O)
+        // propagates honestly so the caller can map it (the gateway's
+        // conversationError maps ENOENT-coded errors to the contract's 404);
+        // misreporting absence as contention would be a false delivery claim.
+        if (error instanceof Error && error.message.includes("audience update is busy")) {
+            return { ok: false, kind: "lock-busy", conversationId: options.conversationId };
+        }
+        throw error;
     }
     try {
         if (options.holdBarrier !== undefined) {
