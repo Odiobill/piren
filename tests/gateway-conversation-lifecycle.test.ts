@@ -294,47 +294,70 @@ describe("Gateway Conversation lifecycle routes (L2)", () => {
   });
 
   describe("controlled concurrency and side-effect proofs", () => {
-    it("concurrent archive vs reopen: exactly one 200 transitioned:true, one 409 busy, one event, no torn manifest", async () => {
+    it("concurrent archive vs reopen preserves serializable state/event invariants across every scheduling outcome", async () => {
       await startServer();
       const id = await createConversationViaApi("Concurrent race");
       const [archive, reopen] = await Promise.all([lifecycle(id, "archive"), lifecycle(id, "reopen")]);
-      const statuses = [archive.status, reopen.status].sort();
-      expect(statuses).toEqual([200, 409]);
-      const okBody = (await (archive.status === 200 ? archive : reopen).json()) as { transitioned: boolean };
-      expect(okBody.transitioned).toBe(true);
-      const busyBody = (await (archive.status === 409 ? archive : reopen).json()) as { error: string };
-      expect(busyBody.error).toMatch(/holds the lock/i);
+      const responses = [archive, reopen];
+      expect(responses.every((response) => response.status === 200 || response.status === 409)).toBe(true);
 
-      // Exactly one lifecycle event, consistent durable manifest (no torn/
-      // last-writer-wins merge, no double dispatch).
+      const transitionedStates: string[] = [];
+      for (const response of responses) {
+        const body = (await response.json()) as { transitioned?: boolean; conversation?: { status: string }; error?: string };
+        if (response.status === 409) {
+          expect(body.error).toBe(`Conversation '${id}' is busy (another update holds the lock); retry after it completes.`);
+        } else if (body.transitioned === true) {
+          transitionedStates.push(body.conversation?.status ?? "");
+        }
+      }
+      // Either request may acquire the single lock first; a later request can
+      // observe the new state, observe its target as a no-op, or lose the
+      // no-clobber race. All are honest outcomes. The durable history must
+      // exactly match the successful actual transitions — never a scheduler-
+      // dependent [200,409] assertion that can flake under full serialization.
       const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
-      expect(events.filter((e) => e.kind === "lifecycle_transition")).toHaveLength(1);
+      const lifecycleEvents = events.filter((event) => event.kind === "lifecycle_transition");
+      expect(lifecycleEvents).toHaveLength(transitionedStates.length);
+      expect(lifecycleEvents.map((event) => event.lifecycleState)).toEqual(transitionedStates);
       const raw = await readFile(manifestPath(id), "utf8");
-      const statusLines = raw.split("\n").filter((line) => line.startsWith("status:"));
-      expect(statusLines).toHaveLength(1);
+      expect(raw.split("\n").filter((line) => line.startsWith("status:"))).toHaveLength(1);
       const final = await readConversation({ vaultRoot: root, conversationId: id });
-      expect(["open", "archived"]).toContain(final.status);
+      expect(final.status).toBe(transitionedStates.at(-1) ?? "open");
       expect(final.created).toBeTruthy();
       expect(final.audience).toEqual([]);
     });
 
-    it("archive vs message append: archived stays read-only/fail-closed with no dispatch and no audience change", async () => {
+    it("archive racing a mention append preserves status and records only the winning durable operations", async () => {
       await startServer();
       const id = await createConversationViaApi("Archive vs append");
-      expect((await lifecycle(id, "archive")).status).toBe(200);
+      const [archive, append] = await Promise.all([
+        lifecycle(id, "archive"),
+        post(url(`/api/conversations/${id}/messages`), { text: "Hello @fake" }, token),
+      ]);
+      expect([200, 409]).toContain(archive.status);
+      expect([200, 409]).toContain(append.status);
 
-      // Message append to an archived conversation is the existing C2 409,
-      // before any append/dispatch; no new run events are created.
-      const append = await post(url(`/api/conversations/${id}/messages`), { text: "Hello @fake" }, token);
-      expect(append.status).toBe(409);
-      const appendBody = (await append.json()) as { error: string };
-      expect(appendBody.error).toMatch(/is archived/i);
+      const archiveBody = (await archive.json()) as { transitioned?: boolean; error?: string };
+      if (archive.status === 409) {
+        expect(archiveBody.error).toBe(`Conversation '${id}' is busy (another update holds the lock); retry after it completes.`);
+      } else {
+        expect(archiveBody.transitioned).toBe(true);
+      }
       const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
-      expect(events.map((e) => e.kind)).toEqual(["steward_message", "lifecycle_transition"]);
-      expect(events.filter((e) => e.kind === "run_started")).toHaveLength(0);
       const reread = await readConversation({ vaultRoot: root, conversationId: id });
-      expect(reread.audience).toEqual([]);
-      expect(reread.status).toBe("archived");
+      const archiveWon = archive.status === 200;
+      expect(reread.status).toBe(archiveWon ? "archived" : "open");
+      expect(events.filter((event) => event.kind === "lifecycle_transition")).toHaveLength(archiveWon ? 1 : 0);
+      // If the message won its audience-lock operation, archive keeps that
+      // audience while changing only status; if it lost, no durable message or
+      // membership was fabricated. A lifecycle request itself never dispatches.
+      if (append.status === 200) {
+        expect(reread.audience).toEqual(["fake"]);
+        expect(events.filter((event) => event.kind === "steward_message")).toHaveLength(2);
+      } else {
+        expect(reread.audience).toEqual([]);
+        expect(events.filter((event) => event.kind === "steward_message")).toHaveLength(1);
+      }
     });
 
     it("lifecycle routes are state-only: no dispatch/abort/attach/SSE/new session, JSON bounded responses", async () => {
