@@ -84,6 +84,13 @@ describe("conversation lifecycle operator docs (L4)", () => {
       expect(README).toMatch(/attach/);
     });
 
+    it("the timeline acceptance bullet enumerates lifecycle transition entries (Kimi review fix)", () => {
+      // L3 renders lifecycle_transition events as immutable timeline entries
+      // ("Conversation archived"/"Conversation reopened"); the acceptance
+      // checklist's entry-kind enumeration must not omit them.
+      expect(README).toMatch(/Timeline entries are immutable \([^)]*lifecycle transition/i);
+    });
+
     it("contains no internal slice/commit terminology and no deferred lifecycle claim", () => {
       expect(README).not.toMatch(/\bL[1-4]\b/);
       expect(README).not.toMatch(/archive\/reopen[^\n]*(deferred|not implemented|later)/i);
