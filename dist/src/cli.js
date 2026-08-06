@@ -15,6 +15,7 @@ import { runTransportConfigure } from "./transport-configure.js";
 import { maybeRegisterApplicationCommands } from "./discord-commands.js";
 import { PiRpcClient } from "./gateway-rpc.js";
 import { askAgent } from "./ask.js";
+import { loadAgentFallbackPolicy } from "./model-fallback-gateway.js";
 import { cleanPiren, formatCleanReport } from "./clean.js";
 import { readVersion } from "./version.js";
 import { formatRunPirenUpdate, runPirenUpdate } from "./update.js";
@@ -481,7 +482,16 @@ try {
         }
         const opts = bootstrapOptions(parsed);
         const runCommand = await buildPiRunCommand({ ...opts, rpcMode: true });
-        await askAgent({ command: runCommand.command, args: runCommand.args, cwd: runCommand.cwd, env: runCommand.env }, message, (token) => process.stdout.write(token));
+        // TB5: resolve the selected agent's model.fallback policy best-effort at
+        // this runtime adapter boundary from the already-resolved run context
+        // (PIREN_VAULT_ROOT/PIREN_AGENT are set by buildPiRunCommand). Absent /
+        // malformed / disabled policy stays inert. The ask core never reads
+        // files/YAML or derives config from RPC args.
+        const fallbackPolicy = await loadAgentFallbackPolicy(runCommand.env.PIREN_VAULT_ROOT, runCommand.env.PIREN_AGENT ?? null);
+        await askAgent({ command: runCommand.command, args: runCommand.args, cwd: runCommand.cwd, env: runCommand.env }, message, (token) => process.stdout.write(token), {
+            fallbackPolicy,
+            onAdvisory: (line) => console.log(line),
+        });
         console.log();
     }
     else if (command === "clean") {
