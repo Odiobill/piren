@@ -110,14 +110,15 @@ export function ConversationNavigator({
     setRetryKey((key) => key + 1);
   }
 
-  async function handleSelect(conversationId: string) {
+  async function handleSelect(conversationId: string, record?: ConversationRecord) {
     setSelection({ phase: "attaching" });
     try {
       const response = await attachConversation(conversationId, token);
       // The rejected attach envelope carries no conversation record (the
       // server keeps the rejection bounded), so the read-only inspection view
-      // reuses the durable record from the loaded list (immutable manifest).
-      const listed = load.phase === "ready" ? load.conversations.find((entry) => entry.id === conversationId) : undefined;
+      // reuses the durable record from the loaded list (immutable manifest),
+      // or the freshly created record passed by the create path.
+      const listed = record ?? (load.phase === "ready" ? load.conversations.find((entry) => entry.id === conversationId) : undefined);
       if (response.attached) {
         setSelection({ phase: "active", conversation: response.conversation });
       } else if (listed !== undefined) {
@@ -154,7 +155,7 @@ export function ConversationNavigator({
     setAnnouncement(`Conversation created: ${conversation.title}`);
     // A freshly created conversation's members were validated against the
     // local runnable set at creation, so attach opens it as active.
-    await handleSelect(conversation.id);
+    await handleSelect(conversation.id, conversation);
   }
 
   if (load.phase === "loading") {
@@ -268,6 +269,11 @@ export function ConversationNavigator({
         onUnauthorized={onUnauthorized}
         busy={selection.phase === "attaching"}
       />
+      {selection.phase === "attaching" && (
+        <p className="muted" role="status">
+          Attaching conversation…
+        </p>
+      )}
     </section>
   );
 }
