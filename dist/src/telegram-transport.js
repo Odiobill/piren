@@ -1,6 +1,8 @@
 import { extractAssistantText } from "./gateway-rpc.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { resolveFeedback, TELEGRAM_DEFAULT_FEEDBACK } from "./transport-feedback.js";
+import { inertFallbackPolicy } from "./model-fallback-gateway.js";
+import { renderTransportFallbackNotice, runTransportFallback } from "./model-fallback-transport.js";
 export class TelegramBotApiHttpClient {
     botToken;
     fetchImpl;
@@ -90,6 +92,7 @@ export class TelegramTransport {
     defaultAgent;
     api;
     feedback;
+    fallbackPolicyLoader;
     sessions;
     constructor(options) {
         this.transportName = options.transportName ?? "telegram";
@@ -101,6 +104,7 @@ export class TelegramTransport {
         // not a Telegram-valid reaction emoji, so Telegram defaults to 👍.
         // Explicit operator overrides still pass through unchanged.
         this.feedback = resolveFeedback(options.feedback, TELEGRAM_DEFAULT_FEEDBACK);
+        this.fallbackPolicyLoader = options.fallbackPolicyLoader;
         this.sessions = new TransportSessionManager({
             runnableAgents: this.runnableAgents,
             defaultAgent: this.defaultAgent,
@@ -158,9 +162,30 @@ export class TelegramTransport {
         const messageId = update.message?.message_id;
         await this.sendPromptFeedbackStart(chatId, messageId, messageThreadId);
         const session = await this.sessions.getSession(this.transportName, conversationId);
-        const events = await session.client.promptAndWait(trimmed);
+        // TB7: bounded same-live-client fallback with platform advisory notices.
+        // Abort authority (isAborted) cannot interleave in sequential Telegram
+        // polling, but the runner still fail-closes at every await boundary.
+        const policy = await this.resolveFallbackPolicy(session.agent);
+        const result = await runTransportFallback({
+            originalPrompt: trimmed,
+            policy,
+            run: (prompt) => session.client.promptAndWait(prompt),
+            setModel: (provider, modelId) => this.setModelOn(session.client, provider, modelId),
+            onNotice: async (notice) => {
+                try {
+                    await this.api.sendMessage(chatId, renderTransportFallbackNotice(notice), messageThreadId);
+                }
+                catch {
+                    // A platform advisory send failure must never abort the reply.
+                }
+            },
+        });
         await this.sendPromptFeedbackComplete(chatId, messageId);
-        const response = extractAssistantText(events).trim();
+        if (result.status === "exhausted") {
+            // The bounded terminal notice was already sent as the reply.
+            return;
+        }
+        const response = extractAssistantText(result.events).trim();
         if (response === "") {
             await this.api.sendMessage(chatId, "(no assistant text returned)", messageThreadId);
             return;
@@ -168,6 +193,19 @@ export class TelegramTransport {
         for (const chunk of chunkTelegramMessage(response)) {
             await this.api.sendMessage(chatId, chunk, messageThreadId);
         }
+    }
+    resolveFallbackPolicy(agent) {
+        if (this.fallbackPolicyLoader === undefined) {
+            return Promise.resolve(inertFallbackPolicy());
+        }
+        return this.fallbackPolicyLoader(agent);
+    }
+    /** set_model on the exact conversation client; fail-closed when unsupported. */
+    async setModelOn(client, provider, modelId) {
+        if (typeof client.setModel !== "function") {
+            throw new Error("RPC client does not support set_model");
+        }
+        return client.setModel(provider, modelId);
     }
     async close() {
         await this.sessions.closeAll();

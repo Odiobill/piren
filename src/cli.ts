@@ -317,6 +317,8 @@ try {
       clientFactory: (target) => new PiRpcClient(target),
       api,
       feedback: telegramConfig?.feedback,
+      // TB7: per-agent fallback policy resolved best-effort from the vault.
+      fallbackPolicyLoader: (agent) => loadAgentFallbackPolicy(context.vaultRoot, agent),
     });
     const controller = new AbortController();
     const shutdown = () => {
@@ -389,6 +391,8 @@ try {
       clientFactory: (target) => new PiRpcClient(target),
       api,
       feedback: discordConfig?.feedback,
+      // TB7: per-agent fallback policy resolved best-effort from the vault.
+      fallbackPolicyLoader: (agent) => loadAgentFallbackPolicy(context.vaultRoot, agent),
     });
     const gatewayUrl = "https://gateway.discord.gg/?v=10&encoding=json";
     // GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT (D1: DM dispatch).

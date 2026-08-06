@@ -3,6 +3,8 @@ import { extractAssistantText, type RpcEvent, type RpcSpawnTarget } from "./gate
 import { TransportSessionManager, type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import { resolveFeedback, type TransportFeedback, type TransportFeedbackConfig } from "./transport-feedback.js";
+import { inertFallbackPolicy, type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
+import { renderTransportFallbackNotice, runTransportFallback } from "./model-fallback-transport.js";
 import {
   DISCORD_INTERACTION_CALLBACK_CHANNEL_MESSAGE,
   parseInteractionCommand,
@@ -193,6 +195,9 @@ export class DiscordBotApiHttpClient implements DiscordBotApi {
 
 export interface DiscordPromptClient extends TransportRpcClient {
   promptAndWait(message: string): Promise<RpcEvent[]>;
+  /** TB7: switch the active model on the same live client (optional; a
+   * fallback attempt fails closed as an unavailable skip when absent). */
+  setModel?(provider: string, modelId: string): Promise<unknown>;
 }
 
 export interface DiscordTransportOptions<TClient extends DiscordPromptClient> {
@@ -212,6 +217,13 @@ export interface DiscordTransportOptions<TClient extends DiscordPromptClient> {
   clientFactory: (target: RpcSpawnTarget) => TClient;
   api: DiscordBotApi;
   feedback?: TransportFeedbackConfig | undefined;
+  /**
+   * TB7: per-agent fallback policy loader. Threaded from the transport
+   * CLI/runtime boundary (production adapter reads `team/<agent>/config.yml`
+   * best-effort). Absent => inert. Absent/malformed/disabled/no-primary
+   * policy is inert/fail-closed.
+   */
+  fallbackPolicyLoader?: ((agent: string) => Promise<GatewayFallbackPolicy>) | undefined;
 }
 
 function conversationId(message: DiscordMessage): string | null {
@@ -238,6 +250,7 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
   private readonly defaultAgent: string;
   private readonly api: DiscordBotApi;
   private readonly feedback: TransportFeedback;
+  private readonly fallbackPolicyLoader: ((agent: string) => Promise<GatewayFallbackPolicy>) | undefined;
   private readonly sessions: TransportSessionManager<TClient>;
 
   constructor(options: DiscordTransportOptions<TClient>) {
@@ -250,6 +263,7 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
     this.defaultAgent = options.defaultAgent ?? this.runnableAgents[0] ?? "";
     this.api = options.api;
     this.feedback = resolveFeedback(options.feedback);
+    this.fallbackPolicyLoader = options.fallbackPolicyLoader;
     this.sessions = new TransportSessionManager<TClient>({
       runnableAgents: this.runnableAgents,
       defaultAgent: this.defaultAgent,
@@ -356,9 +370,29 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
 
     await this.sendPromptFeedbackStart(channelId, message.id);
     const session = await this.sessions.getSession(this.transportName, conversation);
-    const events = await session.client.promptAndWait(trimmed);
+    // TB7: bounded same-live-client fallback with platform advisory notices.
+    // Abort authority (isAborted) cannot interleave in the sequential Discord
+    // gateway dispatch, but the runner still fail-closes at every boundary.
+    const policy = await this.resolveFallbackPolicy(session.agent);
+    const result = await runTransportFallback({
+      originalPrompt: trimmed,
+      policy,
+      run: (prompt) => session.client.promptAndWait(prompt),
+      setModel: (provider, modelId) => this.setModelOn(session.client, provider, modelId),
+      onNotice: async (notice) => {
+        try {
+          await this.api.createMessage(channelId, renderTransportFallbackNotice(notice));
+        } catch {
+          // A platform advisory send failure must never abort the reply.
+        }
+      },
+    });
     await this.sendPromptFeedbackComplete(channelId, message.id);
-    const response = extractAssistantText(events).trim();
+    if (result.status === "exhausted") {
+      // The bounded terminal notice was already sent as the reply.
+      return;
+    }
+    const response = extractAssistantText(result.events).trim();
     if (response === "") {
       await this.api.createMessage(channelId, "(no assistant text returned)");
       return;
@@ -366,6 +400,21 @@ export class DiscordTransport<TClient extends DiscordPromptClient> {
     for (const chunk of chunkDiscordMessage(response)) {
       await this.api.createMessage(channelId, chunk);
     }
+  }
+
+  private resolveFallbackPolicy(agent: string): Promise<GatewayFallbackPolicy> {
+    if (this.fallbackPolicyLoader === undefined) {
+      return Promise.resolve(inertFallbackPolicy());
+    }
+    return this.fallbackPolicyLoader(agent);
+  }
+
+  /** set_model on the exact conversation client; fail-closed when unsupported. */
+  private async setModelOn(client: TClient, provider: string, modelId: string): Promise<unknown> {
+    if (typeof client.setModel !== "function") {
+      throw new Error("RPC client does not support set_model");
+    }
+    return client.setModel(provider, modelId);
   }
 
   async close(): Promise<void> {

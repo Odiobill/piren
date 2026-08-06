@@ -2,6 +2,7 @@ import { type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import { type TransportFeedbackConfig } from "./transport-feedback.js";
+import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 export interface TelegramMessage {
     message_id?: number;
     chat?: {
@@ -49,6 +50,9 @@ export declare class TelegramBotApiHttpClient implements TelegramPollingApi {
 }
 export interface TelegramPromptClient extends TransportRpcClient {
     promptAndWait(message: string): Promise<RpcEvent[]>;
+    /** TB7: switch the active model on the same live client (optional; a
+     * fallback attempt fails closed as an unavailable skip when absent). */
+    setModel?(provider: string, modelId: string): Promise<unknown>;
 }
 /**
  * Resolve the internal routing key for a Telegram conversation.
@@ -72,6 +76,13 @@ export interface TelegramTransportOptions<TClient extends TelegramPromptClient> 
     clientFactory: (target: RpcSpawnTarget) => TClient;
     api: TelegramBotApi;
     feedback?: TransportFeedbackConfig | undefined;
+    /**
+     * TB7: per-agent fallback policy loader. Threaded from the transport
+     * CLI/runtime boundary (production adapter reads `team/<agent>/config.yml`
+     * best-effort). Absent => inert. Absent/malformed/disabled/no-primary
+     * policy is inert/fail-closed.
+     */
+    fallbackPolicyLoader?: ((agent: string) => Promise<GatewayFallbackPolicy>) | undefined;
 }
 /**
  * Minimal Telegram transport over the shared Pi RPC client.
@@ -87,9 +98,13 @@ export declare class TelegramTransport<TClient extends TelegramPromptClient> {
     private readonly defaultAgent;
     private readonly api;
     private readonly feedback;
+    private readonly fallbackPolicyLoader;
     private readonly sessions;
     constructor(options: TelegramTransportOptions<TClient>);
     handleUpdate(update: TelegramUpdate): Promise<void>;
+    private resolveFallbackPolicy;
+    /** set_model on the exact conversation client; fail-closed when unsupported. */
+    private setModelOn;
     close(): Promise<void>;
     private sendPromptFeedbackStart;
     private sendPromptFeedbackComplete;

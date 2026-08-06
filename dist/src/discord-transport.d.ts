@@ -2,6 +2,7 @@ import { type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import { type TransportFeedbackConfig } from "./transport-feedback.js";
+import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 import { type DiscordCommandSpec, type DiscordInteractionPayload, type RegisteredCommandRef } from "./discord-commands.js";
 /**
  * Discord's message hard limit per message (documented as 2000).
@@ -79,6 +80,9 @@ export declare class DiscordBotApiHttpClient implements DiscordBotApi {
 }
 export interface DiscordPromptClient extends TransportRpcClient {
     promptAndWait(message: string): Promise<RpcEvent[]>;
+    /** TB7: switch the active model on the same live client (optional; a
+     * fallback attempt fails closed as an unavailable skip when absent). */
+    setModel?(provider: string, modelId: string): Promise<unknown>;
 }
 export interface DiscordTransportOptions<TClient extends DiscordPromptClient> {
     transportName?: string | undefined;
@@ -97,6 +101,13 @@ export interface DiscordTransportOptions<TClient extends DiscordPromptClient> {
     clientFactory: (target: RpcSpawnTarget) => TClient;
     api: DiscordBotApi;
     feedback?: TransportFeedbackConfig | undefined;
+    /**
+     * TB7: per-agent fallback policy loader. Threaded from the transport
+     * CLI/runtime boundary (production adapter reads `team/<agent>/config.yml`
+     * best-effort). Absent => inert. Absent/malformed/disabled/no-primary
+     * policy is inert/fail-closed.
+     */
+    fallbackPolicyLoader?: ((agent: string) => Promise<GatewayFallbackPolicy>) | undefined;
 }
 /**
  * Minimal Discord transport over the shared Pi RPC client.
@@ -116,9 +127,13 @@ export declare class DiscordTransport<TClient extends DiscordPromptClient> {
     private readonly defaultAgent;
     private readonly api;
     private readonly feedback;
+    private readonly fallbackPolicyLoader;
     private readonly sessions;
     constructor(options: DiscordTransportOptions<TClient>);
     handleMessage(message: DiscordMessage): Promise<void>;
+    private resolveFallbackPolicy;
+    /** set_model on the exact conversation client; fail-closed when unsupported. */
+    private setModelOn;
     close(): Promise<void>;
     /**
      * Verify through the Bot API that a channel is a one-to-one DM (Discord

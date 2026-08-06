@@ -2,6 +2,8 @@ import { chunkTelegramMessage } from "./telegram-transport.js";
 import { extractAssistantText } from "./gateway-rpc.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { resolveFeedback } from "./transport-feedback.js";
+import { inertFallbackPolicy } from "./model-fallback-gateway.js";
+import { renderTransportFallbackNotice, runTransportFallback } from "./model-fallback-transport.js";
 import { DISCORD_INTERACTION_CALLBACK_CHANNEL_MESSAGE, parseInteractionCommand, } from "./discord-commands.js";
 /**
  * Discord's message hard limit per message (documented as 2000).
@@ -157,6 +159,7 @@ export class DiscordTransport {
     defaultAgent;
     api;
     feedback;
+    fallbackPolicyLoader;
     sessions;
     constructor(options) {
         this.transportName = options.transportName ?? "discord";
@@ -168,6 +171,7 @@ export class DiscordTransport {
         this.defaultAgent = options.defaultAgent ?? this.runnableAgents[0] ?? "";
         this.api = options.api;
         this.feedback = resolveFeedback(options.feedback);
+        this.fallbackPolicyLoader = options.fallbackPolicyLoader;
         this.sessions = new TransportSessionManager({
             runnableAgents: this.runnableAgents,
             defaultAgent: this.defaultAgent,
@@ -280,9 +284,30 @@ export class DiscordTransport {
         }
         await this.sendPromptFeedbackStart(channelId, message.id);
         const session = await this.sessions.getSession(this.transportName, conversation);
-        const events = await session.client.promptAndWait(trimmed);
+        // TB7: bounded same-live-client fallback with platform advisory notices.
+        // Abort authority (isAborted) cannot interleave in the sequential Discord
+        // gateway dispatch, but the runner still fail-closes at every boundary.
+        const policy = await this.resolveFallbackPolicy(session.agent);
+        const result = await runTransportFallback({
+            originalPrompt: trimmed,
+            policy,
+            run: (prompt) => session.client.promptAndWait(prompt),
+            setModel: (provider, modelId) => this.setModelOn(session.client, provider, modelId),
+            onNotice: async (notice) => {
+                try {
+                    await this.api.createMessage(channelId, renderTransportFallbackNotice(notice));
+                }
+                catch {
+                    // A platform advisory send failure must never abort the reply.
+                }
+            },
+        });
         await this.sendPromptFeedbackComplete(channelId, message.id);
-        const response = extractAssistantText(events).trim();
+        if (result.status === "exhausted") {
+            // The bounded terminal notice was already sent as the reply.
+            return;
+        }
+        const response = extractAssistantText(result.events).trim();
         if (response === "") {
             await this.api.createMessage(channelId, "(no assistant text returned)");
             return;
@@ -290,6 +315,19 @@ export class DiscordTransport {
         for (const chunk of chunkDiscordMessage(response)) {
             await this.api.createMessage(channelId, chunk);
         }
+    }
+    resolveFallbackPolicy(agent) {
+        if (this.fallbackPolicyLoader === undefined) {
+            return Promise.resolve(inertFallbackPolicy());
+        }
+        return this.fallbackPolicyLoader(agent);
+    }
+    /** set_model on the exact conversation client; fail-closed when unsupported. */
+    async setModelOn(client, provider, modelId) {
+        if (typeof client.setModel !== "function") {
+            throw new Error("RPC client does not support set_model");
+        }
+        return client.setModel(provider, modelId);
     }
     async close() {
         await this.sessions.closeAll();
