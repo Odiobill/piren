@@ -1882,6 +1882,17 @@ export class GatewayServer {
             this.conversationError(res, error);
             return;
         }
+        // C2 rejects writes to archived conversations. C3-A therefore never
+        // presents one as active: archival remains durable read-only state until
+        // a separately gated reopen transition exists.
+        if (conversation.status !== "open") {
+            this.writeJson(res, 409, {
+                error: `Conversation '${conversationId}' is archived and stays read-only.`,
+                attached: false,
+                gate: { ok: true, missing: [], malformed: [] },
+            });
+            return;
+        }
         const gate = checkActiveGate(conversation.audience, this.runnableAgents);
         if (!gate.ok) {
             this.writeJson(res, 409, {

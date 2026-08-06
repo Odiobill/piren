@@ -113,6 +113,22 @@ describe("Gateway Conversation attach gate (C3-A)", () => {
     expect(body.gate.ok).toBe(true);
   });
 
+  it("keeps an archived conversation read-only even when its audience is runnable", async () => {
+    await startServer({ runnableAgents: ["fake"] });
+    const { id } = await createConversationViaApi("Archive me @fake");
+    const manifestPath = join(root, "collaboration", "conversations", id, "index.md");
+    const current = await readFile(manifestPath, "utf8");
+    await writeFile(manifestPath, current.replace("status: open", "status: archived"), "utf8");
+    const manifestBefore = await readFile(manifestPath, "utf8");
+
+    const response = await post(url(`/api/conversations/${id}/attach`), {}, token);
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { attached: boolean; error: string };
+    expect(body.attached).toBe(false);
+    expect(body.error).toMatch(/archived/i);
+    await expect(readFile(manifestPath, "utf8")).resolves.toBe(manifestBefore);
+  });
+
   it("rejects attach with a non-secret 409 when a durable audience member is not locally runnable", async () => {
     await startServer({ runnableAgents: ["fake"] });
     const { id } = await createConversationViaApi("Hello @fake");
