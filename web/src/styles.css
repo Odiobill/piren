@@ -896,3 +896,44 @@ code {
 .conversation-composer .button {
   margin-top: 12px;
 }
+
+/* L3 — lifecycle controls + non-modal archive confirmation */
+.lifecycle-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.confirmation-card {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--warn);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+  width: 100%;
+}
+
+.confirmation-card p {
+  margin: 0 0 10px;
+}
+
+.confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lifecycle-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.lifecycle-error .error-message {
+  margin: 0;
+}

@@ -1,27 +1,47 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import {
+  archiveConversation,
   attachConversation,
   createConversation,
   fetchConversation,
   fetchConversations,
   fetchRoomAgents,
+  LifecycleHttpError,
+  reopenConversation,
   UnauthorizedError,
 } from "./api";
-import type { ConversationRecord } from "./conversations";
+import type { ConversationRecord, ConversationEventRecord } from "./conversations";
 import { classifyAudienceMembers, type MemberRunnableStatus } from "./attach";
+import {
+  archiveConfirmationCopy,
+  type ConversationLifecycleAction,
+  type LifecycleActionError,
+} from "./conversation-lifecycle";
 import { formatConversationHash, parseHashRoute, routeToIntent, urlWithoutHash } from "./hash-route";
 import type { RoomAgentEntry } from "./rooms";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
 
 /**
- * Conversation navigator (C3-A + C4-A): the Conversation Workbench surface
- * over the accepted C2 API family. Lists conversations, creates one via its
- * FIRST raw-text message, and selects one through the C1/runnable-roster-
- * gated attach route: a successful attach opens the ACTIVE surface
- * (immutable whole-history reread + scoped live SSE + raw-text composer); a
- * rejected attach opens the visibly READ-ONLY inspection surface (history
- * only, no composer, no live stream).
+ * Conversation navigator (C3-A + C4-A + L3): the Conversation Workbench
+ * surface over the accepted C2 API family. Lists conversations, creates one
+ * via its FIRST raw-text message, and selects one through the
+ * C1/runnable-roster-gated attach route: a successful attach opens the ACTIVE
+ * surface (immutable whole-history reread + scoped live SSE + raw-text
+ * composer); a rejected attach opens the visibly READ-ONLY inspection surface
+ * (history only, no composer, no live stream).
+ *
+ * L3 adds the minimal first-party lifecycle controls over the accepted L2
+ * routes: Archive (on every selected open Conversation — active or read-only
+ * due to a non-runnable audience, behind a non-modal inline confirmation) and
+ * Reopen (only on selected archived read-only inspection). The browser only
+ * sends the fixed action + selected id; after ANY successful lifecycle POST
+ * (including transitioned:false) it re-runs the C4-A fresh manifest/attach
+ * gate before deciding active/read-only — never an implicit attach, stream,
+ * or composer from the POST response. A live scoped SSE lifecycle event
+ * requests the same fresh re-gate exactly once per received event; archive
+ * from another client becomes inspection-only, reopen only becomes active if
+ * the attach gate accepts every durable member.
  *
  * C4-A adds the sole durable hash route `#conversation/<id>`: the initial
  * hash and every later browser `hashchange` each perform a FRESH manifest
@@ -50,6 +70,12 @@ type SelectionState =
   | { phase: "active"; conversation: ConversationRecord }
   | { phase: "read-only"; conversation: ConversationRecord; message: string };
 
+/** L3 lifecycle control state: idle | busy | bounded error with manual Retry. */
+type LifecycleControlState =
+  | { phase: "idle" }
+  | { phase: "busy"; action: ConversationLifecycleAction }
+  | { phase: "error"; action: ConversationLifecycleAction; error: LifecycleActionError };
+
 export function ConversationNavigator({
   token,
   onUnauthorized,
@@ -71,6 +97,19 @@ export function ConversationNavigator({
   const pendingFocusId = useRef<string | null>(null);
   /** Generation guard so only the newest open flow applies its result. */
   const openSeqRef = useRef(0);
+  /** L3 lifecycle state + archive confirmation. */
+  const [lifecycle, setLifecycle] = useState<LifecycleControlState>({ phase: "idle" });
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
+  /** L3 announcement intent consumed by the selection effect on re-gate. */
+  const lifecycleNoticeRef = useRef<"archive" | "reopen" | "derived" | null>(null);
+  const archiveButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmArchiveRef = useRef<HTMLButtonElement>(null);
+
+  /** Reset the lifecycle controls when leaving the current view. */
+  function resetLifecycleControls() {
+    setLifecycle({ phase: "idle" });
+    setConfirmingArchive(false);
+  }
 
   /** Invalidate any in-flight open flow (navigation home/back/invalid). */
   function cancelPendingOpen() {
@@ -113,13 +152,30 @@ export function ConversationNavigator({
   useEffect(() => {
     if (selection.phase === "active" || selection.phase === "read-only") {
       detailHeadingRef.current?.focus();
-      setAnnouncement(
-        selection.phase === "active"
-          ? `Conversation attached as active: ${selection.conversation.title}`
-          : `Conversation open in read-only inspection: ${selection.conversation.title}`,
-      );
+      // L3: a lifecycle re-gate (explicit action or live SSE) announces the
+      // lifecycle state via the polite status seam; otherwise the attach-based
+      // presentation announcement is used.
+      const lifecycleNotice = lifecycleNoticeRef.current;
+      lifecycleNoticeRef.current = null;
+      if (lifecycleNotice === "archive") {
+        setAnnouncement("Conversation archived.");
+      } else if (lifecycleNotice === "reopen") {
+        setAnnouncement("Conversation reopened.");
+      } else if (lifecycleNotice === "derived") {
+        setAnnouncement(selection.conversation.status === "open" ? "Conversation reopened." : "Conversation archived.");
+      } else if (selection.phase === "active") {
+        setAnnouncement(`Conversation attached as active: ${selection.conversation.title}`);
+      } else {
+        setAnnouncement(`Conversation open in read-only inspection: ${selection.conversation.title}`);
+      }
     }
   }, [selection]);
+
+  // L3: opening the archive confirmation moves focus to the Confirm button;
+  // cancelling returns focus to the Archive button (usable focus path).
+  useEffect(() => {
+    if (confirmingArchive) confirmArchiveRef.current?.focus();
+  }, [confirmingArchive]);
 
   useEffect(() => {
     if (pendingFocusId.current && newConversationRef.current) {
@@ -196,6 +252,7 @@ export function ConversationNavigator({
       const intent = routeToIntent(parseHashRoute(window.location.hash));
       if (intent.kind === "show-home") {
         cancelPendingOpen();
+        resetLifecycleControls();
         setSelection({ phase: "none" });
         setNotice(null);
         setAnnouncement("");
@@ -204,12 +261,14 @@ export function ConversationNavigator({
       if (intent.kind === "invalid-route") {
         // Malformed/unknown hash: fail truthfully to the list, no request.
         cancelPendingOpen();
+        resetLifecycleControls();
         setSelection({ phase: "none" });
         setNotice("Unknown route — showing the conversation list.");
         setAnnouncement("");
         listHeadingRef.current?.focus();
         return;
       }
+      resetLifecycleControls();
       void openConversationById(intent.conversationId);
     };
     handleHash(); // initial deep link (or home)
@@ -221,12 +280,14 @@ export function ConversationNavigator({
   }, [openConversationById]);
 
   async function handleSelect(conversationId: string) {
+    resetLifecycleControls();
     writeHash(formatConversationHash(conversationId));
     await openConversationById(conversationId);
   }
 
   function handleBack() {
     cancelPendingOpen();
+    resetLifecycleControls();
     clearHash();
     setSelection({ phase: "none" });
     setNotice(null);
@@ -242,11 +303,80 @@ export function ConversationNavigator({
     });
     pendingFocusId.current = conversation.id;
     setAnnouncement(`Conversation created: ${conversation.title}`);
+    resetLifecycleControls();
     writeHash(formatConversationHash(conversation.id));
     // A freshly created conversation's members were validated against the
     // local runnable set at creation, so attach opens it as active.
     await openConversationById(conversation.id);
   }
+
+  /**
+   * L3: one fixed lifecycle action (archive|reopen) sent to the L2 route.
+   * Gateway-authoritative only: the POST response is parsed for envelope
+   * validity but NEVER drives presentation — after ANY successful lifecycle
+   * POST (including transitioned:false) the C4-A fresh manifest/attach gate
+   * decides active/read-only. 404 returns to the list with a bounded status;
+   * 409 is a bounded visible error with a manual Retry; a bounded L2 500
+   * fresh-gates before presenting any status (the manifest may already have
+   * transitioned without an event — no rollback/repair/fabrication).
+   */
+  async function handleLifecycleAction(action: ConversationLifecycleAction) {
+    if (selection.phase !== "active" && selection.phase !== "read-only") return;
+    const conversationId = selection.conversation.id;
+    setConfirmingArchive(false);
+    setLifecycle({ phase: "busy", action });
+    lifecycleNoticeRef.current = action;
+    try {
+      await (action === "archive" ? archiveConversation(conversationId, token) : reopenConversation(conversationId, token));
+      await openConversationById(conversationId);
+      setLifecycle({ phase: "idle" });
+    } catch (cause) {
+      if (cause instanceof UnauthorizedError) {
+        onUnauthorized();
+        return;
+      }
+      if (cause instanceof LifecycleHttpError) {
+        if (cause.kind === "not-found") {
+          // 404: return safely to the list with a bounded status.
+          setLifecycle({ phase: "idle" });
+          setSelection({ phase: "none" });
+          setNotice("Conversation not found.");
+          listHeadingRef.current?.focus();
+          return;
+        }
+        if (cause.kind === "server") {
+          // Bounded L2 500: the manifest may already have transitioned (the
+          // L2 event-append residual). Fresh-gate before presenting any
+          // status; never assume rollback or fabricate an event/status.
+          lifecycleNoticeRef.current = "derived";
+          void openConversationById(conversationId);
+          setLifecycle({ phase: "error", action, error: cause });
+          return;
+        }
+        setLifecycle({ phase: "error", action, error: cause });
+        return;
+      }
+      setLifecycle({
+        phase: "error",
+        action,
+        error: { kind: "network", message: cause instanceof Error ? cause.message : String(cause) },
+      });
+    }
+  }
+
+  /**
+   * L3: a live scoped SSE lifecycle event for the selected Conversation
+   * requests the SAME fresh navigator re-gate exactly once per received
+   * event. The fresh attach result decides presentation (archive from
+   * another client ends inspection-only; reopen still relies on the gate).
+   */
+  const handleLifecycleEvent = useCallback(
+    (event: ConversationEventRecord) => {
+      lifecycleNoticeRef.current = "derived";
+      void openConversationById(event.conversationId);
+    },
+    [openConversationById],
+  );
 
   if (load.phase === "loading") {
     return (
@@ -287,6 +417,24 @@ export function ConversationNavigator({
           <code>{selection.conversation.id}</code> — {selection.conversation.status}
         </p>
         <AudienceMembers audience={selection.conversation.audience} agents={load.phase === "ready" ? load.agents : []} />
+        <ConversationLifecycleControls
+          status={selection.conversation.status}
+          phase={lifecycle.phase}
+          error={lifecycle.phase === "error" ? lifecycle.error : null}
+          confirmingArchive={confirmingArchive}
+          archiveButtonRef={archiveButtonRef}
+          confirmArchiveRef={confirmArchiveRef}
+          onArchiveRequest={() => setConfirmingArchive(true)}
+          onCancelArchive={() => {
+            setConfirmingArchive(false);
+            archiveButtonRef.current?.focus();
+          }}
+          onConfirmArchive={() => void handleLifecycleAction("archive")}
+          onReopen={() => void handleLifecycleAction("reopen")}
+          onRetry={() => {
+            if (lifecycle.phase === "error") void handleLifecycleAction(lifecycle.action);
+          }}
+        />
         {active ? (
           <>
             <ConversationTimeline
@@ -294,6 +442,7 @@ export function ConversationNavigator({
               token={token}
               live={true}
               onUnauthorized={onUnauthorized}
+              onLifecycleTransition={handleLifecycleEvent}
             />
             <ConversationComposer
               conversationId={selection.conversation.id}
@@ -370,6 +519,84 @@ export function ConversationNavigator({
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * L3 minimal lifecycle controls: Archive on every selected open Conversation
+ * (active or read-only due to a non-runnable audience) behind an explicit
+ * non-modal inline confirmation; Reopen only on selected archived read-only
+ * inspection. No list-row or batch actions; never a native/browser modal.
+ */
+function ConversationLifecycleControls({
+  status,
+  phase,
+  error,
+  confirmingArchive,
+  archiveButtonRef,
+  confirmArchiveRef,
+  onArchiveRequest,
+  onCancelArchive,
+  onConfirmArchive,
+  onReopen,
+  onRetry,
+}: {
+  status: string;
+  phase: "idle" | "busy" | "error";
+  error: LifecycleActionError | null;
+  confirmingArchive: boolean;
+  archiveButtonRef: RefObject<HTMLButtonElement | null>;
+  confirmArchiveRef: RefObject<HTMLButtonElement | null>;
+  onArchiveRequest: () => void;
+  onCancelArchive: () => void;
+  onConfirmArchive: () => void;
+  onReopen: () => void;
+  onRetry: () => void;
+}) {
+  const busy = phase === "busy";
+  if (status === "archived") {
+    return (
+      <div className="lifecycle-controls">
+        <button type="button" className="button" onClick={onReopen} disabled={busy}>
+          Reopen
+        </button>
+        {phase === "error" && error !== null && <LifecycleErrorNotice error={error} onRetry={onRetry} />}
+      </div>
+    );
+  }
+  const copy = archiveConfirmationCopy();
+  return (
+    <div className="lifecycle-controls">
+      <button type="button" ref={archiveButtonRef} className="button" onClick={onArchiveRequest} disabled={busy}>
+        Archive
+      </button>
+      {confirmingArchive && (
+        <div className="confirmation-card" role="group" aria-label="Confirm archive">
+          <p>{copy.intro}</p>
+          <div className="confirmation-actions">
+            <button type="button" ref={confirmArchiveRef} className="button button-primary" onClick={onConfirmArchive} disabled={busy}>
+              {copy.confirm}
+            </button>
+            <button type="button" className="button" onClick={onCancelArchive} disabled={busy}>
+              {copy.cancel}
+            </button>
+          </div>
+        </div>
+      )}
+      {phase === "error" && error !== null && <LifecycleErrorNotice error={error} onRetry={onRetry} />}
+    </div>
+  );
+}
+
+/** Bounded lifecycle error with an explicit manual Retry (never automatic). */
+function LifecycleErrorNotice({ error, onRetry }: { error: LifecycleActionError; onRetry: () => void }) {
+  return (
+    <div className="lifecycle-error" role="alert">
+      <p className="error-message">{error.message}</p>
+      <button type="button" className="button button-small" onClick={onRetry}>
+        Retry
+      </button>
+    </div>
   );
 }
 

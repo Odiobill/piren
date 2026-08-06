@@ -38,6 +38,8 @@ export interface ConversationEventRecord {
   correlationId?: string;
   runStatus?: string;
   failureKind?: string;
+  /** L2 lifecycle-transition target state (additive, optional; fail-closed). */
+  lifecycleState?: "open" | "archived";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,5 +129,12 @@ function parseConversationEventRecord(entry: unknown): ConversationEventRecord {
   if (typeof entry.correlationId === "string") parsed.correlationId = entry.correlationId;
   if (typeof entry.runStatus === "string") parsed.runStatus = entry.runStatus;
   if (typeof entry.failureKind === "string") parsed.failureKind = entry.failureKind;
+  // L2 lifecycle metadata: accepted ONLY as open|archived; a present-but-
+  // invalid value fails closed (contradictory evidence is never tolerated).
+  if (entry.lifecycleState === "open" || entry.lifecycleState === "archived") {
+    parsed.lifecycleState = entry.lifecycleState;
+  } else if (entry.lifecycleState !== undefined) {
+    throw new Error("unexpected conversation event record (lifecycleState)");
+  }
   return parsed;
 }

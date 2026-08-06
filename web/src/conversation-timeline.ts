@@ -73,6 +73,13 @@ function parseConversationEventRecord(entry: unknown): ConversationEventRecord {
   if (typeof record.correlationId === "string") parsed.correlationId = record.correlationId;
   if (typeof record.runStatus === "string") parsed.runStatus = record.runStatus;
   if (typeof record.failureKind === "string") parsed.failureKind = record.failureKind;
+  // L2 lifecycle metadata: accepted ONLY as open|archived; present-but-invalid
+  // fails closed (mirrors the shared web conversations parser).
+  if (record.lifecycleState === "open" || record.lifecycleState === "archived") {
+    parsed.lifecycleState = record.lifecycleState;
+  } else if (record.lifecycleState !== undefined) {
+    throw new Error("unexpected conversation event record (lifecycleState)");
+  }
   return parsed;
 }
 

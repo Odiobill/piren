@@ -9,6 +9,7 @@ import {
   type ConversationTimelineItem,
   type ReconnectBudget,
 } from "./conversation-timeline";
+import { lifecycleTransitionLabel } from "./conversation-lifecycle";
 import type { ConversationEventRecord } from "./conversations";
 
 /**
@@ -40,6 +41,8 @@ function eventLabel(event: ConversationEventRecord): string {
       return "run cancelled";
     case "model_fallback":
       return "model fallback";
+    case "lifecycle_transition":
+      return lifecycleTransitionLabel(event.lifecycleState);
     default:
       return event.kind;
   }
@@ -55,11 +58,14 @@ export function ConversationTimeline({
   token,
   live,
   onUnauthorized,
+  onLifecycleTransition,
 }: {
   conversationId: string;
   token: string;
   live: boolean;
   onUnauthorized: () => void;
+  /** L3: fresh navigator re-gate request, exactly once per received lifecycle event. */
+  onLifecycleTransition?: (event: ConversationEventRecord) => void;
 }) {
   const [phase, setPhase] = useState<TimelinePhase>({ phase: "loading" });
   const [announcement, setAnnouncement] = useState("");
@@ -109,6 +115,15 @@ export function ConversationTimeline({
               if (cancelled) return;
               const item = conversationFrameToItem(frame);
               if (item === null) return;
+              // L3: a durable lifecycle_transition for this selected
+              // conversation requests the navigator's fresh re-gate exactly
+              // once per received event (archive from another client ends
+              // inspection-only only after the fresh attach result; reopen
+              // still relies on the attach gate). Read-only timelines never
+              // subscribe, so this path only runs while live.
+              if (item.type === "event" && item.event.kind === "lifecycle_transition") {
+                onLifecycleTransition?.(item.event);
+              }
               setPhase((previous) => {
                 if (previous.phase !== "ready") return previous;
                 const next = appendConversationLiveItem(previous.items, item);
@@ -158,7 +173,7 @@ export function ConversationTimeline({
       cancelled = true;
       controller.abort();
     };
-  }, [conversationId, token, live, onUnauthorized, attemptKey]);
+  }, [conversationId, token, live, onUnauthorized, onLifecycleTransition, attemptKey]);
 
   function handleReconnect() {
     budgetRef.current = initialReconnectBudget();

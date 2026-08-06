@@ -199,6 +199,38 @@ describe("raw-text conversation composer core (never derives recipients)", () =>
   });
 });
 
+describe("lifecycleState event metadata (L3, fail-closed)", () => {
+  function lifecycleEvent(overrides: Partial<ConversationEventRecord>): ConversationEventRecord {
+    return {
+      id: "e-lc",
+      conversationId: "c1",
+      kind: "lifecycle_transition",
+      authorKind: "steward",
+      author: "steward",
+      created: "2026-08-06T00:00:00.000Z",
+      sequence: 2,
+      mentions: [],
+      body: "Archived by steward.",
+      path: "collaboration/conversations/c1/events/00000002.md",
+      ...overrides,
+    };
+  }
+
+  it("accepts open|archived lifecycleState and leaves absent absent", () => {
+    const events = parseConversationEvents({
+      events: [lifecycleEvent({ lifecycleState: "archived" }), lifecycleEvent({ id: "e-lc2", sequence: 3, lifecycleState: "open", body: "Reopened by steward." })],
+    });
+    expect(events.map((e) => e.lifecycleState)).toEqual(["archived", "open"]);
+    const absent = parseConversationEvents({ events: [lifecycleEvent({})] });
+    expect(absent[0]?.lifecycleState).toBeUndefined();
+  });
+
+  it("rejects a present-but-invalid lifecycleState fail-closed", () => {
+    expect(() => parseConversationEvents({ events: [lifecycleEvent({ lifecycleState: "bogus" as never })] })).toThrow(/lifecycleState/i);
+    expect(() => parseConversationEvents({ events: [lifecycleEvent({ lifecycleState: 42 as never })] })).toThrow(/lifecycleState/i);
+  });
+});
+
 describe("conversation timeline core (immutable, live-only after attach)", () => {
   it("maps a live conversation_event SSE frame to a display item", () => {
     const parser = createSseParser();

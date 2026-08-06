@@ -36,6 +36,7 @@ function conversationModuleFiles(): string[] {
     "attach.ts",
     "conversation-composer.ts",
     "conversation-timeline.ts",
+    "conversation-lifecycle.ts",
     "hash-route.ts",
   ];
 }

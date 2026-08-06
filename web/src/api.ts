@@ -24,6 +24,23 @@ import {
   type ConversationRecord,
 } from "./conversations";
 import { parseAttachResponse, type AttachResponse } from "./attach";
+import {
+  parseLifecycleActionResponse,
+  parseLifecycleHttpError,
+  type ConversationLifecycleAction,
+  type LifecycleActionResponse,
+} from "./conversation-lifecycle";
+
+/** Typed bounded lifecycle action error (L2 404/409/500 / network). */
+export class LifecycleHttpError extends Error {
+  readonly kind: "not-found" | "conflict" | "server" | "network";
+
+  constructor(kind: "not-found" | "conflict" | "server" | "network", message: string) {
+    super(message);
+    this.name = "LifecycleHttpError";
+    this.kind = kind;
+  }
+}
 
 /**
  * Typed fetch client for the existing gateway /api/* surface. R3b-2 consumes
@@ -246,6 +263,37 @@ export async function sendConversationMessage(
     throw new Error(reason);
   }
   return parseConversationMessageResponse(await res.json());
+}
+
+async function postLifecycleAction(
+  id: string,
+  action: ConversationLifecycleAction,
+  token: string,
+): Promise<LifecycleActionResponse> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/${action}`, token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (res.status === 200) return parseLifecycleActionResponse(await res.json());
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    // keep the typed fallback
+  }
+  const parsed = parseLifecycleHttpError(res.status, json);
+  throw new LifecycleHttpError(parsed.kind, parsed.message);
+}
+
+/** POST /api/conversations/<id>/archive — L2 lifecycle action (state-only). */
+export async function archiveConversation(id: string, token: string): Promise<LifecycleActionResponse> {
+  return postLifecycleAction(id, "archive", token);
+}
+
+/** POST /api/conversations/<id>/reopen — L2 lifecycle action (state-only). */
+export async function reopenConversation(id: string, token: string): Promise<LifecycleActionResponse> {
+  return postLifecycleAction(id, "reopen", token);
 }
 
 /** GET /api/conversations/<id>/events — whole durable history (no replay). */
