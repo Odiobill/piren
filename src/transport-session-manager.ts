@@ -37,6 +37,15 @@ export interface TransportSession<TClient extends TransportRpcClient = PiRpcClie
   agent: string;
   client: TClient;
   lastUsedAt: number;
+  /**
+   * TB7 active-incident cancellation flag. Set by `abort()`/`closeAll()`
+   * BEFORE calling `client.abort()`/`stop()` so a supported transport
+   * abort/shutdown path marks the active fallback incident; the transport's
+   * fallback runner observes it at its next await boundary and never issues
+   * a handoff re-prompt. Reset by the transport when a fresh prompt incident
+   * starts and completes.
+   */
+  abortRequested: boolean;
 }
 
 export interface TransportSessionManagerOptions<TClient extends TransportRpcClient = PiRpcClient> {
@@ -106,6 +115,7 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
       agent: requestedAgent,
       client,
       lastUsedAt: this.now(),
+      abortRequested: false,
     };
     this.sessions.set(key, session);
     return session;
@@ -130,6 +140,7 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
       agent,
       client: nextClient,
       lastUsedAt: this.now(),
+      abortRequested: false,
     };
     this.sessions.set(key, nextSession);
 
@@ -143,6 +154,10 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
   async abort(transport: string, conversationId: string): Promise<boolean> {
     const session = this.sessions.get(sessionKey(transport, conversationId));
     if (!session) return false;
+    // TB7 §5.6: mark the active fallback incident BEFORE calling
+    // client.abort() so the runner observes the cancellation at its next
+    // await boundary (policy load, notice delivery, or delayed set_model).
+    session.abortRequested = true;
     await session.client.abort();
     session.lastUsedAt = this.now();
     return true;
@@ -213,6 +228,9 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
     const sessions = [...this.sessions.values()];
     this.sessions.clear();
     for (const session of sessions) {
+      // Shutdown is also abort authority: mark the incident before stopping
+      // so an in-flight fallback stops at its next await boundary.
+      session.abortRequested = true;
       await session.client.stop();
     }
   }

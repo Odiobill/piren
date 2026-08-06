@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { TelegramTransport, type TelegramUpdate } from "../src/telegram-transport.js";
-import { DiscordTransport, type DiscordMessage } from "../src/discord-transport.js";
-import { TELEGRAM_MESSAGE_LIMIT, chunkTelegramMessage } from "../src/telegram-transport.js";
-import { DISCORD_MESSAGE_LIMIT, chunkDiscordMessage } from "../src/discord-transport.js";
+import { TelegramTransport, type TelegramUpdate, TELEGRAM_MESSAGE_LIMIT, chunkTelegramMessage } from "../src/telegram-transport.js";
+import { DiscordTransport, type DiscordMessage, DISCORD_MESSAGE_LIMIT, chunkDiscordMessage } from "../src/discord-transport.js";
+import { renderTransportFallbackNotice } from "../src/model-fallback-transport.js";
 import type { GatewayFallbackPolicy } from "../src/model-fallback-gateway.js";
 import type { RpcEvent } from "../src/gateway-rpc.js";
 
@@ -79,6 +78,10 @@ class FakePromptClient {
   started = 0;
   stopped = 0;
   aborts = 0;
+  /** When set, promptAndWait awaits this gate before returning the script. */
+  promptGate: Promise<void> | null = null;
+  /** When set, setModel awaits this gate before resolving/rejecting. */
+  setModelGate: Promise<void> | null = null;
 
   async start(): Promise<void> {
     this.started += 1;
@@ -97,9 +100,11 @@ class FakePromptClient {
   }
   async promptAndWait(message: string): Promise<RpcEvent[]> {
     this.prompts.push(message);
+    if (this.promptGate !== null) await this.promptGate;
     return this.scripts.shift() ?? [];
   }
   async setModel(provider: string, modelId: string): Promise<unknown> {
+    if (this.setModelGate !== null) await this.setModelGate;
     this.setModelCalls.push({ provider, modelId });
     if (!this.hasSetModel) throw new Error("RPC client does not support set_model");
     if (this.rejectSetModelIds.includes(`${provider}/${modelId}`)) throw new Error("model not found");
@@ -363,6 +368,130 @@ describe("TelegramTransport TB7 model fallback", () => {
     expect(client.prompts[2]).toBe("second");
     expect(client.setModelCalls).toHaveLength(1);
   });
+
+  it("BLOCKER 1: an /abort concurrent with the active prompt cancels remaining fallback attempts", async () => {
+    const { transport, clients, messages } = makeTelegram();
+    const client = clients[0]!;
+    client.scripts = [providerErrorEvents(false)];
+    let releasePrompt!: () => void;
+    client.promptGate = new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+
+    const promptDone = transport.handleUpdate(tgUpdate("review"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The /abort update marks the active incident before calling client.abort().
+    const abortDone = transport.handleUpdate(tgUpdate("/abort"));
+    await abortDone;
+    releasePrompt();
+    await promptDone;
+
+    // Abort authority won: the original prompt ran once, no switch, no
+    // handoff re-prompt, no fallback advisory.
+    expect(client.prompts).toHaveLength(1);
+    expect(client.setModelCalls).toEqual([]);
+    expect(messages.some((m) => m.text.startsWith("[model fallback:"))).toBe(false);
+    expect(messages.some((m) => m.text === "Abort sent to active Piren session.")).toBe(true);
+    expect(client.aborts).toBe(1);
+  });
+
+  it("BLOCKER 1: an /abort landing during a delayed set_model cancels the pending handoff re-prompt", async () => {
+    const { transport, clients, messages } = makeTelegram();
+    const client = clients[0]!;
+    client.scripts = [providerErrorEvents(false)];
+    let releaseSetModel!: () => void;
+    client.setModelGate = new Promise<void>((resolve) => {
+      releaseSetModel = resolve;
+    });
+
+    const promptDone = transport.handleUpdate(tgUpdate("review"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const abortDone = transport.handleUpdate(tgUpdate("/abort"));
+    await abortDone;
+    releaseSetModel();
+    await promptDone;
+
+    // The switch happened, but the abort cancelled the handoff re-prompt.
+    expect(client.setModelCalls).toEqual([{ provider: "openai", modelId: "gpt-4.1" }]);
+    expect(client.prompts).toHaveLength(1);
+    expect(messages.some((m) => m.text.includes("switched"))).toBe(false);
+    expect(messages.some((m) => m.text.startsWith("[model fallback:"))).toBe(true);
+  });
+
+  it("BLOCKER 1: an abort landing during the policy-loader await prevents the first run entirely", async () => {
+    const { transport, clients, messages } = makeTelegram();
+    const client = clients[0]!;
+    client.scripts = [providerErrorEvents(false)];
+    let releaseLoader!: () => void;
+    const loaderGate = new Promise<void>((resolve) => {
+      releaseLoader = resolve;
+    });
+    // Replace the loader with a gated one for this transport.
+    const gated = new TelegramTransport<FakePromptClient>({
+      allowedChatIds: [111],
+      runnableAgents: ["kimi"],
+      defaultAgent: "kimi",
+      targetBuilder: async (agent) => ({ command: "fake", args: [agent], cwd: process.cwd(), env: process.env }),
+      clientFactory: () => client,
+      api: {
+        async sendMessage(chatId, text, messageThreadId) {
+          messages.push(messageThreadId === undefined ? { chatId, text } : { chatId, text, threadId: messageThreadId });
+        },
+        async sendChatAction() {},
+        async setMessageReaction() {},
+      },
+      fallbackPolicyLoader: async () => {
+        await loaderGate;
+        return POLICY;
+      },
+    });
+
+    const promptDone = gated.handleUpdate(tgUpdate("review"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const abortDone = gated.handleUpdate(tgUpdate("/abort"));
+    await abortDone;
+    releaseLoader();
+    await promptDone;
+
+    // Abort landed before the first prompt: nothing ran, no fallback.
+    expect(client.prompts).toEqual([]);
+    expect(client.setModelCalls).toEqual([]);
+    expect(messages.some((m) => m.text.startsWith("[model fallback:"))).toBe(false);
+  });
+
+  it("BLOCKER 2: a very-long valid model id chunks the advisory within the platform limit and rejoins exactly", async () => {
+    const longModelId = "m".repeat(5000);
+    const longPolicy: GatewayFallbackPolicy = {
+      primaryModelId: "kimi-coding/k3",
+      fallback: {
+        ok: true,
+        present: true,
+        config: { autoSwitch: true, models: [`openai/${longModelId}`] },
+      },
+    };
+    const { transport, clients, messages } = makeTelegram({ policy: longPolicy });
+    const client = clients[0]!;
+    client.scripts = [providerErrorEvents(false), normalEvents("Fbk ok")];
+
+    await transport.handleUpdate(tgUpdate("review"));
+
+    // Advisory chunks are sent before the reply; only the FIRST chunk starts
+    // with the bracket prefix (later chunks continue mid-word).
+    const advisoryChunks = messages.slice(0, -1).map((m) => m.text);
+    expect(advisoryChunks.length).toBeGreaterThan(1);
+    for (const chunk of advisoryChunks) {
+      expect(chunk.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_LIMIT);
+    }
+    expect(advisoryChunks.join("")).toBe(
+      renderTransportFallbackNotice({
+        kind: "attempt",
+        from: "kimi-coding/k3",
+        to: `openai/${longModelId}`,
+        category: "provider_error_other",
+        attempt: 1,
+      }),
+    );
+  });
 });
 
 describe("DiscordTransport TB7 model fallback", () => {
@@ -450,5 +579,83 @@ describe("DiscordTransport TB7 model fallback", () => {
     expect(client.prompts).toHaveLength(3);
     expect(client.setModelCalls).toHaveLength(1);
     expect(replies.some((r) => r.text === "second reply")).toBe(true);
+  });
+
+  it("BLOCKER 1: an /abort concurrent with the active prompt cancels remaining fallback attempts", async () => {
+    const { transport, clients, replies } = makeDiscord();
+    const client = clients[0]!;
+    client.scripts = [providerErrorEvents(false)];
+    let releasePrompt!: () => void;
+    client.promptGate = new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+
+    const promptDone = transport.handleMessage(dcMessage("review"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const abortDone = transport.handleMessage(dcMessage("/abort"));
+    await abortDone;
+    releasePrompt();
+    await promptDone;
+
+    expect(client.prompts).toHaveLength(1);
+    expect(client.setModelCalls).toEqual([]);
+    expect(replies.some((r) => r.text.startsWith("[model fallback:"))).toBe(false);
+    expect(replies.some((r) => r.text === "Abort sent to active Piren session.")).toBe(true);
+    expect(client.aborts).toBe(1);
+  });
+
+  it("BLOCKER 1: an /abort landing during a delayed set_model cancels the pending handoff re-prompt", async () => {
+    const { transport, clients, replies } = makeDiscord();
+    const client = clients[0]!;
+    client.scripts = [providerErrorEvents(false)];
+    let releaseSetModel!: () => void;
+    client.setModelGate = new Promise<void>((resolve) => {
+      releaseSetModel = resolve;
+    });
+
+    const promptDone = transport.handleMessage(dcMessage("review"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const abortDone = transport.handleMessage(dcMessage("/abort"));
+    await abortDone;
+    releaseSetModel();
+    await promptDone;
+
+    expect(client.setModelCalls).toEqual([{ provider: "openai", modelId: "gpt-4.1" }]);
+    expect(client.prompts).toHaveLength(1);
+    expect(replies.some((r) => r.text.includes("switched"))).toBe(false);
+  });
+
+  it("BLOCKER 2: a very-long valid model id chunks the advisory within the platform limit and rejoins exactly", async () => {
+    const longModelId = "m".repeat(5000);
+    const longPolicy: GatewayFallbackPolicy = {
+      primaryModelId: "kimi-coding/k3",
+      fallback: {
+        ok: true,
+        present: true,
+        config: { autoSwitch: true, models: [`openai/${longModelId}`] },
+      },
+    };
+    const { transport, clients, replies } = makeDiscord({ policy: longPolicy });
+    const client = clients[0]!;
+    client.scripts = [providerErrorEvents(false), normalEvents("Fbk ok")];
+
+    await transport.handleMessage(dcMessage("review"));
+
+    // Advisory chunks are sent before the reply; only the FIRST chunk starts
+    // with the bracket prefix (later chunks continue mid-word).
+    const advisoryChunks = replies.slice(0, -1).map((r) => r.text);
+    expect(advisoryChunks.length).toBeGreaterThan(1);
+    for (const chunk of advisoryChunks) {
+      expect(chunk.length).toBeLessThanOrEqual(DISCORD_MESSAGE_LIMIT);
+    }
+    expect(advisoryChunks.join("")).toBe(
+      renderTransportFallbackNotice({
+        kind: "attempt",
+        from: "kimi-coding/k3",
+        to: `openai/${longModelId}`,
+        category: "provider_error_other",
+        attempt: 1,
+      }),
+    );
   });
 });

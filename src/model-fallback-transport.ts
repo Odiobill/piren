@@ -101,6 +101,12 @@ export async function runTransportFallback(input: TransportFallbackRunInput): Pr
   let result: TransportFallbackResult | null = null;
 
   while (result === null) {
+    if (isAborted()) {
+      // Abort landed before the next run (for example during the transport's
+      // policy-loader await): never issue a run or a handoff re-prompt.
+      result = { status: "completed", events: [] };
+      break;
+    }
     if (pending === null) {
       const events = await input.run(prompt);
       if (isAborted()) {

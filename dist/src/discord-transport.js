@@ -284,36 +284,50 @@ export class DiscordTransport {
         }
         await this.sendPromptFeedbackStart(channelId, message.id);
         const session = await this.sessions.getSession(this.transportName, conversation);
-        // TB7: bounded same-live-client fallback with platform advisory notices.
-        // Abort authority (isAborted) cannot interleave in the sequential Discord
-        // gateway dispatch, but the runner still fail-closes at every boundary.
-        const policy = await this.resolveFallbackPolicy(session.agent);
-        const result = await runTransportFallback({
-            originalPrompt: trimmed,
-            policy,
-            run: (prompt) => session.client.promptAndWait(prompt),
-            setModel: (provider, modelId) => this.setModelOn(session.client, provider, modelId),
-            onNotice: async (notice) => {
-                try {
-                    await this.api.createMessage(channelId, renderTransportFallbackNotice(notice));
-                }
-                catch {
-                    // A platform advisory send failure must never abort the reply.
-                }
-            },
-        });
-        await this.sendPromptFeedbackComplete(channelId, message.id);
-        if (result.status === "exhausted") {
-            // The bounded terminal notice was already sent as the reply.
-            return;
+        // TB7 §5.6: a fresh incident clears any stale abort flag; the runner then
+        // observes LIVE abort authority (set by /abort or shutdown BEFORE calling
+        // client.abort()) at every await boundary so it never issues a handoff
+        // re-prompt after an abort. Sequential gateway dispatch cannot interleave
+        // an /abort mid-turn, but the mechanism is wired fail-closed regardless.
+        session.abortRequested = false;
+        try {
+            const policy = await this.resolveFallbackPolicy(session.agent);
+            const result = await runTransportFallback({
+                originalPrompt: trimmed,
+                policy,
+                run: (prompt) => session.client.promptAndWait(prompt),
+                setModel: (provider, modelId) => this.setModelOn(session.client, provider, modelId),
+                onNotice: async (notice) => {
+                    // Every advisory payload goes through the platform chunker so it
+                    // fits Discord's message limit even for very-long model ids;
+                    // chunks are sent in sequence before the fallback reply.
+                    for (const chunk of chunkDiscordMessage(renderTransportFallbackNotice(notice))) {
+                        try {
+                            await this.api.createMessage(channelId, chunk);
+                        }
+                        catch {
+                            // A platform advisory send failure must never abort the reply.
+                        }
+                    }
+                },
+                isAborted: () => session.abortRequested,
+            });
+            await this.sendPromptFeedbackComplete(channelId, message.id);
+            if (result.status === "exhausted") {
+                // The bounded terminal notice was already sent as the reply.
+                return;
+            }
+            const response = extractAssistantText(result.events).trim();
+            if (response === "") {
+                await this.api.createMessage(channelId, "(no assistant text returned)");
+                return;
+            }
+            for (const chunk of chunkDiscordMessage(response)) {
+                await this.api.createMessage(channelId, chunk);
+            }
         }
-        const response = extractAssistantText(result.events).trim();
-        if (response === "") {
-            await this.api.createMessage(channelId, "(no assistant text returned)");
-            return;
-        }
-        for (const chunk of chunkDiscordMessage(response)) {
-            await this.api.createMessage(channelId, chunk);
+        finally {
+            session.abortRequested = false;
         }
     }
     resolveFallbackPolicy(agent) {

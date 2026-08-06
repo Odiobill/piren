@@ -40,6 +40,15 @@ export interface TransportSession<TClient extends TransportRpcClient = PiRpcClie
     agent: string;
     client: TClient;
     lastUsedAt: number;
+    /**
+     * TB7 active-incident cancellation flag. Set by `abort()`/`closeAll()`
+     * BEFORE calling `client.abort()`/`stop()` so a supported transport
+     * abort/shutdown path marks the active fallback incident; the transport's
+     * fallback runner observes it at its next await boundary and never issues
+     * a handoff re-prompt. Reset by the transport when a fresh prompt incident
+     * starts and completes.
+     */
+    abortRequested: boolean;
 }
 export interface TransportSessionManagerOptions<TClient extends TransportRpcClient = PiRpcClient> {
     runnableAgents: string[];

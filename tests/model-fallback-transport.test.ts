@@ -221,10 +221,28 @@ describe("runTransportFallback", () => {
     expect(seam.notices).toEqual([]);
   });
 
-  it("abort after the first run prevents any switch or re-prompt", async () => {
+  it("abort before the first run (e.g. during policy load) never issues a run or a re-prompt", async () => {
     const seam = new FakeSeam();
     seam.scripts = [providerErrorEvents(false)];
-    seam.aborted = true; // abort already landed (run settled with abort events)
+    seam.aborted = true; // abort already landed before the runner started
+    const result = await runWith(seam, POLICY);
+    expect(result.status).toBe("completed");
+    expect(seam.setModelCalls).toEqual([]);
+    expect(seam.prompts).toEqual([]);
+    expect(seam.notices).toEqual([]);
+  });
+
+  it("an abort landing while the first run is in flight prevents any switch or re-prompt", async () => {
+    const seam = new FakeSeam();
+    seam.scripts = [providerErrorEvents(false)];
+    // The abort lands once the run is in flight (client.abort() resolves the
+    // in-flight prompt with abort events); the settled outcome stays terminal.
+    const originalRun = seam.run.bind(seam);
+    seam.run = async (prompt: string) => {
+      const events = await originalRun(prompt);
+      seam.aborted = true;
+      return events;
+    };
     const result = await runWith(seam, POLICY);
     expect(result.status).toBe("completed");
     expect(seam.setModelCalls).toEqual([]);

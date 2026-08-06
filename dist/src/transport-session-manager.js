@@ -51,6 +51,7 @@ export class TransportSessionManager {
             agent: requestedAgent,
             client,
             lastUsedAt: this.now(),
+            abortRequested: false,
         };
         this.sessions.set(key, session);
         return session;
@@ -72,6 +73,7 @@ export class TransportSessionManager {
             agent,
             client: nextClient,
             lastUsedAt: this.now(),
+            abortRequested: false,
         };
         this.sessions.set(key, nextSession);
         if (existing) {
@@ -83,6 +85,10 @@ export class TransportSessionManager {
         const session = this.sessions.get(sessionKey(transport, conversationId));
         if (!session)
             return false;
+        // TB7 §5.6: mark the active fallback incident BEFORE calling
+        // client.abort() so the runner observes the cancellation at its next
+        // await boundary (policy load, notice delivery, or delayed set_model).
+        session.abortRequested = true;
         await session.client.abort();
         session.lastUsedAt = this.now();
         return true;
@@ -151,6 +157,9 @@ export class TransportSessionManager {
         const sessions = [...this.sessions.values()];
         this.sessions.clear();
         for (const session of sessions) {
+            // Shutdown is also abort authority: mark the incident before stopping
+            // so an in-flight fallback stops at its next await boundary.
+            session.abortRequested = true;
             await session.client.stop();
         }
     }
