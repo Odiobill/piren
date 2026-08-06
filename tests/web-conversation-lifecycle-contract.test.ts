@@ -87,6 +87,16 @@ describe("L2 lifecycle action envelope parsing (pure, fail-closed)", () => {
     expect(() => parseLifecycleActionResponse({ conversation: conversationRecord(), transitioned: "yes" })).toThrow();
     expect(() => parseLifecycleActionResponse({ transitioned: true, event: {} })).toThrow();
   });
+
+  it("rejects a transitioned event with a missing conversation id or wrong kind", () => {
+    const base = {
+      conversation: conversationRecord(),
+      transitioned: true,
+      event: { id: "e1", conversationId: "c1", kind: "lifecycle_transition", created: "2026-08-06T00:00:00.000Z" },
+    };
+    expect(() => parseLifecycleActionResponse({ ...base, event: { ...base.event, conversationId: "" } })).toThrow(/event/i);
+    expect(() => parseLifecycleActionResponse({ ...base, event: { ...base.event, kind: "steward_message" } })).toThrow(/event/i);
+  });
 });
 
 describe("bounded L2 error parsing (typed, non-secret, no status fabrication)", () => {

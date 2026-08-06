@@ -32,12 +32,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseLifecycleEvent(json: unknown): LifecycleTransitionEvent {
   if (!isRecord(json)) throw new Error("unexpected lifecycle event");
   const event = json as Partial<LifecycleTransitionEvent>;
-  if (typeof event.id !== "string" || event.id === "" || typeof event.kind !== "string" || typeof event.created !== "string") {
+  if (
+    typeof event.id !== "string" ||
+    event.id === "" ||
+    typeof event.conversationId !== "string" ||
+    event.conversationId === "" ||
+    event.kind !== "lifecycle_transition" ||
+    typeof event.created !== "string" ||
+    event.created === ""
+  ) {
     throw new Error("unexpected lifecycle event");
   }
   return {
     id: event.id,
-    conversationId: typeof event.conversationId === "string" ? event.conversationId : "",
+    conversationId: event.conversationId,
     kind: event.kind,
     created: event.created,
   };
