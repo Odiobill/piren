@@ -113,7 +113,12 @@ export async function askAgentClassified(target, message, options = {}) {
     }
     try {
         const policy = options.fallbackPolicy ?? null;
-        const config = policy !== null && policy.fallback.ok && policy.fallback.present ? policy.fallback.config : null;
+        // Without the configured primary identity, this one-shot client cannot
+        // prove a configured fallback differs from the just-failed Pi model.
+        // Stay inert rather than risk a same-model re-prompt.
+        const config = policy !== null && policy.primaryModelId !== null && policy.fallback.ok && policy.fallback.present
+            ? policy.fallback.config
+            : null;
         const onToken = options.onToken;
         const onAdvisory = options.onAdvisory;
         // Session model affinity: starts at the configured primary; every

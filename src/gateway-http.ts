@@ -628,7 +628,13 @@ export class GatewayServer {
     const client = this.client;
     const unsubscribe = client.onEvent(forward);
     try {
-      const config = policy.fallback.ok && policy.fallback.present ? policy.fallback.config : null;
+      // Without a configured primary identity, this live session cannot
+      // prove a candidate differs from the just-failed Pi model. Stay inert
+      // rather than risk an unsafe same-model re-prompt.
+      const config =
+        policy.primaryModelId !== null && policy.fallback.ok && policy.fallback.present
+          ? policy.fallback.config
+          : null;
       let currentPrompt = prompt;
       let terminal: RpcEvent[] | null = null;
       // The last settled run awaiting a rotation decision. A rejected

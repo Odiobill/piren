@@ -379,6 +379,31 @@ describe("TB4 gateway chat SSE model fallback", () => {
     }
   });
 
+  it("a fallback policy without a configured primary model stays inert fail-closed", async () => {
+    const noPrimary = fallbackPolicy({ primaryModelId: null });
+    const server = new GatewayServer({ target: fakePiTarget(), fallbackPolicyLoader: loader(noPrimary) });
+    try {
+      const handle = await server.start();
+      const start = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: "fallbackerr please" }),
+      });
+      const { stream_id } = (await start.json()) as { stream_id: string };
+      const stream = await fetch(`http://${handle.hostname}:${handle.port}/api/chat/stream?stream_id=${stream_id}`);
+      const frames = parseSse(await stream.text());
+
+      // Without a primary identity, the server cannot prove that a candidate
+      // differs from the just-failed Pi model; it must never replay it.
+      expect(framesByEvent(frames, "model_fallback")).toHaveLength(0);
+      expect(framesByEvent(frames, "model_changed")).toHaveLength(0);
+      expect(tokenText(frames)).toBe("");
+      expect(framesByEvent(frames, "done")).toHaveLength(1);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("absent fallback config stays inert with the existing single-run behavior", async () => {
     // No fallbackPolicyLoader and no vaultRoot: the default loader resolves
     // an absent policy (inert).

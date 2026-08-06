@@ -372,6 +372,27 @@ describe("askAgentClassified TB5 fallback", () => {
     expect(advisory.lines).toEqual([]);
   });
 
+  it("a fallback policy without a configured primary model stays inert fail-closed", async () => {
+    const client = new FakeAskClient();
+    client.scripts = [providerErrorEvents(false)];
+    const noPrimary: GatewayFallbackPolicy = {
+      primaryModelId: null,
+      fallback: { ok: true, present: true, config: { autoSwitch: true, models: ["openai/gpt-4.1"] } },
+    };
+
+    const outcome = await askAgentClassified(TARGET, "original task", {
+      clientFactory: factory(client),
+      fallbackPolicy: noPrimary,
+    });
+
+    // Without a configured primary identity, TB5 cannot prove that a
+    // candidate differs from the just-failed Pi model. Stay inert rather than
+    // risk re-prompting that same model.
+    expect(outcome).toEqual({ ok: true, text: "" });
+    expect(client.setModelCalls).toEqual([]);
+    expect(client.promptMessages).toEqual(["original task"]);
+  });
+
   it("malformed policy stays inert at runtime", async () => {
     const client = new FakeAskClient();
     client.scripts = [providerErrorEvents(false)];
