@@ -25,6 +25,9 @@
 const process = require("node:process");
 
 let buffer = "";
+// TB4: the current model as last set via set_model (used to prove the
+// fallback re-prompt ran on the switched model).
+let currentModelId = null;
 // Blocking-approval state: set by a "waitapprove" prompt, cleared by the
 // matching extension_ui_response or by abort.
 let waitingApprovalId = null;
@@ -38,6 +41,39 @@ function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
+function emitSettledProviderError(retryExhausted) {
+  if (retryExhausted) {
+    emit({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1, errorMessage: "529 provider overloaded" });
+    emit({ type: "auto_retry_end", attempt: 3, maxAttempts: 3, success: false, finalError: "529 provider overloaded" });
+  }
+  const errorRecord = {
+    role: "assistant",
+    content: [],
+    stopReason: "error",
+    errorMessage: "provider error (401)",
+  };
+  emit({ type: "message_start", message: errorRecord });
+  emit({ type: "message_end", message: errorRecord });
+  emit({ type: "turn_end", message: Object.assign({ toolResults: [] }, errorRecord) });
+  emit({ type: "agent_end", messages: [errorRecord], willRetry: false });
+  emit({ type: "agent_settled" });
+}
+
+function emitSettledContaminatedError() {
+  emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Partial" } });
+  const errorRecord = {
+    role: "assistant",
+    content: [],
+    stopReason: "error",
+    errorMessage: "provider error (401)",
+  };
+  emit({ type: "message_start", message: errorRecord });
+  emit({ type: "message_end", message: errorRecord });
+  emit({ type: "turn_end", message: Object.assign({ toolResults: [] }, errorRecord) });
+  emit({ type: "agent_end", messages: [errorRecord], willRetry: false });
+  emit({ type: "agent_settled" });
+}
+
 function handle(cmd) {
   if (cmd.type === "prompt") {
     if (typeof cmd.message === "string" && cmd.message.includes("fail")) {
@@ -46,6 +82,43 @@ function handle(cmd) {
     }
     emit({ type: "response", command: "prompt", success: true, id: cmd.id });
     emit({ type: "agent_start" });
+
+    // TB4 deterministic provider-error scripts (checked BEFORE the default
+    // completion so handoff re-prompts and error triggers are distinct; the
+    // trigger words avoid "fail"/"approve"/"hang"/"waitapprove"/
+    // "roomhandoff"/"steer"/"follow_up" substrings).
+
+    // (d) Fallback handoff re-prompt: the replacement model receives the
+    // TB3 handoff-wrapped original request and completes normally, naming the
+    // current (switched) model so tests can prove the same-client switch.
+    if (typeof cmd.message === "string" && cmd.message.includes("[model fallback:")) {
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Fbk " } });
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: currentModelId || "unknown" } });
+      emit({ type: "queue_update", steering: [], followUp: [] });
+      emit({ type: "agent_end", messages: [], willRetry: false });
+      emit({ type: "agent_settled" });
+      return;
+    }
+
+    // (e) Settled zero-side-effect provider_error_other (eligible fallback).
+    if (typeof cmd.message === "string" && cmd.message.includes("fallbackerr")) {
+      emitSettledProviderError(false);
+      return;
+    }
+
+    // (f) Settled transient-exhausted provider error (auto_retry_end
+    // success:false; eligible fallback).
+    if (typeof cmd.message === "string" && cmd.message.includes("fallbackretry")) {
+      emitSettledProviderError(true);
+      return;
+    }
+
+    // (g) Settled but CONTAMINATED provider error (text delta before the
+    // error; zero-side-effect gate => ambiguous, never fallback-eligible).
+    if (typeof cmd.message === "string" && cmd.message.includes("fallbackcontam")) {
+      emitSettledContaminatedError();
+      return;
+    }
 
     // TB0 deterministic settlement scripts (trigger words avoid "fail"/"approve"/
     // "hang"/"waitapprove"/"roomhandoff"/"steer"/"follow_up" substrings).
@@ -207,6 +280,7 @@ function handle(cmd) {
       emit({ type: "response", command: "set_model", success: false, id: cmd.id, error: "model not found" });
       return;
     }
+    currentModelId = cmd.provider + "/" + cmd.modelId;
     emit({ type: "response", command: "set_model", success: true, id: cmd.id, data: { provider: cmd.provider, id: cmd.modelId } });
     emit({ type: "model_changed", model: { provider: cmd.provider, id: cmd.modelId } });
     return;

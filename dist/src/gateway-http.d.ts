@@ -1,5 +1,13 @@
 import { type RpcSpawnTarget } from "./gateway-rpc.js";
+import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 export type RpcTargetBuilder = (agent: string) => Promise<RpcSpawnTarget>;
+/**
+ * Resolves the agent-local model-fallback policy for a gateway run
+ * (TB4). The production implementation reads `team/<agent>/config.yml`
+ * best-effort from the vault root; tests inject a fixed policy to keep the
+ * gateway filesystem/Pi-auth free. Absent/malformed policies are inert.
+ */
+export type FallbackPolicyLoader = (agent: string | null) => Promise<GatewayFallbackPolicy>;
 export interface GatewayServerOptions {
     target: RpcSpawnTarget;
     vaultRoot?: string | undefined;
@@ -33,6 +41,13 @@ export interface GatewayServerOptions {
      * detection. API routes always take priority over static files.
      */
     publicDir?: string | undefined;
+    /**
+     * Resolves the agent-local model-fallback policy (TB4). Defaults to
+     * reading `team/<agent>/config.yml` best-effort under vaultRoot; absent/
+     * malformed/disabled policies keep existing single-run behavior. Tests
+     * inject a fixed policy so the gateway stays filesystem/Pi-auth free.
+     */
+    fallbackPolicyLoader?: FallbackPolicyLoader | undefined;
 }
 export interface GatewayHandle {
     port: number;
@@ -67,6 +82,13 @@ export declare class GatewayServer {
     /** Idempotent cleanup callbacks for live conversation SSE handlers. */
     private readonly conversationStreamCleanups;
     private shuttingDown;
+    private readonly fallbackPolicyLoader;
+    /** TB4: explicit steward model selection disables automatic fallback for this session. */
+    private explicitModelSelected;
+    /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
+    private currentModelId;
+    /** TB4: active fallback incident for the single live turn (null when idle). */
+    private activeIncident;
     constructor(options: GatewayServerOptions);
     start(port?: number, hostname?: string): Promise<GatewayHandle>;
     close(): Promise<void>;
@@ -81,6 +103,50 @@ export declare class GatewayServer {
     private handleStatic;
     private serveFile;
     private handleStart;
+    /**
+     * Drive one chat turn to its single terminal marker. steer/follow_up run
+     * once on the existing turn (no fallback semantics); a fresh prompt runs
+     * the TB4 bounded same-client rotation. Every turn ends with exactly one
+     * terminal marker: done on success, error on failure.
+     */
+    private runChatTurn;
+    /**
+     * Send a non-prompt RPC command (steer/follow_up) and resolve once the
+     * underlying turn fully settles (agent_settled), forwarding events live.
+     * A command rejection rejects the promise: continuations of an existing
+     * turn are never eligible for model rotation.
+     */
+    private commandAndSettle;
+    /**
+     * Send one prompt on the given client and resolve with its event stream
+     * once the logical run fully settles (agent_settled — the sole terminal
+     * boundary since TB0/G1). Prompt rejection rejects the promise. `timeoutMs`
+     * is optional: chat SSE and OpenAI streaming keep today's no-timeout
+     * behavior, while OpenAI non-streaming keeps its 30s bound.
+     */
+    private promptAndSettle;
+    /**
+     * Run one logical prompt with bounded same-client model fallback (TB4).
+     *
+     * Continuation gate (design §3.1, §4.2, §5): a continuation happens ONLY
+     * after the prompt was accepted AND the logical run reached agent_settled
+     * AND classifyRunOutcome returned an eligible provider-error category. It
+     * always uses the same still-live client/session: set_model(next) then
+     * re-prompt with the TB3 verbatim-safe handoff wrapping the ORIGINAL
+     * request. Never switch_session, never respawn/swap a client, never replays
+     * a different request, never infers eligibility from error text/status.
+     *
+     * Rotation is declaration-order at-most-once through planFallbackAttempt; a
+     * failed/unknown set_model counts as an attempted unavailable fallback and
+     * the next configured model is tried; exhaustion is terminal. Absent/
+     * invalid/disabled fallback config is inert (single run, no events). The
+     * active fallback model remains session affinity after success (no primary
+     * restore). The OpenAI-compatible route reuses this runner with a no-op
+     * notify so no Piren SSE event leaks into its response.
+     */
+    private runWithFallback;
+    /** Resolve the fallback policy for the current agent (injected or vault). */
+    private resolveFallbackPolicy;
     private handleStream;
     private handleModels;
     private handleOpenAiChatCompletions;

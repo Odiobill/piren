@@ -37,6 +37,8 @@ The native web chat uses a POST-start plus GET-stream pattern:
 
 This avoids WebSocket server complexity. Heartbeats keep proxies from closing idle streams.
 
+When the current agent declares a `model.fallback` block (see [Configuration](configuration.md)), the chat stream may also carry a structured `model_fallback` SSE event (`{kind, from, to, category, attempt, exhausted}`) before a same-client automatic continuation when a fully settled run ends as a zero-side-effect provider error. The event is evidence for external integrations and the transcript; the integrated UI adds no model controls. An explicit `POST /api/chat/model` steward selection disables automatic fallback for the session; `autoFallback: true` on the same route re-enables it.
+
 JSON request bodies accepted by gateway API routes are capped at 1 MiB and
 return HTTP 413 when oversized.
 

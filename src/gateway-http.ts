@@ -30,6 +30,15 @@ import {
   type ConversationManifest,
 } from "./conversations.js";
 import type { VaultDirReader } from "./okf.js";
+import { classifyRunOutcome, isFallbackEligibleOutcome } from "./model-fallback-outcome.js";
+import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
+import {
+  buildModelFallbackNotice,
+  loadAgentFallbackPolicy,
+  splitFallbackModelId,
+  type GatewayFallbackPolicy,
+  type ModelFallbackNotice,
+} from "./model-fallback-gateway.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -74,6 +83,14 @@ function createVaultRelativeDirReader(vaultRoot: string): VaultDirReader {
 
 export type RpcTargetBuilder = (agent: string) => Promise<RpcSpawnTarget>;
 
+/**
+ * Resolves the agent-local model-fallback policy for a gateway run
+ * (TB4). The production implementation reads `team/<agent>/config.yml`
+ * best-effort from the vault root; tests inject a fixed policy to keep the
+ * gateway filesystem/Pi-auth free. Absent/malformed policies are inert.
+ */
+export type FallbackPolicyLoader = (agent: string | null) => Promise<GatewayFallbackPolicy>;
+
 export interface GatewayServerOptions {
   target: RpcSpawnTarget;
   vaultRoot?: string | undefined;
@@ -107,6 +124,13 @@ export interface GatewayServerOptions {
    * detection. API routes always take priority over static files.
    */
   publicDir?: string | undefined;
+  /**
+   * Resolves the agent-local model-fallback policy (TB4). Defaults to
+   * reading `team/<agent>/config.yml` best-effort under vaultRoot; absent/
+   * malformed/disabled policies keep existing single-run behavior. Tests
+   * inject a fixed policy so the gateway stays filesystem/Pi-auth free.
+   */
+  fallbackPolicyLoader?: FallbackPolicyLoader | undefined;
 }
 
 export interface GatewayHandle {
@@ -118,6 +142,19 @@ interface ChatStream {
   queue: SseEvent[];
   closed: boolean;
   waiters: Array<() => void>;
+}
+
+/**
+ * TB4 per-incident fallback state for the single live global client turn.
+ * `attemptedModelIds` records every configured fallback already attempted in
+ * this incident (at-most-once); `aborted` is set by POST /api/chat/abort so
+ * steward intent cancels remaining attempts; `policy` is the resolved
+ * agent-local fallback policy for this run.
+ */
+interface FallbackIncident {
+  attemptedModelIds: string[];
+  aborted: boolean;
+  policy: GatewayFallbackPolicy;
 }
 
 type JsonBodyResult =
@@ -171,6 +208,13 @@ export class GatewayServer {
   /** Idempotent cleanup callbacks for live conversation SSE handlers. */
   private readonly conversationStreamCleanups = new Set<() => void>();
   private shuttingDown = false;
+  private readonly fallbackPolicyLoader: FallbackPolicyLoader | undefined;
+  /** TB4: explicit steward model selection disables automatic fallback for this session. */
+  private explicitModelSelected = false;
+  /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
+  private currentModelId: string | null = null;
+  /** TB4: active fallback incident for the single live turn (null when idle). */
+  private activeIncident: FallbackIncident | null = null;
 
   constructor(options: GatewayServerOptions) {
     this.currentTarget = options.target;
@@ -181,6 +225,7 @@ export class GatewayServer {
     this.targetBuilder = options.targetBuilder;
     this.authToken = options.authToken ?? "";
     this.publicDir = options.publicDir;
+    this.fallbackPolicyLoader = options.fallbackPolicyLoader;
     // ADR-0041 R1c: the room broker is wired only when all required room
     // runtime options are present. Room runs use isolated room × agent
     // clients via the broker, never the global gateway chat client.
@@ -416,41 +461,266 @@ export class GatewayServer {
     const stream: ChatStream = { queue: [], closed: false, waiters: [] };
     this.streams.set(streamId, stream);
 
-    const unsubscribe = this.client.onEvent((event: RpcEvent) => {
+    // TB4: one persistent forwarder per turn. Intermediate settled runs
+    // (provider-error fallback attempts) never emit a done; the single
+    // terminal done is enqueued by runChatTurn. model_fallback notices are
+    // enqueued as structured non-secret SSE events for external integrations
+    // and the transcript.
+    const forward = (event: RpcEvent): void => {
       const sse = piEventToSse(event);
-      if (sse) {
+      if (sse !== null && sse.type !== "done") {
         enqueue(stream, sse);
       }
-      // TB0/G1: the stream closes only when the logical run fully settles
-      // (agent_settled). An agent_end alone is never terminal.
-      if (event.type === "agent_settled") {
-        unsubscribe();
-        closeStream(stream);
-      }
-    });
+    };
+    const notify = (notice: ModelFallbackNotice): void => {
+      enqueue(stream, { type: "model_fallback", data: notice as unknown as Record<string, unknown> });
+    };
 
-    // Fire and forget: the POST returns immediately. Errors and mid-stream
-    // crashes surface as SSE error events via the catch and onExit paths.
-    //
-    // When mode is "steer" or "follow_up", send the corresponding RPC command
-    // instead of a new prompt. Events from the ongoing turn flow through the
-    // same SSE stream.
-    const sendPromise =
-      mode === "steer"
-        ? this.client.steer(message)
-        : mode === "follow_up"
-          ? this.client.followUp(message)
-          : this.client.prompt(message);
-
-    void sendPromise.catch((err: Error) => {
-      unsubscribe();
-      if (!stream.closed) {
-        enqueue(stream, { type: "error", data: { message: err.message } });
-        closeStream(stream);
-      }
-    });
+    // Fire and forget: the POST returns immediately. The turn runs to its
+    // single terminal done (or error) and closes the stream. Errors and
+    // mid-stream crashes surface as SSE error events.
+    void this.runChatTurn(stream, message, mode, forward, notify);
 
     this.writeJson(res, 200, { stream_id: streamId });
+  }
+
+  /**
+   * Drive one chat turn to its single terminal marker. steer/follow_up run
+   * once on the existing turn (no fallback semantics); a fresh prompt runs
+   * the TB4 bounded same-client rotation. Every turn ends with exactly one
+   * terminal marker: done on success, error on failure.
+   */
+  private async runChatTurn(
+    stream: ChatStream,
+    message: string,
+    mode: "steer" | "follow_up" | undefined,
+    forward: (event: RpcEvent) => void,
+    notify: (notice: ModelFallbackNotice) => void,
+  ): Promise<void> {
+    try {
+      if (mode === "steer") {
+        await this.commandAndSettle(this.client.steer(message), forward);
+      } else if (mode === "follow_up") {
+        await this.commandAndSettle(this.client.followUp(message), forward);
+      } else {
+        await this.runWithFallback(message, forward, notify);
+      }
+      enqueue(stream, { type: "done", data: {} });
+    } catch (err) {
+      if (!stream.closed) {
+        enqueue(stream, { type: "error", data: { message: err instanceof Error ? err.message : String(err) } });
+      }
+    } finally {
+      closeStream(stream);
+    }
+  }
+
+  /**
+   * Send a non-prompt RPC command (steer/follow_up) and resolve once the
+   * underlying turn fully settles (agent_settled), forwarding events live.
+   * A command rejection rejects the promise: continuations of an existing
+   * turn are never eligible for model rotation.
+   */
+  private commandAndSettle(command: Promise<void>, forward: (event: RpcEvent) => void): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        action();
+      };
+      const unsubscribe = this.client.onEvent((event) => {
+        forward(event);
+        if (event.type === "agent_settled") {
+          finish(() => {
+            unsubscribe();
+            resolve();
+          });
+        }
+      });
+      command.catch((err) => {
+        finish(() => {
+          unsubscribe();
+          reject(err);
+        });
+      });
+    });
+  }
+
+  /**
+   * Send one prompt on the given client and resolve with its event stream
+   * once the logical run fully settles (agent_settled — the sole terminal
+   * boundary since TB0/G1). Prompt rejection rejects the promise. `timeoutMs`
+   * is optional: chat SSE and OpenAI streaming keep today's no-timeout
+   * behavior, while OpenAI non-streaming keeps its 30s bound.
+   */
+  private promptAndSettle(client: PiRpcClient, prompt: string, timeoutMs?: number): Promise<RpcEvent[]> {
+    return new Promise<RpcEvent[]>((resolve, reject) => {
+      const events: RpcEvent[] = [];
+      let settled = false;
+      const finish = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        action();
+      };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          finish(() => reject(new Error(`Timed out waiting for agent_settled. Stderr: ${client.getStderr()}`)));
+        }, timeoutMs);
+      }
+      const unsubscribe = client.onEvent((event) => {
+        events.push(event);
+        if (event.type === "agent_settled") {
+          finish(() => {
+            if (timer !== undefined) clearTimeout(timer);
+            unsubscribe();
+            resolve(events);
+          });
+        }
+      });
+      client.prompt(prompt).catch((err) => {
+        finish(() => {
+          if (timer !== undefined) clearTimeout(timer);
+          unsubscribe();
+          reject(err);
+        });
+      });
+    });
+  }
+
+  /**
+   * Run one logical prompt with bounded same-client model fallback (TB4).
+   *
+   * Continuation gate (design §3.1, §4.2, §5): a continuation happens ONLY
+   * after the prompt was accepted AND the logical run reached agent_settled
+   * AND classifyRunOutcome returned an eligible provider-error category. It
+   * always uses the same still-live client/session: set_model(next) then
+   * re-prompt with the TB3 verbatim-safe handoff wrapping the ORIGINAL
+   * request. Never switch_session, never respawn/swap a client, never replays
+   * a different request, never infers eligibility from error text/status.
+   *
+   * Rotation is declaration-order at-most-once through planFallbackAttempt; a
+   * failed/unknown set_model counts as an attempted unavailable fallback and
+   * the next configured model is tried; exhaustion is terminal. Absent/
+   * invalid/disabled fallback config is inert (single run, no events). The
+   * active fallback model remains session affinity after success (no primary
+   * restore). The OpenAI-compatible route reuses this runner with a no-op
+   * notify so no Piren SSE event leaks into its response.
+   */
+  private async runWithFallback(
+    prompt: string,
+    forward: (event: RpcEvent) => void,
+    notify: (notice: ModelFallbackNotice) => void,
+    timeoutMs?: number,
+  ): Promise<RpcEvent[]> {
+    const policy = await this.resolveFallbackPolicy();
+    const incident: FallbackIncident = { attemptedModelIds: [], aborted: false, policy };
+    this.activeIncident = incident;
+
+    if (this.currentModelId === null) {
+      this.currentModelId = policy.primaryModelId;
+    }
+
+    // Capture the client for the whole incident: a mid-turn agent switch
+    // swaps this.client, and rotation must never migrate attempts across
+    // clients (no respawn/swap semantics).
+    const client = this.client;
+    const unsubscribe = client.onEvent(forward);
+    try {
+      const config = policy.fallback.ok && policy.fallback.present ? policy.fallback.config : null;
+      let currentPrompt = prompt;
+      let terminal: RpcEvent[] | null = null;
+
+      while (terminal === null) {
+        const events = await this.promptAndSettle(client, currentPrompt, timeoutMs);
+        if (incident.aborted) {
+          terminal = events;
+          break;
+        }
+        const outcome = classifyRunOutcome(events);
+        const plan =
+          config === null
+            ? { kind: "no-attempt" as const, reason: "not-eligible" as const }
+            : planFallbackAttempt({
+                configuredFallbacks: config.models,
+                autoSwitch: config.autoSwitch,
+                explicitModelSelected: this.explicitModelSelected,
+                aborted: incident.aborted,
+                outcome,
+                currentModelId: this.currentModelId ?? "",
+                attemptedModelIds: incident.attemptedModelIds,
+              });
+
+        if (plan.kind === "no-attempt") {
+          terminal = events;
+          break;
+        }
+        // planFallbackAttempt only reaches attempt/exhausted for eligible
+        // outcomes; TS cannot see that correlation, so narrow explicitly and
+        // fail closed if it ever disagrees.
+        if (!isFallbackEligibleOutcome(outcome)) {
+          terminal = events;
+          break;
+        }
+
+        if (plan.kind === "exhausted") {
+          notify(
+            buildModelFallbackNotice({
+              from: this.currentModelId,
+              to: null,
+              category: outcome.category,
+              attempt: plan.attemptedCount,
+              exhausted: true,
+            }),
+          );
+          terminal = events;
+          break;
+        }
+
+        // A planned attempt: emit evidence, then set_model. An unavailable
+        // fallback (set_model rejection) is recorded as attempted and skipped
+        // (at-most-once; never retried within this incident).
+        notify(
+          buildModelFallbackNotice({
+            from: this.currentModelId,
+            to: plan.modelId,
+            category: outcome.category,
+            attempt: plan.attemptNumber,
+            exhausted: false,
+          }),
+        );
+        const split = splitFallbackModelId(plan.modelId);
+        let switched = false;
+        try {
+          await client.setModel(split.provider, split.modelId);
+          this.currentModelId = plan.modelId;
+          switched = true;
+        } catch {
+          // Unavailable fallback: skip with evidence already emitted.
+        }
+        incident.attemptedModelIds.push(plan.modelId);
+        if (!switched) {
+          continue;
+        }
+        currentPrompt = buildFallbackHandoffPrompt(prompt, plan.modelId, outcome.category);
+      }
+
+      return terminal ?? [];
+    } finally {
+      unsubscribe();
+      if (this.activeIncident === incident) {
+        this.activeIncident = null;
+      }
+    }
+  }
+
+  /** Resolve the fallback policy for the current agent (injected or vault). */
+  private resolveFallbackPolicy(): Promise<GatewayFallbackPolicy> {
+    if (this.fallbackPolicyLoader !== undefined) {
+      return this.fallbackPolicyLoader(this.currentAgent);
+    }
+    return loadAgentFallbackPolicy(this.vaultRoot, this.currentAgent);
   }
 
   private async handleStream(res: ServerResponse, url: URL): Promise<void> {
@@ -530,7 +800,12 @@ export class GatewayServer {
         return;
       }
 
-      const events = await this.client.promptAndWait(prompt);
+      const events = await this.runWithFallback(
+        prompt,
+        () => {},
+        () => {},
+        30000,
+      );
       const content = extractAssistantText(events).trim();
       const requestedModel = body.value.model;
       const model = typeof requestedModel === "string" && requestedModel.trim() !== "" ? requestedModel : "piren/default";
@@ -581,24 +856,23 @@ export class GatewayServer {
 
     await new Promise<void>((resolve) => {
       let settled = false;
-      const finish = (): void => {
+      const finish = (action: () => void): void => {
         if (settled) return;
         settled = true;
-        unsubscribe();
-        res.write("data: [DONE]\n\n");
-        res.end();
-        resolve();
+        action();
       };
       const fail = (error: Error): void => {
         if (settled) return;
         settled = true;
-        unsubscribe();
         res.write(`data: ${JSON.stringify({ error: { message: error.message } })}\n\n`);
         res.write("data: [DONE]\n\n");
         res.end();
         resolve();
       };
-      const unsubscribe = this.client.onEvent((event) => {
+      // TB4: the runner forwards deltas live but never emits a Piren-specific
+      // model_fallback event into the OpenAI response; the stop chunk and
+      // [DONE] are written once after the terminal run.
+      const forward = (event: RpcEvent): void => {
         const delta = this.openAiTextDeltaFromEvent(event);
         if (delta !== null) {
           res.write(`data: ${JSON.stringify({
@@ -609,18 +883,23 @@ export class GatewayServer {
             choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
           })}\n\n`);
         }
-        if (event.type === "agent_settled") {
-          res.write(`data: ${JSON.stringify({
-            id,
-            object: "chat.completion.chunk",
-            created,
-            model,
-            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-          })}\n\n`);
-          finish();
-        }
-      });
-      this.client.prompt(prompt).catch((err) => fail(err instanceof Error ? err : new Error(String(err))));
+      };
+      this.runWithFallback(prompt, forward, () => {})
+        .then(() => {
+          finish(() => {
+            res.write(`data: ${JSON.stringify({
+              id,
+              object: "chat.completion.chunk",
+              created,
+              model,
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            })}\n\n`);
+            res.write("data: [DONE]\n\n");
+            res.end();
+            resolve();
+          });
+        })
+        .catch((err) => fail(err instanceof Error ? err : new Error(String(err))));
     });
   }
 
@@ -675,6 +954,18 @@ export class GatewayServer {
 
     try {
       const model = await this.client.setModel(provider, modelId);
+      // TB4 (design §5.4): an explicit steward model selection takes
+      // precedence for the session and disables automatic model fallback;
+      // explicit opt-in re-enable is supported on the same route via
+      // autoFallback:true (backward compatible — existing clients send only
+      // provider/modelId). The internal fallback set_model never marks this
+      // flag.
+      if (body.value.autoFallback === true) {
+        this.explicitModelSelected = false;
+      } else {
+        this.explicitModelSelected = true;
+      }
+      this.currentModelId = `${provider}/${modelId}`;
       this.writeJson(res, 200, model);
     } catch (err) {
       this.writeJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -767,6 +1058,12 @@ export class GatewayServer {
    */
   private async handleAbort(res: ServerResponse): Promise<void> {
     try {
+      // TB4 (design §5.6): steward abort cancels any remaining fallback
+      // attempts; the active incident settles as a cancel and never
+      // continues. An abort during a fallback attempt cancels the rest.
+      if (this.activeIncident) {
+        this.activeIncident.aborted = true;
+      }
       await this.client.abort();
       this.writeJson(res, 200, { ok: true });
     } catch (err) {
@@ -791,6 +1088,11 @@ export class GatewayServer {
       this.installExitHandler(nextClient);
       this.client = nextClient;
       this.currentTarget = target;
+      // TB4 (design §5.3): a fresh session resets fallback session state —
+      // the fresh Pi process starts on the configured primary again.
+      this.explicitModelSelected = false;
+      this.currentModelId = null;
+      this.activeIncident = null;
 
       for (const stream of this.streams.values()) {
         if (!stream.closed) {
@@ -914,6 +1216,11 @@ export class GatewayServer {
       this.client = nextClient;
       this.currentTarget = target;
       this.currentAgent = agent;
+      // TB4 (design §5.3): an agent switch is a fresh session for the new
+      // agent — fallback session state resets (fresh configured primary).
+      this.explicitModelSelected = false;
+      this.currentModelId = null;
+      this.activeIncident = null;
 
       // Close any streams still bound to the old client; they cannot continue
       // across an agent restart.
