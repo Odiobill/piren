@@ -376,9 +376,11 @@ export async function askAgent(
   return outcome.text;
 }
 
-/** TB5 askAgent options: the classified options minus the internal surface. */
+/** TB5 askAgent options: the classified options minus the internal surface.
+ * Token streaming stays on the positional third parameter (the historical
+ * contract); there is deliberately no options.onToken alias so no caller can
+ * pass a silently-ignored callback. */
 export interface AskAgentOptions {
-  onToken?: (token: string) => void;
   /** TB5: resolved agent-local fallback policy (inert when absent). */
   fallbackPolicy?: GatewayFallbackPolicy | undefined;
   /** TB5: bounded non-secret advisory output before fallback handoff replies. */

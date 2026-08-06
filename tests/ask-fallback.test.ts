@@ -303,11 +303,6 @@ describe("askAgentClassified TB5 fallback", () => {
   });
 
   it("prompt rejection stays ambiguous at prompt_handoff with no fallback", async () => {
-    const client = new FakeAskClient();
-    client.scripts = [];
-    const original = askAgentClassified;
-    void original;
-
     const outcome = await askAgentClassified(TARGET, "fail please", {
       clientFactory: () => {
         const rejecting = new FakeAskClient();
