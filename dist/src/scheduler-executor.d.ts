@@ -1,4 +1,5 @@
 import { type BoundedRunFailure, type PiRpcClientLike } from "./ask.js";
+import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 import type { RpcSpawnTarget } from "./gateway-rpc.js";
 export interface BuildClaimedInboxTaskPromptOptions {
     agentName: string;
@@ -52,6 +53,13 @@ export interface ClaimedInboxTaskRunnerResult {
      * executor classifies their failures as ambiguous.
      */
     failure?: BoundedRunFailure;
+    /**
+     * TB8: bounded non-secret model-fallback advisory lines (attempt /
+     * unavailable skip / terminal exhaustion), in order. Absent when no
+     * fallback occurred. Never carries raw provider error text, HTTP statuses,
+     * credentials, session/config paths, or the task prompt.
+     */
+    modelFallback?: string[];
 }
 export interface ClaimedInboxTaskRunner {
     run(input: ClaimedInboxTaskRunInput): Promise<ClaimedInboxTaskRunnerResult>;
@@ -80,6 +88,13 @@ export interface ExecuteClaimedInboxTaskResult {
      * pre-handoff milestones.
      */
     failure?: BoundedRunFailure;
+    /**
+     * TB8: bounded non-secret model-fallback advisory lines (attempt /
+     * unavailable skip / terminal exhaustion), in order. Absent when no
+     * fallback occurred. Surfaces through the scheduler --once result/summary
+     * without mutating the claimed task content.
+     */
+    modelFallback?: string[];
 }
 /**
  * Execute exactly one already-claimed inbox task through the injected runner.
@@ -104,6 +119,14 @@ export interface CreateAskRunnerOptions {
      * outcomes without live Pi auth. Production defaults to `PiRpcClient`.
      */
     clientFactory?: (target: RpcSpawnTarget) => PiRpcClientLike;
+    /**
+     * TB8: resolve the active agent's model-fallback policy at this production
+     * scheduler runtime adapter boundary. Production default reads
+     * `team/<agent>/config.yml` best-effort under the input vault root;
+     * absent/malformed/disabled/no-primary stays inert. Pure planner/retry/
+     * release cores never read YAML/files; tests inject a fixed policy.
+     */
+    fallbackPolicyLoader?: ((input: ClaimedInboxTaskRunInput) => Promise<GatewayFallbackPolicy>) | undefined;
 }
 /**
  * Create a production {@link ClaimedInboxTaskRunner} that builds a Pi RPC

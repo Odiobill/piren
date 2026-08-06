@@ -135,6 +135,11 @@ function formatAgentCronRunResult(options) {
         "",
         options.assistantText || "(empty)",
     ];
+    if (options.modelFallback !== undefined && options.modelFallback.length > 0) {
+        lines.push("", "## Model fallback", "");
+        for (const line of options.modelFallback)
+            lines.push(line);
+    }
     if (options.error !== undefined) {
         lines.push("", "## Error", "", options.error);
     }
@@ -182,6 +187,7 @@ export async function executeClaimedAgentCronJob(options) {
     let assistantText = "";
     let exitCode = 0;
     let errorSummary;
+    let modelFallback;
     try {
         const runResult = await options.runner.run({
             agentName: info.agentName,
@@ -190,6 +196,8 @@ export async function executeClaimedAgentCronJob(options) {
         });
         assistantText = runResult.assistantText;
         exitCode = runResult.exitCode;
+        if (runResult.modelFallback !== undefined)
+            modelFallback = runResult.modelFallback;
     }
     catch (error) {
         exitCode = 1;
@@ -209,6 +217,7 @@ export async function executeClaimedAgentCronJob(options) {
             exitCode,
             assistantText,
             ...(errorSummary !== undefined ? { error: errorSummary } : {}),
+            ...(modelFallback !== undefined ? { modelFallback } : {}),
         }),
         startedAt,
         finishedAt,
@@ -227,6 +236,8 @@ export async function executeClaimedAgentCronJob(options) {
     };
     if (errorSummary !== undefined)
         result.error = errorSummary;
+    if (modelFallback !== undefined)
+        result.modelFallback = modelFallback;
     return result;
 }
 //# sourceMappingURL=scheduler-cron-executor.js.map

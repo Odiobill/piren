@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { askAgentClassified } from "./ask.js";
 import { buildPiRunCommand } from "./run.js";
+import { loadAgentFallbackPolicy } from "./model-fallback-gateway.js";
 // ---------------------------------------------------------------------------
 // Claim-scoped inbox task executor (ADR-0029 / O7 S2)
 // ---------------------------------------------------------------------------
@@ -124,6 +125,7 @@ export async function executeClaimedInboxTask(options) {
     let exitCode = 0;
     let errorSummary;
     let failure;
+    let modelFallback;
     try {
         const runResult = await options.runner.run({
             agentName: info.agentName,
@@ -132,6 +134,8 @@ export async function executeClaimedInboxTask(options) {
         });
         assistantText = runResult.assistantText;
         exitCode = runResult.exitCode;
+        if (runResult.modelFallback !== undefined)
+            modelFallback = runResult.modelFallback;
         if (runResult.failure !== undefined) {
             // Preserve the typed failure from instrumented runners.
             failure = runResult.failure;
@@ -165,6 +169,8 @@ export async function executeClaimedInboxTask(options) {
         result.error = errorSummary;
     if (failure !== undefined)
         result.failure = failure;
+    if (modelFallback !== undefined)
+        result.modelFallback = modelFallback;
     return result;
 }
 /**
@@ -195,6 +201,10 @@ export function createAskRunner(options = {}) {
                 env: command.env,
             };
         });
+    // TB8 production adapter: best-effort agent-local config resolution. When
+    // the loader is injected (tests) it replaces this boundary entirely.
+    const fallbackPolicyLoader = options.fallbackPolicyLoader ??
+        (async (input) => loadAgentFallbackPolicy(input.vaultRoot, input.agentName));
     return {
         async run(input) {
             let target;
@@ -214,14 +224,33 @@ export function createAskRunner(options = {}) {
                     },
                 };
             }
+            // TB8: resolve the policy at the adapter boundary and collect the
+            // bounded non-secret advisory lines surfaced by the TB5 ask fallback.
+            const fallbackPolicy = await fallbackPolicyLoader(input);
+            const modelFallback = [];
             const askOptions = {};
             if (options.clientFactory !== undefined)
                 askOptions.clientFactory = options.clientFactory;
+            askOptions.fallbackPolicy = fallbackPolicy;
+            askOptions.onAdvisory = (line) => {
+                modelFallback.push(line);
+            };
             const outcome = await askAgentClassified(target, input.prompt, askOptions);
-            if (outcome.ok) {
-                return { assistantText: outcome.text, exitCode: 0 };
+            const result = outcome.ok
+                ? { assistantText: outcome.text, exitCode: 0 }
+                : { assistantText: "", exitCode: 1, failure: outcome.failure };
+            // The TB5 ask core surfaces terminal exhaustion through the typed
+            // failure (never an advisory); derive the bounded summary line from the
+            // safe evidence so the scheduler operator sees attempt/unavailable/
+            // exhaustion uniformly.
+            if (!outcome.ok && outcome.failure.kind === "exhausted" && outcome.failure.exhaustion !== undefined) {
+                const ex = outcome.failure.exhaustion;
+                modelFallback.push(`[model fallback: exhausted after ${ex.attemptedCount} attempt(s) on ${ex.lastModelId} (${ex.category})]`);
             }
-            return { assistantText: "", exitCode: 1, failure: outcome.failure };
+            if (modelFallback.length > 0) {
+                result.modelFallback = modelFallback;
+            }
+            return result;
         },
     };
 }

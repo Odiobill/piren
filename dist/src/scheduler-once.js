@@ -96,6 +96,11 @@ function formatSummary(result) {
         lines.push(`executed: yes (${result.executedItemType}, ${result.executedItemPath})`);
         if (result.executionStatus !== undefined)
             lines.push(`execution status: ${result.executionStatus}`);
+        if (result.modelFallback !== undefined && result.modelFallback.length > 0) {
+            lines.push("model fallback:");
+            for (const line of result.modelFallback)
+                lines.push(`  ${line}`);
+        }
         if (result.releaseStatus !== undefined) {
             lines.push(`release: ${result.releaseStatus}`);
             if (result.releaseReason !== undefined)
@@ -214,6 +219,7 @@ export async function schedulerOnce(options) {
     let executedAgentName;
     let executionStatus;
     let executionSummary;
+    let modelFallback;
     let releaseStatus;
     let releaseReason;
     let retryStatus;
@@ -256,6 +262,8 @@ export async function schedulerOnce(options) {
                 executedAgentName = claim.agentName;
                 executionStatus = res.ok ? "completed" : "failed";
                 executionSummary = res.ok ? res.assistantText : res.error ?? "failed";
+                if (res.modelFallback !== undefined)
+                    modelFallback = res.modelFallback;
                 if (res.ok) {
                     // Completion release (ADR-0038 revision 2): restore the validated
                     // completed claimed task to its ordinary filename so dependents can
@@ -402,6 +410,8 @@ export async function schedulerOnce(options) {
                 executedAgentName = claim.agentName;
                 executionStatus = res.status;
                 executionSummary = res.ok ? res.assistantText : res.error ?? "failed";
+                if (res.modelFallback !== undefined)
+                    modelFallback = res.modelFallback;
                 claimAttempts.push({
                     itemType: "cron_job",
                     itemPath: claim.itemPath,
@@ -448,6 +458,8 @@ export async function schedulerOnce(options) {
         result.executionStatus = executionStatus;
     if (executionSummary !== undefined)
         result.executionSummary = executionSummary;
+    if (modelFallback !== undefined)
+        result.modelFallback = modelFallback;
     if (releaseStatus !== undefined)
         result.releaseStatus = releaseStatus;
     if (releaseReason !== undefined)

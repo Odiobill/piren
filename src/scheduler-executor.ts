@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { askAgentClassified, type BoundedRunFailure, type PiRpcClientLike } from "./ask.js";
 import { buildPiRunCommand, type PiRunCommand } from "./run.js";
+import { loadAgentFallbackPolicy, type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 import type { RpcSpawnTarget } from "./gateway-rpc.js";
 
 // ---------------------------------------------------------------------------
@@ -156,6 +157,13 @@ export interface ClaimedInboxTaskRunnerResult {
    * executor classifies their failures as ambiguous.
    */
   failure?: BoundedRunFailure;
+  /**
+   * TB8: bounded non-secret model-fallback advisory lines (attempt /
+   * unavailable skip / terminal exhaustion), in order. Absent when no
+   * fallback occurred. Never carries raw provider error text, HTTP statuses,
+   * credentials, session/config paths, or the task prompt.
+   */
+  modelFallback?: string[];
 }
 
 export interface ClaimedInboxTaskRunner {
@@ -187,6 +195,13 @@ export interface ExecuteClaimedInboxTaskResult {
    * pre-handoff milestones.
    */
   failure?: BoundedRunFailure;
+  /**
+   * TB8: bounded non-secret model-fallback advisory lines (attempt /
+   * unavailable skip / terminal exhaustion), in order. Absent when no
+   * fallback occurred. Surfaces through the scheduler --once result/summary
+   * without mutating the claimed task content.
+   */
+  modelFallback?: string[];
 }
 
 /**
@@ -214,6 +229,7 @@ export async function executeClaimedInboxTask(
   let exitCode = 0;
   let errorSummary: string | undefined;
   let failure: BoundedRunFailure | undefined;
+  let modelFallback: string[] | undefined;
   try {
     const runResult = await options.runner.run({
       agentName: info.agentName,
@@ -222,6 +238,7 @@ export async function executeClaimedInboxTask(
     });
     assistantText = runResult.assistantText;
     exitCode = runResult.exitCode;
+    if (runResult.modelFallback !== undefined) modelFallback = runResult.modelFallback;
     if (runResult.failure !== undefined) {
       // Preserve the typed failure from instrumented runners.
       failure = runResult.failure;
@@ -252,6 +269,7 @@ export async function executeClaimedInboxTask(
   };
   if (errorSummary !== undefined) result.error = errorSummary;
   if (failure !== undefined) result.failure = failure;
+  if (modelFallback !== undefined) result.modelFallback = modelFallback;
   return result;
 }
 
@@ -274,6 +292,14 @@ export interface CreateAskRunnerOptions {
    * outcomes without live Pi auth. Production defaults to `PiRpcClient`.
    */
   clientFactory?: (target: RpcSpawnTarget) => PiRpcClientLike;
+  /**
+   * TB8: resolve the active agent's model-fallback policy at this production
+   * scheduler runtime adapter boundary. Production default reads
+   * `team/<agent>/config.yml` best-effort under the input vault root;
+   * absent/malformed/disabled/no-primary stays inert. Pure planner/retry/
+   * release cores never read YAML/files; tests inject a fixed policy.
+   */
+  fallbackPolicyLoader?: ((input: ClaimedInboxTaskRunInput) => Promise<GatewayFallbackPolicy>) | undefined;
 }
 
 /**
@@ -305,6 +331,12 @@ export function createAskRunner(options: CreateAskRunnerOptions = {}): ClaimedIn
         env: command.env,
       };
     });
+  // TB8 production adapter: best-effort agent-local config resolution. When
+  // the loader is injected (tests) it replaces this boundary entirely.
+  const fallbackPolicyLoader: (input: ClaimedInboxTaskRunInput) => Promise<GatewayFallbackPolicy> =
+    options.fallbackPolicyLoader ??
+    (async (input: ClaimedInboxTaskRunInput): Promise<GatewayFallbackPolicy> =>
+      loadAgentFallbackPolicy(input.vaultRoot, input.agentName));
   return {
     async run(input) {
       let target: RpcSpawnTarget;
@@ -323,13 +355,35 @@ export function createAskRunner(options: CreateAskRunnerOptions = {}): ClaimedIn
           },
         };
       }
-      const askOptions: { clientFactory?: (t: RpcSpawnTarget) => PiRpcClientLike } = {};
+      // TB8: resolve the policy at the adapter boundary and collect the
+      // bounded non-secret advisory lines surfaced by the TB5 ask fallback.
+      const fallbackPolicy = await fallbackPolicyLoader(input);
+      const modelFallback: string[] = [];
+      const askOptions: { clientFactory?: (t: RpcSpawnTarget) => PiRpcClientLike; fallbackPolicy?: GatewayFallbackPolicy; onAdvisory?: (line: string) => void } = {};
       if (options.clientFactory !== undefined) askOptions.clientFactory = options.clientFactory;
+      askOptions.fallbackPolicy = fallbackPolicy;
+      askOptions.onAdvisory = (line) => {
+        modelFallback.push(line);
+      };
       const outcome = await askAgentClassified(target, input.prompt, askOptions);
-      if (outcome.ok) {
-        return { assistantText: outcome.text, exitCode: 0 };
+      const result: ClaimedInboxTaskRunnerResult =
+        outcome.ok
+          ? { assistantText: outcome.text, exitCode: 0 }
+          : { assistantText: "", exitCode: 1, failure: outcome.failure };
+      // The TB5 ask core surfaces terminal exhaustion through the typed
+      // failure (never an advisory); derive the bounded summary line from the
+      // safe evidence so the scheduler operator sees attempt/unavailable/
+      // exhaustion uniformly.
+      if (!outcome.ok && outcome.failure.kind === "exhausted" && outcome.failure.exhaustion !== undefined) {
+        const ex = outcome.failure.exhaustion;
+        modelFallback.push(
+          `[model fallback: exhausted after ${ex.attemptedCount} attempt(s) on ${ex.lastModelId} (${ex.category})]`,
+        );
       }
-      return { assistantText: "", exitCode: 1, failure: outcome.failure };
+      if (modelFallback.length > 0) {
+        result.modelFallback = modelFallback;
+      }
+      return result;
     },
   };
 }

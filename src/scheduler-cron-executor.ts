@@ -184,6 +184,13 @@ export interface ClaimedCronJobRunnerResult {
   assistantText: string;
   /** 0 = success, non-zero = failure. Drives the recorded run status. */
   exitCode: number;
+  /**
+   * TB8: bounded non-secret model-fallback advisory lines (attempt /
+   * unavailable skip / terminal exhaustion), in order. Absent when no
+   * fallback occurred. Mirrors ClaimedInboxTaskRunnerResult so the shared
+   * scheduler agent runner serves inbox and agent-mode cron identically.
+   */
+  modelFallback?: string[];
 }
 
 export interface ClaimedCronJobRunner {
@@ -211,6 +218,13 @@ export interface ExecuteClaimedAgentCronJobResult {
   ok: boolean;
   /** Error summary when the runner threw; absent on success. */
   error?: string;
+  /**
+   * TB8: bounded non-secret model-fallback advisory lines (attempt /
+   * unavailable skip / terminal exhaustion), in order. Absent when the run
+   * used no fallback. Mirrors the shared scheduler agent runner semantics
+   * for agent-mode cron; script-mode cron stays LLM-free with no fallback.
+   */
+  modelFallback?: string[];
 }
 
 function formatAgentCronRunResult(options: {
@@ -218,6 +232,7 @@ function formatAgentCronRunResult(options: {
   exitCode: number;
   assistantText: string;
   error?: string;
+  modelFallback?: string[];
 }): string {
   const lines: string[] = [
     "mode: agent",
@@ -232,6 +247,10 @@ function formatAgentCronRunResult(options: {
     "",
     options.assistantText || "(empty)",
   ];
+  if (options.modelFallback !== undefined && options.modelFallback.length > 0) {
+    lines.push("", "## Model fallback", "");
+    for (const line of options.modelFallback) lines.push(line);
+  }
   if (options.error !== undefined) {
     lines.push("", "## Error", "", options.error);
   }
@@ -290,6 +309,7 @@ export async function executeClaimedAgentCronJob(
   let assistantText = "";
   let exitCode = 0;
   let errorSummary: string | undefined;
+  let modelFallback: string[] | undefined;
   try {
     const runResult = await options.runner.run({
       agentName: info.agentName,
@@ -298,6 +318,7 @@ export async function executeClaimedAgentCronJob(
     });
     assistantText = runResult.assistantText;
     exitCode = runResult.exitCode;
+    if (runResult.modelFallback !== undefined) modelFallback = runResult.modelFallback;
   } catch (error) {
     exitCode = 1;
     errorSummary = error instanceof Error ? error.message : String(error);
@@ -318,6 +339,7 @@ export async function executeClaimedAgentCronJob(
       exitCode,
       assistantText,
       ...(errorSummary !== undefined ? { error: errorSummary } : {}),
+      ...(modelFallback !== undefined ? { modelFallback } : {}),
     }),
     startedAt,
     finishedAt,
@@ -336,5 +358,6 @@ export async function executeClaimedAgentCronJob(
     ok,
   };
   if (errorSummary !== undefined) result.error = errorSummary;
+  if (modelFallback !== undefined) result.modelFallback = modelFallback;
   return result;
 }

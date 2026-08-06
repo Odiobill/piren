@@ -124,6 +124,14 @@ export interface SchedulerOnceResult {
     retryStatus?: "requeued" | "exhausted" | "held";
     /** Exact reason when the retry transition was exhausted or held. */
     retryReason?: string;
+    /**
+     * TB8: bounded non-secret model-fallback advisory lines (attempt /
+     * unavailable skip / terminal exhaustion), in order. Absent when the
+     * executed item used no fallback. Never raw provider error text/status,
+     * credentials, session/config paths, or the task prompt. Does not mutate
+     * the claimed task content.
+     */
+    modelFallback?: string[];
     noWork: boolean;
     summary: string;
 }

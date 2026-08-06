@@ -58,6 +58,13 @@ export interface ClaimedCronJobRunnerResult {
     assistantText: string;
     /** 0 = success, non-zero = failure. Drives the recorded run status. */
     exitCode: number;
+    /**
+     * TB8: bounded non-secret model-fallback advisory lines (attempt /
+     * unavailable skip / terminal exhaustion), in order. Absent when no
+     * fallback occurred. Mirrors ClaimedInboxTaskRunnerResult so the shared
+     * scheduler agent runner serves inbox and agent-mode cron identically.
+     */
+    modelFallback?: string[];
 }
 export interface ClaimedCronJobRunner {
     run(input: ClaimedCronJobRunInput): Promise<ClaimedCronJobRunnerResult>;
@@ -82,6 +89,13 @@ export interface ExecuteClaimedAgentCronJobResult {
     ok: boolean;
     /** Error summary when the runner threw; absent on success. */
     error?: string;
+    /**
+     * TB8: bounded non-secret model-fallback advisory lines (attempt /
+     * unavailable skip / terminal exhaustion), in order. Absent when the run
+     * used no fallback. Mirrors the shared scheduler agent runner semantics
+     * for agent-mode cron; script-mode cron stays LLM-free with no fallback.
+     */
+    modelFallback?: string[];
 }
 /**
  * Execute exactly one already-claimed agent-mode cron job.
