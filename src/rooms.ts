@@ -468,7 +468,7 @@ function validateRunOutcomeFields(
         throw new Error("failure_kind is only valid when run_status is failed.");
       }
       if (!(ROOM_RUN_FAILURE_KINDS as readonly string[]).includes(failureKind as string)) {
-        throw new Error(`Unknown failure_kind '${String(failureKind)}'. Use launch_failure or ambiguous.`);
+        throw new Error(`Unknown failure_kind '${String(failureKind)}'. Use launch_failure, ambiguous, or provider_error.`);
       }
       result.failureKind = failureKind as RoomRunFailureKind;
     }

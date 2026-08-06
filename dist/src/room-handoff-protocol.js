@@ -170,7 +170,7 @@ export function resolveRoomMentionToolResult(value) {
             // the tool, so the broker-provided reason is NEVER interpolated.
             return { ok: false, error: "room mention was rejected by the room broker" };
         case "failed":
-            // failureKind is a fixed enum (launch_failure | ambiguous), never an id.
+            // failureKind is a fixed enum (launch_failure | ambiguous | provider_error), never an id.
             return { ok: false, error: `room mention failed (${result.failureKind})` };
         case "timed_out":
             return { ok: false, error: "room mention timed out" };

@@ -461,9 +461,7 @@ describe("RoomBroker TB6 model fallback", () => {
   it("prompt rejection stays ambiguous and launch failure stays launch_failure", async () => {
     const rejectClient = new ScriptedClient();
     rejectClient.scripts = [];
-    const originalPrompt = rejectClient.prompt.bind(rejectClient);
     rejectClient.prompt = async (message: string) => {
-      void originalPrompt;
       rejectClient.prompts.push(message);
       throw new Error("prompt rejected (fake)");
     };
