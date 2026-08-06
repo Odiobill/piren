@@ -1,9 +1,10 @@
 /**
- * Pure nav-state model for the workbench app shell (ADR-0041 R3b-2.5).
+ * Pure nav-state model for the workbench app shell (ADR-0041 R3b-2.5;
+ * C3-A replaces the Rooms page with the Conversation surface).
  * Framework-free so shell transitions are directly unit-testable. The drawer
  * is a mobile/portrait overlay; selecting a page always closes it.
  */
-export type Page = "rooms" | "agents" | "about";
+export type Page = "conversations" | "agents" | "about";
 
 export interface NavState {
   page: Page;
@@ -11,7 +12,7 @@ export interface NavState {
 }
 
 export function initialNavState(): NavState {
-  return { page: "rooms", drawerOpen: false };
+  return { page: "conversations", drawerOpen: false };
 }
 
 /** Select a page; the drawer always closes (mobile behavior). */

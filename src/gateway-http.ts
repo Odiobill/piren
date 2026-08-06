@@ -12,7 +12,7 @@ import { buildOkfGraph } from "./okf-graph.js";
 import { RoomBroker, type RoomApprovalInput } from "./room-broker.js";
 import { createRoom, listRoomEvents, listRooms, readRoom, type RoomRecord } from "./rooms.js";
 import { buildRoomAgentsResponse } from "./room-agents.js";
-import { resolveStewardMentions, type ValidatedRecipients } from "./conversation-contract.js";
+import { checkActiveGate, formatActiveGateRejection, resolveStewardMentions, type ValidatedRecipients } from "./conversation-contract.js";
 import {
   ConversationBroker,
   type ConversationDispatchOutcome,
@@ -1850,6 +1850,8 @@ export class GatewayServer {
       await this.handleConversationEvents(res, conversationId);
     } else if (rest[0] === "messages" && rest.length === 1 && req.method === "POST") {
       await this.handleConversationMessage(req, res, conversationId);
+    } else if (rest[0] === "attach" && rest.length === 1 && req.method === "POST") {
+      await this.handleConversationAttach(res, conversationId);
     } else {
       this.writeJson(res, 404, { error: "not found" });
     }
@@ -2001,6 +2003,39 @@ export class GatewayServer {
     this.writeJson(res, 200, {
       event: this.safeConversationEvent(event),
       ...(dispatch !== undefined ? { dispatch: dispatch.entries } : {}),
+    });
+  }
+
+  /**
+   * C3-A: authenticated POST /api/conversations/<id>/attach — the ONLY
+   * activating route in C3. Reads the durable Conversation manifest and
+   * applies the accepted C1 `checkActiveGate` against the gateway's resolved
+   * runnable agents. The route is STATELESS: no vault write, membership
+   * update, broker dispatch, Pi client/session creation, live subscription,
+   * queue, retry, or persistent active-conversation state. Rejected
+   * conversations stay visibly read-only inspection (C0 §8 exact terms).
+   */
+  private async handleConversationAttach(res: ServerResponse, conversationId: string): Promise<void> {
+    let conversation: ConversationManifest;
+    try {
+      conversation = await readConversation({ vaultRoot: this.vaultRoot as string, conversationId });
+    } catch (error) {
+      this.conversationError(res, error);
+      return;
+    }
+    const gate = checkActiveGate(conversation.audience, this.runnableAgents);
+    if (!gate.ok) {
+      this.writeJson(res, 409, {
+        error: formatActiveGateRejection(conversationId, gate),
+        attached: false,
+        gate: { ok: false, missing: gate.missing, malformed: gate.malformed },
+      });
+      return;
+    }
+    this.writeJson(res, 200, {
+      conversation: this.safeConversation(conversation),
+      attached: true,
+      gate: { ok: true, missing: [], malformed: [] },
     });
   }
 

@@ -21,35 +21,35 @@ import {
 const webSrc = join(process.cwd(), "web", "src");
 
 describe("nav state model (pure)", () => {
-  it("starts on the Rooms page with the drawer closed", () => {
-    expect(initialNavState()).toEqual({ page: "rooms", drawerOpen: false });
+  it("starts on the Conversations page with the drawer closed", () => {
+    expect(initialNavState()).toEqual({ page: "conversations", drawerOpen: false });
   });
 
   it("selectPage switches the page and always closes the drawer", () => {
-    const open: NavState = { page: "rooms", drawerOpen: true };
+    const open: NavState = { page: "conversations", drawerOpen: true };
     expect(selectPage(open, "about")).toEqual({ page: "about", drawerOpen: false });
     expect(selectPage(initialNavState(), "agents")).toEqual({ page: "agents", drawerOpen: false });
   });
 
   it("selectPage on the same page with a closed drawer is a no-op", () => {
     const state = initialNavState();
-    expect(selectPage(state, "rooms")).toBe(state);
+    expect(selectPage(state, "conversations")).toBe(state);
   });
 
   it("toggleDrawer flips and closeDrawer is idempotent", () => {
-    expect(toggleDrawer(initialNavState())).toEqual({ page: "rooms", drawerOpen: true });
+    expect(toggleDrawer(initialNavState())).toEqual({ page: "conversations", drawerOpen: true });
     expect(closeDrawer({ page: "agents", drawerOpen: true })).toEqual({ page: "agents", drawerOpen: false });
     const closed = initialNavState();
     expect(closeDrawer(closed)).toBe(closed);
   });
 
   it("exposes exactly the three shell pages", () => {
-    const pages: readonly Page[] = ["rooms", "agents", "about"];
-    expect(pages).toEqual(["rooms", "agents", "about"]);
+    const pages: readonly Page[] = ["conversations", "agents", "about"];
+    expect(pages).toEqual(["conversations", "agents", "about"]);
   });
 
   it("a nav selection must restore toggle focus exactly when the drawer was open", () => {
-    expect(shouldRestoreFocusAfterSelect({ page: "rooms", drawerOpen: true })).toBe(true);
+    expect(shouldRestoreFocusAfterSelect({ page: "conversations", drawerOpen: true })).toBe(true);
     expect(shouldRestoreFocusAfterSelect(initialNavState())).toBe(false);
   });
 });
@@ -66,10 +66,10 @@ async function readSourceFiles(): Promise<Map<string, string>> {
 }
 
 describe("app shell source surface (static)", () => {
-  it("the sidebar navigates Rooms, Agents, and About with aria-current", async () => {
+  it("the sidebar navigates Conversations, Agents, and About with aria-current", async () => {
     const sources = await readSourceFiles();
     const sidebar = [...sources.values()].join("\n");
-    expect(sidebar).toContain("Rooms");
+    expect(sidebar).toContain("Conversations");
     expect(sidebar).toContain("Agents");
     expect(sidebar).toContain("About");
     expect(sidebar).toContain("aria-current");
@@ -110,10 +110,10 @@ describe("app shell source surface (static)", () => {
     expect(agents).not.toMatch(/onClick|onSubmit|<button/);
   });
 
-  it("RoomNavigator stays mounted across view switches (stable workspace)", async () => {
+  it("ConversationNavigator stays mounted across view switches (stable workspace)", async () => {
     const sources = await readSourceFiles();
     const shell = sources.get("AppShell.tsx") ?? "";
-    expect(shell).toContain("RoomNavigator");
+    expect(shell).toContain("ConversationNavigator");
     expect(shell).toContain("hidden");
   });
 

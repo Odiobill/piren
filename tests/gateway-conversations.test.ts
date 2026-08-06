@@ -193,7 +193,7 @@ describe("Gateway Conversation API family (C2)", () => {
     expect(buffer).not.toContain("Stream seed");
   });
 
-  it("read-only inspection never activates: read/events work regardless of runnability and no activate route exists", async () => {
+  it("read-only inspection never activates: read/events work regardless of runnability; attach is the only activating route (C3-A)", async () => {
     await startServer({ runnableAgents: ["fake"] });
     const { id } = await createConversationViaApi("Inspect me");
     // Make the member non-runnable: inspection must still be allowed.
@@ -204,11 +204,16 @@ describe("Gateway Conversation API family (C2)", () => {
     const read = await fetch(url(`/api/conversations/${id}`), { headers: { authorization: `Bearer ${token}` } });
     expect(read.status).toBe(200);
 
-    // No C2 activate/attach/switch route exists.
+    // C3-A added exactly one activating route: attach. It succeeds when the
+    // empty durable audience is openable (zero-mention conversation).
+    const attach = await post(url(`/api/conversations/${id}/attach`), {}, token);
+    expect(attach.status).toBe(200);
+    // No activate/switch route exists (archive/reopen are later, separately
+    // gated slices; attach is stateless and never switches the global client).
     const activate = await post(url(`/api/conversations/${id}/activate`), {}, token);
     expect(activate.status).toBe(404);
-    const attach = await post(url(`/api/conversations/${id}/attach`), {}, token);
-    expect(attach.status).toBe(404);
+    const switchRoute = await post(url(`/api/conversations/${id}/switch`), {}, token);
+    expect(switchRoute.status).toBe(404);
   });
 
   it("later valid steward mentions grow the durable audience additively in C1 order before dispatch", async () => {

@@ -721,3 +721,167 @@ code {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* C3-A — Conversation surface (mirrors the room surface styles) */
+.conversation-list {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.conversation-entry {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.9375rem;
+}
+
+.conversation-entry:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.conversation-entry:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.conversation-title {
+  font-weight: 600;
+}
+
+.conversation-meta {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.conversation-create {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.conversation-create h3 {
+  margin: 0 0 8px;
+}
+
+.conversation-create label {
+  display: block;
+  font-weight: 600;
+  margin: 10px 0 4px;
+  font-size: 0.9rem;
+}
+
+.conversation-create input[type="text"] {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.conversation-create .button {
+  margin-top: 12px;
+}
+
+.audience-members {
+  margin: 4px 0 12px;
+}
+
+.audience-members h3 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+}
+
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.8125rem;
+}
+
+.member-chip.member-offline {
+  opacity: 0.65;
+}
+
+.member-name {
+  font-weight: 600;
+}
+
+.member-status {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.status-ok {
+  color: var(--ok);
+}
+
+.status-muted {
+  color: var(--muted);
+}
+
+.attach-banner {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--warn);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.conversation-composer {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 14px;
+}
+
+.conversation-composer h3 {
+  margin: 0 0 8px;
+}
+
+.conversation-composer label {
+  display: block;
+  font-weight: 600;
+  margin: 10px 0 4px;
+  font-size: 0.9rem;
+}
+
+.conversation-composer textarea {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+
+.conversation-composer .button {
+  margin-top: 12px;
+}

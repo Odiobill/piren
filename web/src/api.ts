@@ -9,6 +9,21 @@ import {
 } from "./rooms";
 import { createSseParser, parseRoomEvents, type RoomEventRecord, type SseFrame } from "./timeline";
 import { parseDispatchOutcome, parseMessageError } from "./composer";
+import {
+  parseConversationCreateResponse,
+  parseConversationMessageResponse,
+  type ConversationCreateResponse,
+  type ConversationMessageResponse,
+} from "./conversation-composer";
+import {
+  parseConversationEnvelope,
+  parseConversationEvents,
+  parseConversationList,
+  type ConversationEventRecord,
+  type ConversationListResponse,
+  type ConversationRecord,
+} from "./conversations";
+import { parseAttachResponse, type AttachResponse } from "./attach";
 
 /**
  * Typed fetch client for the existing gateway /api/* surface. R3b-2 consumes
@@ -152,4 +167,128 @@ export async function sendRoomMessage(
     throw new Error(reason);
   }
   return parseDispatchOutcome(await res.json());
+}
+
+// ---------------------------------------------------------------------------
+// C3-A — Conversation surface transport over the accepted C2 API family
+// ---------------------------------------------------------------------------
+
+/** GET /api/conversations — durable conversation list, newest-first. */
+export async function fetchConversations(token: string, signal?: AbortSignal): Promise<ConversationListResponse> {
+  const res = await authedFetch("/api/conversations", token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`conversations HTTP ${res.status}`);
+  return parseConversationList(await res.json());
+}
+
+/** GET /api/conversations/<id> — read one conversation manifest. */
+export async function fetchConversation(id: string, token: string, signal?: AbortSignal): Promise<ConversationRecord> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}`, token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`conversation ${id} HTTP ${res.status}`);
+  return parseConversationEnvelope(await res.json());
+}
+
+/** POST /api/conversations — create + activate with the first raw-text message. */
+export async function createConversation(token: string, text: string): Promise<ConversationCreateResponse> {
+  const res = await authedFetch("/api/conversations", token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    let reason = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error !== "") reason = body.error;
+    } catch {
+      // keep the HTTP status reason
+    }
+    throw new Error(reason);
+  }
+  return parseConversationCreateResponse(await res.json());
+}
+
+/**
+ * POST /api/conversations/<id>/attach — the C1/runnable-roster-gated attach.
+ * The gateway applies `checkActiveGate` against the local runnable set; the
+ * response decides the presentation (active vs read-only inspection). This
+ * route is stateless server-side.
+ */
+export async function attachConversation(id: string, token: string): Promise<AttachResponse> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/attach`, token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (res.status === 409) return parseAttachResponse(await res.json());
+  if (!res.ok) throw new Error(`attach HTTP ${res.status}`);
+  return parseAttachResponse(await res.json());
+}
+
+/** POST /api/conversations/<id>/messages — raw-text follow-up composer. */
+export async function sendConversationMessage(
+  id: string,
+  text: string,
+  token: string,
+): Promise<ConversationMessageResponse> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/messages`, token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    let reason = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error !== "") reason = body.error;
+    } catch {
+      // keep the HTTP status reason
+    }
+    throw new Error(reason);
+  }
+  return parseConversationMessageResponse(await res.json());
+}
+
+/** GET /api/conversations/<id>/events — whole durable history (no replay). */
+export async function fetchConversationEvents(id: string, token: string, signal?: AbortSignal): Promise<ConversationEventRecord[]> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/events`, token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`conversation events HTTP ${res.status}`);
+  return parseConversationEvents(await res.json());
+}
+
+export interface ConversationEventStreamHandlers {
+  onFrame: (frame: SseFrame) => void;
+  onOpen?: () => void;
+}
+
+/**
+ * GET /api/conversations/<id>/events/stream — scoped live SSE consumed with
+ * fetch so the in-memory Bearer header is carried. Resolves when the stream
+ * ends; the caller decides the reconnect policy (whole-history reread +
+ * re-subscription). Used ONLY after a successful attach.
+ */
+export async function streamConversationEvents(
+  id: string,
+  token: string,
+  handlers: ConversationEventStreamHandlers,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/events/stream`, token, { signal });
+  if (!res.ok) throw new Error(`conversation stream HTTP ${res.status}`);
+  handlers.onOpen?.();
+  const body = res.body;
+  if (body === null) throw new Error("conversation stream has no body");
+  const reader = body.getReader();
+  const parser = createSseParser();
+  const decoder = new TextDecoder();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
+        handlers.onFrame(frame);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }

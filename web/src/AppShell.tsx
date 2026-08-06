@@ -4,21 +4,22 @@ import { closeDrawer, initialNavState, selectPage, shouldRestoreFocusAfterSelect
 import { StatusBadge, type ShellPhase } from "./StatusBadge";
 import { Sidebar } from "./Sidebar";
 import { MobileDrawer } from "./MobileDrawer";
-import { RoomNavigator } from "./RoomNavigator";
+import { ConversationNavigator } from "./ConversationNavigator";
 import { AgentsView } from "./AgentsView";
 import { AboutView } from "./AboutView";
 
 const COMING_NEXT = [
-  { label: "Approval + abort controls", bullet: "R3b-5", note: "scoped approval cards and room-agent abort" },
-  { label: "Accessibility completion", bullet: "R3b-6", note: "focused WCAG 2.2 AA verification" },
+  { label: "Conversation approval + abort controls", bullet: "later slice", note: "scoped approval cards and conversation×agent abort" },
+  { label: "Persistent navigation", bullet: "C4", note: "active conversation survives module navigation" },
 ] as const;
 
 /**
- * Workbench app shell (ADR-0041 R3b-2.5): persistent desktop sidebar
- * (Rooms → Agents roster → About), responsive mobile burger drawer, and a
- * main workspace. RoomNavigator stays MOUNTED across view switches (hidden
- * toggling) so a view change never cancels a room run and never creates
- * client-side delivery/approval/retry truth.
+ * Workbench app shell (ADR-0041 R3b-2.5; C3-A replaces the Rooms page with
+ * the Conversation surface): persistent desktop sidebar (Conversations →
+ * Agents roster → About), responsive mobile burger drawer, and a main
+ * workspace. ConversationNavigator stays MOUNTED across view switches
+ * (hidden toggling) so a view change never cancels a conversation run and
+ * never creates client-side delivery/approval/retry truth.
  */
 export function AppShell({
   phase,
@@ -106,8 +107,8 @@ export function AppShell({
               </p>
             </section>
           )}
-          <div className="workspace-panel" hidden={nav.page !== "rooms"}>
-            <RoomNavigator token={token} onValidated={onValidated} onUnauthorized={onUnauthorized} />
+          <div className="workspace-panel" hidden={nav.page !== "conversations"}>
+            <ConversationNavigator token={token} onValidated={onValidated} onUnauthorized={onUnauthorized} />
             <ComingNext />
           </div>
           <div className="workspace-panel" hidden={nav.page !== "agents"}>

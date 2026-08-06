@@ -259,6 +259,16 @@ export declare class GatewayServer {
     private handleConversationList;
     private handleConversationRead;
     private handleConversationMessage;
+    /**
+     * C3-A: authenticated POST /api/conversations/<id>/attach — the ONLY
+     * activating route in C3. Reads the durable Conversation manifest and
+     * applies the accepted C1 `checkActiveGate` against the gateway's resolved
+     * runnable agents. The route is STATELESS: no vault write, membership
+     * update, broker dispatch, Pi client/session creation, live subscription,
+     * queue, retry, or persistent active-conversation state. Rejected
+     * conversations stay visibly read-only inspection (C0 §8 exact terms).
+     */
+    private handleConversationAttach;
     private handleConversationEvents;
     private handleConversationEventStream;
     private writeJson;
