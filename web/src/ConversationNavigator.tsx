@@ -2,27 +2,41 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   attachConversation,
   createConversation,
+  fetchConversation,
   fetchConversations,
   fetchRoomAgents,
   UnauthorizedError,
 } from "./api";
 import type { ConversationRecord } from "./conversations";
 import { classifyAudienceMembers, type MemberRunnableStatus } from "./attach";
+import { formatConversationHash, parseHashRoute, routeToIntent, urlWithoutHash } from "./hash-route";
 import type { RoomAgentEntry } from "./rooms";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
 
 /**
- * Conversation navigator (C3-A): the Conversation Workbench surface over the
- * accepted C2 API family. Lists conversations, creates one via its FIRST
- * raw-text message, and selects one through the C1/runnable-roster-gated
- * attach route: a successful attach opens the ACTIVE surface (immutable
- * whole-history reread + scoped live SSE + raw-text composer); a rejected
- * attach opens the visibly READ-ONLY inspection surface (history only, no
- * composer, no live stream). The browser never scans, resolves, or derives
- * dispatch recipients from `@text` — the gateway alone parses mentions.
- * No approval or abort controls, vault/graph navigation, configuration
- * controls, storage, or service worker.
+ * Conversation navigator (C3-A + C4-A): the Conversation Workbench surface
+ * over the accepted C2 API family. Lists conversations, creates one via its
+ * FIRST raw-text message, and selects one through the C1/runnable-roster-
+ * gated attach route: a successful attach opens the ACTIVE surface
+ * (immutable whole-history reread + scoped live SSE + raw-text composer); a
+ * rejected attach opens the visibly READ-ONLY inspection surface (history
+ * only, no composer, no live stream).
+ *
+ * C4-A adds the sole durable hash route `#conversation/<id>`: the initial
+ * hash and every later browser `hashchange` each perform a FRESH manifest
+ * read + the existing stateless attach gate before presenting any active
+ * surface. Own navigations write the hash with history.pushState (which
+ * fires no hashchange), so Back/Forward re-opens via the fresh gate without
+ * duplicate writes, attaches, or stream subscriptions. Malformed/unknown
+ * hashes and nonexistent conversations fail truthfully to the list with a
+ * bounded message and never create a draft, dispatch, mutate, or fabricate
+ * client state.
+ *
+ * The browser never scans, resolves, or derives dispatch recipients from
+ * `@text` — the gateway alone parses mentions. No approval or abort
+ * controls, vault/graph navigation, configuration controls, storage, or
+ * service worker.
  */
 
 type LoadState =
@@ -48,11 +62,20 @@ export function ConversationNavigator({
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [selection, setSelection] = useState<SelectionState>({ phase: "none" });
   const [announcement, setAnnouncement] = useState("");
+  /** Visible bounded route/error notice shown above the conversation list. */
+  const [notice, setNotice] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
   const newConversationRef = useRef<HTMLButtonElement>(null);
   const pendingFocusId = useRef<string | null>(null);
+  /** Generation guard so only the newest open flow applies its result. */
+  const openSeqRef = useRef(0);
+
+  /** Invalidate any in-flight open flow (navigation home/back/invalid). */
+  function cancelPendingOpen() {
+    openSeqRef.current += 1;
+  }
 
   const loadData = useCallback(
     async (signal: AbortSignal) => {
@@ -110,37 +133,103 @@ export function ConversationNavigator({
     setRetryKey((key) => key + 1);
   }
 
-  async function handleSelect(conversationId: string, record?: ConversationRecord) {
-    setSelection({ phase: "attaching" });
-    try {
-      const response = await attachConversation(conversationId, token);
-      // The rejected attach envelope carries no conversation record (the
-      // server keeps the rejection bounded), so the read-only inspection view
-      // reuses the durable record from the loaded list (immutable manifest),
-      // or the freshly created record passed by the create path.
-      const listed = record ?? (load.phase === "ready" ? load.conversations.find((entry) => entry.id === conversationId) : undefined);
-      if (response.attached) {
-        setSelection({ phase: "active", conversation: response.conversation });
-      } else if (listed !== undefined) {
-        // Rejected conversations stay visibly read-only inspection: history
-        // reread only, no composer, no live stream.
-        setSelection({ phase: "read-only", conversation: listed, message: response.error });
-      } else {
+  /** Own navigations write the hash via pushState (fires no hashchange). */
+  function writeHash(hash: string) {
+    if (window.location.hash === hash) return;
+    history.pushState(null, "", hash);
+  }
+
+  /** Return to the list: clear the fragment without a hashchange event. */
+  function clearHash() {
+    const url = urlWithoutHash(window.location.href);
+    if (window.location.href === url) return;
+    history.pushState(null, "", url);
+  }
+
+  /**
+   * Fresh open flow for one conversation id (initial hash, hashchange, and
+   * list selection share it): a fresh manifest read, then the existing
+   * stateless attach gate. A successful attach presents the active surface;
+   * a rejected attach (unavailable audience, archived, ...) presents visibly
+   * read-only inspection with the fresh durable record. A nonexistent or
+   * unavailable conversation fails truthfully to the list — never a draft,
+   * dispatch, mutation, or fabricated client state.
+   */
+  const openConversationById = useCallback(
+    async (conversationId: string) => {
+      const seq = ++openSeqRef.current;
+      setSelection({ phase: "attaching" });
+      setNotice(null);
+      try {
+        const conversation = await fetchConversation(conversationId, token);
+        if (seq !== openSeqRef.current) return;
+        const response = await attachConversation(conversationId, token);
+        if (seq !== openSeqRef.current) return;
+        if (response.attached) {
+          setSelection({ phase: "active", conversation: response.conversation });
+        } else {
+          // Rejected: read-only inspection (history only, no composer, no
+          // live stream) using the fresh durable manifest.
+          setSelection({ phase: "read-only", conversation, message: response.error });
+        }
+      } catch (error) {
+        if (seq !== openSeqRef.current) return;
+        if (error instanceof UnauthorizedError) {
+          onUnauthorized();
+          return;
+        }
         setSelection({ phase: "none" });
-        setAnnouncement("Conversation no longer available.");
+        setNotice(error instanceof Error ? error.message : String(error));
+        listHeadingRef.current?.focus();
       }
-    } catch (error) {
-      if (error instanceof UnauthorizedError) {
-        onUnauthorized();
+    },
+    [token, onUnauthorized],
+  );
+
+  // Initial hash navigation + every later browser hashchange (Back/Forward,
+  // manual edits) performs a FRESH read + attach. Own pushState writes never
+  // fire hashchange, so they cannot double-attach or double-subscribe.
+  useEffect(() => {
+    let cancelled = false;
+    const handleHash = () => {
+      if (cancelled) return;
+      const intent = routeToIntent(parseHashRoute(window.location.hash));
+      if (intent.kind === "show-home") {
+        cancelPendingOpen();
+        setSelection({ phase: "none" });
+        setNotice(null);
+        setAnnouncement("");
         return;
       }
-      setSelection({ phase: "none" });
-      setAnnouncement(error instanceof Error ? error.message : String(error));
-    }
+      if (intent.kind === "invalid-route") {
+        // Malformed/unknown hash: fail truthfully to the list, no request.
+        cancelPendingOpen();
+        setSelection({ phase: "none" });
+        setNotice("Unknown route — showing the conversation list.");
+        setAnnouncement("");
+        listHeadingRef.current?.focus();
+        return;
+      }
+      void openConversationById(intent.conversationId);
+    };
+    handleHash(); // initial deep link (or home)
+    window.addEventListener("hashchange", handleHash);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("hashchange", handleHash);
+    };
+  }, [openConversationById]);
+
+  async function handleSelect(conversationId: string) {
+    writeHash(formatConversationHash(conversationId));
+    await openConversationById(conversationId);
   }
 
   function handleBack() {
+    cancelPendingOpen();
+    clearHash();
     setSelection({ phase: "none" });
+    setNotice(null);
     setAnnouncement("Back to the conversation list.");
     listHeadingRef.current?.focus();
   }
@@ -153,9 +242,10 @@ export function ConversationNavigator({
     });
     pendingFocusId.current = conversation.id;
     setAnnouncement(`Conversation created: ${conversation.title}`);
+    writeHash(formatConversationHash(conversation.id));
     // A freshly created conversation's members were validated against the
     // local runnable set at creation, so attach opens it as active.
-    await handleSelect(conversation.id, conversation);
+    await openConversationById(conversation.id);
   }
 
   if (load.phase === "loading") {
@@ -196,7 +286,7 @@ export function ConversationNavigator({
         <p className="muted">
           <code>{selection.conversation.id}</code> — {selection.conversation.status}
         </p>
-        <AudienceMembers audience={selection.conversation.audience} agents={load.agents} />
+        <AudienceMembers audience={selection.conversation.audience} agents={load.phase === "ready" ? load.agents : []} />
         {active ? (
           <>
             <ConversationTimeline
@@ -239,6 +329,11 @@ export function ConversationNavigator({
       <h2 id="conversations-heading" tabIndex={-1} ref={listHeadingRef}>
         Conversations
       </h2>
+      {notice !== null && (
+        <p className="route-notice" role="status">
+          {notice}
+        </p>
+      )}
       {load.conversations.length === 0 ? (
         <p className="muted">No conversations yet. Start the first one with a message below.</p>
       ) : (

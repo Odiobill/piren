@@ -36,6 +36,7 @@ function conversationModuleFiles(): string[] {
     "attach.ts",
     "conversation-composer.ts",
     "conversation-timeline.ts",
+    "hash-route.ts",
   ];
 }
 
@@ -173,5 +174,43 @@ describe("C1/runnable-roster-gated attach surface (static)", () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     expect(navigator).toContain("classifyAudienceMembers");
     expect(navigator).toContain("Offline");
+  });
+});
+
+describe("C4-A hash deep links (static)", () => {
+  it("the hash-route core is pure: no window/document/storage/network", async () => {
+    const hashRoute = await readFile(join(webSrc, "hash-route.ts"), "utf8");
+    expect(hashRoute).toContain("export function parseHashRoute");
+    expect(hashRoute).toContain("export function formatConversationHash");
+    expect(hashRoute).toContain("export function urlWithoutHash");
+    expect(hashRoute).toContain("export function routeToIntent");
+    for (const forbidden of ["window", "document", "localStorage", "sessionStorage", "fetch(", "XMLHttpRequest", "/api/"]) {
+      expect(hashRoute, `hash-route.ts must not reference ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  it("the navigator wires initial + hashchange fresh restore through the attach gate", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    // Fresh manifest read + existing stateless attach gate before any active
+    // surface; the hash is written by own navigations (pushState, no event).
+    expect(navigator).toContain("hashchange");
+    expect(navigator).toContain("parseHashRoute");
+    expect(navigator).toContain("routeToIntent");
+    expect(navigator).toContain("history.pushState");
+    expect(navigator).toContain("urlWithoutHash");
+    expect(navigator).toContain("fetchConversation");
+    expect(navigator).toContain("attachConversation");
+  });
+
+  it("active deep links open live SSE only after attach; rejected/archived links are inspection-only", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    // The active branch subscribes the timeline live; the read-only branch
+    // renders history without a composer or live stream.
+    expect(navigator).toContain("live={true}");
+    expect(navigator).toContain("live={false}");
+    expect(navigator).toContain("Read-only inspection");
+    // Unknown/malformed routes fail truthfully to the list with a non-secret
+    // message and never perform a request (no draft/dispatch/mutation).
+    expect(navigator).toContain("Unknown route");
   });
 });

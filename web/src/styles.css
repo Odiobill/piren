@@ -764,6 +764,17 @@ code {
   font-size: 0.8125rem;
 }
 
+.route-notice {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--warn);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  color: var(--text);
+  background: var(--surface);
+}
+
 .conversation-create {
   border-top: 1px solid var(--border);
   padding-top: 14px;

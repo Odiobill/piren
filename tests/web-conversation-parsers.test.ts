@@ -126,6 +126,18 @@ describe("attach response parsing and presentation (pure eligibility)", () => {
     expect(resolveAttachPresentation(parsed)).toBe("read-only");
   });
 
+  it("parses an archived rejection (gate ok, status archived) as read-only", () => {
+    // The accepted C3-A attach route returns a non-secret 409 for an
+    // archived conversation even when its audience is runnable; C4-A deep
+    // links therefore treat archived conversations as inspection-only.
+    const archivedGate: AttachGate = { ok: true, missing: [], malformed: [] };
+    const parsed = parseAttachResponse({ attached: false, error: "Conversation 'x' is archived and stays read-only.", gate: archivedGate });
+    if (parsed.attached) throw new Error("expected rejected response");
+    expect(parsed.error).toMatch(/archived/i);
+    expect(parsed.gate.ok).toBe(true);
+    expect(resolveAttachPresentation(parsed)).toBe("read-only");
+  });
+
   it("rejects malformed attach responses fail-closed", () => {
     expect(() => parseAttachResponse(null)).toThrow();
     expect(() => parseAttachResponse({})).toThrow();
