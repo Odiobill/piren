@@ -202,6 +202,28 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
     }
   });
 
+  it("the lifecycle announcement seam never survives a failed action or navigation (Kimi review fix)", async () => {
+    // lifecycleNoticeRef carries the polite announcement intent to the
+    // selection effect. If it is not cleared on failure/navigation paths, a
+    // stale intent mis-announces a lifecycle change ("Conversation
+    // archived.") on an unrelated later selection — a false screen-reader
+    // state claim. Pin the clearing points: resetLifecycleControls, the
+    // explicit action's failure branches, and the open flow's failure catch.
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    const resetStart = navigator.indexOf("function resetLifecycleControls()");
+    const resetBody = navigator.slice(resetStart, resetStart + 400);
+    expect(resetBody).toContain("lifecycleNoticeRef.current = null");
+    const actionStart = navigator.indexOf("async function handleLifecycleAction");
+    const actionBody = navigator.slice(actionStart, navigator.indexOf("const handleLifecycleEvent"));
+    const actionClears = actionBody.match(/lifecycleNoticeRef\.current = null/g) ?? [];
+    // 404 branch + conflict branch + network branch (the 500 branch keeps its
+    // "derived" intent because it re-gates before presenting any status).
+    expect(actionClears.length).toBeGreaterThanOrEqual(3);
+    const openStart = navigator.indexOf("const openConversationById");
+    const openBody = navigator.slice(openStart, navigator.indexOf("// Initial hash navigation"));
+    expect(openBody).toContain("lifecycleNoticeRef.current = null");
+  });
+
   it("the timeline wires the lifecycle SSE re-gate request and a clear label", async () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
     expect(timeline).toContain("onLifecycleTransition");

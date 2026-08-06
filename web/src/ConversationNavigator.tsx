@@ -109,6 +109,9 @@ export function ConversationNavigator({
   function resetLifecycleControls() {
     setLifecycle({ phase: "idle" });
     setConfirmingArchive(false);
+    // Clear any unconsumed announcement intent: a failed or superseded
+    // lifecycle action must never mis-announce on a later selection.
+    lifecycleNoticeRef.current = null;
   }
 
   /** Invalidate any in-flight open flow (navigation home/back/invalid). */
@@ -231,9 +234,13 @@ export function ConversationNavigator({
       } catch (error) {
         if (seq !== openSeqRef.current) return;
         if (error instanceof UnauthorizedError) {
+          lifecycleNoticeRef.current = null;
           onUnauthorized();
           return;
         }
+        // The open flow failed: no selection is presented, so no lifecycle
+        // announcement intent may survive to a later selection.
+        lifecycleNoticeRef.current = null;
         setSelection({ phase: "none" });
         setNotice(error instanceof Error ? error.message : String(error));
         listHeadingRef.current?.focus();
@@ -332,12 +339,14 @@ export function ConversationNavigator({
       setLifecycle({ phase: "idle" });
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
+        lifecycleNoticeRef.current = null;
         onUnauthorized();
         return;
       }
       if (cause instanceof LifecycleHttpError) {
         if (cause.kind === "not-found") {
           // 404: return safely to the list with a bounded status.
+          lifecycleNoticeRef.current = null;
           setLifecycle({ phase: "idle" });
           setSelection({ phase: "none" });
           setNotice("Conversation not found.");
@@ -353,9 +362,12 @@ export function ConversationNavigator({
           setLifecycle({ phase: "error", action, error: cause });
           return;
         }
+        // 409 conflict: bounded error with a manual Retry; no announcement.
+        lifecycleNoticeRef.current = null;
         setLifecycle({ phase: "error", action, error: cause });
         return;
       }
+      lifecycleNoticeRef.current = null;
       setLifecycle({
         phase: "error",
         action,
