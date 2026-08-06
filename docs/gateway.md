@@ -50,19 +50,19 @@ Open:
 http://127.0.0.1:7317/
 ```
 
-The UI provides (app-shell slice):
+The UI provides:
 
-- a responsive app shell: persistent desktop sidebar (**Rooms → Agents → About**) and a mobile/portrait burger drawer (focus trap, Escape closes, focus returns)
+- a responsive app shell: persistent desktop sidebar (**Conversations → Agents → About**) and a mobile/portrait burger drawer (focus trap, Escape closes, focus returns)
 - public auth probe (`GET /api/auth/info`) with loading/error states
 - in-memory Bearer token entry when auth is required (never written to storage); the first protected request validates the token, and a rejected token returns to the entry without persistence
-- a room navigator: room list/create/select, with a vault-agent roster where **online** means runnable on this installation (local installation policy only, not a live presence or provider probe); **offline** agents are visible, labelled, and disabled, and the gateway also rejects offline participants on direct POST
-- participants chosen before creation only — they are immutable afterwards
-- a read-only **Agents** page (local-policy roster, non-interactive; direct chat is not available yet) and a read-only **About** page (connection/status only, no form controls)
-- an inspectable immutable room timeline: the durable historic event sequence plus the live scoped SSE stream rendered as one chronological display; on selection and after a disconnect the whole history is re-read (no replay) and a fresh subscription opens, with no render cache and no client-side delivery/approval/retry truth
-- switching views keeps the room navigator mounted: a view change never cancels a room run and never creates client-side delivery/approval/retry truth
+- a Conversation navigator: list/create/select by first raw-text message, with a vault-agent roster where **online** means runnable on this installation (local installation policy only, not a live presence or provider probe); the gateway alone parses `@` mentions
+- C1/runnable-roster-gated active attach: successful attach renders immutable history plus scoped live SSE and a raw-text composer; rejected or archived conversations are visibly read-only inspection with history only, no composer, and no live stream
+- stable `#conversation/<id>` deep links: initial load and Back/Forward re-read the manifest and re-run the stateless attach gate before a live surface opens; malformed/unknown hashes return to the list without a request
+- a read-only **Agents** page (local-policy roster, non-interactive) and a read-only **About** page (connection/status only, no form controls)
+- switching views keeps the Conversation navigator mounted: a view change never cancels a conversation run and never creates client-side delivery/approval/retry truth
 - the Piren logo and responsive, keyboard-usable semantic layout
 
-The structured dispatch, approvals, abort, and direct chat arrive in later separately-gated slices; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
+Conversation approval/abort controls and broader persistent-navigation work remain separately gated; read-only vault browser/graph navigation is deferred to a later phase. The gateway chat and room APIs remain available for external integrations.
 
 The UI intentionally does not provide model selection, thinking controls, or configuration editing. Those belong in vault config and local config. API routes remain available for external integrations.
 
