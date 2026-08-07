@@ -4,8 +4,8 @@
  * Per-conversation×agent isolated Pi RPC client lifecycle mirroring the
  * accepted room broker SEMANTICS (at-most-one-active-run, durable-first
  * typed outcome evidence) without generalizing or changing room code: no
- * handoff, no approval registry, no agent-address expansion, no
- * queue/retry/fallback/reroute/auto-approval.
+ * handoff or agent-address expansion; C3-C1 adds only the exact in-memory
+ * conversation approval registry. No queue/retry/fallback/reroute/auto-approval.
  *
  * The durable steward message is written by the gateway BEFORE dispatch and
  * is never rolled back because a later Pi dispatch conflicts or fails: the
