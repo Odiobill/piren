@@ -314,14 +314,88 @@ describe("Gateway Conversation approval/abort surface (C3-C2)", () => {
     expect((await eventKinds(id)).filter((k) => k === "run_cancelled")).toHaveLength(1);
   });
 
+  it("an approval frame is live-only: a stream opened after emission never receives it (no replay)", async () => {
+    // Regression probe for the archived-controls test ordering hazard. The
+    // approval frame is delivered ONLY to subscriptions live at emission
+    // time (C3-C2: live-only, never in historic events, no replay). A
+    // subscriber that opens its stream after the frame was emitted (e.g. a
+    // test that dispatches first and subscribes second) can miss it
+    // permanently — the emission races with the late subscription because
+    // the frame comes from the separate Pi process after run_started is
+    // written. Every approval-producing dispatch in this suite MUST
+    // therefore establish the scoped live subscription first.
+    await startServer();
+    const { id } = await createConversationViaApi("Seed no mention");
+
+    // S1: subscribed BEFORE dispatch, so it deterministically receives the
+    // approval frame the fake Pi emits during prompt processing.
+    const streamOne = await fetch(url(`/api/conversations/${id}/events/stream`), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(streamOne.status).toBe(200);
+    const readerOne = streamOne.body!.getReader();
+    const decoderOne = new TextDecoder();
+    let approvalId = "";
+    const readOne = (async () => {
+      let buf = "";
+      while (approvalId === "") {
+        const { value, done } = await readerOne.read();
+        if (done) break;
+        buf += decoderOne.decode(value, { stream: true });
+        const frame = parseSseFrames(buf).find((f) => f.type === "approval");
+        if (frame) approvalId = String(frame.data.requestId ?? "");
+      }
+    })();
+    const dispatch = post(url(`/api/conversations/${id}/messages`), { text: "waitapprove @fake" }, token);
+    await waitForStreamValue(async () => approvalId !== "");
+    // The frame was definitively emitted (and consumed by S1); close S1.
+    await readerOne.cancel().catch(() => {});
+    await readOne.catch(() => {});
+
+    // S2: a NEW subscriber, opened after the emission — it must receive NO
+    // approval frame (no replay, no cache, no queue).
+    const streamTwo = await fetch(url(`/api/conversations/${id}/events/stream`), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(streamTwo.status).toBe(200);
+    const readerTwo = streamTwo.body!.getReader();
+    const decoderTwo = new TextDecoder();
+    let bufferTwo = "";
+    const deadline = Date.now() + 400;
+    while (Date.now() < deadline) {
+      const windowTimer = new Promise<"window">((resolve) => {
+        setTimeout(() => resolve("window"), Math.max(1, deadline - Date.now()));
+      });
+      const result = await Promise.race([readerTwo.read(), windowTimer]);
+      if (result === "window") break;
+      const { value, done } = result;
+      if (done) break;
+      bufferTwo += decoderTwo.decode(value, { stream: true });
+    }
+    expect(parseSseFrames(bufferTwo).filter((f) => f.type === "approval")).toEqual([]);
+    await readerTwo.cancel().catch(() => {});
+
+    // The pending approval is still answerable from S1's request id (the
+    // run stayed active), proving S2's silence was a no-replay property,
+    // not a lost run.
+    const approve = await post(url(`/api/conversations/${id}/approve`), { agent: "fake", request_id: approvalId, confirmed: true }, token);
+    expect(approve.status).toBe(200);
+    const outcome = (await (await dispatch).json()) as { dispatch: { agent: string; status: string }[] };
+    expect(outcome.dispatch).toEqual([{ agent: "fake", status: "completed" }]);
+  });
+
   it("keeps archived active-run controls answerable and unchanged archive/attach/message behavior", async () => {
     await startServer();
 
     // Approve a pending request from a run of an archived conversation.
+    // Establish the scoped live subscription BEFORE dispatching the
+    // approval-producing message: the approval frame is live-only with no
+    // replay, so a late subscriber would miss it (see the probe test above).
     const convApprove = (await createConversationViaApi("Seed A no mention")).id;
-    const dispatchApprove = post(url(`/api/conversations/${convApprove}/messages`), { text: "waitapprove @fake" }, token);
-    await waitForStreamValue(async () => (await eventKinds(convApprove)).includes("run_started"));
-    const streamA = await fetch(url(`/api/conversations/${convApprove}/events/stream`), { headers: { authorization: `Bearer ${token}` } });
+    const streamA = await fetch(url(`/api/conversations/${convApprove}/events/stream`), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(streamA.status).toBe(200);
     const readerA = streamA.body!.getReader();
     const decoderA = new TextDecoder();
     let approvalIdA = "";
@@ -335,6 +409,7 @@ describe("Gateway Conversation approval/abort surface (C3-C2)", () => {
         if (frame) approvalIdA = String(frame.data.requestId ?? "");
       }
     })();
+    const dispatchApprove = post(url(`/api/conversations/${convApprove}/messages`), { text: "waitapprove @fake" }, token);
     await waitForStreamValue(async () => approvalIdA !== "");
     const archivedApprove = await post(url(`/api/conversations/${convApprove}/archive`), {}, token);
     expect(archivedApprove.status).toBe(200);
