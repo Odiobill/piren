@@ -182,6 +182,17 @@ describe("static pins: minimal approval/abort Workbench controls (C3-C3)", () =>
     expect(navigator).not.toMatch(/crypto\.randomUUID|Date\.now\(\).*requestId/);
   });
 
+  it("a manual approval Retry re-sends the exact attempted response, never a flipped intent", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    // The submit error state carries the attempted response so a failed
+    // Cancel is retried as Cancel, never silently flipped to Confirm/Submit.
+    expect(navigator).toContain('phase: "error"; requestId: string; attempted: ApprovalResponse;');
+    expect(navigator).toContain("attempted: response,");
+    // The card's Retry dispatches the attempted response, not the primary
+    // action (a failed Cancel must never retry as Confirm).
+    expect(navigator).toContain("onClick={() => onRespond(approval, failure.attempted)}");
+  });
+
   it("the timeline forwards live approval frames and never renders them as durable timeline entries", async () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
     const timelineCore = await readFile(join(webSrc, "conversation-timeline.ts"), "utf8");

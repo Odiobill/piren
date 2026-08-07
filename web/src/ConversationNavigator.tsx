@@ -124,7 +124,7 @@ export function ConversationNavigator({
   const [approvalSubmit, setApprovalSubmit] = useState<
     | { phase: "idle" }
     | { phase: "busy"; requestId: string }
-    | { phase: "error"; requestId: string; error: ConversationControlError }
+    | { phase: "error"; requestId: string; attempted: ApprovalResponse; error: ConversationControlError }
   >({ phase: "idle" });
   /** C3-C3: abort control state (active surface only; one conversation×agent run). */
   const [abortState, setAbortState] = useState<
@@ -451,6 +451,7 @@ export function ConversationNavigator({
         setApprovalSubmit({
           phase: "error",
           requestId: approval.requestId,
+          attempted: response,
           error: { kind: cause.kind, message: cause.message },
         });
         return;
@@ -458,6 +459,7 @@ export function ConversationNavigator({
       setApprovalSubmit({
         phase: "error",
         requestId: approval.requestId,
+        attempted: response,
         error: networkConversationControlError(cause),
       });
     }
@@ -853,7 +855,7 @@ function ConversationApprovalCards({
   submit:
     | { phase: "idle" }
     | { phase: "busy"; requestId: string }
-    | { phase: "error"; requestId: string; error: ConversationControlError };
+    | { phase: "error"; requestId: string; attempted: ApprovalResponse; error: ConversationControlError };
   onRespond: (approval: PendingApproval, response: ApprovalResponse) => void;
 }) {
   if (approvals.length === 0) return null;
@@ -864,7 +866,7 @@ function ConversationApprovalCards({
           key={approval.requestId}
           approval={approval}
           submitting={submit.phase === "busy" && submit.requestId === approval.requestId}
-          error={submit.phase === "error" && submit.requestId === approval.requestId ? submit.error : null}
+          failure={submit.phase === "error" && submit.requestId === approval.requestId ? { attempted: submit.attempted, error: submit.error } : null}
           onRespond={onRespond}
         />
       ))}
@@ -875,12 +877,13 @@ function ConversationApprovalCards({
 function ApprovalCard({
   approval,
   submitting,
-  error,
+  failure,
   onRespond,
 }: {
   approval: PendingApproval;
   submitting: boolean;
-  error: ConversationControlError | null;
+  /** Bounded failure carrying the exact attempted response for manual Retry. */
+  failure: { attempted: ApprovalResponse; error: ConversationControlError } | null;
   onRespond: (approval: PendingApproval, response: ApprovalResponse) => void;
 }) {
   const [inputValue, setInputValue] = useState("");
@@ -937,10 +940,10 @@ function ApprovalCard({
           Cancel
         </button>
       </div>
-      {error !== null && (
+      {failure !== null && (
         <div className="lifecycle-error" role="alert">
-          <p className="error-message">{error.message}</p>
-          <button type="button" className="button button-small" disabled={submitting} onClick={primary}>
+          <p className="error-message">{failure.error.message}</p>
+          <button type="button" className="button button-small" disabled={submitting} onClick={() => onRespond(approval, failure.attempted)}>
             Retry
           </button>
         </div>
