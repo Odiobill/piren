@@ -90,12 +90,14 @@ describe("declared C2 endpoints (static)", () => {
     expect(api).toContain("/api/room-agents");
   });
 
-  it("the Conversation surface files never reference room/chat/vault/control endpoints", async () => {
+  it("the Conversation surface files never reference room/chat/vault endpoints (C3-C3 authorizes approve/abort)", async () => {
     const sources = await readAllTs();
     for (const name of conversationModuleFiles()) {
       const content = sources.get(name) ?? "";
       expect(content.length).toBeGreaterThan(0);
-      for (const forbidden of ["/api/rooms", "/api/chat", "/api/vault", "/approve", "/abort", "/api/v1/"]) {
+      // C3-C3 (2026-08-07) authorizes the two conversation control
+      // endpoints; rooms/chat/vault/generic-API references stay forbidden.
+      for (const forbidden of ["/api/rooms", "/api/chat", "/api/vault", "/api/v1/"]) {
         expect(content, `${name} must not reference ${forbidden}`).not.toContain(forbidden);
       }
     }

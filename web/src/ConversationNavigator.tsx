@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import {
+  abortConversationRun,
+  approveConversationApproval,
   archiveConversation,
   attachConversation,
+  ConversationControlHttpError,
   createConversation,
   fetchConversation,
   fetchConversations,
@@ -12,6 +15,17 @@ import {
 } from "./api";
 import type { ConversationRecord, ConversationEventRecord } from "./conversations";
 import { classifyAudienceMembers, type MemberRunnableStatus } from "./attach";
+import {
+  abortAnnouncement,
+  approvalCardMessage,
+  approvalCardTitle,
+  approvalRequestedAnnouncement,
+  approvalResponseAnnouncement,
+  networkConversationControlError,
+  type ApprovalResponse,
+  type ConversationControlError,
+  type PendingApproval,
+} from "./conversation-controls";
 import {
   archiveConfirmationCopy,
   type ConversationLifecycleAction,
@@ -104,6 +118,20 @@ export function ConversationNavigator({
   const lifecycleNoticeRef = useRef<"archive" | "reopen" | "derived" | null>(null);
   const archiveButtonRef = useRef<HTMLButtonElement>(null);
   const confirmArchiveRef = useRef<HTMLButtonElement>(null);
+  /** C3-C3: pending approval cards derived ONLY from scoped live frames. */
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
+  /** C3-C3: in-flight/errored approval response per request id (manual Retry). */
+  const [approvalSubmit, setApprovalSubmit] = useState<
+    | { phase: "idle" }
+    | { phase: "busy"; requestId: string }
+    | { phase: "error"; requestId: string; error: ConversationControlError }
+  >({ phase: "idle" });
+  /** C3-C3: abort control state (active surface only; one conversation×agent run). */
+  const [abortState, setAbortState] = useState<
+    | { phase: "idle" }
+    | { phase: "busy"; agent: string }
+    | { phase: "error"; agent: string; error: ConversationControlError }
+  >({ phase: "idle" });
 
   /** Reset the lifecycle controls when leaving the current view. */
   function resetLifecycleControls() {
@@ -112,6 +140,13 @@ export function ConversationNavigator({
     // Clear any unconsumed announcement intent: a failed or superseded
     // lifecycle action must never mis-announce on a later selection.
     lifecycleNoticeRef.current = null;
+  }
+
+  /** C3-C3: clear stale approval/abort UI state on re-gate or navigation. */
+  function resetApprovalControls() {
+    setPendingApprovals([]);
+    setApprovalSubmit({ phase: "idle" });
+    setAbortState({ phase: "idle" });
   }
 
   /** Invalidate any in-flight open flow (navigation home/back/invalid). */
@@ -217,6 +252,9 @@ export function ConversationNavigator({
   const openConversationById = useCallback(
     async (conversationId: string) => {
       const seq = ++openSeqRef.current;
+      // C3-C3: every fresh attach/lifecycle gate clears stale pending
+      // approval/abort UI state; controls never activate or attach anything.
+      resetApprovalControls();
       setSelection({ phase: "attaching" });
       setNotice(null);
       try {
@@ -377,6 +415,83 @@ export function ConversationNavigator({
   }
 
   /**
+   * C3-C3: a scoped live `approval` frame for the selected active
+   * conversation creates one card (deduped by agent+requestId). The browser
+   * never invents recipients, request ids, or approval state.
+   */
+  const handleApprovalFrame = useCallback((approval: PendingApproval) => {
+    setPendingApprovals((previous) => {
+      if (previous.some((pending) => pending.agent === approval.agent && pending.requestId === approval.requestId)) {
+        return previous;
+      }
+      return [...previous, approval];
+    });
+    setAnnouncement(approvalRequestedAnnouncement(approval));
+  }, []);
+
+  /**
+   * C3-C3: submit one exactly-one approval response to the declared approve
+   * route. Success is delivery acceptance only (never a fabricated agent
+   * outcome); errors are bounded with a manual Retry.
+   */
+  async function handleApprovalResponse(approval: PendingApproval, response: ApprovalResponse) {
+    if (selection.phase !== "active") return;
+    setApprovalSubmit({ phase: "busy", requestId: approval.requestId });
+    try {
+      await approveConversationApproval(selection.conversation.id, approval.agent, approval.requestId, response, token);
+      setPendingApprovals((previous) => previous.filter((pending) => pending.requestId !== approval.requestId));
+      setApprovalSubmit({ phase: "idle" });
+      setAnnouncement(approvalResponseAnnouncement(approval.agent));
+    } catch (cause) {
+      if (cause instanceof UnauthorizedError) {
+        onUnauthorized();
+        return;
+      }
+      if (cause instanceof ConversationControlHttpError) {
+        setApprovalSubmit({
+          phase: "error",
+          requestId: approval.requestId,
+          error: { kind: cause.kind, message: cause.message },
+        });
+        return;
+      }
+      setApprovalSubmit({
+        phase: "error",
+        requestId: approval.requestId,
+        error: networkConversationControlError(cause),
+      });
+    }
+  }
+
+  /**
+   * C3-C3: abort the active run for exactly one conversation×agent member.
+   * The bounded cancelled|no-active-run outcome is announced truthfully;
+   * errors are bounded with a manual Retry.
+   */
+  async function handleAbort(agent: string) {
+    if (selection.phase !== "active") return;
+    setAbortState({ phase: "busy", agent });
+    try {
+      const outcome = await abortConversationRun(selection.conversation.id, agent, token);
+      setAbortState({ phase: "idle" });
+      setAnnouncement(abortAnnouncement(outcome));
+    } catch (cause) {
+      if (cause instanceof UnauthorizedError) {
+        onUnauthorized();
+        return;
+      }
+      setAbortState({
+        phase: "error",
+        agent,
+        error:
+          cause instanceof ConversationControlHttpError
+            ? { kind: cause.kind, message: cause.message }
+            : networkConversationControlError(cause),
+      });
+    }
+  }
+
+  /**
    * L3: a live scoped SSE lifecycle event for the selected Conversation
    * requests the SAME fresh navigator re-gate exactly once per received
    * event. The fresh attach result decides presentation (archive from
@@ -449,12 +564,23 @@ export function ConversationNavigator({
         />
         {active ? (
           <>
+            <ConversationApprovalCards
+              approvals={pendingApprovals}
+              submit={approvalSubmit}
+              onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
+            />
+            <ConversationAbortControls
+              members={selection.conversation.audience}
+              state={abortState}
+              onAbort={(agent) => void handleAbort(agent)}
+            />
             <ConversationTimeline
               conversationId={selection.conversation.id}
               token={token}
               live={true}
               onUnauthorized={onUnauthorized}
               onLifecycleTransition={handleLifecycleEvent}
+              onApproval={handleApprovalFrame}
             />
             <ConversationComposer
               conversationId={selection.conversation.id}
@@ -707,5 +833,168 @@ function ConversationCreateForm({
         Start conversation
       </button>
     </form>
+  );
+}
+
+/**
+ * C3-C3: non-modal approval cards for the selected ACTIVE conversation's
+ * pending approvals, derived ONLY from scoped live frames. Confirm / Cancel
+ * (and a labeled input for select/input) submit exactly-one response bodies;
+ * success is delivery acceptance only. Errors are bounded with a manual
+ * Retry; focus moves into the card on arrival; the polite announcement is
+ * made by the navigator.
+ */
+function ConversationApprovalCards({
+  approvals,
+  submit,
+  onRespond,
+}: {
+  approvals: PendingApproval[];
+  submit:
+    | { phase: "idle" }
+    | { phase: "busy"; requestId: string }
+    | { phase: "error"; requestId: string; error: ConversationControlError };
+  onRespond: (approval: PendingApproval, response: ApprovalResponse) => void;
+}) {
+  if (approvals.length === 0) return null;
+  return (
+    <div className="approval-cards" aria-label="Pending approvals">
+      {approvals.map((approval) => (
+        <ApprovalCard
+          key={approval.requestId}
+          approval={approval}
+          submitting={submit.phase === "busy" && submit.requestId === approval.requestId}
+          error={submit.phase === "error" && submit.requestId === approval.requestId ? submit.error : null}
+          onRespond={onRespond}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ApprovalCard({
+  approval,
+  submitting,
+  error,
+  onRespond,
+}: {
+  approval: PendingApproval;
+  submitting: boolean;
+  error: ConversationControlError | null;
+  onRespond: (approval: PendingApproval, response: ApprovalResponse) => void;
+}) {
+  const [inputValue, setInputValue] = useState("");
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const needsInput = approval.method === "select" || approval.method === "input";
+  const message = approvalCardMessage(approval);
+  // Deliberate focus policy: on arrival, focus the input (select/input) or
+  // the Confirm button (confirm), so the steward can act without hunting.
+  useEffect(() => {
+    if (needsInput) {
+      inputRef.current?.focus();
+    } else {
+      confirmButtonRef.current?.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only intent
+  }, []);
+  const primary = () =>
+    onRespond(approval, needsInput ? { value: inputValue } : { confirmed: true });
+  return (
+    <div
+      className="approval-card"
+      role="group"
+      aria-label={`Approval requested by ${approval.agent}`}
+    >
+      <p className="approval-title">{approvalCardTitle(approval)}</p>
+      {message !== "" && <p className="muted">{message}</p>}
+      <p className="approval-meta">
+        <code>{approval.agent}</code> · {approval.method}
+      </p>
+      {needsInput && (
+        <>
+          <label htmlFor={`approval-input-${approval.requestId}`}>Response</label>
+          <input
+            id={`approval-input-${approval.requestId}`}
+            ref={inputRef}
+            type="text"
+            value={inputValue}
+            onChange={(event) => setInputValue(event.target.value)}
+            disabled={submitting}
+          />
+        </>
+      )}
+      <div className="confirmation-actions">
+        <button type="button" ref={confirmButtonRef} className="button button-primary" disabled={submitting} onClick={primary}>
+          {needsInput ? "Submit" : "Confirm"}
+        </button>
+        <button
+          type="button"
+          className="button"
+          disabled={submitting}
+          onClick={() => onRespond(approval, { cancelled: true })}
+        >
+          Cancel
+        </button>
+      </div>
+      {error !== null && (
+        <div className="lifecycle-error" role="alert">
+          <p className="error-message">{error.message}</p>
+          <button type="button" className="button button-small" disabled={submitting} onClick={primary}>
+            Retry
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * C3-C3: Abort control for the selected ACTIVE conversation only. One Abort
+ * per audience member sends only `{agent}` to the declared route; the bounded
+ * cancelled|no-active-run outcome is announced truthfully. Never shown on
+ * read-only/archived/gate-rejected inspection.
+ */
+function ConversationAbortControls({
+  members,
+  state,
+  onAbort,
+}: {
+  members: string[];
+  state:
+    | { phase: "idle" }
+    | { phase: "busy"; agent: string }
+    | { phase: "error"; agent: string; error: ConversationControlError };
+  onAbort: (agent: string) => void;
+}) {
+  if (members.length === 0) return null;
+  return (
+    <div className="run-controls" aria-label="Active run controls">
+      <h3>Active run</h3>
+      <ul className="run-control-list">
+        {members.map((agent) => (
+          <li key={agent} className="run-control-row">
+            <span className="member-name">{agent}</span>
+            <button
+              type="button"
+              className="button button-small"
+              disabled={state.phase === "busy"}
+              onClick={() => onAbort(agent)}
+            >
+              Abort
+            </button>
+            {state.phase === "busy" && state.agent === agent && <span className="muted">Aborting…</span>}
+            {state.phase === "error" && state.agent === agent && (
+              <div className="lifecycle-error" role="alert">
+                <p className="error-message">{state.error.message}</p>
+                <button type="button" className="button button-small" onClick={() => onAbort(agent)}>
+                  Retry
+                </button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

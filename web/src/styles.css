@@ -937,3 +937,69 @@ code {
 .lifecycle-error .error-message {
   margin: 0;
 }
+
+/* C3-C3 — approval cards + active-run abort controls */
+.approval-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.approval-card {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--accent, var(--warn));
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+  width: 100%;
+}
+
+.approval-card p {
+  margin: 0 0 8px;
+}
+
+.approval-card .approval-title {
+  font-weight: 600;
+}
+
+.approval-card .approval-meta {
+  margin-bottom: 10px;
+}
+
+.approval-card label {
+  display: block;
+  margin: 4px 0;
+}
+
+.approval-card input {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.run-controls {
+  margin: 4px 0 12px;
+}
+
+.run-controls h3 {
+  margin: 0 0 8px;
+}
+
+.run-control-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.run-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.run-control-row .member-name {
+  min-width: 120px;
+}

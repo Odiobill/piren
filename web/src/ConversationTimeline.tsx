@@ -9,6 +9,7 @@ import {
   type ConversationTimelineItem,
   type ReconnectBudget,
 } from "./conversation-timeline";
+import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
 import { lifecycleTransitionLabel } from "./conversation-lifecycle";
 import type { ConversationEventRecord } from "./conversations";
 
@@ -59,6 +60,7 @@ export function ConversationTimeline({
   live,
   onUnauthorized,
   onLifecycleTransition,
+  onApproval,
 }: {
   conversationId: string;
   token: string;
@@ -66,6 +68,8 @@ export function ConversationTimeline({
   onUnauthorized: () => void;
   /** L3: fresh navigator re-gate request, exactly once per received lifecycle event. */
   onLifecycleTransition?: (event: ConversationEventRecord) => void;
+  /** C3-C3: forward a scoped live approval frame for the selected conversation. */
+  onApproval?: (approval: PendingApproval) => void;
 }) {
   const [phase, setPhase] = useState<TimelinePhase>({ phase: "loading" });
   const [announcement, setAnnouncement] = useState("");
@@ -113,6 +117,18 @@ export function ConversationTimeline({
             },
             onFrame: (frame) => {
               if (cancelled) return;
+              // C3-C3: a scoped live `approval` frame is forwarded to the
+              // navigator's card surface and NEVER becomes a durable timeline
+              // entry. A malformed frame is ignored (no card, no crash, no
+              // fabricated approval state).
+              if (frame.event === "approval") {
+                try {
+                  onApproval?.(parseConversationApprovalFrame(JSON.parse(frame.data)));
+                } catch {
+                  // non-authoritative; ignored
+                }
+                return;
+              }
               const item = conversationFrameToItem(frame);
               if (item === null) return;
               // L3: a durable lifecycle_transition for this selected

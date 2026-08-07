@@ -247,7 +247,9 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
   it("forbidden behavior/strings are absent from the lifecycle surface and repo-wide web scans", async () => {
     const sources = await readAllTs();
     for (const [name, content] of sources) {
-      for (const forbidden of ["localStorage", "sessionStorage", "new EventSource", "/api/chat", "/approve", "/abort", "/api/vault", "thinking", "window.confirm"]) {
+      // C3-C3 (2026-08-07) authorizes /approve and /abort on the
+      // Conversation surface; they are no longer repo-wide forbidden.
+      for (const forbidden of ["localStorage", "sessionStorage", "new EventSource", "/api/chat", "/api/vault", "thinking", "window.confirm"]) {
         expect(content, `${name} must not contain ${forbidden}`).not.toContain(forbidden);
       }
     }

@@ -145,9 +145,10 @@ describe("app shell source surface (static)", () => {
     const sources = await readSourceFiles();
     const shell = [...sources.values()].join("\n");
     // R3b-3 authorized room event + stream reads; R3b-4 authorized the
-    // structured messages POST (composer). Chat, approval, abort, vault,
-    // native SSE, and storage stay forbidden across the whole workbench.
-    for (const forbidden of ["/api/chat", "new EventSource", "/approve", "/abort", "/api/vault", "localStorage", "sessionStorage"]) {
+    // structured messages POST (composer). C3-C3 (2026-08-07) authorizes the
+    // Conversation approve/abort endpoints. Chat, vault, native SSE, and
+    // storage stay forbidden across the whole workbench.
+    for (const forbidden of ["/api/chat", "new EventSource", "/api/vault", "localStorage", "sessionStorage"]) {
       expect(shell, `${forbidden} must not appear in the shell surface`).not.toContain(forbidden);
     }
   });

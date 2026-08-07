@@ -92,7 +92,7 @@ describe("web room navigator contract (R3b-2)", () => {
       expect(combined).toContain("disabled");
     });
 
-    it("contains no timeline/SSE/composer/approval/abort/vault/graph/model behavior", async () => {
+    it("contains no timeline/SSE/composer/approval/abort/vault/graph/model behavior in the ROOM surface", async () => {
       const files = await readdir(webSrc, { recursive: true });
       const tsFiles = files.filter(
         (f) => typeof f === "string" && (f.endsWith(".ts") || f.endsWith(".tsx")),
@@ -102,17 +102,20 @@ describe("web room navigator contract (R3b-2)", () => {
       // R3b-2 authorized the roster + room routes; R3b-3 authorized the
       // room event + stream READS; R3b-4 authorized the structured
       // {agent, text} messages POST (composer). Writes and other surfaces
-      // stay forbidden.
-      for (const forbiddenOfR3b2 of [
-        "new EventSource",
-        "/approve",
-        "/abort",
-        "/api/vault",
-        "/api/chat",
-        "thinking",
-      ]) {
+      // stay forbidden. Since C3-C3 (2026-08-07) the Conversation surface
+      // legitimately uses /approve and /abort, so those two are scoped to
+      // the ROOM files only here.
+      for (const forbiddenOfR3b2 of ["new EventSource", "/api/vault", "/api/chat", "thinking"]) {
         expect(combined, `${forbiddenOfR3b2} must not appear in the R3b-2 navigator surface`).not.toContain(forbiddenOfR3b2);
       }
+      // The room surface itself never adds approval/abort behavior.
+      const roomFiles = ["RoomNavigator.tsx", "RoomTimeline.tsx", "RoomComposer.tsx", "rooms.ts", "timeline.ts"];
+      let roomCombined = "";
+      for (const name of roomFiles) {
+        roomCombined += (await readFile(join(webSrc, name), "utf8")) + "\n";
+      }
+      expect(roomCombined, "room files must not reference approval/abort").not.toContain("/approve");
+      expect(roomCombined, "room files must not reference approval/abort").not.toContain("/abort");
       // R3b-4 composer: messages POST is the ONLY write surface.
       expect(combined).toContain("/messages");
     });

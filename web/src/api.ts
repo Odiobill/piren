@@ -30,6 +30,13 @@ import {
   type ConversationLifecycleAction,
   type LifecycleActionResponse,
 } from "./conversation-lifecycle";
+import {
+  buildConversationApproveBody,
+  parseConversationAbortOutcome,
+  parseConversationControlHttpError,
+  type ApprovalResponse,
+  type ConversationAbortOutcome,
+} from "./conversation-controls";
 
 /** Typed bounded lifecycle action error (L2 404/409/500 / network). */
 export class LifecycleHttpError extends Error {
@@ -294,6 +301,66 @@ export async function archiveConversation(id: string, token: string): Promise<Li
 /** POST /api/conversations/<id>/reopen — L2 lifecycle action (state-only). */
 export async function reopenConversation(id: string, token: string): Promise<LifecycleActionResponse> {
   return postLifecycleAction(id, "reopen", token);
+}
+
+/** Typed bounded error from the C3-C2 approve/abort routes. */
+export class ConversationControlHttpError extends Error {
+  readonly kind: "bad-request" | "not-found" | "stale" | "server" | "network";
+
+  constructor(kind: "bad-request" | "not-found" | "stale" | "server" | "network", message: string) {
+    super(message);
+    this.name = "ConversationControlHttpError";
+    this.kind = kind;
+  }
+}
+
+/**
+ * POST /api/conversations/<id>/approve — forward one exactly-one approval
+ * response to the exact pending conversation×agent request. Success is
+ * delivery acceptance only; the browser never fabricates an agent outcome.
+ */
+export async function approveConversationApproval(
+  id: string,
+  agent: string,
+  requestId: string,
+  response: ApprovalResponse,
+  token: string,
+): Promise<void> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/approve`, token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(buildConversationApproveBody(agent, requestId, response)),
+  });
+  if (res.status === 200) return;
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    // keep the typed fallback
+  }
+  const parsed = parseConversationControlHttpError(res.status, json);
+  throw new ConversationControlHttpError(parsed.kind, parsed.message);
+}
+
+/**
+ * POST /api/conversations/<id>/abort — abort the active run for exactly one
+ * conversation×agent key; returns the bounded cancelled|no-active-run outcome.
+ */
+export async function abortConversationRun(id: string, agent: string, token: string): Promise<ConversationAbortOutcome> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/abort`, token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent }),
+  });
+  if (res.status === 200) return parseConversationAbortOutcome(await res.json());
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    // keep the typed fallback
+  }
+  const parsed = parseConversationControlHttpError(res.status, json);
+  throw new ConversationControlHttpError(parsed.kind, parsed.message);
 }
 
 /** GET /api/conversations/<id>/events — whole durable history (no replay). */
