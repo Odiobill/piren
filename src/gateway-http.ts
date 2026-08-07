@@ -15,6 +15,7 @@ import { buildRoomAgentsResponse } from "./room-agents.js";
 import { checkActiveGate, formatActiveGateRejection, resolveStewardMentions, type ValidatedRecipients } from "./conversation-contract.js";
 import {
   ConversationBroker,
+  type ConversationApprovalNotification,
   type ConversationDispatchOutcome,
   type ConversationEventNotification,
 } from "./conversation-broker.js";
@@ -1855,6 +1856,10 @@ export class GatewayServer {
       await this.handleConversationMessage(req, res, conversationId);
     } else if (rest[0] === "attach" && rest.length === 1 && req.method === "POST") {
       await this.handleConversationAttach(res, conversationId);
+    } else if (rest[0] === "approve" && rest.length === 1 && req.method === "POST") {
+      await this.handleConversationApprove(req, res, conversationId);
+    } else if (rest[0] === "abort" && rest.length === 1 && req.method === "POST") {
+      await this.handleConversationAbort(req, res, conversationId);
     } else if ((rest[0] === "archive" || rest[0] === "reopen") && rest.length === 1 && req.method === "POST") {
       await this.handleConversationLifecycle(res, conversationId, rest[0]);
     } else {
@@ -2129,6 +2134,94 @@ export class GatewayServer {
     }
   }
 
+  /**
+   * C3-C2 bounded error vocabulary for the approval/abort control routes:
+   * 400 for malformed bodies / non-exactly-one responses, 404 for absent
+   * conversation (ENOENT), 409 for unknown/stale/already-settled approvals,
+   * bounded 500 otherwise. Never leaks raw errors, Pi internals, lock
+   * content, paths, or secrets.
+   */
+  private conversationControlError(res: ServerResponse, error: unknown): void {
+    if (error instanceof Error && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+      this.writeJson(res, 404, { error: "conversation not found" });
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Exactly one of confirmed, value, or cancelled is required")) {
+      this.writeJson(res, 400, { error: message });
+    } else if (message.startsWith("Unknown or stale approval request")) {
+      this.writeJson(res, 409, { error: message });
+    } else {
+      this.writeJson(res, 500, { error: "internal error" });
+    }
+  }
+
+  /**
+   * C3-C2: forward an approval response to the exact pending
+   * conversation×agent request. Body `{agent, request_id, confirmed|value|
+   * cancelled}` with exactly one response field; the accepted C3-C1 core
+   * validates the shape, delivers at most once, and cleans up. Only the
+   * bounded vocabulary is mapped (400/404/409/401/200); the route never
+   * duplicates approval authority in HTTP code.
+   */
+  private async handleConversationApprove(req: IncomingMessage, res: ServerResponse, conversationId: string): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const agent = parsed.value.agent;
+    const requestId = parsed.value.request_id;
+    if (typeof agent !== "string" || agent.trim() === "") {
+      this.writeJson(res, 400, { error: "agent is required" });
+      return;
+    }
+    if (typeof requestId !== "string" || requestId === "") {
+      this.writeJson(res, 400, { error: "request_id is required" });
+      return;
+    }
+    try {
+      // C3-C2: absent conversation is a bounded 404 (contract §7.1),
+      // distinct from an unknown/stale request on an existing conversation
+      // (409). Existence is checked without consulting lifecycle status —
+      // the control itself stays run-scoped.
+      await readConversation({ vaultRoot: this.vaultRoot as string, conversationId });
+      (this.conversationBroker as ConversationBroker).respondToConversationApproval({
+        conversationId,
+        agent,
+        requestId,
+        response: parsed.value,
+      });
+      this.writeJson(res, 200, { ok: true });
+    } catch (error) {
+      this.conversationControlError(res, error);
+    }
+  }
+
+  /**
+   * C3-C2: abort the active run for exactly one conversation × agent key.
+   * Body `{agent}`; maps the C3-C1 typed outcome (cancelled | no-active-run)
+   * verbatim and never creates/attaches/dispatches/switches a client.
+   */
+  private async handleConversationAbort(req: IncomingMessage, res: ServerResponse, conversationId: string): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const agent = parsed.value.agent;
+    if (typeof agent !== "string" || agent.trim() === "") {
+      this.writeJson(res, 400, { error: "agent is required" });
+      return;
+    }
+    try {
+      const outcome = await (this.conversationBroker as ConversationBroker).abort(conversationId, agent);
+      this.writeJson(res, 200, { outcome });
+    } catch (error) {
+      this.conversationControlError(res, error);
+    }
+  }
+
   private async handleConversationEventStream(req: IncomingMessage, res: ServerResponse, conversationId: string): Promise<void> {
     // Validate the conversation exists before opening the stream.
     try {
@@ -2150,6 +2243,12 @@ export class GatewayServer {
     const unsubscribe = broker.onConversationEvent(conversationId, (event: ConversationEventNotification) => {
       enqueue(stream, { type: "conversation_event", data: event as unknown as Record<string, unknown> });
     });
+    // C3-C2: scoped live `approval` frames only (never durable, never
+    // replayed in historic events); delivered only to this conversation's
+    // attached/live stream. Mirrors the room stream.
+    const unsubscribeApprovals = broker.onConversationApproval(conversationId, (approval: ConversationApprovalNotification) => {
+      enqueue(stream, { type: "approval", data: approval as unknown as Record<string, unknown> });
+    });
 
     const heartbeat = setInterval(() => {
       res.write(": heartbeat\n\n");
@@ -2161,6 +2260,7 @@ export class GatewayServer {
       cleaned = true;
       clearInterval(heartbeat);
       unsubscribe();
+      unsubscribeApprovals();
       this.conversationStreamCleanups.delete(cleanup);
       closeStream(stream);
     };

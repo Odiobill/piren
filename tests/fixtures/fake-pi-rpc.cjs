@@ -35,6 +35,10 @@ let promptCount = 0;
 // Blocking-approval state: set by a "waitapprove" prompt, cleared by the
 // matching extension_ui_response or by abort.
 let waitingApprovalId = null;
+// Unique approval request ids: two approval requests raised in the same
+// millisecond must never collide across conversation/room keys, so every
+// emitted id carries a process-local sequence suffix.
+let approvalSeq = 0;
 // Blocking reserved room-handoff state (ADR-0041 R2b): set by a
 // "roomhandoff" prompt, cleared by the matching extension_ui_response or by
 // abort. The id is deterministic so gateway proofs can assert the internal
@@ -199,7 +203,7 @@ function handle(cmd) {
     // extension_ui_response (or abort) arrives. This models a real approval
     // gate deterministically for room/gateway lifecycle tests.
     if (typeof cmd.message === "string" && cmd.message.includes("waitapprove")) {
-      waitingApprovalId = "ui-req-" + Date.now();
+      waitingApprovalId = "ui-req-" + Date.now() + "-" + ++approvalSeq;
       emit({
         type: "extension_ui_request",
         id: waitingApprovalId,
@@ -215,7 +219,7 @@ function handle(cmd) {
     if (typeof cmd.message === "string" && cmd.message.includes("approve")) {
       emit({
         type: "extension_ui_request",
-        id: "ui-req-" + Date.now(),
+        id: "ui-req-" + Date.now() + "-" + ++approvalSeq,
         method: "confirm",
         title: "Approve action?",
         message: "The agent wants to proceed.",

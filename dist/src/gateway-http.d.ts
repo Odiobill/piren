@@ -290,6 +290,29 @@ export declare class GatewayServer {
      */
     private handleConversationLifecycle;
     private handleConversationEvents;
+    /**
+     * C3-C2 bounded error vocabulary for the approval/abort control routes:
+     * 400 for malformed bodies / non-exactly-one responses, 404 for absent
+     * conversation (ENOENT), 409 for unknown/stale/already-settled approvals,
+     * bounded 500 otherwise. Never leaks raw errors, Pi internals, lock
+     * content, paths, or secrets.
+     */
+    private conversationControlError;
+    /**
+     * C3-C2: forward an approval response to the exact pending
+     * conversation×agent request. Body `{agent, request_id, confirmed|value|
+     * cancelled}` with exactly one response field; the accepted C3-C1 core
+     * validates the shape, delivers at most once, and cleans up. Only the
+     * bounded vocabulary is mapped (400/404/409/401/200); the route never
+     * duplicates approval authority in HTTP code.
+     */
+    private handleConversationApprove;
+    /**
+     * C3-C2: abort the active run for exactly one conversation × agent key.
+     * Body `{agent}`; maps the C3-C1 typed outcome (cancelled | no-active-run)
+     * verbatim and never creates/attaches/dispatches/switches a client.
+     */
+    private handleConversationAbort;
     private handleConversationEventStream;
     private writeJson;
     private writeSse;
