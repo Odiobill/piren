@@ -1127,6 +1127,41 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
     await broker.close();
   });
 
+  it("replays the accepted handoff edge and the completed source terminal in the child's durable transcript", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "Please review the diff" });
+    if (accepted.status !== "accepted") throw new Error("expected accepted");
+    clients[0]?.settleCompleted();
+    await dispatch;
+
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const handoffEventId = accepted.handoffEventId;
+    const sourceTerminal = events.find((e) => e.kind === "run_finished" && e.correlationId === stewardEventId);
+    const childStarted = events.find((e) => e.kind === "run_started" && e.correlationId === handoffEventId);
+    expect(sourceTerminal).toBeDefined();
+    expect(childStarted).toBeDefined();
+
+    // C5 §6.3: the child's bounded durable replay includes the accepted
+    // handoff edge AND the completed source-stage terminal (which caused
+    // defer-launch) — proven via the inspectable selection metadata, not the
+    // separate "Handoff request" prompt section.
+    const selectedIds = childStarted?.contextMetadata?.selectedIds ?? [];
+    expect(selectedIds).toContain(handoffEventId);
+    expect(selectedIds).toContain(sourceTerminal?.id ?? "");
+
+    // The durable transcript evidence is also visible in the child prompt
+    // (the completed source terminal body is only in the replay, never in the
+    // Handoff request section).
+    const childPrompt = clients[1]?.prompts[0] ?? "";
+    expect(childPrompt).toContain("Run completed for agent 'zai'.");
+    expect(childPrompt).toContain("Please review the diff");
+    await broker.close();
+  });
+
   it("enforces the depth budget end-to-end: a stage at max depth cannot hand off", async () => {
     const { broker, clients } = makeBroker({
       runnableAgents: ["zai", "dipu", "kimi", "sam"],

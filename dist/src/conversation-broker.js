@@ -933,8 +933,12 @@ export class ConversationBroker {
             await recordLaunchFailure();
             return;
         }
-        const handoffEvent = events.find((entry) => entry.id === deferred.handoffEventId);
-        const priorEvents = handoffEvent === undefined ? [] : events.filter((entry) => entry.sequence < handoffEvent.sequence);
+        // C5 §6.3: the child's replayed durable transcript is the durable history
+        // available BEFORE the child's own run_started is written — the accepted
+        // handoff edge AND the completed source-stage terminal (which caused
+        // defer-launch) are both included. The child's own run_started is written
+        // after selection and never appears in its own prompt.
+        const priorEvents = events;
         const context = selectConversationContext(priorEvents);
         let child;
         let childDone;
