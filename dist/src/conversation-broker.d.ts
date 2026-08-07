@@ -112,6 +112,33 @@ export interface ConversationEventNotification {
     created: string;
     body: string;
 }
+/** C3-C1: bounded pending-approval notification for a conversation-scoped listener. */
+export interface ConversationApprovalNotification {
+    conversationId: string;
+    agent: string;
+    requestId: string;
+    method: string;
+    /** Bounded Pi request payload (everything except type/id). */
+    payload: Record<string, unknown>;
+}
+/** C3-C1: response input for one pending conversation approval. */
+export interface ConversationApprovalInput {
+    conversationId: string;
+    agent: string;
+    requestId: string;
+    response: unknown;
+}
+/** C3-C1: abort outcome for exactly one conversation × agent key. */
+export type ConversationAbortOutcome = {
+    status: "cancelled";
+    conversationId: string;
+    agent: string;
+    terminalEventId: string;
+} | {
+    status: "no-active-run";
+    conversationId: string;
+    agent: string;
+};
 /**
  * The bounded prompt handed to Pi for one conversation mention. Renders the
  * C2 bounded prior-transcript replay in durable order with an explicit
@@ -135,6 +162,14 @@ export declare function selectConversationContext(priorEvents: readonly Conversa
     truncated: boolean;
     metadata: ConversationContextMetadata;
 };
+/**
+ * C3-C1: validate a raw approval response into the room-precedent exactly-one
+ * shape (`{confirmed:boolean}` | `{value:string}` | `{cancelled:true}`).
+ * Returns null for missing, wrong-typed, multiple, or non-object shapes so
+ * the core rejects malformed responses deterministically (the later gateway
+ * slice maps the bounded rejection to its HTTP vocabulary).
+ */
+export declare function parseConversationApprovalResponse(value: unknown): ExtensionUiResponse | null;
 export declare class ConversationBroker {
     private readonly vaultRoot;
     private readonly runnableAgents;
@@ -148,9 +183,21 @@ export declare class ConversationBroker {
     private readonly fallbackPolicyLoader;
     private readonly activeRuns;
     private readonly eventListeners;
+    /** C3-C1: in-memory pending approvals keyed exactly conversationId:agent:requestId. */
+    private readonly pendingApprovals;
+    private readonly approvalListeners;
     private closed;
     constructor(options: ConversationBrokerOptions);
     hasActiveRun(conversationId: string, agent: string): boolean;
+    /** C3-C1: whether an exact conversation×agent×requestId approval is pending. */
+    hasPendingApproval(conversationId: string, agent: string, requestId: string): boolean;
+    /**
+     * C3-C1: subscribe to pending-approval notifications for exactly one
+     * conversation. Fired only when an active conversation×agent run registers
+     * an exact approvable request. Never auto-approves and never persists
+     * approval payloads.
+     */
+    onConversationApproval(conversationId: string, listener: (approval: ConversationApprovalNotification) => void): () => void;
     onConversationEvent(conversationId: string, listener: (event: ConversationEventNotification) => void): () => void;
     private appendAndPublish;
     /**
@@ -178,5 +225,27 @@ export declare class ConversationBroker {
     private onSettledAttempt;
     private settle;
     private finalizeRun;
+    /**
+     * C3-C1: respond to a pending approval on the exact conversation×agent
+     * client that raised it. The response is validated into the exactly-one
+     * shape; unknown, stale, or already-settled requests reject with the
+     * contract's bounded strict 409-ready message (the gateway mapping is a
+     * later slice). Calls `respondToUiRequest` at most once and cleans up the
+     * entry. Never auto-approves, never persists approval payloads, and never
+     * consults manifest lifecycle status (controls are run-scoped).
+     */
+    respondToConversationApproval(input: ConversationApprovalInput): void;
+    /**
+     * C3-C1: abort the active run for exactly one conversation × agent key. No
+     * active run returns `no-active-run`. A real abort settles the run once
+     * with cancel, the dispatch finalization performs the client abort and
+     * appends exactly one durable `run_cancelled`; this method waits for that
+     * terminal record. A second abort for the same key sees `no-active-run`
+     * and never duplicates the record. Run-scoped: manifest lifecycle status
+     * is never consulted.
+     */
+    abort(conversationId: string, agent: string): Promise<ConversationAbortOutcome>;
+    /** C3-C1: exactly one run_cancelled when cancellation wins during startup. */
+    private finalizeCancelledDuringInit;
     close(): Promise<void>;
 }

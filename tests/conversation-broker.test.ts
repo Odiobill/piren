@@ -2,23 +2,50 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createConversation, appendConversationEvent, readConversationEvents } from "../src/conversations.js";
+import { createConversation, appendConversationEvent, readConversationEvents, transitionConversationLifecycle } from "../src/conversations.js";
 import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse } from "../src/gateway-rpc.js";
-import { ConversationBroker, type ConversationRpcClient, type ConversationDispatchOutcome } from "../src/conversation-broker.js";
+import {
+  ConversationBroker,
+  parseConversationApprovalResponse,
+  type ConversationRpcClient,
+  type ConversationDispatchOutcome,
+} from "../src/conversation-broker.js";
 
-type FakeBehavior = "complete" | "empty" | "hang" | "end-only" | "maintenance-settle" | "prompt-fail" | "start-fail" | "exit-mid-run" | "with-text";
+type FakeBehavior =
+  | "complete"
+  | "empty"
+  | "hang"
+  | "end-only"
+  | "maintenance-settle"
+  | "prompt-fail"
+  | "start-fail"
+  | "exit-mid-run"
+  | "with-text"
+  | "approval"
+  | "approval-hang";
 
 class FakeConversationClient implements ConversationRpcClient {
   started = 0;
   stopped = 0;
   aborted = 0;
   prompts: string[] = [];
+  /** respondToUiRequest calls recorded for approval tests. */
+  responses: { id: string; response: ExtensionUiResponse }[] = [];
+  /** Pi request id emitted by approval behaviors (fixed for deterministic keys). */
+  approvalRequestId = "req-1";
+  /** Pi UI method emitted by approval behaviors. */
+  approvalMethod = "confirm";
+  /** Optional barrier awaited inside start() (cancellation-during-init tests). */
+  startBarrier: Promise<void> | undefined;
   private listeners: Array<(event: RpcEvent) => void> = [];
   private exitListeners: Array<() => void> = [];
 
   constructor(public behavior: FakeBehavior) {}
 
   async start(): Promise<void> {
+    if (this.startBarrier !== undefined) {
+      await this.startBarrier;
+    }
     this.started += 1;
     if (this.behavior === "start-fail") {
       throw new Error("spawn failed (fake)");
@@ -87,6 +114,24 @@ class FakeConversationClient implements ConversationRpcClient {
       this.emit({ type: "agent_settled" });
       return;
     }
+    if (this.behavior === "approval" || this.behavior === "approval-hang") {
+      // Emit an approvable (or, via approvalMethod, a non-approvable) Pi UI
+      // request. "approval" completes the turn; "approval-hang" holds the
+      // run active until the matching extension_ui_response (or abort).
+      this.emit({
+        type: "extension_ui_request",
+        id: this.approvalRequestId,
+        method: this.approvalMethod,
+        title: "Approve action?",
+        message: "The agent wants to proceed.",
+      });
+      if (this.behavior === "approval-hang") {
+        return;
+      }
+      this.emit({ type: "agent_end", messages: [] });
+      this.emit({ type: "agent_settled" });
+      return;
+    }
     this.emit({ type: "agent_end", messages: [] });
     this.emit({ type: "agent_settled" });
   }
@@ -99,8 +144,18 @@ class FakeConversationClient implements ConversationRpcClient {
     return { tokensBefore: null, estimatedTokensAfter: null };
   }
 
-  respondToUiRequest(_id: string, _response: ExtensionUiResponse): void {
-    // C2 has no approval/agent-address surface; unused.
+  respondToUiRequest(id: string, response: ExtensionUiResponse): void {
+    this.responses.push({ id, response });
+    // A response to a held approval completes the held turn (approval-hang).
+    if (this.behavior === "approval-hang" && id === this.approvalRequestId) {
+      this.emit({
+        type: "message_update",
+        role: "assistant",
+        assistantMessageEvent: { type: "text_delta", delta: "Approved." },
+      });
+      this.emit({ type: "agent_end", messages: [] });
+      this.emit({ type: "agent_settled" });
+    }
   }
 
   private emit(event: RpcEvent): void {
@@ -157,8 +212,11 @@ function makeBroker(options?: {
   runnableAgents?: string[];
   behaviors?: FakeBehavior[];
   timers?: ReturnType<typeof makeTimers>;
+  approvalMethods?: string[];
+  clientSetup?: (client: FakeConversationClient) => void;
 }): { broker: ConversationBroker; clients: FakeConversationClient[]; timers: ReturnType<typeof makeTimers> } {
   const behaviors = options?.behaviors ?? [];
+  const approvalMethods = options?.approvalMethods ?? [];
   const clients: FakeConversationClient[] = [];
   const timers = options?.timers ?? makeTimers();
   const broker = new ConversationBroker({
@@ -167,6 +225,8 @@ function makeBroker(options?: {
     targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
     clientFactory: () => {
       const client = new FakeConversationClient(behaviors[clients.length] ?? "complete");
+      client.approvalMethod = approvalMethods[clients.length] ?? "confirm";
+      if (options?.clientSetup !== undefined) options.clientSetup(client);
       clients.push(client);
       return client;
     },
@@ -511,6 +571,335 @@ describe("Conversation context handoff (8 / 16384, C1 selectDurableTranscript)",
     expect(started?.contextMetadata?.selectedCount).toBe(8);
     expect(started?.contextMetadata?.omittedCount).toBe(4);
     expect(started?.contextMetadata?.truncated).toBe(true);
+    await broker.close();
+  });
+});
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("waitFor timed out");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+describe("ConversationBroker approval/abort core (C3-C1)", () => {
+  it("parseConversationApprovalResponse accepts exactly one of confirmed|value|cancelled and rejects everything else", () => {
+    expect(parseConversationApprovalResponse({ confirmed: true })).toEqual({ confirmed: true });
+    expect(parseConversationApprovalResponse({ confirmed: false })).toEqual({ confirmed: false });
+    expect(parseConversationApprovalResponse({ value: "pick me" })).toEqual({ value: "pick me" });
+    expect(parseConversationApprovalResponse({ cancelled: true })).toEqual({ cancelled: true });
+    // Missing, wrong-typed, multiple, or non-object shapes are rejected.
+    expect(parseConversationApprovalResponse({})).toBeNull();
+    expect(parseConversationApprovalResponse({ confirmed: "yes" })).toBeNull();
+    expect(parseConversationApprovalResponse({ value: 5 })).toBeNull();
+    expect(parseConversationApprovalResponse({ cancelled: false })).toBeNull();
+    expect(parseConversationApprovalResponse({ confirmed: true, value: "x" })).toBeNull();
+    expect(parseConversationApprovalResponse({ cancelled: true, confirmed: true })).toBeNull();
+    expect(parseConversationApprovalResponse(null)).toBeNull();
+    expect(parseConversationApprovalResponse(undefined)).toBeNull();
+    expect(parseConversationApprovalResponse("yes")).toBeNull();
+    expect(parseConversationApprovalResponse(5)).toBeNull();
+  });
+
+  it("registers pending approvals only for confirm|select|input and never for other Pi UI methods", async () => {
+    const { broker } = makeBroker({
+      behaviors: ["approval-hang", "approval-hang", "approval-hang", "approval-hang"],
+      approvalMethods: ["confirm", "select", "input", "notify"],
+    });
+    const conversationIds: string[] = [];
+    const seen: string[] = [];
+    for (const method of ["confirm", "select", "input", "notify"]) {
+      const conversationId = await makeConversation(["zai"], `Hello @zai ${method}`);
+      conversationIds.push(conversationId);
+      broker.onConversationApproval(conversationId, (approval) => seen.push(approval.method));
+      const stewardEventId = await makeStewardEvent(conversationId, `Go ${method}`);
+      void broker.dispatchConversationMention({
+        conversationId,
+        agent: "zai",
+        text: `Go ${method}`,
+        stewardEventId,
+        priorEvents: [],
+      });
+    }
+    // Approvable methods register; notify never does (the run stays active).
+    await waitFor(() => broker.hasPendingApproval(conversationIds[0] ?? "", "zai", "req-1"));
+    await waitFor(() => broker.hasPendingApproval(conversationIds[1] ?? "", "zai", "req-1"));
+    await waitFor(() => broker.hasPendingApproval(conversationIds[2] ?? "", "zai", "req-1"));
+    expect(broker.hasPendingApproval(conversationIds[3] ?? "", "zai", "req-1")).toBe(false);
+    expect(seen).toEqual(["confirm", "select", "input"]);
+    // Abort every held run so the broker closes cleanly with no timeouts.
+    for (const conversationId of conversationIds) {
+      await broker.abort(conversationId, "zai");
+    }
+    await broker.close();
+  });
+
+  it("responds exactly once to the exact key, cleans up, and never persists approval payloads", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["approval-hang"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "Go",
+      stewardEventId,
+      priorEvents: [],
+    });
+    await waitFor(() => broker.hasPendingApproval(conversationId, "zai", "req-1"));
+
+    broker.respondToConversationApproval({
+      conversationId,
+      agent: "zai",
+      requestId: "req-1",
+      response: { confirmed: true },
+    });
+    expect(clients[0]?.responses).toEqual([{ id: "req-1", response: { confirmed: true } }]);
+    expect(broker.hasPendingApproval(conversationId, "zai", "req-1")).toBe(false);
+
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+
+    // A second response to the now-resolved request is a bounded rejection.
+    expect(() =>
+      broker.respondToConversationApproval({
+        conversationId,
+        agent: "zai",
+        requestId: "req-1",
+        response: { confirmed: true },
+      }),
+    ).toThrow(/Unknown or stale approval request 'req-1' for conversation '.*' and agent 'zai'\./);
+    expect(clients[0]?.responses).toHaveLength(1);
+
+    // Durable truth stays the ordinary run events; no approval record or
+    // payload ever enters the vault.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual([
+      "steward_message",
+      "run_started",
+      "agent_message",
+      "run_finished",
+    ]);
+    expect(events.some((e) => e.kind.toLowerCase().includes("approval"))).toBe(false);
+    expect(events.some((e) => JSON.stringify(e).includes("confirmed"))).toBe(false);
+    await broker.close();
+  });
+
+  it("rejects a wrong conversation, wrong agent, or wrong request id with the bounded message and sends nothing", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["approval-hang"] });
+    const conversationId = await makeConversation();
+    const otherId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "Go",
+      stewardEventId,
+      priorEvents: [],
+    });
+    await waitFor(() => broker.hasPendingApproval(conversationId, "zai", "req-1"));
+
+    expect(() =>
+      broker.respondToConversationApproval({ conversationId: otherId, agent: "zai", requestId: "req-1", response: { confirmed: true } }),
+    ).toThrow(/Unknown or stale approval request/);
+    expect(() =>
+      broker.respondToConversationApproval({ conversationId, agent: "dipu", requestId: "req-1", response: { confirmed: true } }),
+    ).toThrow(/Unknown or stale approval request/);
+    expect(() =>
+      broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: "req-999", response: { confirmed: true } }),
+    ).toThrow(/Unknown or stale approval request/);
+    expect(clients[0]?.responses).toHaveLength(0);
+    // No unintended side effects: no extra clients/sessions and no extra events.
+    expect(clients).toHaveLength(1);
+    expect(clients[0]?.started).toBe(1);
+
+    // The real response still works afterwards.
+    broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: "req-1", response: { value: "ok" } });
+    expect(clients[0]?.responses).toEqual([{ id: "req-1", response: { value: "ok" } }]);
+    await dispatch;
+    await broker.close();
+  });
+
+  it("never cross-delivers the same Pi request id across conversation×agent keys", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["approval-hang", "approval-hang"] });
+    const convOne = await makeConversation(["zai"], "Hello @zai one");
+    const convTwo = await makeConversation(["zai"], "Hello @zai two");
+    const stewardOne = await makeStewardEvent(convOne, "Go one");
+    const stewardTwo = await makeStewardEvent(convTwo, "Go two");
+    const dispatchOne = broker.dispatchConversationMention({ conversationId: convOne, agent: "zai", text: "Go one", stewardEventId: stewardOne, priorEvents: [] });
+    const dispatchTwo = broker.dispatchConversationMention({ conversationId: convTwo, agent: "zai", text: "Go two", stewardEventId: stewardTwo, priorEvents: [] });
+    await waitFor(() => broker.hasPendingApproval(convOne, "zai", "req-1") && broker.hasPendingApproval(convTwo, "zai", "req-1"));
+
+    broker.respondToConversationApproval({ conversationId: convOne, agent: "zai", requestId: "req-1", response: { confirmed: true } });
+    // Only convOne's client received the response; convTwo's pending request stays.
+    expect(clients[0]?.responses).toHaveLength(1);
+    expect(clients[1]?.responses).toHaveLength(0);
+    expect(broker.hasPendingApproval(convTwo, "zai", "req-1")).toBe(true);
+
+    broker.respondToConversationApproval({ conversationId: convTwo, agent: "zai", requestId: "req-1", response: { cancelled: true } });
+    expect(clients[1]?.responses).toEqual([{ id: "req-1", response: { cancelled: true } }]);
+    await dispatchOne;
+    await dispatchTwo;
+    await broker.close();
+  });
+
+  it("rejects a malformed response at the core and keeps the entry answerable", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["approval-hang"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasPendingApproval(conversationId, "zai", "req-1"));
+
+    expect(() =>
+      broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: "req-1", response: { confirmed: "yes" } }),
+    ).toThrow(/Exactly one of confirmed, value, or cancelled is required\./);
+    expect(clients[0]?.responses).toHaveLength(0);
+    // The pending entry survives the malformed attempt.
+    expect(broker.hasPendingApproval(conversationId, "zai", "req-1")).toBe(true);
+
+    broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: "req-1", response: { confirmed: true } });
+    expect(clients[0]?.responses).toEqual([{ id: "req-1", response: { confirmed: true } }]);
+    await dispatch;
+    await broker.close();
+  });
+
+  it("cleans up a settled run's pending approval; a late response is a bounded rejection", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["approval"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    // The run completed at agent_settled; the registry entry was removed.
+    expect(broker.hasPendingApproval(conversationId, "zai", "req-1")).toBe(false);
+    expect(clients[0]?.responses).toHaveLength(0);
+    expect(() =>
+      broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: "req-1", response: { confirmed: true } }),
+    ).toThrow(/Unknown or stale approval request/);
+    await broker.close();
+  });
+
+  it("aborts exactly one run: no-active-run for a missing key, exactly one run_cancelled, duplicate abort is a no-op", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["hang"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+
+    const outcome = await broker.abort(conversationId, "zai");
+    expect(outcome.status).toBe("cancelled");
+    if (outcome.status === "cancelled") {
+      expect(outcome.terminalEventId).toBeTruthy();
+    }
+    await dispatch;
+    expect(clients[0]?.aborted).toBe(1);
+
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "run_cancelled")).toHaveLength(1);
+    expect(events.filter((e) => e.kind === "run_finished")).toHaveLength(0);
+
+    // Duplicate abort: no-active-run, no second run_cancelled.
+    expect(await broker.abort(conversationId, "zai")).toEqual({ status: "no-active-run", conversationId, agent: "zai" });
+    // Never-dispatched key: no-active-run.
+    expect(await broker.abort("never-dispatched", "zai")).toEqual({ status: "no-active-run", conversationId: "never-dispatched", agent: "zai" });
+    const eventsAfter = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(eventsAfter.filter((e) => e.kind === "run_cancelled")).toHaveLength(1);
+    await broker.close();
+  });
+
+  it("abort during session start wins: no run_started, no launch_failure, exactly one run_cancelled", async () => {
+    let releaseStart!: () => void;
+    const startBarrier = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const { broker, clients } = makeBroker({
+      behaviors: ["hang"],
+      clientSetup: (client) => {
+        client.startBarrier = startBarrier;
+      },
+    });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "Go",
+      stewardEventId,
+      priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const abortPromise = broker.abort(conversationId, "zai");
+    releaseStart();
+    const outcome = await abortPromise;
+    expect(outcome.status).toBe("cancelled");
+    await dispatch;
+    // Cancellation wins over the startup outcome: the just-created session is
+    // stopped and forgotten, never wired, never prompted, never launch_failure.
+    expect(clients[0]?.stopped).toBe(1);
+    expect(clients[0]?.prompts).toHaveLength(0);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_cancelled"]);
+    expect(events.filter((e) => e.kind === "run_cancelled")).toHaveLength(1);
+    await broker.close();
+  });
+
+  it("close clears pending approvals and cancels each active run exactly once", async () => {
+    const { broker } = makeBroker({ behaviors: ["approval-hang", "approval-hang"] });
+    const convOne = await makeConversation(["zai"], "Hello @zai one");
+    const convTwo = await makeConversation(["zai"], "Hello @zai two");
+    const stewardOne = await makeStewardEvent(convOne, "Go one");
+    const stewardTwo = await makeStewardEvent(convTwo, "Go two");
+    const dispatchOne = broker.dispatchConversationMention({ conversationId: convOne, agent: "zai", text: "Go one", stewardEventId: stewardOne, priorEvents: [] });
+    const dispatchTwo = broker.dispatchConversationMention({ conversationId: convTwo, agent: "zai", text: "Go two", stewardEventId: stewardTwo, priorEvents: [] });
+    await waitFor(() => broker.hasPendingApproval(convOne, "zai", "req-1") && broker.hasPendingApproval(convTwo, "zai", "req-1"));
+
+    await broker.close();
+    expect(broker.hasPendingApproval(convOne, "zai", "req-1")).toBe(false);
+    expect(broker.hasPendingApproval(convTwo, "zai", "req-1")).toBe(false);
+    await dispatchOne;
+    await dispatchTwo;
+    for (const conversationId of [convOne, convTwo]) {
+      const events = await readConversationEvents({ vaultRoot: root, conversationId });
+      expect(events.filter((e) => e.kind === "run_cancelled")).toHaveLength(1);
+    }
+    // Idempotent close writes nothing further.
+    await broker.close();
+    const eventsAfter = await readConversationEvents({ vaultRoot: root, conversationId: convOne });
+    expect(eventsAfter.filter((e) => e.kind === "run_cancelled")).toHaveLength(1);
+  });
+
+  it("controls are run-scoped: a pending approval from an archived conversation stays answerable and abort still works", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["approval-hang", "approval-hang"] });
+
+    // 1. Approve a pending request from a run of a conversation archived mid-run.
+    const convOne = await makeConversation(["zai"], "Hello @zai one");
+    const stewardOne = await makeStewardEvent(convOne, "Go one");
+    const dispatchOne = broker.dispatchConversationMention({ conversationId: convOne, agent: "zai", text: "Go one", stewardEventId: stewardOne, priorEvents: [] });
+    await waitFor(() => broker.hasPendingApproval(convOne, "zai", "req-1"));
+    const archived = await transitionConversationLifecycle({
+      vaultRoot: root,
+      conversationId: convOne,
+      transition: "archive",
+      now: tick,
+      nonce: () => `a${++nonceSeq}`,
+    });
+    expect(archived.ok).toBe(true);
+    // The pending approval is still answerable after the archive (run-scoped).
+    broker.respondToConversationApproval({ conversationId: convOne, agent: "zai", requestId: "req-1", response: { confirmed: true } });
+    expect(clients[0]?.responses).toEqual([{ id: "req-1", response: { confirmed: true } }]);
+    await dispatchOne;
+
+    // 2. Abort a still-running run of a conversation archived mid-run.
+    const convTwo = await makeConversation(["zai"], "Hello @zai two");
+    const stewardTwo = await makeStewardEvent(convTwo, "Go two");
+    const dispatchTwo = broker.dispatchConversationMention({ conversationId: convTwo, agent: "zai", text: "Go two", stewardEventId: stewardTwo, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(convTwo, "zai"));
+    await transitionConversationLifecycle({ vaultRoot: root, conversationId: convTwo, transition: "archive", now: tick, nonce: () => `a${++nonceSeq}` });
+    const abortOutcome = await broker.abort(convTwo, "zai");
+    expect(abortOutcome.status).toBe("cancelled");
+    await dispatchTwo;
+    const eventsTwo = await readConversationEvents({ vaultRoot: root, conversationId: convTwo });
+    expect(eventsTwo.filter((e) => e.kind === "run_cancelled")).toHaveLength(1);
     await broker.close();
   });
 });

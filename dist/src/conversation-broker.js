@@ -34,6 +34,8 @@ function defaultTimers() {
         clearTimeout: (handle) => clearTimeout(handle),
     };
 }
+/** Only these Pi UI request methods are approvable conversation approvals. */
+const APPROVABLE_METHODS = new Set(["confirm", "select", "input"]);
 /**
  * The bounded prompt handed to Pi for one conversation mention. Renders the
  * C2 bounded prior-transcript replay in durable order with an explicit
@@ -114,6 +116,31 @@ export function selectConversationContext(priorEvents) {
     }
     return { lines, truncated: metadata.truncated, metadata };
 }
+/**
+ * C3-C1: validate a raw approval response into the room-precedent exactly-one
+ * shape (`{confirmed:boolean}` | `{value:string}` | `{cancelled:true}`).
+ * Returns null for missing, wrong-typed, multiple, or non-object shapes so
+ * the core rejects malformed responses deterministically (the later gateway
+ * slice maps the bounded rejection to its HTTP vocabulary).
+ */
+export function parseConversationApprovalResponse(value) {
+    if (typeof value !== "object" || value === null)
+        return null;
+    const record = value;
+    const confirmed = record.confirmed;
+    const responseValue = record.value;
+    const cancelled = record.cancelled;
+    if (cancelled === true && confirmed === undefined && responseValue === undefined) {
+        return { cancelled: true };
+    }
+    if (typeof confirmed === "boolean" && responseValue === undefined && cancelled === undefined) {
+        return { confirmed };
+    }
+    if (typeof responseValue === "string" && confirmed === undefined && cancelled === undefined) {
+        return { value: responseValue };
+    }
+    return null;
+}
 export class ConversationBroker {
     vaultRoot;
     runnableAgents;
@@ -127,6 +154,9 @@ export class ConversationBroker {
     fallbackPolicyLoader;
     activeRuns = new Map();
     eventListeners = new Map();
+    /** C3-C1: in-memory pending approvals keyed exactly conversationId:agent:requestId. */
+    pendingApprovals = new Map();
+    approvalListeners = new Map();
     closed = false;
     constructor(options) {
         this.vaultRoot = options.vaultRoot;
@@ -149,6 +179,30 @@ export class ConversationBroker {
     }
     hasActiveRun(conversationId, agent) {
         return this.activeRuns.has(`${conversationId}:${agent}`);
+    }
+    /** C3-C1: whether an exact conversation×agent×requestId approval is pending. */
+    hasPendingApproval(conversationId, agent, requestId) {
+        return this.pendingApprovals.has(`${conversationId}:${agent}:${requestId}`);
+    }
+    /**
+     * C3-C1: subscribe to pending-approval notifications for exactly one
+     * conversation. Fired only when an active conversation×agent run registers
+     * an exact approvable request. Never auto-approves and never persists
+     * approval payloads.
+     */
+    onConversationApproval(conversationId, listener) {
+        let listeners = this.approvalListeners.get(conversationId);
+        if (!listeners) {
+            listeners = new Set();
+            this.approvalListeners.set(conversationId, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners.delete(listener);
+            if (listeners.size === 0) {
+                this.approvalListeners.delete(conversationId);
+            }
+        };
     }
     onConversationEvent(conversationId, listener) {
         let listeners = this.eventListeners.get(conversationId);
@@ -270,6 +324,7 @@ export class ConversationBroker {
             stewardEventId: "",
             settled: false,
             settleKind: undefined,
+            terminalEventId: undefined,
             events: [],
             attemptEvents: [],
             attemptedModelIds: [],
@@ -295,6 +350,17 @@ export class ConversationBroker {
         }
         catch {
             startupFailed = true;
+        }
+        // C3-C1 cancellation boundary: abort/close won while the session was
+        // starting. Cancellation wins over any startup outcome: clean up only
+        // the just-created exact session (when one materialized), never write
+        // run_started, never record launch_failure.
+        if (run.settled) {
+            if (session !== undefined) {
+                await session.client.stop().catch(() => { });
+                this.sessions.forgetSession("conversation", run.key, session.client);
+            }
+            return await this.finalizeCancelledDuringInit(run);
         }
         if (startupFailed || session === undefined) {
             const terminal = await this.appendAndPublish(run.conversationId, {
@@ -351,6 +417,43 @@ export class ConversationBroker {
             return;
         run.events.push(event);
         run.attemptEvents.push(event);
+        if (event.type === "extension_ui_request" && typeof event.id === "string") {
+            // C3-C1: only approvable request kinds register; other Pi UI requests
+            // (notify, setStatus, ...) never become conversation approvals. The
+            // registry is keyed exactly conversation×agent×requestId and lives in
+            // memory only — approval payloads are never persisted.
+            const method = typeof event.method === "string" ? event.method : "";
+            if (!APPROVABLE_METHODS.has(method))
+                return;
+            this.pendingApprovals.set(`${run.key}:${event.id}`, {
+                conversationId: run.conversationId,
+                agent: run.agent,
+                requestId: event.id,
+                run,
+            });
+            const { type: _type, id: _id, ...payload } = event;
+            const notification = {
+                conversationId: run.conversationId,
+                agent: run.agent,
+                requestId: event.id,
+                method,
+                payload,
+            };
+            const listeners = this.approvalListeners.get(run.conversationId);
+            if (listeners) {
+                for (const listener of [...listeners]) {
+                    // Same containment as conversation events: a throwing observer must
+                    // not escape the Pi event handler or affect the run lifecycle.
+                    try {
+                        listener(notification);
+                    }
+                    catch {
+                        // contained
+                    }
+                }
+            }
+            return;
+        }
         if (event.type === "agent_end") {
             // TB0/G1: agent_end alone is never terminal (Pi may still auto-retry,
             // retry compaction, or drain queued follow-ups). Only agent_settled
@@ -511,10 +614,23 @@ export class ConversationBroker {
         }
         run.unsubscribeEvents?.();
         run.unsubscribeExit?.();
+        for (const [approvalKey, approval] of [...this.pendingApprovals.entries()]) {
+            if (approval.run === run) {
+                this.pendingApprovals.delete(approvalKey);
+            }
+        }
         run.resolveDone();
     }
     async finalizeRun(run) {
         const kind = run.settleKind ?? "cancel";
+        // C3-C1 room-precedent: abort only the exact conversation-agent client
+        // for a timeout or cancel settle. Stale agent_end emitted by the abort
+        // is ignored: listeners were unsubscribed at settle time.
+        if (kind === "timeout" || kind === "cancel") {
+            if (run.client !== undefined) {
+                await run.client.abort().catch(() => { });
+            }
+        }
         if (kind === "completed") {
             const text = extractAssistantText(run.events).trim();
             // Bounded visible agent evidence (mirrors the room broker): exactly one
@@ -538,6 +654,7 @@ export class ConversationBroker {
                 runStatus: "completed",
                 correlationId: run.stewardEventId,
             });
+            run.terminalEventId = terminal.id;
             return { status: "completed", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id };
         }
         if (kind === "timeout") {
@@ -549,6 +666,7 @@ export class ConversationBroker {
                 runStatus: "timed_out",
                 correlationId: run.stewardEventId,
             });
+            run.terminalEventId = terminal.id;
             return { status: "timed_out", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id };
         }
         if (kind === "ambiguous") {
@@ -561,6 +679,7 @@ export class ConversationBroker {
                 failureKind: "ambiguous",
                 correlationId: run.stewardEventId,
             });
+            run.terminalEventId = terminal.id;
             return { status: "failed", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id, failureKind: "ambiguous" };
         }
         if (kind === "provider_error") {
@@ -581,6 +700,7 @@ export class ConversationBroker {
                 failureKind: "provider_error",
                 correlationId: run.stewardEventId,
             });
+            run.terminalEventId = terminal.id;
             return { status: "failed", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id, failureKind: "provider_error" };
         }
         // cancel
@@ -592,7 +712,72 @@ export class ConversationBroker {
             runStatus: "cancelled",
             correlationId: run.stewardEventId,
         });
+        run.terminalEventId = terminal.id;
         return { status: "cancelled", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id };
+    }
+    /**
+     * C3-C1: respond to a pending approval on the exact conversation×agent
+     * client that raised it. The response is validated into the exactly-one
+     * shape; unknown, stale, or already-settled requests reject with the
+     * contract's bounded strict 409-ready message (the gateway mapping is a
+     * later slice). Calls `respondToUiRequest` at most once and cleans up the
+     * entry. Never auto-approves, never persists approval payloads, and never
+     * consults manifest lifecycle status (controls are run-scoped).
+     */
+    respondToConversationApproval(input) {
+        const response = parseConversationApprovalResponse(input.response);
+        if (response === null) {
+            throw new Error("Exactly one of confirmed, value, or cancelled is required.");
+        }
+        const approvalKey = `${input.conversationId}:${input.agent}:${input.requestId}`;
+        const pending = this.pendingApprovals.get(approvalKey);
+        if (!pending) {
+            throw new Error(`Unknown or stale approval request '${input.requestId}' for conversation '${input.conversationId}' and agent '${input.agent}'.`);
+        }
+        if (pending.run.settled || pending.run.client === undefined || this.activeRuns.get(pending.run.key) !== pending.run) {
+            this.pendingApprovals.delete(approvalKey);
+            throw new Error(`Unknown or stale approval request '${input.requestId}' for conversation '${input.conversationId}' and agent '${input.agent}'.`);
+        }
+        pending.run.client.respondToUiRequest(input.requestId, response);
+        this.pendingApprovals.delete(approvalKey);
+    }
+    /**
+     * C3-C1: abort the active run for exactly one conversation × agent key. No
+     * active run returns `no-active-run`. A real abort settles the run once
+     * with cancel, the dispatch finalization performs the client abort and
+     * appends exactly one durable `run_cancelled`; this method waits for that
+     * terminal record. A second abort for the same key sees `no-active-run`
+     * and never duplicates the record. Run-scoped: manifest lifecycle status
+     * is never consulted.
+     */
+    async abort(conversationId, agent) {
+        const key = `${conversationId}:${agent}`;
+        const run = this.activeRuns.get(key);
+        if (!run) {
+            return { status: "no-active-run", conversationId, agent };
+        }
+        this.settle(run, "cancel");
+        await run.finalized;
+        return { status: "cancelled", conversationId, agent, terminalEventId: run.terminalEventId };
+    }
+    /** C3-C1: exactly one run_cancelled when cancellation wins during startup. */
+    async finalizeCancelledDuringInit(run) {
+        const terminal = await this.appendAndPublish(run.conversationId, {
+            kind: "run_cancelled",
+            authorKind: "system",
+            author: "system",
+            body: "Run cancelled by the steward.",
+            runStatus: "cancelled",
+            correlationId: run.stewardEventId,
+        });
+        run.terminalEventId = terminal.id;
+        return {
+            status: "cancelled",
+            conversationId: run.conversationId,
+            agent: run.agent,
+            stewardEventId: run.stewardEventId,
+            terminalEventId: terminal.id,
+        };
     }
     async close() {
         if (this.closed)
@@ -606,6 +791,7 @@ export class ConversationBroker {
                 await run.client.stop().catch(() => { });
             }
         }
+        this.pendingApprovals.clear();
         for (const run of [...this.activeRuns.values()]) {
             await run.finalized;
         }
