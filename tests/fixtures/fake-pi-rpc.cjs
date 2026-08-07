@@ -35,9 +35,10 @@ let promptCount = 0;
 // Blocking-approval state: set by a "waitapprove" prompt, cleared by the
 // matching extension_ui_response or by abort.
 let waitingApprovalId = null;
-// Unique approval request ids: two approval requests raised in the same
-// millisecond must never collide across conversation/room keys, so every
-// emitted id carries a process-local sequence suffix.
+// Unique approval request ids: each fake-Pi process is isolated per
+// conversation/room run, so two requests raised in the same millisecond by
+// DIFFERENT processes must never collide across keys. Every emitted id
+// carries the process id plus a process-local sequence suffix.
 let approvalSeq = 0;
 // Blocking reserved room-handoff state (ADR-0041 R2b): set by a
 // "roomhandoff" prompt, cleared by the matching extension_ui_response or by
@@ -203,7 +204,7 @@ function handle(cmd) {
     // extension_ui_response (or abort) arrives. This models a real approval
     // gate deterministically for room/gateway lifecycle tests.
     if (typeof cmd.message === "string" && cmd.message.includes("waitapprove")) {
-      waitingApprovalId = "ui-req-" + Date.now() + "-" + ++approvalSeq;
+      waitingApprovalId = "ui-req-" + Date.now() + "-" + process.pid + "-" + ++approvalSeq;
       emit({
         type: "extension_ui_request",
         id: waitingApprovalId,
@@ -219,7 +220,7 @@ function handle(cmd) {
     if (typeof cmd.message === "string" && cmd.message.includes("approve")) {
       emit({
         type: "extension_ui_request",
-        id: "ui-req-" + Date.now() + "-" + ++approvalSeq,
+        id: "ui-req-" + Date.now() + "-" + process.pid + "-" + ++approvalSeq,
         method: "confirm",
         title: "Approve action?",
         message: "The agent wants to proceed.",

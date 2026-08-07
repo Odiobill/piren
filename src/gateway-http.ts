@@ -2147,7 +2147,11 @@ export class GatewayServer {
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("Exactly one of confirmed, value, or cancelled is required")) {
+    if (message.startsWith("Invalid conversation id")) {
+      // Same family convention as conversationError: an id that can never
+      // name a conversation is a bounded 404, never a 500.
+      this.writeJson(res, 404, { error: message });
+    } else if (message.includes("Exactly one of confirmed, value, or cancelled is required")) {
       this.writeJson(res, 400, { error: message });
     } else if (message.startsWith("Unknown or stale approval request")) {
       this.writeJson(res, 409, { error: message });

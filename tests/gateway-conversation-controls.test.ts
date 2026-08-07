@@ -138,6 +138,16 @@ describe("Gateway Conversation approval/abort surface (C3-C2)", () => {
     expect(await eventKinds(id)).toEqual(kindsBefore);
   });
 
+  it("maps a malformed conversation id on approve to the family 404, never a 500", async () => {
+    await startServer();
+    // `bad_id!` fails CONVERSATION_ID_PATTERN inside readConversation; the
+    // conversation route family maps an invalid id to a bounded 404 (the same
+    // convention as conversationError), never a 500 "internal error".
+    const response = await post(url("/api/conversations/bad_id!/approve"), { agent: "fake", request_id: "r", confirmed: true }, token);
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as { error: string }).error).toBe("Invalid conversation id. Use the deterministic compact-UTC id.");
+  });
+
   it("emits a live approval SSE frame only for the matching conversation and delivers the approval exactly once", async () => {
     await startServer();
     const { id } = await createConversationViaApi("Seed no mention");
@@ -246,6 +256,10 @@ describe("Gateway Conversation approval/abort surface (C3-C2)", () => {
     const [idA, idB] = await Promise.all([watcherA.idPromise, watcherB.idPromise]);
     expect(idA).toBeTruthy();
     expect(idB).toBeTruthy();
+    // Fixture contract this test relies on: two isolated fake-Pi processes
+    // never emit the same request id (pid+seq suffixed). Pin it explicitly so
+    // a uniqueness regression fails here, not as a misleading 409/200 diff.
+    expect(idA).not.toBe(idB);
 
     // The URL conversationId is authoritative: the request id that exists in
     // convA is unknown/stale for convB (bounded 409), nothing is delivered.
