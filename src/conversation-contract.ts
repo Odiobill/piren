@@ -276,18 +276,24 @@ export function resolveStewardMentions(
  * Membership change with explicit provenance.
  *  - `steward`: validated steward recipients (from resolution success) — the
  *    only membership-growing act (additive).
+ *  - `handoff`: a validated agent-handoff target within an explicitly
+ *    steward-approved Conversation workflow (C5, ADR-0042 amendment
+ *    2026-08-07) — additive-only, finite, steward-sanctioned exception to
+ *    the agent-address neutrality rule.
  *  - `agent`: an agent-originated address — asks a named agent to read/react
  *    within the current run and NEVER alters durable membership.
  */
 export type MembershipChange =
   | { kind: "steward"; recipients: ValidatedRecipients }
+  | { kind: "handoff"; recipients: ValidatedRecipients }
   | { kind: "agent"; to: string };
 
 /**
- * Additive membership application. Steward recipients are added after existing
- * members (never removing or reordering them; already-present names are
- * skipped). Agent-originated addresses return the caller's membership array
- * unchanged (same reference, byte-for-byte) and can never grow membership.
+ * Additive membership application. Steward and C5-handoff recipients are
+ * added after existing members (never removing or reordering them;
+ * already-present names are skipped). Agent-originated addresses return the
+ * caller's membership array unchanged (same reference, byte-for-byte) and can
+ * never grow membership.
  */
 export function applyMembershipChange(
   existing: readonly string[],

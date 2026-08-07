@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createConversation, appendConversationEvent, readConversationEvents, transitionConversationLifecycle } from "../src/conversations.js";
+import { createConversation, appendConversationEvent, readConversation, readConversationEvents, transitionConversationLifecycle, acquireAudienceLock } from "../src/conversations.js";
 import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse } from "../src/gateway-rpc.js";
 import {
   ConversationBroker,
@@ -160,6 +160,12 @@ class FakeConversationClient implements ConversationRpcClient {
 
   private emit(event: RpcEvent): void {
     for (const listener of [...this.listeners]) listener(event);
+  }
+
+  /** C5-1: settle a held (hang) run as completed on demand (defer-launch tests). */
+  settleCompleted(): void {
+    this.emit({ type: "agent_end", messages: [] });
+    this.emit({ type: "agent_settled" });
   }
 }
 
@@ -900,6 +906,227 @@ describe("ConversationBroker approval/abort core (C3-C1)", () => {
     await dispatchTwo;
     const eventsTwo = await readConversationEvents({ vaultRoot: root, conversationId: convTwo });
     expect(eventsTwo.filter((e) => e.kind === "run_cancelled")).toHaveLength(1);
+    await broker.close();
+  });
+});
+
+describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
+  it("accepts a handoff: durable handoff event + M1 audience growth, child launches only after the completed source terminal", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "Lead this workflow",
+      stewardEventId,
+      priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "Please review the diff" });
+    expect(accepted.status).toBe("accepted");
+    if (accepted.status !== "accepted") throw new Error("expected accepted");
+    const handoffEventId = accepted.handoffEventId;
+
+    // Durable handoff event + additive M1 membership, in that moment.
+    const eventsAfterRequest = await readConversationEvents({ vaultRoot: root, conversationId });
+    const handoff = eventsAfterRequest.find((e) => e.id === handoffEventId);
+    expect(handoff?.kind).toBe("agent_message");
+    expect(handoff?.author).toBe("zai");
+    expect(handoff?.addressedAgent).toBe("dipu");
+    expect(handoff?.correlationId).toBe(stewardEventId);
+    expect(handoff?.body).toBe("Please review the diff");
+    const manifestAfter = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifestAfter.audience).toEqual(["zai", "dipu"]);
+
+    // Child launches only after the source settles completed.
+    expect(clients).toHaveLength(1);
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+
+    expect(clients).toHaveLength(2);
+    const childPrompt = clients[1]?.prompts[0] ?? "";
+    expect(childPrompt).toContain("agent 'dipu'");
+    expect(childPrompt).toContain("Please review the diff");
+
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toEqual([
+      "steward_message",
+      "run_started",      // source
+      "agent_message",    // handoff edge
+      "run_finished",     // source completed
+      "run_started",      // child
+      "run_finished",     // child completed
+    ]);
+    const sourceTerminal = events.find((e) => e.kind === "run_finished" && e.correlationId === stewardEventId);
+    const childStarted = events.find((e) => e.kind === "run_started" && e.correlationId === handoffEventId);
+    const childTerminal = events.find((e) => e.kind === "run_finished" && e.correlationId === handoffEventId);
+    expect(sourceTerminal).toBeDefined();
+    expect(childStarted).toBeDefined();
+    expect(childTerminal?.runStatus).toBe("completed");
+    // Sequential: the child's run_started sequence is strictly after the source terminal.
+    expect(childStarted?.sequence ?? 0).toBeGreaterThan(sourceTerminal?.sequence ?? 0);
+    // The child is a workflow stage: it may hand off again within budget.
+    expect(clients[1]?.prompts[0]).toContain("approved Piren conversation workflow");
+    await broker.close();
+  });
+
+  it("never launches the deferred child when the source settles non-completed (timeout and abort)", async () => {
+    // Timeout path.
+    const timers = makeTimers();
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"], timers });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    let outcome: ConversationDispatchOutcome | undefined;
+    const pending = broker
+      .dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] })
+      .then((value) => {
+        outcome = value;
+      });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    for (const handle of [...timers.pending.keys()]) timers.fire(handle);
+    await pending;
+    expect(outcome?.status).toBe("timed_out");
+    expect(clients).toHaveLength(1);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "run_started")).toHaveLength(1);
+    expect(events.some((e) => e.kind === "agent_message" && e.addressedAgent === "dipu")).toBe(true);
+    expect(events.filter((e) => e.kind === "run_finished" && e.correlationId !== stewardEventId)).toHaveLength(0);
+    await broker.close();
+
+    // Abort path.
+    const { broker: brokerB, clients: clientsB } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationB = await makeConversation(["zai"], "Hello @zai B");
+    const stewardB = await makeStewardEvent(conversationB, "Go B");
+    const dispatchB = brokerB.dispatchConversationMention({ conversationId: conversationB, agent: "zai", text: "Go B", stewardEventId: stewardB, priorEvents: [] });
+    await waitFor(() => brokerB.hasActiveRun(conversationB, "zai"));
+    await brokerB.requestConversationHandoff(conversationB, "zai", { to: "dipu", text: "help" });
+    await brokerB.abort(conversationB, "zai");
+    const outcomeB = await dispatchB;
+    expect(outcomeB.status).toBe("cancelled");
+    expect(clientsB).toHaveLength(1);
+    await brokerB.close();
+  });
+
+  it("records exactly one correlated launch_failure terminal when the child cannot start", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "start-fail"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    if (accepted.status !== "accepted") throw new Error("expected accepted");
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const launchFailures = events.filter((e) => e.kind === "run_finished" && e.failureKind === "launch_failure" && e.correlationId === accepted.handoffEventId);
+    expect(launchFailures).toHaveLength(1);
+    expect(launchFailures[0]?.body).toContain("could not be started");
+    expect(events.filter((e) => e.kind === "run_started")).toHaveLength(1);
+    await broker.close();
+  });
+
+  it("rejects a handoff to an agent with an active run: no event, no membership change", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "hang"] });
+    const conversationId = await makeConversation(["zai", "dipu"], "Hello @zai @dipu");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatchZai = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    const dispatchDipu = broker.dispatchConversationMention({ conversationId, agent: "dipu", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai") && broker.hasActiveRun(conversationId, "dipu"));
+    const rejected = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(rejected).toMatchObject({ status: "rejected" });
+    if (rejected.status === "rejected") {
+      expect(rejected.reason).toMatch(/has an active run/);
+    }
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "agent_message" && e.addressedAgent === "dipu")).toBe(false);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai", "dipu"]);
+    await broker.abort(conversationId, "zai");
+    await broker.abort(conversationId, "dipu");
+    await dispatchZai;
+    await dispatchDipu;
+    await broker.close();
+  });
+
+  it("rejects a handoff when the audience lock is busy: no event, no membership change", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const lock = await acquireAudienceLock({ vaultRoot: root, conversationId });
+    const rejected = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(rejected).toMatchObject({ status: "rejected" });
+    if (rejected.status === "rejected") {
+      expect(rejected.reason).toMatch(/could not grow the audience/i);
+    }
+    await lock.release();
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "agent_message" && e.addressedAgent === "dipu")).toBe(false);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai"]);
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("rejects a handoff request with no eligible active run and keeps ordinary dispatch behavior unchanged", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    expect(await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" })).toMatchObject({
+      status: "rejected",
+    });
+    // Ordinary dispatch still completes with the pre-C5 event sequence.
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const outcome = await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    expect(outcome.status).toBe("completed");
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    await broker.close();
+  });
+
+  it("enforces the depth budget end-to-end: a stage at max depth cannot hand off", async () => {
+    const { broker, clients } = makeBroker({
+      runnableAgents: ["zai", "dipu", "kimi", "sam"],
+      behaviors: ["hang", "hang", "hang", "hang"],
+    });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Workflow");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Workflow", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    // zai(root,0) -> dipu(1) -> kimi(2) -> sam(3).
+    const steps: Array<[string, string]> = [
+      ["zai", "dipu"],
+      ["dipu", "kimi"],
+      ["kimi", "sam"],
+    ];
+    for (const [source, to] of steps) {
+      const accepted = await broker.requestConversationHandoff(conversationId, source, { to, text: `step to ${to}` });
+      expect(accepted.status).toBe("accepted");
+      const clientIndex = clients.findIndex((c) => (c.prompts[0] ?? "").includes(`agent '${source}'`));
+      const sourceClient = clients[clientIndex >= 0 ? clientIndex : clients.length - 1];
+      sourceClient?.settleCompleted();
+      await waitFor(() => broker.hasActiveRun(conversationId, to));
+    }
+    // sam is at depth 3 (max); a further handoff is rejected with the depth reason.
+    const rejected = await broker.requestConversationHandoff(conversationId, "sam", { to: "zai", text: "back" });
+    expect(rejected).toMatchObject({ status: "rejected" });
+    if (rejected.status === "rejected") {
+      expect(rejected.reason).toMatch(/budget exhausted: depth/);
+    }
+    // Clean up: settle the final stage.
+    const samClient = clients.find((c) => (c.prompts[0] ?? "").includes("agent 'sam'"));
+    samClient?.settleCompleted();
+    await dispatch;
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string")).toHaveLength(3);
+    expect(events.filter((e) => e.kind === "run_finished" && e.runStatus === "completed")).toHaveLength(4);
     await broker.close();
   });
 });

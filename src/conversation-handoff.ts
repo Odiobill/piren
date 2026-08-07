@@ -1,0 +1,227 @@
+/**
+ * C5-1 — pure Conversation-scoped agent-handoff protocol core.
+ *
+ * Bounded, async, sequential, finite-budget handoff semantics (C5 decision
+ * package §6, steward-decided §10): a reserved `{to, text}` control shape
+ * (callers can never supply ids, source identity, root correlation, budget,
+ * or capability — those are derived by the broker from its active run), the
+ * finite per-workflow budgets (depth 3 / edges 8 / rework rounds 2), and the
+ * deterministic server-side target planner. Workflow budget state is derived
+ * from the durable immutable Conversation event chain, so a reload
+ * reconstructs it exactly (§6.9).
+ *
+ * This module is pure: no filesystem, no network, no Pi auth, no broker.
+ * The ConversationBroker applies these decisions inside its sequential
+ * lifecycle; the C5-3 slice wires the gated `conversation_handoff` tool.
+ */
+import type { ConversationEventRecord } from "./conversations.js";
+
+/** Wire protocol version. Bump only on an incompatible control-shape change. */
+export const CONVERSATION_HANDOFF_PROTOCOL_VERSION = 1 as const;
+
+/** Fixed maximum handoff request text length (characters). Deliberately tiny. */
+export const CONVERSATION_HANDOFF_MAX_TEXT_LENGTH = 4000;
+
+/** Longest handoff chain from the steward root (lead = 0). Steward-decided. */
+export const CONVERSATION_HANDOFF_MAX_DEPTH = 3;
+
+/** Total accepted handoff edges within one workflow. Steward-decided. */
+export const CONVERSATION_HANDOFF_MAX_EDGES = 8;
+
+/** How many times a specific source → target pair may repeat after the target's prior terminal. Steward-decided. */
+export const CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS = 2;
+
+/** The bounded request the agent can supply; everything else is broker-derived. */
+export interface ConversationHandoffRequest {
+  to: string;
+  text: string;
+}
+
+/** Parse outcome for a versioned `{v, to, text}` (or plain `{to, text}`) request. */
+export type ConversationHandoffRequestParse =
+  | { ok: true; request: ConversationHandoffRequest }
+  | { ok: false; reason: string };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Parse and validate the reserved handoff request shape. Returns a
+ * deterministic non-secret reason for every malformed/version/size case and
+ * never throws. Unknown extra fields are ignored (tolerance convention);
+ * the caller can never supply identity, root, budget, or capability.
+ */
+export function parseConversationHandoffRequest(value: unknown): ConversationHandoffRequestParse {
+  if (!isPlainObject(value)) {
+    return { ok: false, reason: "conversation handoff request is not a JSON object" };
+  }
+  if (value.v !== undefined && value.v !== CONVERSATION_HANDOFF_PROTOCOL_VERSION) {
+    return { ok: false, reason: `conversation handoff request version mismatch: expected ${CONVERSATION_HANDOFF_PROTOCOL_VERSION}` };
+  }
+  const to = value.to;
+  if (typeof to !== "string" || to === "" || !/^[a-z][a-z0-9-]*$/.test(to)) {
+    return { ok: false, reason: "conversation handoff target is not a valid agent name" };
+  }
+  const text = value.text;
+  if (typeof text !== "string" || text.trim() === "") {
+    return { ok: false, reason: "conversation handoff text is blank" };
+  }
+  if (text.length > CONVERSATION_HANDOFF_MAX_TEXT_LENGTH) {
+    return { ok: false, reason: "conversation handoff text exceeds the maximum length" };
+  }
+  return { ok: true, request: { to, text } };
+}
+
+/** One accepted handoff edge, derived from the durable event chain. */
+export interface ConversationHandoffEdge {
+  source: string;
+  target: string;
+  handoffEventId: string;
+  sequence: number;
+}
+
+/**
+ * Workflow budget state derived from the durable Conversation events for one
+ * workflow root. Reload-surviving and inspectable: the event chain is the
+ * authority, never in-memory bookkeeping.
+ */
+export interface ConversationWorkflowState {
+  rootEventId: string;
+  /** First mention of the root steward_message (the lead). Undefined when the root is absent. */
+  rootAgent: string | undefined;
+  /** Accepted handoff edges in durable sequence order. */
+  edges: ConversationHandoffEdge[];
+  /** agent -> chain depth from the root (lead = 0). */
+  depthByAgent: ReadonlyMap<string, number>;
+  /** "source->target" -> occurrence count (rework rounds). */
+  pairOccurrences: ReadonlyMap<string, number>;
+}
+
+/**
+ * Derive the workflow budget state from the durable event chain. A handoff
+ * edge is an `agent_message` event with an `addressedAgent` correlated to the
+ * workflow root; the lead is the first mention of the root steward_message.
+ * Events of other workflows and ordinary replies are ignored.
+ */
+export function deriveConversationWorkflowState(
+  events: readonly ConversationEventRecord[],
+  rootEventId: string,
+): ConversationWorkflowState {
+  const root = events.find((event) => event.id === rootEventId && event.kind === "steward_message");
+  const rootAgent = root !== undefined && root.mentions.length > 0 ? root.mentions[0] : undefined;
+  const edges: ConversationHandoffEdge[] = [];
+  for (const event of events) {
+    if (
+      event.kind === "agent_message" &&
+      typeof event.addressedAgent === "string" &&
+      event.addressedAgent !== "" &&
+      event.correlationId === rootEventId
+    ) {
+      edges.push({ source: event.author, target: event.addressedAgent, handoffEventId: event.id, sequence: event.sequence });
+    }
+  }
+  edges.sort((a, b) => a.sequence - b.sequence);
+  const depthByAgent = new Map<string, number>();
+  if (rootAgent !== undefined) {
+    depthByAgent.set(rootAgent, 0);
+  }
+  const pairOccurrences = new Map<string, number>();
+  for (const edge of edges) {
+    const sourceDepth = depthByAgent.get(edge.source);
+    if (sourceDepth !== undefined && !depthByAgent.has(edge.target)) {
+      // First-accept wins (like membership): a return-to-lead or rework edge
+      // never overwrites an agent's existing chain depth.
+      depthByAgent.set(edge.target, sourceDepth + 1);
+    }
+    const key = `${edge.source}->${edge.target}`;
+    pairOccurrences.set(key, (pairOccurrences.get(key) ?? 0) + 1);
+  }
+  return { rootEventId, rootAgent, edges, depthByAgent, pairOccurrences };
+}
+
+/** Inputs for the deterministic server-side handoff edge planner. */
+export interface PlanConversationHandoffEdgeInput {
+  conversationId: string;
+  sourceAgent: string;
+  request: ConversationHandoffRequest;
+  /** Local runnable set (allowed minus excluded) on this gateway instance. */
+  runnableAgents: readonly string[];
+  /** `conversationId:agent` keys currently holding an active run. */
+  activeKeys: readonly string[];
+  workflow: ConversationWorkflowState;
+}
+
+export type PlanConversationHandoffEdgeResult =
+  | { ok: true; depth: number }
+  | { ok: false; reason: string };
+
+/**
+ * Deterministic server-side target planning. Every check has a bounded
+ * non-secret reason; nothing is queued, retried, rerouted, or dispatched here.
+ * A valid edge is accepted synchronously; the broker then appends the durable
+ * handoff event and consumes one workflow edge.
+ */
+export function planConversationHandoffEdge(input: PlanConversationHandoffEdgeInput): PlanConversationHandoffEdgeResult {
+  const { to, text } = input.request;
+  void text;
+  if (to === input.sourceAgent) {
+    return { ok: false, reason: "conversation handoff to self is not allowed" };
+  }
+  if (!input.runnableAgents.includes(to)) {
+    return { ok: false, reason: `conversation handoff target '${to}' is not locally runnable` };
+  }
+  if (input.activeKeys.includes(`${input.conversationId}:${to}`)) {
+    return { ok: false, reason: `conversation handoff target '${to}' has an active run` };
+  }
+  const sourceDepth = input.workflow.depthByAgent.get(input.sourceAgent);
+  if (sourceDepth === undefined) {
+    return { ok: false, reason: "source agent is not part of the conversation handoff workflow" };
+  }
+  if (input.workflow.edges.length >= CONVERSATION_HANDOFF_MAX_EDGES) {
+    return { ok: false, reason: "conversation handoff workflow budget exhausted: edges" };
+  }
+  if (sourceDepth + 1 > CONVERSATION_HANDOFF_MAX_DEPTH) {
+    return { ok: false, reason: "conversation handoff workflow budget exhausted: depth" };
+  }
+  const pairKey = `${input.sourceAgent}->${to}`;
+  const occurrences = input.workflow.pairOccurrences.get(pairKey) ?? 0;
+  if (occurrences >= 1 + CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS) {
+    return { ok: false, reason: "conversation handoff workflow budget exhausted: rework" };
+  }
+  return { ok: true, depth: sourceDepth + 1 };
+}
+
+/** Render the bounded prompt for one handoff stage run (C5-1). */
+export function buildConversationStagePrompt(input: {
+  conversationId: string;
+  agent: string;
+  sourceAgent: string;
+  text: string;
+  rootEventId: string;
+  handoffEventId: string;
+  depth: number;
+  priorLines: readonly string[];
+  truncated: boolean;
+  omittedCount: number;
+}): string {
+  const context =
+    input.priorLines.length === 0
+      ? "(no prior conversation context)"
+      : input.priorLines.join("\n");
+  const truncationNotice =
+    input.truncated && input.omittedCount > 0
+      ? `\ncontext_truncated: true (${input.omittedCount} earlier message(s) omitted)\n`
+      : "";
+  return [
+    `You are agent '${input.agent}' participating in an approved Piren conversation workflow (conversation '${input.conversationId}', workflow root '${input.rootEventId}', handoff '${input.handoffEventId}', stage depth ${input.depth}).`,
+    `Agent '${input.sourceAgent}' has handed off a bounded request to you within the steward-approved workflow.`,
+    "Complete the request, then report your outcome visibly. You may hand off to another locally runnable agent only when that is needed, within the finite workflow budget.",
+    "",
+    "Prior conversation context (durable order):",
+    context,
+    truncationNotice,
+    "Handoff request:",
+    input.text,
+  ].join("\n");
+}

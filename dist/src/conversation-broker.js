@@ -18,7 +18,8 @@
  * (maxItems 8 / maxChars 16384 via the accepted C1 `selectDurableTranscript`)
  * into the prompt and records the exact selection metadata on run_started.
  */
-import { appendConversationEvent, readConversation, } from "./conversations.js";
+import { appendConversationEvent, readConversation, readConversationEvents, updateConversationAudience, } from "./conversations.js";
+import { buildConversationStagePrompt, deriveConversationWorkflowState, parseConversationHandoffRequest, planConversationHandoffEdge, } from "./conversation-handoff.js";
 import { selectDurableTranscript, validateTranscriptBudget, } from "./conversation-contract.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { extractAssistantText } from "./gateway-rpc.js";
@@ -287,6 +288,10 @@ export class ConversationBroker {
         }
         const { run, done } = this.reserveRun(input.conversationId, input.agent);
         run.stewardEventId = input.stewardEventId;
+        // C5-1: a run dispatched directly by a steward message is a workflow ROOT
+        // (lead at depth 0); each steward message starts a fresh workflow with
+        // fresh budgets (§6.1/§6.4).
+        run.c5 = { role: "root", rootEventId: input.stewardEventId, parentHandoffEventId: undefined, depth: 0 };
         try {
             const context = selectConversationContext(input.priorEvents);
             return await this.executeConversationRun(run, buildConversationMentionPrompt({
@@ -300,7 +305,17 @@ export class ConversationBroker {
         }
         finally {
             this.activeRuns.delete(run.key);
+            // C5-1 sequential defer-launch: the accepted handoff child launches only
+            // after the source settled `completed`, never on any other terminal, and
+            // only after the source key is freed (no two stage runs overlap).
+            await this.maybeLaunchDeferredChild(run);
             run.resolveFinalized();
+        }
+    }
+    /** C5-1: launch a deferred handoff child only after a `completed` source terminal. */
+    async maybeLaunchDeferredChild(run) {
+        if (run.deferredHandoff !== undefined && run.settleKind === "completed") {
+            await this.launchDeferredStageRun(run).catch(() => { });
         }
     }
     reserveRun(conversationId, agent) {
@@ -329,6 +344,8 @@ export class ConversationBroker {
             attemptEvents: [],
             attemptedModelIds: [],
             currentModelId: null,
+            c5: undefined,
+            deferredHandoff: undefined,
             fallbackPolicy: undefined,
             exhaustion: undefined,
             originalPrompt: "",
@@ -778,6 +795,180 @@ export class ConversationBroker {
             stewardEventId: run.stewardEventId,
             terminalEventId: terminal.id,
         };
+    }
+    /**
+     * C5-1: request one conversation handoff from an eligible active run. The
+     * caller supplies ONLY `{to, text}`; identity, root correlation, budget,
+     * and capability are derived from the broker's run state and the durable
+     * event chain. An accepted edge appends one immutable handoff event and
+     * grows the audience additively (M1) through the authoritative lock path;
+     * the child launches later, sequentially, only after a `completed` source
+     * terminal (§6.3). Failures are bounded non-secret rejections with no
+     * event, no budget consumption, and no queue/retry/reroute.
+     */
+    async requestConversationHandoff(conversationId, agent, request) {
+        const key = `${conversationId}:${agent}`;
+        const run = this.activeRuns.get(key);
+        if (run === undefined || run.c5 === undefined) {
+            return { status: "rejected", reason: "no eligible conversation handoff run" };
+        }
+        const parsed = parseConversationHandoffRequest(request);
+        if (!parsed.ok) {
+            return { status: "rejected", reason: parsed.reason };
+        }
+        let events;
+        try {
+            events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+        }
+        catch {
+            return { status: "rejected", reason: "conversation handoff could not read the workflow history" };
+        }
+        const workflow = deriveConversationWorkflowState(events, run.c5.rootEventId);
+        const plan = planConversationHandoffEdge({
+            conversationId,
+            sourceAgent: agent,
+            request: parsed.request,
+            runnableAgents: this.runnableAgents,
+            activeKeys: [...this.activeRuns.keys()],
+            workflow,
+        });
+        if (!plan.ok) {
+            return { status: "rejected", reason: plan.reason };
+        }
+        // M1: grow the durable audience additively through the authoritative
+        // no-clobber lock path BEFORE the handoff event, so a busy lock can
+        // never leave an orphan handoff edge. A failure rejects the request
+        // with no event and no budget consumption.
+        try {
+            await updateConversationAudience({
+                vaultRoot: this.vaultRoot,
+                conversationId,
+                additions: { __validatedRecipients: true, recipients: [parsed.request.to] },
+                kind: "handoff",
+                now: this.now,
+            });
+        }
+        catch {
+            return {
+                status: "rejected",
+                reason: "conversation handoff could not grow the audience (another update holds the lock); retry later",
+            };
+        }
+        // Durable handoff edge: exactly one immutable agent_message with the
+        // addressed agent, correlated to the workflow root.
+        let handoff;
+        try {
+            handoff = await this.appendAndPublish(conversationId, {
+                kind: "agent_message",
+                authorKind: "agent",
+                author: agent,
+                body: parsed.request.text,
+                addressedAgent: parsed.request.to,
+                correlationId: run.c5.rootEventId,
+            });
+        }
+        catch {
+            // Containment: an additive membership may already exist (inspectable),
+            // but no deferred child is scheduled and the budget is not consumed.
+            return { status: "rejected", reason: "conversation handoff could not be recorded" };
+        }
+        run.deferredHandoff = {
+            handoffEventId: handoff.id,
+            rootEventId: run.c5.rootEventId,
+            to: parsed.request.to,
+            text: parsed.request.text,
+            depth: plan.depth,
+        };
+        return { status: "accepted", to: parsed.request.to, handoffEventId: handoff.id };
+    }
+    /**
+     * C5-1 sequential defer-launch: start the accepted handoff child ONLY on
+     * the current durable state (open conversation, member, runnable, no
+     * active run) and only after the source settled `completed`. Every launch
+     * failure records exactly one `run_finished` failed `launch_failure`
+     * correlated to the handoff event; the accepted handoff event stands as
+     * the causality record. Non-throwing.
+     */
+    async launchDeferredStageRun(source) {
+        const deferred = source.deferredHandoff;
+        if (deferred === undefined)
+            return;
+        const conversationId = source.conversationId;
+        const recordLaunchFailure = async () => {
+            try {
+                await this.appendAndPublish(conversationId, {
+                    kind: "run_finished",
+                    authorKind: "system",
+                    author: "system",
+                    body: "The handoff child could not be started.",
+                    runStatus: "failed",
+                    failureKind: "launch_failure",
+                    correlationId: deferred.handoffEventId,
+                });
+            }
+            catch {
+                // best-effort: the terminal could not be written; do not retry.
+            }
+        };
+        let conversation;
+        let events;
+        try {
+            conversation = await this.conversationReader({ vaultRoot: this.vaultRoot, conversationId });
+            events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+        }
+        catch {
+            await recordLaunchFailure();
+            return;
+        }
+        if (conversation.status !== "open" ||
+            !conversation.audience.includes(deferred.to) ||
+            !this.runnableAgents.includes(deferred.to) ||
+            this.activeRuns.has(`${conversationId}:${deferred.to}`)) {
+            await recordLaunchFailure();
+            return;
+        }
+        const handoffEvent = events.find((entry) => entry.id === deferred.handoffEventId);
+        const priorEvents = handoffEvent === undefined ? [] : events.filter((entry) => entry.sequence < handoffEvent.sequence);
+        const context = selectConversationContext(priorEvents);
+        let child;
+        let childDone;
+        try {
+            const reserved = this.reserveRun(conversationId, deferred.to);
+            child = reserved.run;
+            childDone = reserved.done;
+        }
+        catch {
+            await recordLaunchFailure();
+            return;
+        }
+        child.stewardEventId = deferred.handoffEventId;
+        child.c5 = {
+            role: "workflow",
+            rootEventId: deferred.rootEventId,
+            parentHandoffEventId: deferred.handoffEventId,
+            depth: deferred.depth,
+        };
+        try {
+            await this.executeConversationRun(child, buildConversationStagePrompt({
+                conversationId,
+                agent: deferred.to,
+                sourceAgent: source.agent,
+                text: deferred.text,
+                rootEventId: deferred.rootEventId,
+                handoffEventId: deferred.handoffEventId,
+                depth: deferred.depth,
+                priorLines: context.lines,
+                truncated: context.truncated,
+                omittedCount: context.metadata.omittedCount,
+            }), context.metadata, childDone);
+        }
+        finally {
+            this.activeRuns.delete(child.key);
+            // A workflow stage may hand off again within budget: the same
+            // sequential defer-launch applies to the child's own accepted edge.
+            await this.maybeLaunchDeferredChild(child);
+            child.resolveFinalized();
+        }
     }
     async close() {
         if (this.closed)

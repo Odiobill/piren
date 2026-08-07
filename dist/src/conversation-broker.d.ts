@@ -19,6 +19,7 @@
  * into the prompt and records the exact selection metadata on run_started.
  */
 import { type ConversationContextMetadata, type ConversationEventRecord, type ConversationManifest, type ConversationRunFailureKind, type ConversationWriteIo } from "./conversations.js";
+import { type ConversationHandoffRequest } from "./conversation-handoff.js";
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import { type ExtensionUiResponse, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
@@ -139,6 +140,15 @@ export type ConversationAbortOutcome = {
     conversationId: string;
     agent: string;
 };
+/** C5-1: outcome of one conversation handoff request (accepted or bounded-rejected). */
+export type ConversationHandoffRequestResult = {
+    status: "accepted";
+    to: string;
+    handoffEventId: string;
+} | {
+    status: "rejected";
+    reason: string;
+};
 /**
  * The bounded prompt handed to Pi for one conversation mention. Renders the
  * C2 bounded prior-transcript replay in durable order with an explicit
@@ -206,6 +216,8 @@ export declare class ConversationBroker {
      * bounded run evidence only and never rolls the message back.
      */
     dispatchConversationMention(input: ConversationMentionInput): Promise<ConversationDispatchOutcome>;
+    /** C5-1: launch a deferred handoff child only after a `completed` source terminal. */
+    private maybeLaunchDeferredChild;
     private reserveRun;
     private executeConversationRun;
     private handleClientEvent;
@@ -247,5 +259,25 @@ export declare class ConversationBroker {
     abort(conversationId: string, agent: string): Promise<ConversationAbortOutcome>;
     /** C3-C1: exactly one run_cancelled when cancellation wins during startup. */
     private finalizeCancelledDuringInit;
+    /**
+     * C5-1: request one conversation handoff from an eligible active run. The
+     * caller supplies ONLY `{to, text}`; identity, root correlation, budget,
+     * and capability are derived from the broker's run state and the durable
+     * event chain. An accepted edge appends one immutable handoff event and
+     * grows the audience additively (M1) through the authoritative lock path;
+     * the child launches later, sequentially, only after a `completed` source
+     * terminal (§6.3). Failures are bounded non-secret rejections with no
+     * event, no budget consumption, and no queue/retry/reroute.
+     */
+    requestConversationHandoff(conversationId: string, agent: string, request: ConversationHandoffRequest): Promise<ConversationHandoffRequestResult>;
+    /**
+     * C5-1 sequential defer-launch: start the accepted handoff child ONLY on
+     * the current durable state (open conversation, member, runnable, no
+     * active run) and only after the source settled `completed`. Every launch
+     * failure records exactly one `run_finished` failed `launch_failure`
+     * correlated to the handoff event; the accepted handoff event stands as
+     * the causality record. Non-throwing.
+     */
+    private launchDeferredStageRun;
     close(): Promise<void>;
 }

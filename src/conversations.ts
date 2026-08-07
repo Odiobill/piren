@@ -342,8 +342,15 @@ async function atomicReplaceManifest(conversationDir: string, absolutePath: stri
 export interface UpdateConversationAudienceOptions {
   vaultRoot: string;
   conversationId: string;
-  /** C1-validated steward recipients (first-mention order); the ONLY membership-growing act. */
+  /** C1-validated recipients (first-mention order); additive-only membership growth. */
   additions: ValidatedRecipients;
+  /**
+   * Membership provenance: `steward` (validated mentions, the historic
+   * growing act) or `handoff` (C5 steward-approved workflow exception,
+   * ADR-0042 amendment 2026-08-07). Both apply additively via C1
+   * `applyMembershipChange`; agent addresses never grow membership.
+   */
+  kind?: "steward" | "handoff" | undefined;
   now?: () => Date;
   /** Deterministic test seam: a barrier awaited while holding the audience lock. */
   holdBarrier?: Promise<void> | undefined;
@@ -365,8 +372,11 @@ const AUDIENCE_LOCK_FILENAME = ".audience.lock";
  * remove the file after triage. The release removes ONLY our own lock
  * (token-verified) so a manually replaced lock is never deleted by a stale
  * holder. No hidden DB, queue, retry, or fallback.
+ *
+ * Exported as a test seam (C5-1 lock-failure containment): tests hold the
+ * lock to prove a busy audience append is contained.
  */
-async function acquireAudienceLock(options: {
+export async function acquireAudienceLock(options: {
   vaultRoot: string;
   conversationId: string;
   now?: () => Date;
@@ -464,7 +474,9 @@ export async function updateConversationAudience(
       await options.holdBarrier;
     }
     const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
-    const audience = applyMembershipChange(current.audience, { kind: "steward", recipients: options.additions });
+    const kind = options.kind ?? "steward";
+    const membershipChange = kind === "handoff" ? { kind: "handoff" as const, recipients: options.additions } : { kind: "steward" as const, recipients: options.additions };
+    const audience = applyMembershipChange(current.audience, membershipChange);
     const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
 
     const content = renderConversationManifest({

@@ -70,14 +70,44 @@ export declare function createConversation(options: CreateConversationOptions): 
 export interface UpdateConversationAudienceOptions {
     vaultRoot: string;
     conversationId: string;
-    /** C1-validated steward recipients (first-mention order); the ONLY membership-growing act. */
+    /** C1-validated recipients (first-mention order); additive-only membership growth. */
     additions: ValidatedRecipients;
+    /**
+     * Membership provenance: `steward` (validated mentions, the historic
+     * growing act) or `handoff` (C5 steward-approved workflow exception,
+     * ADR-0042 amendment 2026-08-07). Both apply additively via C1
+     * `applyMembershipChange`; agent addresses never grow membership.
+     */
+    kind?: "steward" | "handoff" | undefined;
     now?: () => Date;
     /** Deterministic test seam: a barrier awaited while holding the audience lock. */
     holdBarrier?: Promise<void> | undefined;
     /** Deterministic test seam for the lock token. */
     lockToken?: () => string;
 }
+/**
+ * Acquire the per-conversation audience-update lock (vault-visible,
+ * no-clobber, cross-process safe): an atomic no-clobber create of
+ * `collaboration/conversations/<id>/.audience.lock`. A held/contended lock
+ * rejects with a deterministic non-secret conflict — the CALLER surfaces it
+ * as 409 BEFORE creating any steward event or dispatch (no false delivery
+ * claim). There is NO automatic stale recovery; a crashed holder's lock is
+ * recovered manually (see the C2 contract): inspect the lock content, then
+ * remove the file after triage. The release removes ONLY our own lock
+ * (token-verified) so a manually replaced lock is never deleted by a stale
+ * holder. No hidden DB, queue, retry, or fallback.
+ *
+ * Exported as a test seam (C5-1 lock-failure containment): tests hold the
+ * lock to prove a busy audience append is contained.
+ */
+export declare function acquireAudienceLock(options: {
+    vaultRoot: string;
+    conversationId: string;
+    now?: () => Date;
+    token?: () => string;
+}): Promise<{
+    release: () => Promise<void>;
+}>;
 /**
  * C2 additive later-mention membership seam: grow the durable manifest
  * `audience` with validated steward recipients only, preserving existing
