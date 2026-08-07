@@ -974,6 +974,42 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
     await broker.close();
   });
 
+  it("rejects a second handoff request while one is already accepted and pending launch", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu", "sam"], behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "Lead this workflow",
+      stewardEventId,
+      priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+
+    const first = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "First edge" });
+    expect(first.status).toBe("accepted");
+
+    // A second request before the deferred child launches would otherwise
+    // overwrite the pending edge (its child would never launch) while still
+    // consuming budget and audience. The sequential invariant rejects it.
+    const second = await broker.requestConversationHandoff(conversationId, "zai", { to: "sam", text: "Second edge" });
+    expect(second.status).toBe("rejected");
+    if (second.status === "rejected") {
+      expect(second.reason).toBe("a conversation handoff is already accepted and pending launch");
+    }
+
+    // No second durable edge, no membership growth for sam, no budget consumed.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message" && e.addressedAgent !== undefined)).toHaveLength(1);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai", "dipu"]);
+
+    clients[0]?.settleCompleted();
+    await dispatch;
+    await broker.close();
+  });
+
   it("never launches the deferred child when the source settles non-completed (timeout and abort)", async () => {
     // Timeout path.
     const timers = makeTimers();

@@ -812,6 +812,12 @@ export class ConversationBroker {
         if (run === undefined || run.c5 === undefined) {
             return { status: "rejected", reason: "no eligible conversation handoff run" };
         }
+        // Sequential invariant: one accepted-but-not-yet-launched edge per run.
+        // A second request would overwrite the pending edge (its child would
+        // never launch) while still consuming budget and audience.
+        if (run.deferredHandoff !== undefined) {
+            return { status: "rejected", reason: "a conversation handoff is already accepted and pending launch" };
+        }
         const parsed = parseConversationHandoffRequest(request);
         if (!parsed.ok) {
             return { status: "rejected", reason: parsed.reason };
