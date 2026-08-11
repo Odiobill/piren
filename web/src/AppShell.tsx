@@ -8,11 +8,6 @@ import { ConversationNavigator } from "./ConversationNavigator";
 import { AgentsView } from "./AgentsView";
 import { AboutView } from "./AboutView";
 
-const COMING_NEXT = [
-  { label: "Conversation approval + abort controls", bullet: "later slice", note: "scoped approval cards and conversation×agent abort" },
-  { label: "Persistent navigation", bullet: "C4", note: "active conversation survives module navigation" },
-] as const;
-
 /**
  * Workbench app shell (ADR-0041 R3b-2.5; C3-A replaces the Rooms page with
  * the Conversation surface): persistent desktop sidebar (Conversations →
@@ -60,7 +55,7 @@ export function AppShell({
         <img src={logoUrl} alt="Piren logo" className="shell-logo" width={48} height={48} />
         <div className="shell-heading">
           <h1>Piren Workbench</h1>
-          <p className="shell-subtitle">Local-first agent collaboration shell</p>
+          <p className="shell-subtitle">A calm workspace for your local-first agent team</p>
         </div>
         <button
           type="button"
@@ -72,24 +67,19 @@ export function AppShell({
         >
           Menu
         </button>
-        <StatusBadge phase={phase} />
+        {phase !== "ready-local" && <StatusBadge phase={phase} />}
       </header>
 
       <div className="shell-body">
         <div className="sidebar-desktop">
-          <Sidebar page={nav.page} onSelect={handleSelect} />
+          <Sidebar page={nav.page} token={token} onSelect={handleSelect} onValidated={onValidated} onUnauthorized={onUnauthorized} />
         </div>
 
         <MobileDrawer open={nav.drawerOpen} onClose={handleCloseDrawer} label="Navigation">
-          <Sidebar page={nav.page} onSelect={handleSelect} />
+          <Sidebar page={nav.page} token={token} onSelect={handleSelect} onValidated={onValidated} onUnauthorized={onUnauthorized} />
         </MobileDrawer>
 
         <main className="shell-main">
-          {phase === "ready-local" && (
-            <section className="card">
-              <p className="muted">Gateway reachable — this host requires no token.</p>
-            </section>
-          )}
           {phase === "token-ready" && (
             <section className="card">
               <p className="muted">
@@ -109,7 +99,6 @@ export function AppShell({
           )}
           <div className="workspace-panel" hidden={nav.page !== "conversations"}>
             <ConversationNavigator token={token} onValidated={onValidated} onUnauthorized={onUnauthorized} />
-            <ComingNext />
           </div>
           <div className="workspace-panel" hidden={nav.page !== "agents"}>
             <AgentsView token={token} onUnauthorized={onUnauthorized} />
@@ -127,27 +116,5 @@ export function AppShell({
         </p>
       </footer>
     </div>
-  );
-}
-
-function ComingNext() {
-  return (
-    <section className="card">
-      <h3>Coming next (each separately steward-gated)</h3>
-      <ul className="coming-next">
-        {COMING_NEXT.map((item) => (
-          <li key={item.bullet}>
-            <span className="coming-label">
-              {item.label} <code>{item.bullet}</code>
-            </span>
-            <span className="coming-note">{item.note}</span>
-          </li>
-        ))}
-      </ul>
-      <p className="muted">
-        Read-only vault/graph navigation is deferred to R4; the service worker is deferred to R3c
-        or later.
-      </p>
-    </section>
   );
 }

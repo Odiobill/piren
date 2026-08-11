@@ -64,16 +64,19 @@ body {
 
 .shell {
   min-height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .shell-header {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 24px;
-  background: var(--surface);
+  padding: 14px 24px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
   border-bottom: 1px solid var(--border);
 }
 
@@ -126,17 +129,23 @@ body {
 
 .shell-main {
   flex: 1;
-  width: 100%;
-  max-width: 880px;
-  margin: 0 auto;
-  padding: 24px;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(18px, 3vw, 36px);
+}
+
+.shell-main > * {
+  width: min(100%, 980px);
+  margin-inline: auto;
 }
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px 22px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 16px;
+  padding: clamp(18px, 3vw, 30px);
+  box-shadow: 0 12px 34px color-mix(in srgb, var(--text) 5%, transparent);
 }
 
 .card h2 {
@@ -288,15 +297,17 @@ code {
 }
 
 .shell-footer {
-  padding: 14px 24px;
+  flex: none;
+  padding: 10px 24px;
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
+  background: var(--surface);
 }
 
 .shell-footer p {
   margin: 0 auto;
-  max-width: 880px;
+  max-width: 980px;
 }
 
 /* Screen-reader-only announcements */
@@ -516,11 +527,12 @@ code {
 }
 
 .timeline-entry {
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-left-width: 3px;
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 12px;
+  padding: 13px 15px;
   list-style: none;
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
 }
 
 .timeline-entry.timeline-steward_message {
@@ -581,14 +593,17 @@ code {
   flex: 1;
   display: flex;
   min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar-desktop {
-  width: 220px;
+  width: 292px;
   flex: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-right: 1px solid var(--border);
   padding: 16px 12px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 94%, var(--bg));
 }
 
 .sidebar-nav ul {
@@ -597,6 +612,88 @@ code {
   padding: 0;
   display: grid;
   gap: 4px;
+}
+
+.sidebar-section-heading {
+  display: grid;
+  gap: 10px;
+  margin: 24px 4px 12px;
+}
+
+.sidebar-section-heading h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.button-new-conversation {
+  justify-content: center;
+  width: 100%;
+}
+
+.sidebar-create {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.sidebar-create label {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.sidebar-create textarea {
+  min-height: 92px;
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.sidebar-conversation-list {
+  gap: 5px;
+}
+
+.sidebar-conversation-entry {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sidebar-conversation-entry:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+}
+
+.sidebar-conversation-entry span {
+  overflow: hidden;
+  font-size: 0.9rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-conversation-entry small {
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .nav-item {
@@ -657,6 +754,26 @@ code {
   margin-top: 16px;
 }
 
+.conversation-welcome {
+  display: grid;
+  align-content: center;
+  min-height: min(48vh, 460px);
+  padding: clamp(24px, 7vw, 72px);
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 20px;
+  background: radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 48%), var(--surface);
+}
+
+.conversation-welcome h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2.4rem);
+}
+
+.conversation-welcome .muted {
+  max-width: 38rem;
+  font-size: 1rem;
+}
+
 .about-list {
   display: grid;
   gap: 10px;
@@ -705,6 +822,10 @@ code {
 
   .shell-main {
     padding: 16px;
+  }
+
+  .shell-footer {
+    display: none;
   }
 
   .status-badge {

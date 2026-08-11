@@ -10,10 +10,11 @@ import type { RpcEvent, RpcSpawnTarget } from "./gateway-rpc.js";
  * one reserved, versioned input envelope; the broker intercepts it only from
  * its exact active C5 run, performs the bounded root-gate or workflow-accept
  * decision, and answers the same request id with a structured `value` result.
- * Unlike the blocking room R2 handoff, the conversation control is
- * non-blocking: a root gate returns a prompt `pending` outcome and a workflow
- * accept returns `ok` — the child stage launches later, sequentially, only
- * after the source terminal.
+ * Unlike the blocking room R2 parent/child handoff, the conversation control
+ * waits only for the steward's initial gate: the root input stays pending
+ * until confirmation/cancellation, then returns `ok` or `rejected`. A
+ * workflow accept returns `ok` immediately; every child still launches later,
+ * sequentially, only after the source terminal.
  *
  * The reserved {@link CONVERSATION_HANDOFF_REQUEST_TITLE} is a protocol
  * discriminator, NOT an authorization secret. Authoritative source identity
@@ -79,10 +80,9 @@ export declare function renderConversationHandoffRequestPlaceholder(to: string, 
  */
 export declare function validateConversationHandoffArgs(to: string, text: string): string | null;
 /**
- * Bounded non-blocking result statuses returned to the tool call. The root
- * gate returns `pending` promptly (the child launches later, sequentially);
- * a workflow accept returns `ok`; every other bounded failure returns
- * `rejected`.
+ * Bounded results returned to the tool call. A root gate is held until the
+ * steward settles it, then returns `ok` or `rejected`; a workflow accept
+ * returns `ok` immediately; every other bounded failure returns `rejected`.
  */
 export declare const CONVERSATION_HANDOFF_RESULT_STATUSES: readonly ["pending", "ok", "rejected"];
 export type ConversationHandoffResultStatus = (typeof CONVERSATION_HANDOFF_RESULT_STATUSES)[number];

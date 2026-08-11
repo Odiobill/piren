@@ -32,6 +32,22 @@ async function waitForStreamValue(condition: () => Promise<boolean>, timeoutMs =
   throw new Error("stream condition not met in time");
 }
 
+function parseSseFrames(buffer: string): Array<{ type: string; data: Record<string, unknown> }> {
+  const frames: Array<{ type: string; data: Record<string, unknown> }> = [];
+  for (const block of buffer.split("\n\n")) {
+    const type = /^event: (.+)$/m.exec(block)?.[1];
+    const raw = /^data: (.+)$/m.exec(block)?.[1];
+    if (type === undefined || raw === undefined) continue;
+    try {
+      const data = JSON.parse(raw) as unknown;
+      if (typeof data === "object" && data !== null) frames.push({ type, data: data as Record<string, unknown> });
+    } catch {
+      // Test helper: incomplete stream chunks are not complete frames.
+    }
+  }
+  return frames;
+}
+
 describe("Gateway Conversation API family (C2)", () => {
   let root: string;
   let server: GatewayServer;
@@ -191,6 +207,22 @@ describe("Gateway Conversation API family (C2)", () => {
     expect(buffer).toContain("conversation_event");
     expect(buffer).toContain("run_finished");
     expect(buffer).not.toContain("Stream seed");
+    // Live records must use the same complete durable-record schema as the
+    // history endpoint; otherwise the Workbench correctly rejects them as
+    // non-authoritative and only renders them after a later history reload.
+    const liveRunFinished = parseSseFrames(buffer).find(
+      (frame) => frame.type === "conversation_event" && frame.data.kind === "run_finished",
+    );
+    expect(liveRunFinished?.data).toMatchObject({
+      conversationId: id,
+      kind: "run_finished",
+      authorKind: "system",
+      author: "system",
+      sequence: expect.any(Number),
+      mentions: [],
+      body: expect.any(String),
+      path: expect.stringContaining(`/conversations/${id}/events/`),
+    });
   });
 
   it("read-only inspection never activates: read/events work regardless of runnability; attach is the only activating route (C3-A)", async () => {

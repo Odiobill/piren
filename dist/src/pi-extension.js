@@ -1250,7 +1250,7 @@ export default async function pirenExtension(pi, testOptions = {}) {
             name: "conversation_handoff",
             label: "Conversation Handoff",
             description: rootGate
-                ? "Request the steward-approved initial conversation handoff. The broker raises a live approval card the steward confirms or rejects; nothing is dispatched before confirmation and this returns promptly while the approval is pending."
+                ? "Request the steward-approved initial conversation handoff. The broker raises a live approval card; this tool waits for the steward to confirm or reject it, and nothing is dispatched before confirmation."
                 : "Hand off a bounded request to another locally runnable agent within the approved conversation workflow. The child stage launches only after this run completes; subject to the finite workflow budget.",
             parameters: Type.Object({
                 to: Type.String({ description: "Target agent name (lowercase kebab-case)" }),

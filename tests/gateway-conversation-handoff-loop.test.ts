@@ -181,7 +181,7 @@ describe("C5-3 authenticated gateway conversation-handoff loop (fake Pi)", () =>
     const replies = events.filter((e) => e.kind === "agent_message" && e.addressedAgent === undefined);
     expect(replies).toHaveLength(5);
     expect(String(replies[0]?.body)).toContain("[role:root]");
-    expect(String(replies[0]?.body)).toContain("Handoff settled (pending)");
+    expect(String(replies[0]?.body)).toContain("Handoff settled (ok)");
     const stageReplies = replies.slice(1);
     const handoffStageReplies = stageReplies.filter((r) => String(r.body).includes("conversation handoff"));
     expect(handoffStageReplies).toHaveLength(3);

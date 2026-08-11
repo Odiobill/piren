@@ -83,7 +83,7 @@ describe("web auth shell contract (R3b-1)", () => {
       ]);
       const combined = `${app}\n${shell}`;
       expect(combined).toContain("Token ready");
-      expect(combined).toContain("Gateway reachable");
+      expect(combined).not.toContain("Gateway reachable");
       expect(combined).toMatch(/not been validated/i);
     });
 

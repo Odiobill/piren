@@ -1674,22 +1674,19 @@ describe("ConversationBroker C5-3 tool control bridge", () => {
     await broker.close();
   });
 
-  it("a root control envelope only registers the pending gate (live frame, bounded pending response) with NO side effects before confirmation", async () => {
+  it("a root control envelope holds its input until the live gate is answered, with NO side effects before confirmation", async () => {
     const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["convhandoff"] });
     const conversationId = await makeConversation(["zai"], "Hello @zai");
     const stewardEventId = await makeStewardEvent(conversationId, "Lead");
     const seen: ConversationApprovalNotification[] = [];
     broker.onConversationApproval(conversationId, (approval) => seen.push(approval));
     const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Lead", stewardEventId, priorEvents: [] });
-    await waitFor(() => clients[0]?.responses.length === 1);
+    await waitFor(() => seen.length === 1);
 
-    // The reserved envelope was answered with the bounded pending value and
-    // never entered the generic approval registry (its request id is not the
-    // gate key; the gate id is broker-synthesized).
-    const response = clients[0]?.responses[0];
-    expect(response?.id).toBe("convhandoff-req-1");
-    const value = JSON.parse(String((response?.response as { value?: string }).value)) as { status?: string; v?: number };
-    expect(value).toEqual({ v: 1, status: "pending" });
+    // The root tool's reserved input remains open while the steward decides.
+    // Returning `pending` to Pi lets a real agent finish its turn and clears
+    // the run-scoped approval, making every later Accept stale.
+    expect(clients[0]?.responses).toEqual([]);
     expect(broker.hasPendingApproval(conversationId, "zai", "convhandoff-req-1")).toBe(false);
     // One live confirm-only gate notification with the bounded payload.
     expect(seen).toHaveLength(1);
@@ -1722,6 +1719,11 @@ describe("ConversationBroker C5-3 tool control bridge", () => {
     // The root stays held after the pending response; confirm through the
     // exact approval response path accepts the stored edge.
     await broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: gateId, response: { confirmed: true } });
+    // Confirmation settles the exact held root tool request only now; a real
+    // Pi run therefore cannot terminally clear the approval before the
+    // steward has acted.
+    const gateResponse = clients[0]?.responses.find((response) => response.id === "convhandoff-req-1");
+    expect(JSON.parse(String((gateResponse?.response as { value?: string }).value))).toEqual({ v: 1, status: "ok" });
     const eventsAfter = await readConversationEvents({ vaultRoot: root, conversationId });
     const handoff = eventsAfter.find((e) => e.kind === "agent_message" && e.addressedAgent === "dipu");
     expect(handoff).toBeDefined();

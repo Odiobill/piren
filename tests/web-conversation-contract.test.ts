@@ -192,15 +192,18 @@ describe("C4-A hash deep links (static)", () => {
     }
   });
 
-  it("the navigator wires initial + hashchange fresh restore through the attach gate", async () => {
-    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    // Fresh manifest read + existing stateless attach gate before any active
-    // surface; the hash is written by own navigations (pushState, no event).
+  it("the sidebar selection drives a hashchange and the navigator always fresh-attaches it", async () => {
+    const [navigator, sidebar] = await Promise.all([
+      readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8"),
+      readFile(join(webSrc, "Sidebar.tsx"), "utf8"),
+    ]);
+    // Sidebar-owned selection writes the durable hash route; the navigator
+    // remains the single attach gate and re-reads before any active surface.
+    expect(sidebar).toContain("window.location.hash");
+    expect(sidebar).toContain("formatConversationHash");
     expect(navigator).toContain("hashchange");
     expect(navigator).toContain("parseHashRoute");
     expect(navigator).toContain("routeToIntent");
-    expect(navigator).toContain("history.pushState");
-    expect(navigator).toContain("urlWithoutHash");
     expect(navigator).toContain("fetchConversation");
     expect(navigator).toContain("attachConversation");
   });

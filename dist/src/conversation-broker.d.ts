@@ -104,15 +104,12 @@ export type ConversationDispatchOutcome = {
     stewardEventId: string;
     terminalEventId: string;
 };
-export interface ConversationEventNotification {
-    conversationId: string;
-    id: string;
-    kind: string;
-    authorKind: string;
-    author: string;
-    created: string;
-    body: string;
-}
+/**
+ * A live event is the exact complete durable-record shape. Consumers may
+ * safely render it with the same parser as `/events`; live transport is never
+ * a lossy parallel schema that only becomes readable after a history reload.
+ */
+export type ConversationEventNotification = ConversationEventRecord;
 /** C3-C1: bounded pending-approval notification for a conversation-scoped listener. */
 export interface ConversationApprovalNotification {
     conversationId: string;
@@ -290,6 +287,8 @@ export declare class ConversationBroker {
      * fabricated.
      */
     private resolveGateApproval;
+    /** Settle the held root tool input only when this gate originated from it. */
+    private respondGateHandoffInput;
     /**
      * C3-C1: abort the active run for exactly one conversation × agent key. No
      * active run returns `no-active-run`. A real abort settles the run once
@@ -325,7 +324,7 @@ export declare class ConversationBroker {
      * timeout) clears the pending gate under the existing C3 run-scoped
      * semantics; a late response gets the bounded stale rejection.
      */
-    requestInitialHandoffGate(conversationId: string, agent: string, request: ConversationHandoffRequest): Promise<ConversationGateRequestResult>;
+    requestInitialHandoffGate(conversationId: string, agent: string, request: ConversationHandoffRequest, handoffRequestId?: string): Promise<ConversationGateRequestResult>;
     /**
      * C5-1/C5-2 shared accept: derive the durable workflow, plan the edge,
      * grow the audience additively (M1) through the authoritative no-clobber

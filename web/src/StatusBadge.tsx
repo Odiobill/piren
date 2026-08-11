@@ -12,6 +12,9 @@ export type ShellPhase =
   | "token-accepted";
 
 export function StatusBadge({ phase }: { phase: ShellPhase }) {
+  // A loaded localhost Workbench confirms reachability by being usable; only
+  // actionable auth/connection states deserve persistent header chrome.
+  if (phase === "ready-local") return null;
   const text =
     phase === "loading"
       ? "Connecting…"
@@ -19,13 +22,11 @@ export function StatusBadge({ phase }: { phase: ShellPhase }) {
         ? "Connection error"
         : phase === "token-needed"
           ? "Token required"
-          : phase === "ready-local"
-            ? "Gateway reachable"
-            : phase === "token-ready"
-              ? "Token ready"
-              : "Token accepted";
+          : phase === "token-ready"
+            ? "Token ready"
+            : "Token accepted";
   const tone =
-    phase === "ready-local" || phase === "token-accepted"
+    phase === "token-accepted"
       ? "ok"
       : phase === "error"
         ? "error"

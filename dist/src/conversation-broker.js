@@ -244,8 +244,23 @@ export class ConversationBroker {
             authorKind: options.authorKind,
             author: options.author,
             created: result.created,
+            sequence: result.sequence,
+            mentions: options.mentions === undefined ? [] : [...options.mentions],
             body: options.body,
+            path: result.path,
         };
+        if (options.correlationId !== undefined)
+            notification.correlationId = options.correlationId;
+        if (options.addressedAgent !== undefined)
+            notification.addressedAgent = options.addressedAgent;
+        if (options.runStatus !== undefined)
+            notification.runStatus = options.runStatus;
+        if (options.failureKind !== undefined)
+            notification.failureKind = options.failureKind;
+        if (options.contextMetadata !== undefined)
+            notification.contextMetadata = options.contextMetadata;
+        if (options.lifecycleState !== undefined)
+            notification.lifecycleState = options.lifecycleState;
         const listeners = this.eventListeners.get(conversationId);
         if (listeners) {
             for (const listener of [...listeners]) {
@@ -687,8 +702,13 @@ export class ConversationBroker {
         }
         const request = { to: parsed.to, text: parsed.text };
         if (role === "root") {
-            const result = await this.requestInitialHandoffGate(run.conversationId, run.agent, request);
-            this.respondToConversationHandoffInput(run, requestId, result.status === "pending" ? { status: "pending" } : { status: "rejected", reason: result.reason });
+            const result = await this.requestInitialHandoffGate(run.conversationId, run.agent, request, requestId);
+            // Keep the root tool's input request pending until the steward answers
+            // the live gate. Returning `pending` here lets Pi complete the root run,
+            // invalidating its run-scoped approval before it can be accepted.
+            if (result.status === "rejected") {
+                this.respondToConversationHandoffInput(run, requestId, { status: "rejected", reason: result.reason });
+            }
             return;
         }
         const result = await this.requestConversationHandoff(run.conversationId, run.agent, request);
@@ -881,6 +901,7 @@ export class ConversationBroker {
         if (!("confirmed" in response) || response.confirmed === false) {
             // cancelled / confirmed:false — the steward declined: bounded
             // rejection with no event, no audience mutation, no budget, no child.
+            this.respondGateHandoffInput(run, gate.handoffRequestId, { status: "rejected", reason: "steward declined the initial handoff" });
             return;
         }
         const result = await this.acceptHandoffEdge(run, gate.request, run.c5.rootEventId);
@@ -888,8 +909,15 @@ export class ConversationBroker {
             // A confirmed gate whose edge cannot be accepted now (state conflict:
             // target/budget/audience lock) is a bounded rejection, never a
             // fabricated accept and never a silent failure.
+            this.respondGateHandoffInput(run, gate.handoffRequestId, { status: "rejected", reason: result.reason });
             throw new Error(`conversation handoff gate could not be accepted: ${result.reason}`);
         }
+        this.respondGateHandoffInput(run, gate.handoffRequestId, { status: "ok" });
+    }
+    /** Settle the held root tool input only when this gate originated from it. */
+    respondGateHandoffInput(run, handoffRequestId, result) {
+        if (handoffRequestId !== undefined)
+            this.respondToConversationHandoffInput(run, handoffRequestId, result);
     }
     /**
      * C3-C1: abort the active run for exactly one conversation × agent key. No
@@ -969,7 +997,7 @@ export class ConversationBroker {
      * timeout) clears the pending gate under the existing C3 run-scoped
      * semantics; a late response gets the bounded stale rejection.
      */
-    async requestInitialHandoffGate(conversationId, agent, request) {
+    async requestInitialHandoffGate(conversationId, agent, request, handoffRequestId) {
         const key = `${conversationId}:${agent}`;
         const run = this.activeRuns.get(key);
         if (run === undefined || run.c5 === undefined) {
@@ -1001,7 +1029,7 @@ export class ConversationBroker {
             agent,
             requestId,
             run,
-            gate: { request: parsed.request },
+            gate: handoffRequestId === undefined ? { request: parsed.request } : { request: parsed.request, handoffRequestId },
         });
         const notification = {
             conversationId,

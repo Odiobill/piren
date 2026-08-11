@@ -34,7 +34,7 @@ import {
   type ConversationLifecycleAction,
   type LifecycleActionError,
 } from "./conversation-lifecycle";
-import { formatConversationHash, parseHashRoute, routeToIntent, urlWithoutHash } from "./hash-route";
+import { parseHashRoute, routeToIntent } from "./hash-route";
 import type { RoomAgentEntry } from "./rooms";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
@@ -110,8 +110,6 @@ export function ConversationNavigator({
   const [retryKey, setRetryKey] = useState(0);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailHeadingRef = useRef<HTMLHeadingElement>(null);
-  const newConversationRef = useRef<HTMLButtonElement>(null);
-  const pendingFocusId = useRef<string | null>(null);
   /** Generation guard so only the newest open flow applies its result. */
   const openSeqRef = useRef(0);
   /** L3 lifecycle state + archive confirmation. */
@@ -218,29 +216,9 @@ export function ConversationNavigator({
     if (confirmingArchive) confirmArchiveRef.current?.focus();
   }, [confirmingArchive]);
 
-  useEffect(() => {
-    if (pendingFocusId.current && newConversationRef.current) {
-      newConversationRef.current.focus();
-      pendingFocusId.current = null;
-    }
-  }, [load]);
-
   function handleRetry() {
     setLoad({ phase: "loading" });
     setRetryKey((key) => key + 1);
-  }
-
-  /** Own navigations write the hash via pushState (fires no hashchange). */
-  function writeHash(hash: string) {
-    if (window.location.hash === hash) return;
-    history.pushState(null, "", hash);
-  }
-
-  /** Return to the list: clear the fragment without a hashchange event. */
-  function clearHash() {
-    const url = urlWithoutHash(window.location.href);
-    if (window.location.href === url) return;
-    history.pushState(null, "", url);
   }
 
   /**
@@ -326,37 +304,6 @@ export function ConversationNavigator({
       window.removeEventListener("hashchange", handleHash);
     };
   }, [openConversationById]);
-
-  async function handleSelect(conversationId: string) {
-    resetLifecycleControls();
-    writeHash(formatConversationHash(conversationId));
-    await openConversationById(conversationId);
-  }
-
-  function handleBack() {
-    cancelPendingOpen();
-    resetLifecycleControls();
-    clearHash();
-    setSelection({ phase: "none" });
-    setNotice(null);
-    setAnnouncement("Back to the conversation list.");
-    listHeadingRef.current?.focus();
-  }
-
-  async function handleCreated(conversation: ConversationRecord) {
-    setLoad((previous) => {
-      if (previous.phase !== "ready") return previous;
-      const conversations = [...previous.conversations, conversation];
-      return { phase: "ready", agents: previous.agents, conversations };
-    });
-    pendingFocusId.current = conversation.id;
-    setAnnouncement(`Conversation created: ${conversation.title}`);
-    resetLifecycleControls();
-    writeHash(formatConversationHash(conversation.id));
-    // A freshly created conversation's members were validated against the
-    // local runnable set at creation, so attach opens it as active.
-    await openConversationById(conversation.id);
-  }
 
   /**
    * L3: one fixed lifecycle action (archive|reopen) sent to the L2 route.
@@ -543,9 +490,6 @@ export function ConversationNavigator({
         <p className="sr-only" role="status" aria-live="polite">
           {announcement}
         </p>
-        <button type="button" className="button" onClick={handleBack}>
-          ← All conversations
-        </button>
         <h2 id="conversation-detail-heading" tabIndex={-1} ref={detailHeadingRef}>
           {selection.conversation.title}
         </h2>
@@ -618,53 +562,15 @@ export function ConversationNavigator({
   }
 
   return (
-    <section className="card" aria-labelledby="conversations-heading">
+    <section className="conversation-welcome" aria-labelledby="conversations-heading">
       <p className="sr-only" role="status" aria-live="polite">
         {announcement}
       </p>
       <h2 id="conversations-heading" tabIndex={-1} ref={listHeadingRef}>
-        Conversations
+        Your workspace
       </h2>
-      {notice !== null && (
-        <p className="route-notice" role="status">
-          {notice}
-        </p>
-      )}
-      {load.conversations.length === 0 ? (
-        <p className="muted">No conversations yet. Start the first one with a message below.</p>
-      ) : (
-        <ul className="conversation-list">
-          {load.conversations.map((conversation) => (
-            <li key={conversation.id}>
-              <button
-                type="button"
-                className="conversation-entry"
-                ref={pendingFocusId.current === conversation.id ? newConversationRef : undefined}
-                onClick={() => void handleSelect(conversation.id)}
-                disabled={selection.phase === "attaching"}
-              >
-                <span className="conversation-title">{conversation.title}</span>
-                <span className="conversation-meta">
-                  {conversation.status} · {conversation.audience.length} member
-                  {conversation.audience.length === 1 ? "" : "s"}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <ConversationCreateForm
-        token={token}
-        onCreated={(conversation) => void handleCreated(conversation)}
-        onError={(message) => setAnnouncement(message)}
-        onUnauthorized={onUnauthorized}
-        busy={selection.phase === "attaching"}
-      />
-      {selection.phase === "attaching" && (
-        <p className="muted" role="status">
-          Attaching conversation…
-        </p>
-      )}
+      {notice !== null && <p className="route-notice" role="status">{notice}</p>}
+      <p className="muted">Choose a conversation from the sidebar, or begin a new one when you are ready.</p>
     </section>
   );
 }

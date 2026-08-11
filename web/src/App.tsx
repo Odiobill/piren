@@ -16,8 +16,8 @@ import { AppShell } from "./AppShell";
  *
  * Honest auth state: the shell never claims a token is authenticated before
  * a protected request succeeds. It distinguishes a no-token localhost shell
- * ("Gateway reachable"), a token-entered shell ("Token ready"), and a
- * token-accepted shell ("Token accepted", after a verified protected
+ * (ready without a token prompt), a token-entered shell ("Token ready"), and
+ * a token-accepted shell ("Token accepted", after a verified protected
  * request). A 401 on a protected request returns to token entry without
  * persisting anything.
  */

@@ -66,13 +66,33 @@ async function readSourceFiles(): Promise<Map<string, string>> {
 }
 
 describe("app shell source surface (static)", () => {
-  it("the sidebar navigates Conversations, Agents, and About with aria-current", async () => {
+  it("the sidebar owns conversation navigation and creation alongside the other pages", async () => {
     const sources = await readSourceFiles();
-    const sidebar = [...sources.values()].join("\n");
+    const sidebar = sources.get("Sidebar.tsx") ?? "";
     expect(sidebar).toContain("Conversations");
+    expect(sidebar).toContain("+ New conversation");
+    expect(sidebar).toContain("fetchConversations");
+    expect(sidebar).toContain("createConversation");
     expect(sidebar).toContain("Agents");
     expect(sidebar).toContain("About");
     expect(sidebar).toContain("aria-current");
+  });
+
+  it("removes routine gateway-reachability chrome and obsolete work-in-progress copy", async () => {
+    const sources = await readSourceFiles();
+    const shell = sources.get("AppShell.tsx") ?? "";
+    const badge = sources.get("StatusBadge.tsx") ?? "";
+    expect(shell).not.toContain("Gateway reachable");
+    expect(shell).not.toContain("Coming next");
+    expect(badge).not.toContain("Gateway reachable");
+  });
+
+  it("keeps desktop application chrome fixed while the selected conversation scrolls independently", async () => {
+    const styles = await readFile(join(webSrc, "styles.css"), "utf8");
+    expect(styles).toMatch(/\.shell\s*\{[\s\S]*height:\s*100dvh/);
+    expect(styles).toMatch(/\.shell-header\s*\{[\s\S]*flex:\s*none/);
+    expect(styles).toMatch(/\.sidebar-desktop\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(styles).toMatch(/\.shell-main\s*\{[\s\S]*overflow-y:\s*auto/);
   });
 
   it("the mobile drawer is labelled, aria-expanded, and closes on Escape with focus return", async () => {
