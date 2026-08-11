@@ -181,20 +181,22 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
     expect(api).not.toMatch(/\.status\s*=\s*[^=]/);
   });
 
-  it("the navigator shows Archive on open (active or read-only) and Reopen only on archived inspection, with a non-modal confirmation", async () => {
+  it("the details modal shows Archive on open (active or read-only) and Reopen only on archived inspection, with a non-modal confirmation", async () => {
+    // U2 relocated the lifecycle controls INTO the details modal; the routine
+    // conversation flow no longer renders them directly.
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    expect(navigator).toContain("Archive");
-    expect(navigator).toContain("Reopen");
-    expect(navigator).toContain("Confirm archive");
-    expect(navigator).toContain("Cancel");
+    const modal = await readFile(join(webSrc, "ConversationDetailsModal.tsx"), "utf8");
+    expect(modal).toContain("Archive");
+    expect(modal).toContain("Reopen");
+    expect(modal).toContain("Confirm archive");
+    expect(modal).toContain("Cancel");
+    // The navigator renders the controls only inside the modal.
+    expect(navigator).toContain("ConversationDetailsModal");
     // No native/browser modal confirmation anywhere in the surface.
-    expect(navigator).not.toContain("window.confirm");
-    expect(navigator).not.toContain("confirm(");
-    // No list-row or batch lifecycle action: the list section has no Archive/
-    // Reopen button copy.
-    const listSection = navigator.slice(navigator.indexOf("conversation-list"), navigator.indexOf("ConversationCreateForm"));
-    expect(listSection).not.toContain("Archive");
-    expect(listSection).not.toContain("Reopen");
+    for (const content of [navigator, modal]) {
+      expect(content).not.toContain("window.confirm");
+      expect(content).not.toContain("confirm(");
+    }
   });
 
   it("no browser status/membership/event writes or mention derivation in the lifecycle surface", async () => {

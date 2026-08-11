@@ -9,11 +9,12 @@ import {
   fetchConversation,
   fetchRoomAgents,
   LifecycleHttpError,
+  RenameHttpError,
+  renameConversation,
   reopenConversation,
   UnauthorizedError,
 } from "./api";
 import type { ConversationRecord, ConversationEventRecord } from "./conversations";
-import { classifyAudienceMembers, type MemberRunnableStatus } from "./attach";
 import {
   abortAnnouncement,
   approvalCardMessage,
@@ -29,12 +30,13 @@ import {
   type PendingApproval,
 } from "./conversation-controls";
 import {
-  archiveConfirmationCopy,
   type ConversationLifecycleAction,
   type LifecycleActionError,
 } from "./conversation-lifecycle";
 import { formatConversationHash, parseHashRoute, routeToIntent } from "./hash-route";
+import { renameAnnouncement, type RenameError } from "./conversation-details";
 import type { RoomAgentEntry } from "./rooms";
+import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
 
@@ -96,13 +98,13 @@ export function ConversationNavigator({
   token,
   onUnauthorized,
   onValidated,
-  onConversationCreated,
+  onConversationsChanged,
 }: {
   token: string;
   onUnauthorized: () => void;
   onValidated: () => void;
-  /** U1: the main-window draft created a durable conversation (sidebar list refresh). */
-  onConversationCreated: () => void;
+  /** U1/U2: a conversation was created or renamed (sidebar list refresh). */
+  onConversationsChanged: () => void;
 }) {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [selection, setSelection] = useState<SelectionState>({ phase: "none" });
@@ -119,8 +121,13 @@ export function ConversationNavigator({
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   /** L3 announcement intent consumed by the selection effect on re-gate. */
   const lifecycleNoticeRef = useRef<"archive" | "reopen" | "derived" | null>(null);
+  /** U2 announcement intent (the returned authoritative title) consumed on re-gate. */
+  const renameNoticeRef = useRef<string | null>(null);
   const archiveButtonRef = useRef<HTMLButtonElement>(null);
   const confirmArchiveRef = useRef<HTMLButtonElement>(null);
+  /** U2 details modal: open state + the invoking button for focus return. */
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsButtonRef = useRef<HTMLButtonElement>(null);
   /** C3-C3: pending approval cards derived ONLY from scoped live frames. */
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   /** C3-C3: in-flight/errored approval response per request id (manual Retry). */
@@ -140,9 +147,11 @@ export function ConversationNavigator({
   function resetLifecycleControls() {
     setLifecycle({ phase: "idle" });
     setConfirmingArchive(false);
+    setDetailsOpen(false);
     // Clear any unconsumed announcement intent: a failed or superseded
-    // lifecycle action must never mis-announce on a later selection.
+    // lifecycle action or rename must never mis-announce on a later selection.
     lifecycleNoticeRef.current = null;
+    renameNoticeRef.current = null;
   }
 
   /** C3-C3: clear stale approval/abort UI state on re-gate or navigation. */
@@ -193,12 +202,16 @@ export function ConversationNavigator({
   useEffect(() => {
     if (selection.phase === "active" || selection.phase === "read-only") {
       detailHeadingRef.current?.focus();
-      // L3: a lifecycle re-gate (explicit action or live SSE) announces the
-      // lifecycle state via the polite status seam; otherwise the attach-based
-      // presentation announcement is used.
+      // U2: a rename re-gate announces the returned authoritative title;
+      // otherwise the L3 lifecycle notice or the attach-based presentation
+      // announcement is used.
+      const renameNotice = renameNoticeRef.current;
+      renameNoticeRef.current = null;
       const lifecycleNotice = lifecycleNoticeRef.current;
       lifecycleNoticeRef.current = null;
-      if (lifecycleNotice === "archive") {
+      if (renameNotice !== null) {
+        setAnnouncement(renameAnnouncement(renameNotice));
+      } else if (lifecycleNotice === "archive") {
         setAnnouncement("Conversation archived.");
       } else if (lifecycleNotice === "reopen") {
         setAnnouncement("Conversation reopened.");
@@ -238,6 +251,9 @@ export function ConversationNavigator({
       // C3-C3: every fresh attach/lifecycle gate clears stale pending
       // approval/abort UI state; controls never activate or attach anything.
       resetApprovalControls();
+      // U2: a fresh selection never re-opens the details modal from a
+      // previous conversation.
+      setDetailsOpen(false);
       setSelection({ phase: "attaching" });
       setNotice(null);
       try {
@@ -262,6 +278,7 @@ export function ConversationNavigator({
         // The open flow failed: no selection is presented, so no lifecycle
         // announcement intent may survive to a later selection.
         lifecycleNoticeRef.current = null;
+        renameNoticeRef.current = null;
         setSelection({ phase: "none" });
         setNotice(error instanceof Error ? error.message : String(error));
         listHeadingRef.current?.focus();
@@ -469,10 +486,48 @@ export function ConversationNavigator({
    * through the same fresh attach gate as any sidebar selection.
    */
   function handleCreated(conversation: ConversationRecord) {
-    onConversationCreated();
+    onConversationsChanged();
     resetLifecycleControls();
     setAnnouncement(`Conversation created: ${conversation.title}`);
     window.location.hash = formatConversationHash(conversation.id);
+  }
+
+  /**
+   * U2: the details modal invokes this with the normalized title. The raw
+   * title goes to the authenticated rename route only; on success the
+   * sidebar refreshes, the modal closes, and the C4-A fresh re-read/re-gate
+   * presents the authoritative result (announced via renameNoticeRef). A
+   * bounded failure returns a typed error for the modal's visible Retry.
+   */
+  async function handleRenameRequest(title: string): Promise<RenameError | null> {
+    if (selection.phase !== "active" && selection.phase !== "read-only") return null;
+    const conversationId = selection.conversation.id;
+    try {
+      const result = await renameConversation(conversationId, title, token);
+      renameNoticeRef.current = result.conversation.title;
+      onConversationsChanged();
+      setDetailsOpen(false);
+      void openConversationById(conversationId);
+      return null;
+    } catch (cause) {
+      if (cause instanceof UnauthorizedError) {
+        onUnauthorized();
+        return null;
+      }
+      if (cause instanceof RenameHttpError) {
+        return { kind: cause.kind, message: cause.message };
+      }
+      return { kind: "network", message: "The rename request failed. Check the gateway and retry." };
+    }
+  }
+
+  function openDetails() {
+    setDetailsOpen(true);
+  }
+
+  function closeDetails() {
+    setDetailsOpen(false);
+    detailsButtonRef.current?.focus();
   }
 
   if (load.phase === "loading") {
@@ -507,28 +562,6 @@ export function ConversationNavigator({
         <h2 id="conversation-detail-heading" tabIndex={-1} ref={detailHeadingRef}>
           {selection.conversation.title}
         </h2>
-        <p className="muted">
-          <code>{selection.conversation.id}</code> — {selection.conversation.status}
-        </p>
-        <AudienceMembers audience={selection.conversation.audience} agents={load.phase === "ready" ? load.agents : []} />
-        <ConversationLifecycleControls
-          status={selection.conversation.status}
-          phase={lifecycle.phase}
-          error={lifecycle.phase === "error" ? lifecycle.error : null}
-          confirmingArchive={confirmingArchive}
-          archiveButtonRef={archiveButtonRef}
-          confirmArchiveRef={confirmArchiveRef}
-          onArchiveRequest={() => setConfirmingArchive(true)}
-          onCancelArchive={() => {
-            setConfirmingArchive(false);
-            archiveButtonRef.current?.focus();
-          }}
-          onConfirmArchive={() => void handleLifecycleAction("archive")}
-          onReopen={() => void handleLifecycleAction("reopen")}
-          onRetry={() => {
-            if (lifecycle.phase === "error") void handleLifecycleAction(lifecycle.action);
-          }}
-        />
         {active ? (
           <>
             <ConversationApprovalCards
@@ -549,12 +582,16 @@ export function ConversationNavigator({
               onLifecycleTransition={handleLifecycleEvent}
               onApproval={handleApprovalFrame}
             />
-            <ConversationComposer
-              conversationId={selection.conversation.id}
-              token={token}
-              onUnauthorized={onUnauthorized}
-              onAnnounce={setAnnouncement}
-            />
+            {/* U2: the details action sits composer-right on the active surface. */}
+            <div className="composer-action-row">
+              <ConversationComposer
+                conversationId={selection.conversation.id}
+                token={token}
+                onUnauthorized={onUnauthorized}
+                onAnnounce={setAnnouncement}
+              />
+              <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
+            </div>
           </>
         ) : (
           <div className="attach-banner" role="status">
@@ -569,7 +606,37 @@ export function ConversationNavigator({
               live={false}
               onUnauthorized={onUnauthorized}
             />
+            {/* U2: read-only inspection has no composer, so the details action
+                lives in a minimal inspection action row (Archive/Reopen stay
+                reachable inside the modal). */}
+            <div className="inspection-actions">
+              <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
+            </div>
           </div>
+        )}
+        {detailsOpen && (
+          <ConversationDetailsModal
+            key={selection.conversation.id}
+            conversation={selection.conversation}
+            agents={load.phase === "ready" ? load.agents : []}
+            lifecyclePhase={lifecycle.phase}
+            lifecycleError={lifecycle.phase === "error" ? lifecycle.error : null}
+            confirmingArchive={confirmingArchive}
+            archiveButtonRef={archiveButtonRef}
+            confirmArchiveRef={confirmArchiveRef}
+            onArchiveRequest={() => setConfirmingArchive(true)}
+            onCancelArchive={() => {
+              setConfirmingArchive(false);
+              archiveButtonRef.current?.focus();
+            }}
+            onConfirmArchive={() => void handleLifecycleAction("archive")}
+            onReopen={() => void handleLifecycleAction("reopen")}
+            onLifecycleRetry={() => {
+              if (lifecycle.phase === "error") void handleLifecycleAction(lifecycle.action);
+            }}
+            onRename={handleRenameRequest}
+            onClose={closeDetails}
+          />
         )}
       </section>
     );
@@ -597,104 +664,33 @@ export function ConversationNavigator({
 }
 
 /**
- * L3 minimal lifecycle controls: Archive on every selected open Conversation
- * (active or read-only due to a non-runnable audience) behind an explicit
- * non-modal inline confirmation; Reopen only on selected archived read-only
- * inspection. No list-row or batch actions; never a native/browser modal.
+ * U2: the details action — a familiar information icon button with the
+ * accessible name "Conversation details". On the active surface it sits
+ * composer-right; on read-only inspection it lives in the minimal inspection
+ * action row (no composer exists there). The navigator keeps its ref so
+ * dismissing the modal returns focus to the invoking button.
  */
-function ConversationLifecycleControls({
-  status,
-  phase,
-  error,
-  confirmingArchive,
-  archiveButtonRef,
-  confirmArchiveRef,
-  onArchiveRequest,
-  onCancelArchive,
-  onConfirmArchive,
-  onReopen,
-  onRetry,
+function DetailsToggleButton({
+  buttonRef,
+  onClick,
 }: {
-  status: string;
-  phase: "idle" | "busy" | "error";
-  error: LifecycleActionError | null;
-  confirmingArchive: boolean;
-  archiveButtonRef: RefObject<HTMLButtonElement | null>;
-  confirmArchiveRef: RefObject<HTMLButtonElement | null>;
-  onArchiveRequest: () => void;
-  onCancelArchive: () => void;
-  onConfirmArchive: () => void;
-  onReopen: () => void;
-  onRetry: () => void;
+  buttonRef: RefObject<HTMLButtonElement | null>;
+  onClick: () => void;
 }) {
-  const busy = phase === "busy";
-  if (status === "archived") {
-    return (
-      <div className="lifecycle-controls">
-        <button type="button" className="button" onClick={onReopen} disabled={busy}>
-          Reopen
-        </button>
-        {phase === "error" && error !== null && <LifecycleErrorNotice error={error} onRetry={onRetry} />}
-      </div>
-    );
-  }
-  const copy = archiveConfirmationCopy();
   return (
-    <div className="lifecycle-controls">
-      <button type="button" ref={archiveButtonRef} className="button" onClick={onArchiveRequest} disabled={busy}>
-        Archive
-      </button>
-      {confirmingArchive && (
-        <div className="confirmation-card" role="group" aria-label="Confirm archive">
-          <p>{copy.intro}</p>
-          <div className="confirmation-actions">
-            <button type="button" ref={confirmArchiveRef} className="button button-primary" onClick={onConfirmArchive} disabled={busy}>
-              {copy.confirm}
-            </button>
-            <button type="button" className="button" onClick={onCancelArchive} disabled={busy}>
-              {copy.cancel}
-            </button>
-          </div>
-        </div>
-      )}
-      {phase === "error" && error !== null && <LifecycleErrorNotice error={error} onRetry={onRetry} />}
-    </div>
-  );
-}
-
-/** Bounded lifecycle error with an explicit manual Retry (never automatic). */
-function LifecycleErrorNotice({ error, onRetry }: { error: LifecycleActionError; onRetry: () => void }) {
-  return (
-    <div className="lifecycle-error" role="alert">
-      <p className="error-message">{error.message}</p>
-      <button type="button" className="button button-small" onClick={onRetry}>
-        Retry
-      </button>
-    </div>
-  );
-}
-
-function AudienceMembers({ audience, agents }: { audience: string[]; agents: RoomAgentEntry[] }) {
-  const members: MemberRunnableStatus[] = classifyAudienceMembers(audience, agents);
-  if (members.length === 0) {
-    return <p className="muted">No members yet — mention a locally runnable agent to add one.</p>;
-  }
-  return (
-    <div className="audience-members">
-      <h3>Members</h3>
-      <ul className="member-list">
-        {members.map((member) => (
-          <li key={member.name} className={member.runnable ? "member-chip" : "member-chip member-offline"}>
-            <span className="member-name">{member.name}</span>
-            {member.runnable ? (
-              <span className="member-status status-ok">Runnable</span>
-            ) : (
-              <span className="member-status status-muted">Offline</span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <button
+      type="button"
+      ref={buttonRef}
+      className="conversation-details-toggle"
+      aria-label="Conversation details"
+      onClick={onClick}
+    >
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="16" x2="12" y2="12" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
+      </svg>
+    </button>
   );
 }
 

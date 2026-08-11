@@ -31,6 +31,11 @@ import {
   type LifecycleActionResponse,
 } from "./conversation-lifecycle";
 import {
+  parseRenameHttpError,
+  parseRenameResponse,
+  type RenameResponse,
+} from "./conversation-details";
+import {
   buildConversationApproveBody,
   parseConversationAbortOutcome,
   parseConversationControlHttpError,
@@ -301,6 +306,40 @@ export async function archiveConversation(id: string, token: string): Promise<Li
 /** POST /api/conversations/<id>/reopen — L2 lifecycle action (state-only). */
 export async function reopenConversation(id: string, token: string): Promise<LifecycleActionResponse> {
   return postLifecycleAction(id, "reopen", token);
+}
+
+/** Typed bounded error from the U2 rename route (400/404/409/500 / network). */
+export class RenameHttpError extends Error {
+  readonly kind: "invalid-title" | "not-found" | "conflict" | "server" | "network";
+
+  constructor(kind: "invalid-title" | "not-found" | "conflict" | "server" | "network", message: string) {
+    super(message);
+    this.name = "RenameHttpError";
+    this.kind = kind;
+  }
+}
+
+/**
+ * POST /api/conversations/<id>/rename — bounded steward-facing title change.
+ * Sends the raw trimmed title only; the gateway validates and applies it, and
+ * the returned conversation/event are used only as the result of this
+ * authenticated operation (the navigator then re-reads/re-gates).
+ */
+export async function renameConversation(id: string, title: string, token: string): Promise<RenameResponse> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/rename`, token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (res.status === 200) return parseRenameResponse(await res.json());
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    // keep the typed fallback
+  }
+  const parsed = parseRenameHttpError(res.status, json);
+  throw new RenameHttpError(parsed.kind, parsed.message);
 }
 
 /** Typed bounded error from the C3-C2 approve/abort routes. */

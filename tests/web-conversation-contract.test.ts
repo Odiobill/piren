@@ -32,10 +32,12 @@ function conversationModuleFiles(): string[] {
     "ConversationNavigator.tsx",
     "ConversationTimeline.tsx",
     "ConversationComposer.tsx",
+    "ConversationDetailsModal.tsx",
     "conversations.ts",
     "attach.ts",
     "conversation-composer.ts",
     "conversation-timeline.ts",
+    "conversation-details.ts",
     "conversation-lifecycle.ts",
     "hash-route.ts",
   ];
@@ -173,10 +175,14 @@ describe("C1/runnable-roster-gated attach surface (static)", () => {
     expect(timeline).toContain("no live stream");
   });
 
-  it("offline audience members are labelled truthfully in the list", async () => {
+  it("offline audience members are labelled truthfully (U2: in the details modal)", async () => {
+    // U2 moved the audience roster into the details modal; the truthful
+    // runnable/offline labels now live there (the navigator imports it).
+    const modal = await readFile(join(webSrc, "ConversationDetailsModal.tsx"), "utf8");
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    expect(navigator).toContain("classifyAudienceMembers");
-    expect(navigator).toContain("Offline");
+    expect(modal).toContain("classifyAudienceMembers");
+    expect(modal).toContain("Offline");
+    expect(navigator).toContain("ConversationDetailsModal");
   });
 });
 

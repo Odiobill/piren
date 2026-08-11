@@ -289,6 +289,26 @@ export declare class GatewayServer {
      * bodies carry no lifecycle input.
      */
     private handleConversationLifecycle;
+    /**
+     * U2: authenticated POST /api/conversations/<id>/rename — the bounded
+     * steward-facing title change (accepted details/rename contract §Gateway/
+     * API). The route only calls the `renameConversation` core and maps its
+     * typed result to the bounded HTTP vocabulary:
+     *   - 200 {conversation, renamed:true, event} for a completed rename; the
+     *     safe event retains both bounded titles as inspectable evidence;
+     *   - 200 {conversation, renamed:false} for the same normalized title (no
+     *     write, no event);
+     *   - 400 for malformed/missing/invalid titles (non-secret message);
+     *   - 401 unauthenticated (existing Bearer gate);
+     *   - 404 absent/invalid id (existing conversationError mapping);
+     *   - 409 exact busy vocabulary for genuine lock contention;
+     *   - 500 {error:"internal error"} for an event-append residual (the
+     *     renamed manifest is authoritative; no rollback/retry/repair/
+     *     fabricated event, no raw error/path/lock/Pi leakage).
+     * State-only: no dispatch, retry, reroute, abort, attach, SSE, broker/Pi
+     * client/session, audience/membership, lifecycle, or local-config effect.
+     */
+    private handleConversationRename;
     private handleConversationEvents;
     /**
      * C3-C2 bounded error vocabulary for the approval/abort control routes:

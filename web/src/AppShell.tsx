@@ -31,9 +31,9 @@ export function AppShell({
 }) {
   const [nav, setNav] = useState(initialNavState());
   const toggleRef = useRef<HTMLButtonElement>(null);
-  /** U1: bump when the main-window draft creates a conversation so the sidebar refreshes. */
+  /** U1/U2: bump when a conversation is created or renamed so the sidebar refreshes. */
   const [conversationsReloadKey, setConversationsReloadKey] = useState(0);
-  const handleConversationCreated = useCallback(() => setConversationsReloadKey((key) => key + 1), []);
+  const handleConversationsChanged = useCallback(() => setConversationsReloadKey((key) => key + 1), []);
 
   function handleSelect(page: Page) {
     // A selection made from the open mobile drawer closes it and must return
@@ -124,7 +124,7 @@ export function AppShell({
               token={token}
               onValidated={onValidated}
               onUnauthorized={onUnauthorized}
-              onConversationCreated={handleConversationCreated}
+              onConversationsChanged={handleConversationsChanged}
             />
           </div>
           <div className="workspace-panel" hidden={nav.page !== "agents"}>

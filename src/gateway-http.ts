@@ -25,6 +25,7 @@ import {
   listConversations,
   readConversation,
   readConversationEvents,
+  renameConversation,
   transitionConversationLifecycle,
   updateConversationAudience,
   type AppendConversationEventResult,
@@ -32,6 +33,7 @@ import {
   type ConversationLifecycleTransitionKind,
   type ConversationLifecycleTransitionResult,
   type ConversationManifest,
+  type RenameConversationResult,
 } from "./conversations.js";
 import type { VaultDirReader } from "./okf.js";
 import { classifyRunOutcome, isFallbackEligibleOutcome, type RunOutcome } from "./model-fallback-outcome.js";
@@ -1862,6 +1864,8 @@ export class GatewayServer {
       await this.handleConversationAbort(req, res, conversationId);
     } else if ((rest[0] === "archive" || rest[0] === "reopen") && rest.length === 1 && req.method === "POST") {
       await this.handleConversationLifecycle(res, conversationId, rest[0]);
+    } else if (rest[0] === "rename" && rest.length === 1 && req.method === "POST") {
+      await this.handleConversationRename(req, res, conversationId);
     } else {
       this.writeJson(res, 404, { error: "not found" });
     }
@@ -2122,6 +2126,85 @@ export class GatewayServer {
     this.writeJson(res, 200, {
       conversation: this.safeConversation(result.conversation),
       transitioned: false,
+    });
+  }
+
+  /**
+   * U2: authenticated POST /api/conversations/<id>/rename — the bounded
+   * steward-facing title change (accepted details/rename contract §Gateway/
+   * API). The route only calls the `renameConversation` core and maps its
+   * typed result to the bounded HTTP vocabulary:
+   *   - 200 {conversation, renamed:true, event} for a completed rename; the
+   *     safe event retains both bounded titles as inspectable evidence;
+   *   - 200 {conversation, renamed:false} for the same normalized title (no
+   *     write, no event);
+   *   - 400 for malformed/missing/invalid titles (non-secret message);
+   *   - 401 unauthenticated (existing Bearer gate);
+   *   - 404 absent/invalid id (existing conversationError mapping);
+   *   - 409 exact busy vocabulary for genuine lock contention;
+   *   - 500 {error:"internal error"} for an event-append residual (the
+   *     renamed manifest is authoritative; no rollback/retry/repair/
+   *     fabricated event, no raw error/path/lock/Pi leakage).
+   * State-only: no dispatch, retry, reroute, abort, attach, SSE, broker/Pi
+   * client/session, audience/membership, lifecycle, or local-config effect.
+   */
+  private async handleConversationRename(req: IncomingMessage, res: ServerResponse, conversationId: string): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const title = parsed.value.title;
+    if (typeof title !== "string") {
+      this.writeJson(res, 400, { error: "conversation title is required" });
+      return;
+    }
+    let result: RenameConversationResult;
+    try {
+      result = await renameConversation({
+        vaultRoot: this.vaultRoot as string,
+        conversationId,
+        title,
+      });
+    } catch (error) {
+      // Absence/filesystem failures propagate honestly through the existing
+      // conversationError mapping (ENOENT-coded -> 404; anything else -> the
+      // bounded 500). Never relabel absence as contention, never expose raw
+      // errors.
+      this.conversationError(res, error);
+      return;
+    }
+    if (!result.ok) {
+      if (result.kind === "invalid-title") {
+        this.writeJson(res, 400, { error: result.message });
+        return;
+      }
+      if (result.kind === "lock-busy") {
+        this.writeJson(res, 409, {
+          error: `Conversation '${conversationId}' is busy (another update holds the lock); retry after it completes.`,
+        });
+        return;
+      }
+      // event-append-failed: the renamed manifest is authoritative; a bounded
+      // 500 with no raw filesystem/typed-name leakage.
+      this.writeJson(res, 500, { error: "internal error" });
+      return;
+    }
+    if (result.renamed) {
+      this.writeJson(res, 200, {
+        conversation: this.safeConversation(result.conversation),
+        renamed: true,
+        event: {
+          ...this.safeConversationEvent(result.event),
+          previousTitle: result.previousTitle,
+          title: result.title,
+        },
+      });
+      return;
+    }
+    this.writeJson(res, 200, {
+      conversation: this.safeConversation(result.conversation),
+      renamed: false,
     });
   }
 

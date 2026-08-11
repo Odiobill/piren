@@ -20,7 +20,7 @@
 import { type ConversationLifecycleTransition, type ValidatedRecipients } from "./conversation-contract.js";
 export declare const CONVERSATION_STATUSES: readonly ["open", "archived"];
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
-export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition"];
+export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition", "conversation_renamed"];
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 export declare const CONVERSATION_AUTHOR_KINDS: readonly ["steward", "agent", "system"];
 export type ConversationAuthorKind = (typeof CONVERSATION_AUTHOR_KINDS)[number];
@@ -28,12 +28,32 @@ export declare const CONVERSATION_RUN_STATUSES: readonly ["running", "completed"
 export type ConversationRunStatus = (typeof CONVERSATION_RUN_STATUSES)[number];
 export declare const CONVERSATION_RUN_FAILURE_KINDS: readonly ["launch_failure", "ambiguous", "provider_error"];
 export type ConversationRunFailureKind = (typeof CONVERSATION_RUN_FAILURE_KINDS)[number];
+/** U2: bounded rename title length in UTF-16 code units (contract §Rename input). */
+export declare const CONVERSATION_TITLE_MAX = 120;
 /** Deterministic compact-UTC timestamp: `20260805T131530000Z`. */
 export declare function compactConversationTimestamp(date: Date): string;
 /** Deterministic conversation id from the first message (no LLM). */
 export declare function conversationIdFromText(text: string, now: Date): string;
 /** Deterministic display title from the first message (no LLM). */
 export declare function conversationTitleFromText(text: string, now: Date): string;
+/**
+ * U2 — bounded rename title validation and trim normalization (contract
+ * §Rename input, exact): the trim-normalized value must be a single line of
+ * 1–120 Unicode code units. Empty, control/newline-containing (including
+ * Unicode line separators), and overlength values fail with exact reasons.
+ * The value is stored exactly after trim; it is never LLM-derived, slugged,
+ * used to derive the id, or parsed for `@` mentions.
+ */
+export type ConversationTitleValidation = {
+    ok: true;
+    title: string;
+} | {
+    ok: false;
+    reason: "empty" | "control-or-newline" | "too-long";
+};
+export declare function normalizeConversationTitle(raw: string): ConversationTitleValidation;
+/** Non-secret deterministic message for a rejected rename title (gateway 400). */
+export declare function conversationTitleErrorMessage(reason: "empty" | "control-or-newline" | "too-long"): string;
 /** Injected final-target seam (mirrors the room write seam; never imports room types). */
 export interface ConversationWriteIo {
     /** Hard-link temp to target; MUST reject when the target already exists. */
@@ -179,6 +199,75 @@ export type ConversationLifecycleTransitionResult = {
     conversation: ConversationManifest;
 };
 export declare function transitionConversationLifecycle(options: TransitionConversationLifecycleOptions): Promise<ConversationLifecycleTransitionResult>;
+/**
+ * U2 — durable Conversation rename (accepted details/rename contract
+ * §Rename input and durable core).
+ *
+ * A bounded steward-facing title change: the trim-normalized single-line
+ * title (1–120 Unicode code units) replaces ONLY `title` and `updated` in the
+ * manifest, atomically, under the same per-conversation transition lock as
+ * audience updates and archive/reopen; `id`, `audience`, `status`,
+ * `created_by`, and `created` are preserved byte-for-byte. Every actual
+ * rename appends exactly one immutable `conversation_renamed` event (author
+ * steward) carrying both bounded titles (`previousTitle`, `title`); the
+ * manifest remains authoritative — the event is evidence, not authority.
+ *
+ * A request whose normalized title equals the durable title is an idempotent
+ * `renamed:false` result: no manifest rewrite, timestamp change, or event.
+ * An archived Conversation remains renameable (title presentation is
+ * independent of attach state).
+ *
+ * Failure boundaries (typed, no hidden state): invalid titles return
+ * `invalid-title` with a non-secret message before any lock/write; a held
+ * lock fails closed as `lock-busy` before any manifest write or event; an
+ * event-append failure leaves the renamed manifest authoritative (never
+ * rolled back, auto-repaired, or retried) and returns
+ * `event-append-failed` with the renamed manifest. The helper never creates
+ * a broker/Pi client/session, dispatches, retries, reroutes, aborts,
+ * attaches, streams, or changes membership.
+ */
+export interface RenameConversationOptions {
+    vaultRoot: string;
+    conversationId: string;
+    /** Raw request title; validated and trim-normalized here. */
+    title: string;
+    now?: () => Date;
+    nonce?: () => string;
+    io?: ConversationWriteIo | undefined;
+    /** Deterministic test seam for the lock token. */
+    lockToken?: () => string;
+    /** Deterministic test seam: a barrier awaited while holding the lock. */
+    holdBarrier?: Promise<void> | undefined;
+}
+export type RenameConversationResult = {
+    ok: true;
+    renamed: true;
+    conversation: ConversationManifest;
+    event: AppendConversationEventResult;
+    /** Bounded prior title evidence echoed to the client. */
+    previousTitle: string;
+    /** Bounded new title evidence echoed to the client. */
+    title: string;
+} | {
+    ok: true;
+    renamed: false;
+    conversation: ConversationManifest;
+} | {
+    ok: false;
+    kind: "invalid-title";
+    conversationId: string;
+    message: string;
+} | {
+    ok: false;
+    kind: "lock-busy";
+    conversationId: string;
+} | {
+    ok: false;
+    kind: "event-append-failed";
+    conversationId: string;
+    conversation: ConversationManifest;
+};
+export declare function renameConversation(options: RenameConversationOptions): Promise<RenameConversationResult>;
 export interface AppendConversationEventOptions {
     vaultRoot: string;
     conversationId: string;
@@ -196,6 +285,10 @@ export interface AppendConversationEventOptions {
     contextMetadata?: ConversationContextMetadata | undefined;
     /** L1 lifecycle-transition target state metadata (additive, optional). */
     lifecycleState?: ConversationStatus | undefined;
+    /** U2 conversation_renamed evidence: the bounded prior title (optional, additive). */
+    previousTitle?: string | undefined;
+    /** U2 conversation_renamed evidence: the bounded new title (optional, additive). */
+    title?: string | undefined;
     now?: () => Date;
     nonce?: () => string;
     io?: ConversationWriteIo | undefined;
@@ -257,6 +350,10 @@ export interface ConversationEventRecord {
     contextMetadata?: ConversationContextMetadata | undefined;
     /** L1 lifecycle-transition target state metadata (additive, optional). */
     lifecycleState?: ConversationStatus | undefined;
+    /** U2 conversation_renamed evidence: the bounded prior title (additive, optional). */
+    previousTitle?: string | undefined;
+    /** U2 conversation_renamed evidence: the bounded new title (additive, optional). */
+    title?: string | undefined;
     body: string;
     path: string;
 }

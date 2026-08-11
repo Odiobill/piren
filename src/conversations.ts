@@ -38,6 +38,11 @@ export const CONVERSATION_EVENT_KINDS = [
   // strict parser recognizes it only on servers that ship it, and the web
   // timeline renders it via its default branch.
   "lifecycle_transition",
+  // U2: additive steward-facing rename kind (accepted details/rename
+  // contract §Rename input): one immutable event per actual rename carrying
+  // previous/new bounded titles. Additive and backwards-compatible like the
+  // lifecycle kind.
+  "conversation_renamed",
 ] as const;
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 
@@ -54,6 +59,8 @@ const CONVERSATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/i;
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 const CONVERSATION_TITLE_PREFIX_MAX = 48;
 const CONVERSATION_SLUG_MAX = 48;
+/** U2: bounded rename title length in UTF-16 code units (contract §Rename input). */
+export const CONVERSATION_TITLE_MAX = 120;
 
 /** Deterministic compact-UTC timestamp: `20260805T131530000Z`. */
 export function compactConversationTimestamp(date: Date): string {
@@ -87,6 +94,38 @@ export function conversationTitleFromText(text: string, now: Date): string {
   ).padStart(2, "0")} ${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}`;
   const prefix = plainPrefix(text);
   return prefix === "" ? `Conversation ${stamp}` : `Conversation ${stamp} - ${prefix}`;
+}
+
+/**
+ * U2 — bounded rename title validation and trim normalization (contract
+ * §Rename input, exact): the trim-normalized value must be a single line of
+ * 1–120 Unicode code units. Empty, control/newline-containing (including
+ * Unicode line separators), and overlength values fail with exact reasons.
+ * The value is stored exactly after trim; it is never LLM-derived, slugged,
+ * used to derive the id, or parsed for `@` mentions.
+ */
+export type ConversationTitleValidation =
+  | { ok: true; title: string }
+  | { ok: false; reason: "empty" | "control-or-newline" | "too-long" };
+
+export function normalizeConversationTitle(raw: string): ConversationTitleValidation {
+  const title = raw.trim();
+  if (title === "") return { ok: false, reason: "empty" };
+  for (let index = 0; index < title.length; index += 1) {
+    const code = title.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f || code === 0x2028 || code === 0x2029) {
+      return { ok: false, reason: "control-or-newline" };
+    }
+  }
+  if (title.length > CONVERSATION_TITLE_MAX) return { ok: false, reason: "too-long" };
+  return { ok: true, title };
+}
+
+/** Non-secret deterministic message for a rejected rename title (gateway 400). */
+export function conversationTitleErrorMessage(reason: "empty" | "control-or-newline" | "too-long"): string {
+  if (reason === "empty") return "conversation title is required";
+  if (reason === "control-or-newline") return "conversation title must be a single line without control characters";
+  return "conversation title must be at most 120 characters";
 }
 
 function assertValidConversationId(conversationId: string): void {
@@ -196,11 +235,14 @@ function renderConversationManifest(options: {
     options.audience.length === 0
       ? "audience: []"
       : ["audience:", ...options.audience.map((name) => `  - ${name}`)].join("\n");
+  // JSON.stringify produces a valid YAML double-quoted scalar and is
+  // byte-identical to the historic `title: "..."` rendering for ordinary
+  // titles; it keeps quote/backslash titles round-trippable (U2 rename).
   return [
     "---",
     "type: Conversation Manifest",
     `id: ${options.id}`,
-    `title: "${options.title}"`,
+    `title: ${JSON.stringify(options.title)}`,
     audienceYaml,
     `status: ${options.status}`,
     "created_by: steward",
@@ -656,6 +698,170 @@ export async function transitionConversationLifecycle(
   }
 }
 
+/**
+ * U2 — durable Conversation rename (accepted details/rename contract
+ * §Rename input and durable core).
+ *
+ * A bounded steward-facing title change: the trim-normalized single-line
+ * title (1–120 Unicode code units) replaces ONLY `title` and `updated` in the
+ * manifest, atomically, under the same per-conversation transition lock as
+ * audience updates and archive/reopen; `id`, `audience`, `status`,
+ * `created_by`, and `created` are preserved byte-for-byte. Every actual
+ * rename appends exactly one immutable `conversation_renamed` event (author
+ * steward) carrying both bounded titles (`previousTitle`, `title`); the
+ * manifest remains authoritative — the event is evidence, not authority.
+ *
+ * A request whose normalized title equals the durable title is an idempotent
+ * `renamed:false` result: no manifest rewrite, timestamp change, or event.
+ * An archived Conversation remains renameable (title presentation is
+ * independent of attach state).
+ *
+ * Failure boundaries (typed, no hidden state): invalid titles return
+ * `invalid-title` with a non-secret message before any lock/write; a held
+ * lock fails closed as `lock-busy` before any manifest write or event; an
+ * event-append failure leaves the renamed manifest authoritative (never
+ * rolled back, auto-repaired, or retried) and returns
+ * `event-append-failed` with the renamed manifest. The helper never creates
+ * a broker/Pi client/session, dispatches, retries, reroutes, aborts,
+ * attaches, streams, or changes membership.
+ */
+export interface RenameConversationOptions {
+  vaultRoot: string;
+  conversationId: string;
+  /** Raw request title; validated and trim-normalized here. */
+  title: string;
+  now?: () => Date;
+  nonce?: () => string;
+  io?: ConversationWriteIo | undefined;
+  /** Deterministic test seam for the lock token. */
+  lockToken?: () => string;
+  /** Deterministic test seam: a barrier awaited while holding the lock. */
+  holdBarrier?: Promise<void> | undefined;
+}
+
+export type RenameConversationResult =
+  | {
+      ok: true;
+      renamed: true;
+      conversation: ConversationManifest;
+      event: AppendConversationEventResult;
+      /** Bounded prior title evidence echoed to the client. */
+      previousTitle: string;
+      /** Bounded new title evidence echoed to the client. */
+      title: string;
+    }
+  | { ok: true; renamed: false; conversation: ConversationManifest }
+  | { ok: false; kind: "invalid-title"; conversationId: string; message: string }
+  | { ok: false; kind: "lock-busy"; conversationId: string }
+  | { ok: false; kind: "event-append-failed"; conversationId: string; conversation: ConversationManifest };
+
+export async function renameConversation(options: RenameConversationOptions): Promise<RenameConversationResult> {
+  assertValidConversationId(options.conversationId);
+  const validation = normalizeConversationTitle(options.title);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      kind: "invalid-title",
+      conversationId: options.conversationId,
+      message: conversationTitleErrorMessage(validation.reason),
+    };
+  }
+  const normalizedTitle = validation.title;
+  const root = resolve(options.vaultRoot);
+  const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
+  const absolutePath = join(conversationDir, "index.md");
+  assertInside(root, conversationDir);
+
+  // Same per-conversation no-clobber transition lock as audience updates and
+  // lifecycle transitions: every manifest mutation serializes on it. A held
+  // lock fails closed as lock-busy before ANY manifest write or event.
+  const lockOptions: { vaultRoot: string; conversationId: string; now?: () => Date; token?: () => string } = {
+    vaultRoot: root,
+    conversationId: options.conversationId,
+  };
+  if (options.now !== undefined) lockOptions.now = options.now;
+  if (options.lockToken !== undefined) lockOptions.token = options.lockToken;
+  let lock;
+  try {
+    lock = await acquireAudienceLock(lockOptions);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("audience update is busy")) {
+      return { ok: false, kind: "lock-busy", conversationId: options.conversationId };
+    }
+    throw error;
+  }
+  try {
+    if (options.holdBarrier !== undefined) {
+      await options.holdBarrier;
+    }
+    const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
+
+    // Idempotent no-op: same normalized title -> no write, no timestamp
+    // change, no event (a duplicate Save is truthful, never manufactured
+    // history).
+    if (current.title === normalizedTitle) {
+      return { ok: true, renamed: false, conversation: current };
+    }
+
+    // Manifest-first: the authoritative title (and updated timestamp) is
+    // written before the rename evidence event; every other manifest field
+    // is preserved byte-for-byte.
+    const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
+    const content = renderConversationManifest({
+      id: current.id,
+      title: normalizedTitle,
+      audience: current.audience,
+      status: current.status,
+      timestamp: updatedStamp,
+      created: current.created,
+    });
+    await atomicReplaceManifest(conversationDir, absolutePath, content);
+    const renamedManifest: ConversationManifest = {
+      id: current.id,
+      title: normalizedTitle,
+      audience: current.audience,
+      status: current.status,
+      createdBy: current.createdBy,
+      created: current.created,
+      updated: updatedStamp,
+      path: current.path,
+      absolutePath: current.absolutePath,
+    };
+
+    // Exactly one immutable rename event per actual rename. A failure here
+    // NEVER rolls back or auto-repairs the authoritative manifest; it is
+    // surfaced as the typed event-append-failed result with the renamed
+    // manifest (contract §Rename input 6).
+    try {
+      const event = await appendConversationEvent({
+        vaultRoot: root,
+        conversationId: options.conversationId,
+        kind: "conversation_renamed",
+        authorKind: "steward",
+        author: "steward",
+        body: `Renamed to: ${normalizedTitle}`,
+        previousTitle: current.title,
+        title: normalizedTitle,
+        ...(options.now !== undefined ? { now: options.now } : {}),
+        ...(options.nonce !== undefined ? { nonce: options.nonce } : {}),
+        ...(options.io !== undefined ? { io: options.io } : {}),
+      });
+      return {
+        ok: true,
+        renamed: true,
+        conversation: renamedManifest,
+        event,
+        previousTitle: current.title,
+        title: normalizedTitle,
+      };
+    } catch {
+      return { ok: false, kind: "event-append-failed", conversationId: options.conversationId, conversation: renamedManifest };
+    }
+  } finally {
+    await lock.release();
+  }
+}
+
 export interface AppendConversationEventOptions {
   vaultRoot: string;
   conversationId: string;
@@ -673,6 +879,10 @@ export interface AppendConversationEventOptions {
   contextMetadata?: ConversationContextMetadata | undefined;
   /** L1 lifecycle-transition target state metadata (additive, optional). */
   lifecycleState?: ConversationStatus | undefined;
+  /** U2 conversation_renamed evidence: the bounded prior title (optional, additive). */
+  previousTitle?: string | undefined;
+  /** U2 conversation_renamed evidence: the bounded new title (optional, additive). */
+  title?: string | undefined;
   now?: () => Date;
   nonce?: () => string;
   io?: ConversationWriteIo | undefined;
@@ -719,6 +929,8 @@ function renderConversationEvent(options: {
   failureKind?: ConversationRunFailureKind | undefined;
   contextMetadata?: ConversationContextMetadata | undefined;
   lifecycleState?: ConversationStatus | undefined;
+  previousTitle?: string | undefined;
+  title?: string | undefined;
   body: string;
 }): string {
   const fields: string[] = [
@@ -742,6 +954,10 @@ function renderConversationEvent(options: {
   if (options.failureKind !== undefined) fields.push(`failureKind: ${options.failureKind}`);
   if (options.contextMetadata !== undefined) fields.push(`contextMetadata: '${JSON.stringify(options.contextMetadata)}'`);
   if (options.lifecycleState !== undefined) fields.push(`lifecycleState: ${options.lifecycleState}`);
+  // U2 rename evidence: both bounded titles render as YAML-safe quoted
+  // scalars so quotes/backslashes in titles round-trip exactly.
+  if (options.previousTitle !== undefined) fields.push(`previousTitle: ${JSON.stringify(options.previousTitle)}`);
+  if (options.title !== undefined) fields.push(`title: ${JSON.stringify(options.title)}`);
   fields.push("---", "", options.body, "");
   return fields.join("\n");
 }
@@ -749,6 +965,16 @@ function renderConversationEvent(options: {
 function assertValidLifecycleMetadata(lifecycleState: ConversationStatus | undefined): void {
   if (lifecycleState !== undefined && lifecycleState !== "open" && lifecycleState !== "archived") {
     throw new Error(`Invalid conversation lifecycleState: '${String(lifecycleState)}'.`);
+  }
+}
+
+/** U2: rename evidence metadata must be bounded non-empty strings when present. */
+function assertValidRenameMetadata(previousTitle: string | undefined, title: string | undefined): void {
+  if (previousTitle !== undefined && previousTitle.trim() === "") {
+    throw new Error("Invalid conversation rename previousTitle: must be a non-empty string.");
+  }
+  if (title !== undefined && title.trim() === "") {
+    throw new Error("Invalid conversation rename title: must be a non-empty string.");
   }
 }
 
@@ -826,6 +1052,7 @@ export async function appendConversationEvent(
   }
   assertValidRunOutcome(options.kind, options.runStatus, options.failureKind);
   assertValidLifecycleMetadata(options.lifecycleState);
+  assertValidRenameMetadata(options.previousTitle, options.title);
 
   const root = resolve(options.vaultRoot);
   const created = (options.now ?? (() => new Date()))().toISOString();
@@ -864,6 +1091,8 @@ export async function appendConversationEvent(
       ...(options.failureKind !== undefined ? { failureKind: options.failureKind } : {}),
       ...(options.contextMetadata !== undefined ? { contextMetadata: options.contextMetadata } : {}),
       ...(options.lifecycleState !== undefined ? { lifecycleState: options.lifecycleState } : {}),
+      ...(options.previousTitle !== undefined ? { previousTitle: options.previousTitle } : {}),
+      ...(options.title !== undefined ? { title: options.title } : {}),
       body: options.body,
     });
     try {
@@ -970,6 +1199,10 @@ export interface ConversationEventRecord {
   contextMetadata?: ConversationContextMetadata | undefined;
   /** L1 lifecycle-transition target state metadata (additive, optional). */
   lifecycleState?: ConversationStatus | undefined;
+  /** U2 conversation_renamed evidence: the bounded prior title (additive, optional). */
+  previousTitle?: string | undefined;
+  /** U2 conversation_renamed evidence: the bounded new title (additive, optional). */
+  title?: string | undefined;
   body: string;
   path: string;
 }
@@ -1100,6 +1333,27 @@ function parseConversationEvent(content: string, path: string, expectedConversat
     record.lifecycleState = lifecycleState as ConversationStatus;
   } else if (lifecycleState !== undefined) {
     throw new Error(`Invalid conversation event at ${path}: lifecycleState must be open or archived`);
+  }
+  // U2 rename evidence: both bounded titles are optional on the record but
+  // fail closed when present-but-invalid (non-string/empty); absent stays
+  // absent so every existing event keeps parsing.
+  const previousTitle = fields.previousTitle;
+  if (typeof previousTitle === "string") {
+    if (previousTitle.trim() === "") {
+      throw new Error(`Invalid conversation event at ${path}: previousTitle must be a non-empty string`);
+    }
+    record.previousTitle = previousTitle;
+  } else if (previousTitle !== undefined) {
+    throw new Error(`Invalid conversation event at ${path}: previousTitle must be a string`);
+  }
+  const eventTitle = fields.title;
+  if (typeof eventTitle === "string") {
+    if (eventTitle.trim() === "") {
+      throw new Error(`Invalid conversation event at ${path}: title must be a non-empty string`);
+    }
+    record.title = eventTitle;
+  } else if (eventTitle !== undefined) {
+    throw new Error(`Invalid conversation event at ${path}: title must be a string`);
   }
   return record;
 }

@@ -55,6 +55,10 @@ export function conversationEventLabel(event: ConversationEventRecord): string {
       return "model fallback";
     case "lifecycle_transition":
       return lifecycleTransitionLabel(event.lifecycleState);
+    case "conversation_renamed":
+      // U2: neutral evidence label — never manufactures or echoes a title the
+      // browser did not verify (the manifest re-read carries authority).
+      return "Conversation renamed";
     default:
       return event.kind;
   }
