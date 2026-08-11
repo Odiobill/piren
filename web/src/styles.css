@@ -1314,3 +1314,42 @@ code {
   margin: 0;
   word-break: break-word;
 }
+
+/* U4 — transient broker-authoritative activity surface */
+.conversation-activity {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-run {
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-left-width: 3px;
+  border-left-color: var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.activity-status {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.activity-partial {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.9rem;
+}
+
+.activity-truncated {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.activity-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}

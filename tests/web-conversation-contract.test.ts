@@ -37,6 +37,7 @@ function conversationModuleFiles(): string[] {
     "attach.ts",
     "conversation-composer.ts",
     "conversation-autocomplete.ts",
+    "conversation-activity.ts",
     "conversation-timeline.ts",
     "conversation-details.ts",
     "conversation-lifecycle.ts",
@@ -300,5 +301,40 @@ describe("U3 Discord-like composer surface (static)", () => {
     // U2's composer-right details placement is preserved on the active surface.
     expect(navigator).toContain("composer-action-row");
     expect(navigator).toContain("DetailsToggleButton");
+  });
+});
+
+describe("U4 transient live activity surface (static)", () => {
+  it("the timeline shows truthful working/typing language and marks partial replies as transient", async () => {
+    const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
+    const activity = await readFile(join(webSrc, "conversation-activity.ts"), "utf8");
+    expect(timeline).toContain("is working");
+    expect(timeline).toContain("is typing");
+    expect(timeline).toContain("transient");
+    // Never a read/seen/delivery-to-model claim and never a durable event
+    // per token or activity replay from history.
+    expect(timeline).not.toMatch(/has read|read receipt|seen by|delivered to model/i);
+    expect(activity).not.toMatch(/localStorage|sessionStorage|new EventSource|fetch\(/);
+  });
+
+  it("activity is parsed strictly and never promoted to a durable timeline record", async () => {
+    const activity = await readFile(join(webSrc, "conversation-activity.ts"), "utf8");
+    const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
+    // The pure core is fail-closed and bounded.
+    expect(activity).toContain("parseConversationActivityFrame");
+    expect(activity).toContain("4096");
+    expect(activity).toContain("16384");
+    // The timeline reconciles transient state with durable evidence (it never
+    // reconstructs activity from history).
+    expect(timeline).toContain("reconcileConversationActivity");
+    expect(timeline).toContain("conversation_activity");
+  });
+
+  it("read-only inspection never opens the live stream, so it can never show activity", async () => {
+    const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
+    // The live subscription is gated by the `live` prop; the inspection phase
+    // renders history only with an explicit no-live-stream notice.
+    expect(timeline).toContain("!live");
+    expect(timeline).toContain("no live stream");
   });
 });

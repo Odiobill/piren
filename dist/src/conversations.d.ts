@@ -289,6 +289,8 @@ export interface AppendConversationEventOptions {
     previousTitle?: string | undefined;
     /** U2 conversation_renamed evidence: the bounded new title (optional, additive). */
     title?: string | undefined;
+    /** U4 durable run-agent attribution for run events (optional, additive; U5 consumes it). */
+    runAgent?: string | undefined;
     now?: () => Date;
     nonce?: () => string;
     io?: ConversationWriteIo | undefined;
@@ -354,6 +356,8 @@ export interface ConversationEventRecord {
     previousTitle?: string | undefined;
     /** U2 conversation_renamed evidence: the bounded new title (additive, optional). */
     title?: string | undefined;
+    /** U4 durable run-agent attribution for run events (additive, optional). */
+    runAgent?: string | undefined;
     body: string;
     path: string;
 }

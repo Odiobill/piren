@@ -40,6 +40,8 @@ export interface ConversationEventRecord {
   failureKind?: string;
   /** L2 lifecycle-transition target state (additive, optional; fail-closed). */
   lifecycleState?: "open" | "archived";
+  /** U4 durable run-agent attribution for run events (additive, optional). */
+  runAgent?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -97,7 +99,7 @@ export function parseConversationEvents(json: unknown): ConversationEventRecord[
   return json.events.map((entry) => parseConversationEventRecord(entry));
 }
 
-function parseConversationEventRecord(entry: unknown): ConversationEventRecord {
+export function parseConversationEventRecord(entry: unknown): ConversationEventRecord {
   if (!isRecord(entry)) throw new Error("unexpected conversation event record");
   for (const field of ["id", "conversationId", "kind", "authorKind", "author", "created", "body", "path"] as const) {
     if (!isNonEmptyString(entry[field])) {
@@ -135,6 +137,13 @@ function parseConversationEventRecord(entry: unknown): ConversationEventRecord {
     parsed.lifecycleState = entry.lifecycleState;
   } else if (entry.lifecycleState !== undefined) {
     throw new Error("unexpected conversation event record (lifecycleState)");
+  }
+  // U4 run-agent attribution: present-but-invalid fails closed; absent stays
+  // absent so every existing event keeps parsing.
+  if (typeof entry.runAgent === "string" && entry.runAgent !== "") {
+    parsed.runAgent = entry.runAgent;
+  } else if (entry.runAgent !== undefined) {
+    throw new Error("unexpected conversation event record (runAgent)");
   }
   return parsed;
 }

@@ -155,6 +155,26 @@ export interface ConversationApprovalNotification {
   payload: Record<string, unknown>;
 }
 
+/** U4: broker-authoritative transient live activity for one active run. */
+export type ConversationActivityKind = "working" | "text_delta" | "settled";
+export type ConversationActivityOutcome = "completed" | "failed" | "timed_out" | "cancelled";
+
+export interface ConversationActivityNotification {
+  conversationId: string;
+  /** Opaque broker-generated per-active-run key (unique while the broker is alive). */
+  runId: string;
+  /** The broker-selected exact run agent (never browser text or roster inference). */
+  agent: string;
+  kind: ConversationActivityKind;
+  /** text_delta only: the exact non-empty Pi assistant delta, bounded. */
+  delta?: string;
+  /** settled only: the terminal outcome after the durable terminal append. */
+  outcome?: ConversationActivityOutcome;
+}
+
+/** U4: the bounded per-frame assistant delta (larger deltas emit no frame). */
+export const CONVERSATION_ACTIVITY_DELTA_MAX = 4096;
+
 /** C3-C1: response input for one pending conversation approval. */
 export interface ConversationApprovalInput {
   conversationId: string;
@@ -196,6 +216,8 @@ interface ActiveRun {
   key: string;
   conversationId: string;
   agent: string;
+  /** U4: opaque per-active-run correlation key generated at reservation. */
+  runId: string;
   client: ConversationRpcClient | undefined;
   stewardEventId: string;
   settled: boolean;
@@ -382,6 +404,10 @@ export class ConversationBroker {
   private readonly fallbackPolicyLoader: ConversationBrokerFallbackPolicyLoader;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly eventListeners = new Map<string, Set<(event: ConversationEventNotification) => void>>();
+  /** U4: scoped transient-activity listeners (never durable, never replayed). */
+  private readonly activityListeners = new Map<string, Set<(activity: ConversationActivityNotification) => void>>();
+  /** U4: opaque per-run id sequence (unique while this broker is alive). */
+  private runIdSeq = 0;
   /** C3-C1: in-memory pending approvals keyed exactly conversationId:agent:requestId. */
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly approvalListeners = new Map<string, Set<(approval: ConversationApprovalNotification) => void>>();
@@ -457,6 +483,56 @@ export class ConversationBroker {
     };
   }
 
+  /** U4: subscribe to broker-authoritative transient activity for one conversation. */
+  onConversationActivity(conversationId: string, listener: (activity: ConversationActivityNotification) => void): () => void {
+    let listeners = this.activityListeners.get(conversationId);
+    if (!listeners) {
+      listeners = new Set();
+      this.activityListeners.set(conversationId, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) {
+        this.activityListeners.delete(conversationId);
+      }
+    };
+  }
+
+  /**
+   * U4: publish one transient activity frame. Observer failures are contained
+   * observability issues: they can never affect Pi, durable evidence,
+   * settlement, locks, or subsequent dispatch.
+   */
+  private publishActivity(notification: ConversationActivityNotification): void {
+    const listeners = this.activityListeners.get(notification.conversationId);
+    if (!listeners) return;
+    for (const listener of [...listeners]) {
+      try {
+        listener(notification);
+      } catch {
+        // contained
+      }
+    }
+  }
+
+  /**
+   * U4: the exact bounded assistant delta of a genuine nested Pi
+   * `message_update.assistantMessageEvent` text_delta — or null when the
+   * event is not a real text delta (empty/non-string/oversized/non-text
+   * events emit no frame and never imply typing).
+   */
+  private conversationTextDelta(event: RpcEvent): string | null {
+    if (event.type !== "message_update") return null;
+    const inner = event.assistantMessageEvent;
+    if (typeof inner !== "object" || inner === null) return null;
+    const record = inner as Record<string, unknown>;
+    if (record.type !== "text_delta" || typeof record.delta !== "string") return null;
+    const delta = record.delta;
+    if (delta === "" || delta.length > CONVERSATION_ACTIVITY_DELTA_MAX) return null;
+    return delta;
+  }
+
   private async appendAndPublish(
     conversationId: string,
     options: Omit<
@@ -490,6 +566,7 @@ export class ConversationBroker {
     if (options.failureKind !== undefined) notification.failureKind = options.failureKind;
     if (options.contextMetadata !== undefined) notification.contextMetadata = options.contextMetadata;
     if (options.lifecycleState !== undefined) notification.lifecycleState = options.lifecycleState;
+    if (options.runAgent !== undefined) notification.runAgent = options.runAgent;
     const listeners = this.eventListeners.get(conversationId);
     if (listeners) {
       for (const listener of [...listeners]) {
@@ -603,6 +680,7 @@ export class ConversationBroker {
       key,
       conversationId,
       agent,
+      runId: `run-${String(++this.runIdSeq).padStart(4, "0")}`,
       client: undefined,
       stewardEventId: "",
       settled: false,
@@ -672,6 +750,17 @@ export class ConversationBroker {
         runStatus: "failed",
         failureKind: "launch_failure",
         correlationId: run.stewardEventId,
+        runAgent: run.agent,
+      });
+      // U4: startup failed before any run_started, so neither working nor
+      // typing was emitted; the settled cleanup follows the durable
+      // launch-failure terminal.
+      this.publishActivity({
+        conversationId: run.conversationId,
+        runId: run.runId,
+        agent: run.agent,
+        kind: "settled",
+        outcome: "failed",
       });
       return {
         status: "failed",
@@ -695,7 +784,14 @@ export class ConversationBroker {
       runStatus: "running",
       correlationId: run.stewardEventId,
       contextMetadata,
+      runAgent: run.agent,
     });
+
+    // U4: working is emitted only AFTER the durable run_started append
+    // succeeded. If the run is settled by cancellation between the append
+    // and this point, still emit working (the run_started is durable); the
+    // subsequent settled cleanup clears it.
+    this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "working" });
 
     if (!run.settled) {
       run.unsubscribeEvents = run.client.onEvent((event) => this.handleClientEvent(run, event));
@@ -721,6 +817,13 @@ export class ConversationBroker {
     if (run.settled) return;
     run.events.push(event);
     run.attemptEvents.push(event);
+    // U4: a genuine bounded text delta while the run is active emits one
+    // transient text_delta frame (never synthesized from agent_end, errors,
+    // approvals, fallback notices, or the final durable body).
+    const delta = this.conversationTextDelta(event);
+    if (delta !== null) {
+      this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "text_delta", delta });
+    }
     if (event.type === "extension_ui_request" && typeof event.id === "string") {
       // C5-3: a reserved conversation-handoff control request is consumed only
       // from this exact active run, BEFORE generic input approval forwarding.
@@ -1019,8 +1122,10 @@ export class ConversationBroker {
         body: `Run completed for agent '${run.agent}'.`,
         runStatus: "completed",
         correlationId: run.stewardEventId,
+        runAgent: run.agent,
       });
       run.terminalEventId = terminal.id;
+      this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "settled", outcome: "completed" });
       return { status: "completed", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id };
     }
     if (kind === "timeout") {
@@ -1031,8 +1136,10 @@ export class ConversationBroker {
         body: `Run timed out for agent '${run.agent}'.`,
         runStatus: "timed_out",
         correlationId: run.stewardEventId,
+        runAgent: run.agent,
       });
       run.terminalEventId = terminal.id;
+      this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "settled", outcome: "timed_out" });
       return { status: "timed_out", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id };
     }
     if (kind === "ambiguous") {
@@ -1044,8 +1151,10 @@ export class ConversationBroker {
         runStatus: "failed",
         failureKind: "ambiguous",
         correlationId: run.stewardEventId,
+        runAgent: run.agent,
       });
       run.terminalEventId = terminal.id;
+      this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "settled", outcome: "failed" });
       return { status: "failed", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id, failureKind: "ambiguous" };
     }
     if (kind === "provider_error") {
@@ -1066,8 +1175,10 @@ export class ConversationBroker {
         runStatus: "failed",
         failureKind: "provider_error",
         correlationId: run.stewardEventId,
+        runAgent: run.agent,
       });
       run.terminalEventId = terminal.id;
+      this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "settled", outcome: "failed" });
       return { status: "failed", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id, failureKind: "provider_error" };
     }
     // cancel
@@ -1078,8 +1189,10 @@ export class ConversationBroker {
       body: `Run cancelled for agent '${run.agent}'.`,
       runStatus: "cancelled",
       correlationId: run.stewardEventId,
+      runAgent: run.agent,
     });
     run.terminalEventId = terminal.id;
+    this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "settled", outcome: "cancelled" });
     return { status: "cancelled", conversationId: run.conversationId, agent: run.agent, stewardEventId: run.stewardEventId, terminalEventId: terminal.id };
   }
 
@@ -1203,8 +1316,10 @@ export class ConversationBroker {
       body: "Run cancelled by the steward.",
       runStatus: "cancelled",
       correlationId: run.stewardEventId,
+      runAgent: run.agent,
     });
     run.terminalEventId = terminal.id;
+    this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "settled", outcome: "cancelled" });
     return {
       status: "cancelled",
       conversationId: run.conversationId,

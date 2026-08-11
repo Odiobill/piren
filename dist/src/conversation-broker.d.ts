@@ -119,6 +119,23 @@ export interface ConversationApprovalNotification {
     /** Bounded Pi request payload (everything except type/id). */
     payload: Record<string, unknown>;
 }
+/** U4: broker-authoritative transient live activity for one active run. */
+export type ConversationActivityKind = "working" | "text_delta" | "settled";
+export type ConversationActivityOutcome = "completed" | "failed" | "timed_out" | "cancelled";
+export interface ConversationActivityNotification {
+    conversationId: string;
+    /** Opaque broker-generated per-active-run key (unique while the broker is alive). */
+    runId: string;
+    /** The broker-selected exact run agent (never browser text or roster inference). */
+    agent: string;
+    kind: ConversationActivityKind;
+    /** text_delta only: the exact non-empty Pi assistant delta, bounded. */
+    delta?: string;
+    /** settled only: the terminal outcome after the durable terminal append. */
+    outcome?: ConversationActivityOutcome;
+}
+/** U4: the bounded per-frame assistant delta (larger deltas emit no frame). */
+export declare const CONVERSATION_ACTIVITY_DELTA_MAX = 4096;
 /** C3-C1: response input for one pending conversation approval. */
 export interface ConversationApprovalInput {
     conversationId: string;
@@ -203,6 +220,10 @@ export declare class ConversationBroker {
     private readonly fallbackPolicyLoader;
     private readonly activeRuns;
     private readonly eventListeners;
+    /** U4: scoped transient-activity listeners (never durable, never replayed). */
+    private readonly activityListeners;
+    /** U4: opaque per-run id sequence (unique while this broker is alive). */
+    private runIdSeq;
     /** C3-C1: in-memory pending approvals keyed exactly conversationId:agent:requestId. */
     private readonly pendingApprovals;
     private readonly approvalListeners;
@@ -221,6 +242,21 @@ export declare class ConversationBroker {
      */
     onConversationApproval(conversationId: string, listener: (approval: ConversationApprovalNotification) => void): () => void;
     onConversationEvent(conversationId: string, listener: (event: ConversationEventNotification) => void): () => void;
+    /** U4: subscribe to broker-authoritative transient activity for one conversation. */
+    onConversationActivity(conversationId: string, listener: (activity: ConversationActivityNotification) => void): () => void;
+    /**
+     * U4: publish one transient activity frame. Observer failures are contained
+     * observability issues: they can never affect Pi, durable evidence,
+     * settlement, locks, or subsequent dispatch.
+     */
+    private publishActivity;
+    /**
+     * U4: the exact bounded assistant delta of a genuine nested Pi
+     * `message_update.assistantMessageEvent` text_delta — or null when the
+     * event is not a real text delta (empty/non-string/oversized/non-text
+     * events emit no frame and never imply typing).
+     */
+    private conversationTextDelta;
     private appendAndPublish;
     /**
      * Dispatch one validated conversation mention. The durable steward message

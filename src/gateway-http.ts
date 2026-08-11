@@ -15,6 +15,7 @@ import { buildRoomAgentsResponse } from "./room-agents.js";
 import { checkActiveGate, formatActiveGateRejection, resolveStewardMentions, type ValidatedRecipients } from "./conversation-contract.js";
 import {
   ConversationBroker,
+  type ConversationActivityNotification,
   type ConversationApprovalNotification,
   type ConversationDispatchOutcome,
   type ConversationEventNotification,
@@ -2346,6 +2347,12 @@ export class GatewayServer {
     const unsubscribeApprovals = broker.onConversationApproval(conversationId, (approval: ConversationApprovalNotification) => {
       enqueue(stream, { type: "approval", data: approval as unknown as Record<string, unknown> });
     });
+    // U4: scoped broker-authoritative `conversation_activity` frames (additive
+    // named event; transient, never replayed, delivered only to this
+    // conversation's attached live stream).
+    const unsubscribeActivity = broker.onConversationActivity(conversationId, (activity: ConversationActivityNotification) => {
+      enqueue(stream, { type: "conversation_activity", data: activity as unknown as Record<string, unknown> });
+    });
 
     const heartbeat = setInterval(() => {
       res.write(": heartbeat\n\n");
@@ -2358,6 +2365,7 @@ export class GatewayServer {
       clearInterval(heartbeat);
       unsubscribe();
       unsubscribeApprovals();
+      unsubscribeActivity();
       this.conversationStreamCleanups.delete(cleanup);
       closeStream(stream);
     };

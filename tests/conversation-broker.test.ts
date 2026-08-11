@@ -1859,3 +1859,163 @@ describe("ConversationBroker C5-3 tool control bridge", () => {
     expect(prompt).toContain("conversation_handoff(to, text)");
   });
 });
+
+describe("broker-authoritative live activity (U4)", () => {
+  type ActivityLog = {
+    kind: "working" | "text_delta" | "settled";
+    runId: string;
+    agent: string;
+    delta?: string;
+    outcome?: "completed" | "failed" | "timed_out" | "cancelled";
+  };
+
+  async function dispatchWithText(broker: ConversationBroker, agent = "zai", text = "Reply"): Promise<ConversationDispatchOutcome> {
+    const conversationId = await makeConversation([agent], `Hello @${agent}`);
+    const stewardEventId = await makeStewardEvent(conversationId, text);
+    return broker.dispatchConversationMention({
+      conversationId,
+      agent,
+      text,
+      stewardEventId,
+      priorEvents: [],
+    });
+  }
+
+  it("emits working only after durable run_started, text_delta for real deltas, settled after the durable terminal", async () => {
+    const { broker } = makeBroker({ behaviors: ["with-text"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Reply");
+    const timeline: Array<{ channel: "event" | "activity"; kind: string; delta?: string; outcome?: string }> = [];
+    broker.onConversationEvent(conversationId, (event) => timeline.push({ channel: "event", kind: event.kind }));
+    broker.onConversationActivity(conversationId, (activity) =>
+      timeline.push({
+        channel: "activity",
+        kind: activity.kind,
+        ...(activity.delta !== undefined ? { delta: activity.delta } : {}),
+        ...(activity.outcome !== undefined ? { outcome: activity.outcome } : {}),
+      }),
+    );
+
+    const outcome = await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Reply", stewardEventId, priorEvents: [] });
+    expect(outcome.status).toBe("completed");
+
+    const activity = timeline.filter((entry) => entry.channel === "activity");
+    expect(activity.map((entry) => entry.kind)).toEqual(["working", "text_delta", "settled"]);
+    // Ordering: run_started event precedes working; durable terminal evidence
+    // precedes the settled cleanup frame.
+    const runStarted = timeline.findIndex((entry) => entry.channel === "event" && entry.kind === "run_started");
+    const working = timeline.findIndex((entry) => entry.channel === "activity" && entry.kind === "working");
+    expect(runStarted).toBeGreaterThan(-1);
+    expect(working).toBeGreaterThan(runStarted);
+    const settled = timeline.findIndex((entry) => entry.channel === "activity" && entry.kind === "settled");
+    const agentMessage = timeline.findIndex((entry) => entry.channel === "event" && entry.kind === "agent_message");
+    const runFinished = timeline.findIndex((entry) => entry.channel === "event" && entry.kind === "run_finished");
+    expect(settled).toBeGreaterThan(Math.max(agentMessage, runFinished));
+    expect(activity[1]).toMatchObject({ kind: "text_delta", delta: "Visible agent reply." });
+    expect(activity[2]).toMatchObject({ kind: "settled", outcome: "completed" });
+    // No synthetic activity: exactly one working + the exact real delta + one settled.
+    expect(activity).toHaveLength(3);
+    await broker.close();
+  });
+
+  it("emits no text_delta without a real text delta and no working on startup failure", async () => {
+    const { broker } = makeBroker({ behaviors: ["complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Reply");
+    const activity: ActivityLog[] = [];
+    broker.onConversationActivity(conversationId, (a) => activity.push({ kind: a.kind, runId: a.runId, agent: a.agent, ...(a.delta !== undefined ? { delta: a.delta } : {}), ...(a.outcome !== undefined ? { outcome: a.outcome } : {}) }));
+    const outcome = await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Reply", stewardEventId, priorEvents: [] });
+    expect(outcome.status).toBe("completed");
+    expect(activity.map((a) => a.kind)).toEqual(["working", "settled"]);
+    expect(activity[1]?.outcome).toBe("completed");
+    await broker.close();
+
+    // Startup failure: neither working nor typing; only the settled cleanup
+    // after the durable launch-failure terminal.
+    const { broker: failing } = makeBroker({ behaviors: ["start-fail"] });
+    const failedActivity: ActivityLog[] = [];
+    const conversation2 = await makeConversation(["zai"], "Hello @zai");
+    const steward2 = await makeStewardEvent(conversation2, "Reply");
+    failing.onConversationActivity(conversation2, (a) => failedActivity.push({ kind: a.kind, runId: a.runId, agent: a.agent, ...(a.delta !== undefined ? { delta: a.delta } : {}), ...(a.outcome !== undefined ? { outcome: a.outcome } : {}) }));
+    const failed = await failing.dispatchConversationMention({ conversationId: conversation2, agent: "zai", text: "Reply", stewardEventId: steward2, priorEvents: [] });
+    expect(failed.status).toBe("failed");
+    expect(failedActivity.map((a) => a.kind)).toEqual(["settled"]);
+    expect(failedActivity[0]?.outcome).toBe("failed");
+    await failing.close();
+  });
+
+  it("a hanging run settles with timed_out and never emits text_delta", async () => {
+    const timers = makeTimers();
+    const { broker } = makeBroker({ behaviors: ["hang"], timers });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const activity: ActivityLog[] = [];
+    broker.onConversationActivity(conversationId, (a) => activity.push({ kind: a.kind, runId: a.runId, agent: a.agent, ...(a.delta !== undefined ? { delta: a.delta } : {}), ...(a.outcome !== undefined ? { outcome: a.outcome } : {}) }));
+    let outcome: ConversationDispatchOutcome | undefined;
+    const pending = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] }).then((value) => {
+      outcome = value;
+    });
+    const deadline = Date.now() + 2000;
+    while (outcome === undefined && Date.now() < deadline) {
+      for (const handle of [...timers.pending.keys()]) timers.fire(handle);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await pending;
+    expect(outcome?.status).toBe("timed_out");
+    expect(activity.map((a) => a.kind)).toEqual(["working", "settled"]);
+    expect(activity[1]?.outcome).toBe("timed_out");
+    await broker.close();
+  });
+
+  it("runId isolates simultaneous runs across conversations/agents", async () => {
+    const { broker } = makeBroker({ behaviors: ["with-text", "with-text"] });
+    const seen = new Map<string, string[]>();
+    const collect = (conversationId: string) =>
+      broker.onConversationActivity(conversationId, (a) => {
+        seen.set(conversationId, [...(seen.get(conversationId) ?? []), a.runId]);
+      });
+    const c1 = await makeConversation(["zai"], "Hello @zai");
+    const c2 = await makeConversation(["dipu"], "Hello @dipu");
+    const s1 = await makeStewardEvent(c1, "One");
+    const s2 = await makeStewardEvent(c2, "Two");
+    collect(c1);
+    collect(c2);
+    await broker.dispatchConversationMention({ conversationId: c1, agent: "zai", text: "One", stewardEventId: s1, priorEvents: [] });
+    await broker.dispatchConversationMention({ conversationId: c2, agent: "dipu", text: "Two", stewardEventId: s2, priorEvents: [] });
+    const runIds = new Set<string>();
+    for (const ids of seen.values()) for (const id of ids) runIds.add(id);
+    // Two independent runs produce distinct opaque run ids, each scoped to
+    // its own conversation.
+    expect(runIds.size).toBe(2);
+    expect(seen.get(c1)?.every((id) => id.startsWith("run-"))).toBe(true);
+    await broker.close();
+  });
+
+  it("a throwing activity listener is a contained observability failure", async () => {
+    const { broker } = makeBroker({ behaviors: ["with-text"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Reply");
+    broker.onConversationActivity(conversationId, () => {
+      throw new Error("listener boom");
+    });
+    const outcome = await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Reply", stewardEventId, priorEvents: [] });
+    expect(outcome.status).toBe("completed");
+    // The durable evidence is unaffected by the throwing observer.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
+    await broker.close();
+  });
+
+  it("run_started/run_finished carry durable runAgent; agent_message does not", async () => {
+    const { broker } = makeBroker({ behaviors: ["with-text"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Reply");
+    const outcome = await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Reply", stewardEventId, priorEvents: [] });
+    expect(outcome.status).toBe("completed");
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.find((e) => e.kind === "run_started")?.runAgent).toBe("zai");
+    expect(events.find((e) => e.kind === "run_finished")?.runAgent).toBe("zai");
+    expect(events.find((e) => e.kind === "agent_message")?.runAgent).toBeUndefined();
+    await broker.close();
+  });
+});

@@ -485,3 +485,68 @@ describe("ConversationEventRecord shape", () => {
     expect(events.map((e) => e.kind)).toEqual(["run_started", "agent_message", "run_finished"]);
   });
 });
+
+describe("U4 optional runAgent metadata on run events", () => {
+  it("writes and reads back runAgent on run_started/run_finished/run_cancelled; agent_message stays clean", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Seed @zai", audience: ["zai"], now: () => new Date("2026-08-05T13:15:30.000Z") });
+    await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "run_started", authorKind: "system", author: "system",
+      body: "start", runStatus: "running", runAgent: "zai", now: () => new Date("2026-08-05T13:15:31.000Z"), nonce: () => "a",
+    });
+    await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "agent_message", authorKind: "agent", author: "zai",
+      body: "reply", now: () => new Date("2026-08-05T13:15:32.000Z"), nonce: () => "b",
+    });
+    await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "run_finished", authorKind: "system", author: "system",
+      body: "done", runStatus: "completed", runAgent: "zai", now: () => new Date("2026-08-05T13:15:33.000Z"), nonce: () => "c",
+    });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events[0]?.runAgent).toBe("zai");
+    expect(events[1]?.runAgent).toBeUndefined();
+    expect(events[2]?.runAgent).toBe("zai");
+  });
+
+  it("rejects a present-but-invalid runAgent at append time (fail-closed)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Seed @zai", audience: ["zai"], now: () => new Date("2026-08-05T13:15:30.000Z") });
+    await expect(
+      appendConversationEvent({
+        vaultRoot: root, conversationId: conversation.id, kind: "run_cancelled", authorKind: "system", author: "system",
+        body: "cancel", runStatus: "cancelled", runAgent: "", now: () => new Date("2026-08-05T13:15:31.000Z"), nonce: () => "x",
+      }),
+    ).rejects.toThrow(/runAgent/);
+  });
+
+  it("rejects a malformed stored runAgent fail-closed at parse time and keeps old records valid", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Seed @zai", audience: ["zai"], now: () => new Date("2026-08-05T13:15:30.000Z") });
+    const eventsDir = join(root, "collaboration", "conversations", conversation.id, "events");
+    // Old record without runAgent: valid.
+    await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "run_started", authorKind: "system", author: "system",
+      body: "start", runStatus: "running", now: () => new Date("2026-08-05T13:15:31.000Z"), nonce: () => "y",
+    });
+    // Malformed stored runAgent (number): strict parser rejects it.
+    await writeFile(
+      join(eventsDir, "00000002.md"),
+      [
+        "---",
+        "type: Conversation Event",
+        "id: e-bad",
+        `conversationId: ${conversation.id}`,
+        "kind: run_finished",
+        "authorKind: system",
+        "author: system",
+        `created: ${new Date("2026-08-05T13:15:32.000Z").toISOString()}`,
+        "sequence: 2",
+        "runStatus: completed",
+        "runAgent: 42",
+        "---",
+        "",
+        "done",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await expect(readConversationEvents({ vaultRoot: root, conversationId: conversation.id })).rejects.toThrow(/runAgent/);
+  });
+});

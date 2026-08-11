@@ -10,6 +10,13 @@ import {
   type ConversationTimelineItem,
   type ReconnectBudget,
 } from "./conversation-timeline";
+import {
+  applyConversationActivityFrame,
+  emptyConversationActivity,
+  parseConversationActivityFrame,
+  reconcileConversationActivity,
+  type ConversationActivityState,
+} from "./conversation-activity";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
 import type { ConversationEventRecord } from "./conversations";
 
@@ -54,6 +61,8 @@ export function ConversationTimeline({
   const [announcement, setAnnouncement] = useState("");
   const [attemptKey, setAttemptKey] = useState(0);
   const budgetRef = useRef<ReconnectBudget>(initialReconnectBudget());
+  /** U4: transient broker-authoritative activity (working/typing + partial). */
+  const [activity, setActivity] = useState<ConversationActivityState>(emptyConversationActivity);
 
   // The reconnect budget is scoped to the selection lifecycle: selecting a
   // conversation (or a token change) starts a fresh lifecycle. Opening a
@@ -69,6 +78,9 @@ export function ConversationTimeline({
     const announce = (item: ConversationTimelineItem) => setAnnouncement(announcementFor(item));
 
     (async () => {
+      // U4: transient activity/partial replies are cleared before EVERY
+      // whole-history reread (fresh attempt, reconnect, or selection change).
+      setActivity(emptyConversationActivity());
       setPhase((previous) => (previous.phase === "loading" ? previous : { phase: "loading" }));
       try {
         const events = await fetchConversationEvents(conversationId, token, controller.signal);
@@ -96,6 +108,20 @@ export function ConversationTimeline({
             },
             onFrame: (frame) => {
               if (cancelled) return;
+              // U4: a scoped broker-authoritative activity frame updates the
+              // transient surface. Malformed, foreign, stale, or contradictory
+              // frames are strictly ignored (no crash, no transient state).
+              if (frame.event === "conversation_activity") {
+                try {
+                  const parsed = parseConversationActivityFrame(JSON.parse(frame.data), conversationId);
+                  if (parsed.ok) {
+                    setActivity((previous) => applyConversationActivityFrame(previous, parsed.frame));
+                  }
+                } catch {
+                  // non-authoritative; ignored
+                }
+                return;
+              }
               // C3-C3: a scoped live `approval` frame is forwarded to the
               // navigator's card surface and NEVER becomes a durable timeline
               // entry. A malformed frame is ignored (no card, no crash, no
@@ -110,6 +136,12 @@ export function ConversationTimeline({
               }
               const item = conversationFrameToItem(frame);
               if (item === null) return;
+              // U4: reconcile transient activity with DURABLE evidence
+              // (agent_message replaces the partial; runAgent terminals clear
+              // it). History rereads already cleared activity.
+              if (item.type === "event") {
+                setActivity((previous) => reconcileConversationActivity(previous, item.event));
+              }
               // L3: a durable lifecycle_transition for this selected
               // conversation requests the navigator's fresh re-gate exactly
               // once per received event (archive from another client ends
@@ -131,7 +163,9 @@ export function ConversationTimeline({
         );
         if (cancelled) return;
         // The stream ended without an abort: disconnect and reconnect via a
-        // fresh whole-history reread + re-subscription (no replay).
+        // fresh whole-history reread + re-subscription (no replay). Transient
+        // activity is cleared on stream end.
+        setActivity(emptyConversationActivity());
         setPhase((previous) =>
           previous.phase === "ready"
             ? { ...previous, stream: "disconnected", message: "Live stream ended. Showing last known history." }
@@ -145,6 +179,7 @@ export function ConversationTimeline({
           return;
         }
         if (error instanceof DOMException && error.name === "AbortError") return;
+        setActivity(emptyConversationActivity());
         setPhase((previous) => {
           if (previous.phase === "ready") {
             return { ...previous, stream: "disconnected", message: error instanceof Error ? error.message : String(error) };
@@ -213,10 +248,39 @@ export function ConversationTimeline({
             )}
           </p>
           {phase.message !== null && phase.stream === "disconnected" && <p className="muted">{phase.message}</p>}
+          <ConversationActivityDisplay activity={activity} />
           <ConversationTimelineItems items={phase.items} />
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * U4: truthful transient activity surface — `<agent> is working…` only after
+ * a durable run_started-backed working frame, `<agent> is typing…` only after
+ * a real text delta, and a clearly TRANSIENT bounded partial reply that is
+ * replaced by the correlated durable agent_message. Never a read/seen/claim.
+ */
+function ConversationActivityDisplay({ activity }: { activity: ConversationActivityState }) {
+  if (activity.runs.length === 0) return null;
+  return (
+    <div className="conversation-activity" aria-live="polite">
+      {activity.runs.map((run) => (
+        <div key={run.runId} className={`activity-run activity-${run.phase}`}>
+          <p className="activity-status">
+            {run.agent} is {run.phase === "working" ? "working" : "typing"}…
+          </p>
+          {run.phase === "typing" && run.partial !== "" && (
+            <p className="activity-partial">
+              {run.partial}
+              {run.truncated && <span className="activity-truncated"> … (truncated)</span>}
+            </p>
+          )}
+          <p className="activity-note">Transient — only durable events are saved.</p>
+        </div>
+      ))}
+    </div>
   );
 }
 

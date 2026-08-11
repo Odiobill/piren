@@ -128,6 +128,13 @@ function parseConversationEventRecord(entry: unknown): ConversationEventRecord {
   } else if (record.lifecycleState !== undefined) {
     throw new Error("unexpected conversation event record (lifecycleState)");
   }
+  // U4 run-agent attribution: present-but-invalid fails closed; absent stays
+  // absent (legacy records stay readable).
+  if (typeof record.runAgent === "string" && record.runAgent !== "") {
+    parsed.runAgent = record.runAgent;
+  } else if (record.runAgent !== undefined) {
+    throw new Error("unexpected conversation event record (runAgent)");
+  }
   return parsed;
 }
 

@@ -674,6 +674,9 @@ function renderConversationEvent(options) {
         fields.push(`previousTitle: ${JSON.stringify(options.previousTitle)}`);
     if (options.title !== undefined)
         fields.push(`title: ${JSON.stringify(options.title)}`);
+    // U4 run-agent attribution (plain agent-name scalar).
+    if (options.runAgent !== undefined)
+        fields.push(`runAgent: ${options.runAgent}`);
     fields.push("---", "", options.body, "");
     return fields.join("\n");
 }
@@ -689,6 +692,12 @@ function assertValidRenameMetadata(previousTitle, title) {
     }
     if (title !== undefined && title.trim() === "") {
         throw new Error("Invalid conversation rename title: must be a non-empty string.");
+    }
+}
+/** U4: runAgent must be a non-empty string when present (fail-closed). */
+function assertValidRunAgentMetadata(runAgent) {
+    if (runAgent !== undefined && runAgent.trim() === "") {
+        throw new Error("Invalid conversation runAgent: must be a non-empty string.");
     }
 }
 function assertValidRunOutcome(kind, runStatus, failureKind) {
@@ -762,6 +771,7 @@ export async function appendConversationEvent(options) {
     assertValidRunOutcome(options.kind, options.runStatus, options.failureKind);
     assertValidLifecycleMetadata(options.lifecycleState);
     assertValidRenameMetadata(options.previousTitle, options.title);
+    assertValidRunAgentMetadata(options.runAgent);
     const root = resolve(options.vaultRoot);
     const created = (options.now ?? (() => new Date()))().toISOString();
     const id = `${compactConversationTimestamp(new Date(created))}${options.nonce !== undefined ? `-${options.nonce()}` : ""}`;
@@ -800,6 +810,7 @@ export async function appendConversationEvent(options) {
             ...(options.lifecycleState !== undefined ? { lifecycleState: options.lifecycleState } : {}),
             ...(options.previousTitle !== undefined ? { previousTitle: options.previousTitle } : {}),
             ...(options.title !== undefined ? { title: options.title } : {}),
+            ...(options.runAgent !== undefined ? { runAgent: options.runAgent } : {}),
             body: options.body,
         });
         try {
@@ -1022,6 +1033,18 @@ function parseConversationEvent(content, path, expectedConversationId) {
     }
     else if (eventTitle !== undefined) {
         throw new Error(`Invalid conversation event at ${path}: title must be a string`);
+    }
+    // U4 run-agent attribution: present-but-invalid fails closed; absent stays
+    // absent so every existing event keeps parsing.
+    const runAgent = fields.runAgent;
+    if (typeof runAgent === "string") {
+        if (runAgent.trim() === "") {
+            throw new Error(`Invalid conversation event at ${path}: runAgent must be a non-empty string`);
+        }
+        record.runAgent = runAgent;
+    }
+    else if (runAgent !== undefined) {
+        throw new Error(`Invalid conversation event at ${path}: runAgent must be a string`);
     }
     return record;
 }

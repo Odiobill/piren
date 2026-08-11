@@ -2201,6 +2201,12 @@ export class GatewayServer {
         const unsubscribeApprovals = broker.onConversationApproval(conversationId, (approval) => {
             enqueue(stream, { type: "approval", data: approval });
         });
+        // U4: scoped broker-authoritative `conversation_activity` frames (additive
+        // named event; transient, never replayed, delivered only to this
+        // conversation's attached live stream).
+        const unsubscribeActivity = broker.onConversationActivity(conversationId, (activity) => {
+            enqueue(stream, { type: "conversation_activity", data: activity });
+        });
         const heartbeat = setInterval(() => {
             res.write(": heartbeat\n\n");
         }, HEARTBEAT_INTERVAL_MS);
@@ -2212,6 +2218,7 @@ export class GatewayServer {
             clearInterval(heartbeat);
             unsubscribe();
             unsubscribeApprovals();
+            unsubscribeActivity();
             this.conversationStreamCleanups.delete(cleanup);
             closeStream(stream);
         };
