@@ -21,7 +21,10 @@ import {
   approvalCardTitle,
   approvalRequestedAnnouncement,
   approvalResponseAnnouncement,
+  conversationHandoffGateLabel,
+  handoffGateRequestedAnnouncement,
   networkConversationControlError,
+  parseConversationHandoffGate,
   type ApprovalResponse,
   type ConversationControlError,
   type PendingApproval,
@@ -417,7 +420,10 @@ export function ConversationNavigator({
   /**
    * C3-C3: a scoped live `approval` frame for the selected active
    * conversation creates one card (deduped by agent+requestId). The browser
-   * never invents recipients, request ids, or approval state.
+   * never invents recipients, request ids, or approval state. C5-4: a frame
+   * recognized as a C5 initial-handoff gate is announced truthfully as a
+   * handoff gate (source → target); every other frame keeps the generic
+   * approval announcement.
    */
   const handleApprovalFrame = useCallback((approval: PendingApproval) => {
     setPendingApprovals((previous) => {
@@ -426,7 +432,8 @@ export function ConversationNavigator({
       }
       return [...previous, approval];
     });
-    setAnnouncement(approvalRequestedAnnouncement(approval));
+    const gate = parseConversationHandoffGate(approval);
+    setAnnouncement(gate !== null ? handoffGateRequestedAnnouncement(approval, gate) : approvalRequestedAnnouncement(approval));
   }, []);
 
   /**
@@ -890,7 +897,13 @@ function ApprovalCard({
   const confirmButtonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const needsInput = approval.method === "select" || approval.method === "input";
-  const message = approvalCardMessage(approval);
+  // C5-4: display-only recognition of an eligible C5 initial-handoff gate. A
+  // recognized gate is titled as a handoff request naming the source agent
+  // and proposed target with the bounded handoff text; every other frame
+  // keeps the generic card. Confirm/Cancel, exactly-one, focus, error/Retry,
+  // and announcement semantics are unchanged.
+  const gate = parseConversationHandoffGate(approval);
+  const message = gate !== null ? gate.text : approvalCardMessage(approval);
   // Deliberate focus policy: on arrival, focus the input (select/input) or
   // the Confirm button (confirm), so the steward can act without hunting.
   useEffect(() => {
@@ -907,13 +920,23 @@ function ApprovalCard({
     <div
       className="approval-card"
       role="group"
-      aria-label={`Approval requested by ${approval.agent}`}
+      aria-label={
+        gate !== null
+          ? `Handoff request: ${conversationHandoffGateLabel(gate, approval.agent)}`
+          : `Approval requested by ${approval.agent}`
+      }
     >
-      <p className="approval-title">{approvalCardTitle(approval)}</p>
+      <p className="approval-title">{gate !== null ? "Handoff request" : approvalCardTitle(approval)}</p>
       {message !== "" && <p className="muted">{message}</p>}
-      <p className="approval-meta">
-        <code>{approval.agent}</code> · {approval.method}
-      </p>
+      {gate !== null ? (
+        <p className="approval-meta">
+          <code>{approval.agent}</code> → <code>{gate.to}</code>
+        </p>
+      ) : (
+        <p className="approval-meta">
+          <code>{approval.agent}</code> · {approval.method}
+        </p>
+      )}
       {needsInput && (
         <>
           <label htmlFor={`approval-input-${approval.requestId}`}>Response</label>

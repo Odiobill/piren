@@ -21,7 +21,10 @@ import {
 } from "../web/src/conversation-composer.js";
 import {
   appendConversationLiveItem,
+  conversationEventLabel,
   conversationFrameToItem,
+  conversationHandoffEventLabel,
+  isConversationHandoffEvent,
   replaceConversationHistoric,
 } from "../web/src/conversation-timeline.js";
 import { createSseParser } from "../web/src/timeline.js";
@@ -228,6 +231,35 @@ describe("lifecycleState event metadata (L3, fail-closed)", () => {
   it("rejects a present-but-invalid lifecycleState fail-closed", () => {
     expect(() => parseConversationEvents({ events: [lifecycleEvent({ lifecycleState: "bogus" as never })] })).toThrow(/lifecycleState/i);
     expect(() => parseConversationEvents({ events: [lifecycleEvent({ lifecycleState: 42 as never })] })).toThrow(/lifecycleState/i);
+  });
+});
+
+describe("C5-4 durable stage presentation labels (pure)", () => {
+  it("labels addressed agent_message as a handoff from source to target and ordinary replies as replies", () => {
+    const handoff = event({ kind: "agent_message", authorKind: "agent", author: "sam", addressedAgent: "dipu", body: "Please review the diff" });
+    const reply = event({ kind: "agent_message", authorKind: "agent", author: "sam", body: "plain reply" });
+    expect(isConversationHandoffEvent(handoff)).toBe(true);
+    expect(isConversationHandoffEvent(reply)).toBe(false);
+    expect(conversationHandoffEventLabel(handoff)).toBe("handoff from sam to dipu");
+    expect(conversationEventLabel(handoff)).toBe("handoff from sam to dipu");
+    expect(conversationEventLabel(reply)).toBe("sam replied");
+  });
+
+  it("labels run evidence with the agent/stage and the actual supplied terminal values", () => {
+    expect(conversationEventLabel(event({ kind: "run_started", author: "dipu", runStatus: "running" }))).toBe("run started for dipu (running)");
+    expect(conversationEventLabel(event({ kind: "run_started", author: "dipu" }))).toBe("run started for dipu (running)");
+    expect(conversationEventLabel(event({ kind: "run_finished", author: "dipu", runStatus: "completed" }))).toBe("run finished for dipu (completed)");
+    expect(conversationEventLabel(event({ kind: "run_finished", author: "dipu", runStatus: "failed", failureKind: "ambiguous" }))).toBe("run finished for dipu (failed, ambiguous)");
+    expect(conversationEventLabel(event({ kind: "run_cancelled", author: "dipu" }))).toBe("run cancelled for dipu");
+  });
+
+  it("never reclassifies missing/invalid addressed data as a handoff and never crashes", () => {
+    expect(isConversationHandoffEvent(event({ kind: "agent_message", author: "sam", addressedAgent: "" }))).toBe(false);
+    expect(isConversationHandoffEvent(event({ kind: "steward_message" }))).toBe(false);
+    expect(conversationEventLabel(event({ kind: "agent_message", author: "sam", addressedAgent: "" }))).toBe("sam replied");
+    expect(conversationEventLabel(event({ kind: "steward_message" }))).toBe("steward message");
+    expect(conversationEventLabel(event({ kind: "model_fallback" }))).toBe("model fallback");
+    expect(conversationEventLabel(event({ kind: "lifecycle_transition", lifecycleState: "archived" }))).toBe("Conversation archived");
   });
 });
 

@@ -161,6 +161,47 @@ export function approvalCardMessage(approval: PendingApproval): string {
   return typeof approval.payload.message === "string" ? approval.payload.message : "";
 }
 
+/**
+ * C5-4 — bounded display-only recognition of an eligible C5 initial-handoff
+ * gate. The broker raises the gate as a live `confirm` approval whose payload
+ * carries exactly `{to, text}` (target + bounded handoff text). Recognition is
+ * presentation-only and fails closed: only a `confirm` frame whose payload has
+ * a non-empty bounded `to` and a non-blank bounded `text` is a gate. Every
+ * other frame (select/input, generic confirm with title/message, malformed,
+ * blank, or oversize) falls back to the existing generic card behavior and
+ * never invents C5 state. The browser never derives the target from text, and
+ * the gate still uses the exact `{agent, request_id, confirmed|cancelled}`
+ * response path.
+ */
+export interface ConversationHandoffGate {
+  to: string;
+  text: string;
+}
+
+/** Display-only bounds mirroring the broker's bounded handoff surface. */
+export const CONVERSATION_HANDOFF_GATE_TEXT_MAX_LENGTH = 4000;
+export const CONVERSATION_HANDOFF_GATE_TARGET_MAX_LENGTH = 64;
+
+export function parseConversationHandoffGate(approval: PendingApproval): ConversationHandoffGate | null {
+  if (approval.method !== "confirm") return null;
+  const payload = approval.payload;
+  const to = payload.to;
+  const text = payload.text;
+  if (typeof to !== "string" || to === "" || to.length > CONVERSATION_HANDOFF_GATE_TARGET_MAX_LENGTH) return null;
+  if (typeof text !== "string" || text.trim() === "" || text.length > CONVERSATION_HANDOFF_GATE_TEXT_MAX_LENGTH) return null;
+  return { to, text };
+}
+
+/** Bounded semantic label naming the source agent and the proposed target. */
+export function conversationHandoffGateLabel(gate: ConversationHandoffGate, source: string): string {
+  return `handoff from ${source} to ${gate.to}`;
+}
+
+/** Polite status announcement for a recognized gate (no raw internals). */
+export function handoffGateRequestedAnnouncement(approval: PendingApproval, gate: ConversationHandoffGate): string {
+  return `Handoff gate requested by ${approval.agent} to ${gate.to}.`;
+}
+
 /** Polite status announcements (never raw internals). */
 export function approvalRequestedAnnouncement(approval: PendingApproval): string {
   return `Approval requested by ${approval.agent}.`;

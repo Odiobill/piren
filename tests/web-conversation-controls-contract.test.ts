@@ -6,9 +6,12 @@ import {
   approvalRequestedAnnouncement,
   approvalResponseAnnouncement,
   buildConversationApproveBody,
+  conversationHandoffGateLabel,
+  handoffGateRequestedAnnouncement,
   parseConversationAbortOutcome,
   parseConversationApprovalFrame,
   parseConversationControlHttpError,
+  parseConversationHandoffGate,
   type ConversationApprovalMethod,
   type PendingApproval,
 } from "../web/src/conversation-controls.js";
@@ -122,6 +125,46 @@ describe("announcement vocabulary", () => {
   });
 });
 
+describe("C5-4 gate-card recognition (pure, display-only, fail-closed)", () => {
+  function gateApproval(overrides?: Partial<Record<string, unknown>>): PendingApproval {
+    return {
+      conversationId: "20260807T000000000Z-conv",
+      agent: "sam",
+      requestId: "gate-1",
+      method: "confirm",
+      payload: { to: "dipu", text: "Please review the diff" },
+      ...overrides,
+    } as PendingApproval;
+  }
+
+  it("recognizes a valid C5 confirm gate frame with bounded {to,text} presentation-only", () => {
+    expect(parseConversationHandoffGate(gateApproval())).toEqual({ to: "dipu", text: "Please review the diff" });
+  });
+
+  it("never labels select/input or generic confirm frames as a C5 gate", () => {
+    expect(parseConversationHandoffGate(gateApproval({ method: "select" }))).toBeNull();
+    expect(parseConversationHandoffGate(gateApproval({ method: "input" }))).toBeNull();
+    // A generic confirm with a title/message payload is NOT a gate.
+    expect(parseConversationHandoffGate(gateApproval({ payload: { title: "Approve action?", message: "Go" } }))).toBeNull();
+    // The frame with no to/text is not a gate (generic card behavior).
+    expect(parseConversationHandoffGate(gateApproval({ payload: {} }))).toBeNull();
+  });
+
+  it("fails closed on malformed, blank, and oversize gate fields (never invents C5 state)", () => {
+    expect(parseConversationHandoffGate(gateApproval({ payload: { to: "", text: "x" } }))).toBeNull();
+    expect(parseConversationHandoffGate(gateApproval({ payload: { to: "dipu", text: "   " } }))).toBeNull();
+    expect(parseConversationHandoffGate(gateApproval({ payload: { to: "dipu", text: "x".repeat(4001) } }))).toBeNull();
+    expect(parseConversationHandoffGate(gateApproval({ payload: { to: "d".repeat(65), text: "x" } }))).toBeNull();
+    expect(parseConversationHandoffGate(gateApproval({ payload: { to: 7, text: "x" } }))).toBeNull();
+    expect(parseConversationHandoffGate(gateApproval({ payload: { to: "dipu", text: 7 } }))).toBeNull();
+  });
+
+  it("labels and announces a recognized gate truthfully without raw internals", () => {
+    expect(conversationHandoffGateLabel({ to: "dipu", text: "x" }, "sam")).toBe("handoff from sam to dipu");
+    expect(handoffGateRequestedAnnouncement(gateApproval(), { to: "dipu", text: "x" })).toBe("Handoff gate requested by sam to dipu.");
+  });
+});
+
 describe("static pins: minimal approval/abort Workbench controls (C3-C3)", () => {
   async function readAllTs(): Promise<Map<string, string>> {
     const files = await readdir(webSrc, { recursive: true });
@@ -201,5 +244,38 @@ describe("static pins: minimal approval/abort Workbench controls (C3-C3)", () =>
     // The timeline item model has no approval entry type (approvals are
     // live-only, never part of the durable history).
     expect(timelineCore).not.toMatch(/type: "approval"/);
+  });
+
+  it("C5-4: the navigator identifies a C5 handoff gate on the active surface with the exact response path and never on inspection", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    expect(navigator).toContain("parseConversationHandoffGate");
+    expect(navigator).toContain("Handoff request");
+    // The gate still submits the exact exactly-one response body via the
+    // shared card path (confirmed / cancelled), never a special C5 verb.
+    expect(navigator).toContain("onRespond(approval, needsInput ? { value: inputValue } : { confirmed: true })");
+    // No client-side recipient derivation: the target is only read from the
+    // parsed frame payload (display-only) and never parsed from @text.
+    expect(navigator).not.toMatch(/match\(\s*\/@/);
+  });
+
+  it("C5-4: the gate card renders source → target and the bounded handoff text, never raw internals", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    // The card names the source agent and the proposed target with an arrow.
+    expect(navigator).toContain("→");
+    expect(navigator).toContain("gate.to");
+    expect(navigator).toContain("gate.text");
+    // It never exposes correlation/root ids, budgets, role flags, or paths.
+    expect(navigator).not.toMatch(/correlationId/);
+    expect(navigator).not.toMatch(/rootEventId|PIREN_CONVERSATION_HANDOFF/);
+  });
+
+  it("C5-4: the timeline pure core labels durable C5 stage evidence without raw internals", async () => {
+    const timelineCore = await readFile(join(webSrc, "conversation-timeline.ts"), "utf8");
+    expect(timelineCore).toMatch(/handoff from/);
+    expect(timelineCore).toContain("addressedAgent");
+    // The label derives ONLY from durable record fields already supplied;
+    // it never reads correlation ids, budgets, role flags, or paths.
+    expect(timelineCore).not.toMatch(/event\.correlationId/);
+    expect(timelineCore).not.toMatch(/rootEventId|PIREN_CONVERSATION_HANDOFF/);
   });
 });

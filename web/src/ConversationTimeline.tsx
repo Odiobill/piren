@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchConversationEvents, streamConversationEvents, UnauthorizedError } from "./api";
 import {
   appendConversationLiveItem,
+  conversationEventLabel,
   conversationFrameToItem,
   initialReconnectBudget,
   replaceConversationHistoric,
@@ -10,7 +11,6 @@ import {
   type ReconnectBudget,
 } from "./conversation-timeline";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
-import { lifecycleTransitionLabel } from "./conversation-lifecycle";
 import type { ConversationEventRecord } from "./conversations";
 
 /**
@@ -28,29 +28,8 @@ type TimelinePhase =
   | { phase: "error"; message: string }
   | { phase: "ready"; items: ConversationTimelineItem[]; stream: "connecting" | "live" | "disconnected" | "inspection"; message: string | null };
 
-function eventLabel(event: ConversationEventRecord): string {
-  switch (event.kind) {
-    case "steward_message":
-      return "steward message";
-    case "agent_message":
-      return `${event.author} replied`;
-    case "run_started":
-      return `run started (${event.runStatus ?? "running"})`;
-    case "run_finished":
-      return `run finished (${event.runStatus ?? "completed"}${event.failureKind !== undefined ? `, ${event.failureKind}` : ""})`;
-    case "run_cancelled":
-      return "run cancelled";
-    case "model_fallback":
-      return "model fallback";
-    case "lifecycle_transition":
-      return lifecycleTransitionLabel(event.lifecycleState);
-    default:
-      return event.kind;
-  }
-}
-
 function announcementFor(item: ConversationTimelineItem): string {
-  if (item.type === "event") return `New conversation event: ${eventLabel(item.event)}`;
+  if (item.type === "event") return `New conversation event: ${conversationEventLabel(item.event)}`;
   return "Unreadable stream frame (non-authoritative)";
 }
 
@@ -274,7 +253,7 @@ function ConversationTimelineEntry({ item }: { item: ConversationTimelineItem })
   const { event } = item;
   return (
     <li className={`timeline-entry timeline-${event.kind}`}>
-      <span className="timeline-kind">{eventLabel(event)}</span>
+      <span className="timeline-kind">{conversationEventLabel(event)}</span>
       <time className="timeline-time" dateTime={event.created}>
         {event.created}
       </time>

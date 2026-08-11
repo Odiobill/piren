@@ -12,9 +12,53 @@
  */
 import type { ConversationEventRecord } from "./conversations.js";
 import { createSseParser, streamEnded, initialReconnectBudget, MAX_AUTO_RECONNECT_ATTEMPTS, type ReconnectBudget, type SseFrame } from "./timeline.js";
+import { lifecycleTransitionLabel } from "./conversation-lifecycle.js";
 
 export { streamEnded, initialReconnectBudget, MAX_AUTO_RECONNECT_ATTEMPTS };
 export type { ReconnectBudget };
+
+/**
+ * C5-4 — a durable `agent_message` is labeled a handoff only when its
+ * durable addressed-agent field is valid/present (never derived from text,
+ * correlation ids, event ordering, or SSE arrival order). Ordinary agent
+ * replies remain replies.
+ */
+export function isConversationHandoffEvent(event: ConversationEventRecord): boolean {
+  return event.kind === "agent_message" && typeof event.addressedAgent === "string" && event.addressedAgent !== "";
+}
+
+/** Bounded label naming the handoff source → target (no raw internals). */
+export function conversationHandoffEventLabel(event: ConversationEventRecord): string {
+  const target = typeof event.addressedAgent === "string" ? event.addressedAgent : "";
+  return `handoff from ${event.author} to ${target}`;
+}
+
+/**
+ * C5-4 — the bounded display label for one durable conversation event. Run
+ * records remain visibly attributable to their agent/stage with the ACTUAL
+ * supplied terminal values; no workflow status is manufactured and no
+ * correlation/root ids, budgets, role flags, or internal reasons are shown.
+ */
+export function conversationEventLabel(event: ConversationEventRecord): string {
+  switch (event.kind) {
+    case "steward_message":
+      return "steward message";
+    case "agent_message":
+      return isConversationHandoffEvent(event) ? conversationHandoffEventLabel(event) : `${event.author} replied`;
+    case "run_started":
+      return `run started for ${event.author} (${event.runStatus ?? "running"})`;
+    case "run_finished":
+      return `run finished for ${event.author} (${event.runStatus ?? "completed"}${event.failureKind !== undefined ? `, ${event.failureKind}` : ""})`;
+    case "run_cancelled":
+      return `run cancelled for ${event.author}`;
+    case "model_fallback":
+      return "model fallback";
+    case "lifecycle_transition":
+      return lifecycleTransitionLabel(event.lifecycleState);
+    default:
+      return event.kind;
+  }
+}
 
 /** One immutable timeline display item. Error items are non-authoritative. */
 export type ConversationTimelineItem =

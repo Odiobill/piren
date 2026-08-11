@@ -236,9 +236,12 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
 
   it("the timeline wires the lifecycle SSE re-gate request and a clear label", async () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
+    const timelineCore = await readFile(join(webSrc, "conversation-timeline.ts"), "utf8");
     expect(timeline).toContain("onLifecycleTransition");
     expect(timeline).toContain("lifecycle_transition");
-    expect(timeline).toContain("lifecycleTransitionLabel");
+    // The lifecycle label is wired through the pure timeline label core
+    // (C5-4 moved the event labels into the testable pure module).
+    expect(timelineCore).toContain("lifecycleTransitionLabel");
     // The re-gate is requested only from the LIVE stream path (no re-gate in
     // the inspection/read-only branch).
     expect(timeline).toContain("live");
