@@ -162,7 +162,10 @@ export type ConversationGateRequestResult = {
  * C2 bounded prior-transcript replay in durable order with an explicit
  * recipient-visible truncation notice; the current raw request is the
  * dispatch message and is never duplicated as "prior" context. Rendered
- * `@text` is never parsed; no new authority is granted.
+ * `@text` is never parsed; no new authority is granted. A C5 ROOT lead may
+ * additionally be offered ONLY the ability to REQUEST the steward-approved
+ * initial handoff gate (never a dispatch); every other run keeps the
+ * no-handoff wording byte-for-byte.
  */
 export declare function buildConversationMentionPrompt(input: {
     conversationId: string;
@@ -171,6 +174,8 @@ export declare function buildConversationMentionPrompt(input: {
     priorLines: readonly string[];
     truncated: boolean;
     omittedCount: number;
+    /** C5-3: when true (a steward-dispatched ROOT lead), adds only the gate-request capability line. */
+    rootHandoffGateRequest?: boolean;
 }): string;
 /** Render one prior durable event as a compact context line. */
 export declare function conversationEventToContextLine(event: ConversationEventRecord): string;
@@ -245,6 +250,18 @@ export declare class ConversationBroker {
      * boundary (including during `set_model`) cancels remaining attempts.
      */
     private onSettledAttempt;
+    /**
+     * C5-3: bridge one reserved conversation-handoff control request from the
+     * flagged extension process to the broker's bounded core. Root mode may
+     * ONLY request the initial C5-2 steward gate (answered promptly `pending`
+     * with no side effect before confirmation); workflow mode may ONLY use the
+     * existing C5-1 bounded acceptance path (`ok`). A malformed or stale
+     * request gets exactly one bounded `rejected` response with no retry,
+     * queue, reroute, fallback, or second UI attempt.
+     */
+    private handleConversationHandoffControlRequest;
+    /** Answer the source run's reserved input request id with a bounded structured value. */
+    private respondToConversationHandoffInput;
     private settle;
     private finalizeRun;
     /**

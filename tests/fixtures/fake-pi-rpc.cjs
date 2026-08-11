@@ -45,6 +45,17 @@ let approvalSeq = 0;
 // abort. The id is deterministic so gateway proofs can assert the internal
 // handoff request is never answerable through the public approval path.
 let waitingHandoffId = null;
+// C5-3: reserved conversation-handoff control state (root gate or workflow
+// accept). Set by a "conversationhandoff" marker in the active prompt section,
+// cleared by the matching extension_ui_response or by abort. The completion
+// delta names the broker role flag so gateway e2e tests can prove the
+// root/workflow target decoration from durable evidence.
+let waitingConversationHandoffId = null;
+let conversationHandoffSeq = 0;
+// Root gate: the run stays active after the pending answer so the steward can
+// confirm via the approve route before the deferred child may launch. The
+// bounded window keeps the gateway e2e deterministic without a second signal.
+const CONVERSATION_HANDOFF_ROOT_HOLD_MS = Number(process.env.FAKE_PI_CONVERSATION_HANDOFF_ROOT_HOLD_MS ?? 1200);
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -193,6 +204,37 @@ function handle(cmd) {
       return;
     }
 
+    // C5-3: reserved conversation_handoff control request. The active section
+    // is the text after the last "Handoff request:" (stage prompt) or the whole
+    // message (root mention prompt); the first "conversationhandoff-><to>:<text>"
+    // marker in that section drives the envelope, so each run in a bounded
+    // chain carries only its own next link (the parent edge body embeds the
+    // remainder). The completion delta names the broker role flag.
+    if (typeof cmd.message === "string" && cmd.message.includes("conversationhandoff")) {
+      const sectionIndex = cmd.message.lastIndexOf("Handoff request:");
+      const section = sectionIndex >= 0 ? cmd.message.slice(sectionIndex + "Handoff request:".length) : cmd.message;
+      const match = section.match(/conversationhandoff\s*->\s*([a-z0-9-]+)\s*:\s*([\s\S]*)/);
+      if (match) {
+        waitingConversationHandoffId = "convhandoff-req-" + Date.now() + "-" + process.pid + "-" + ++conversationHandoffSeq;
+        emit({
+          type: "message_update",
+          role: "assistant",
+          assistantMessageEvent: {
+            type: "text_delta",
+            delta: "Requesting conversation handoff [role:" + (process.env.PIREN_CONVERSATION_HANDOFF_ENABLED || "none") + "].",
+          },
+        });
+        emit({
+          type: "extension_ui_request",
+          id: waitingConversationHandoffId,
+          method: "input",
+          title: "piren:conversation-handoff",
+          placeholder: JSON.stringify({ v: 1, to: match[1], text: match[2] }),
+        });
+        return;
+      }
+    }
+
     // Blocking "hang": keep the run active (ack + agent_start, no agent_end)
     // until abort. Used to hold a handoff worker mid-run for lifecycle proofs.
     if (typeof cmd.message === "string" && cmd.message.includes("hang")) {
@@ -216,8 +258,11 @@ function handle(cmd) {
     }
 
     // If the message requests approval, emit an extension_ui_request before
-    // completing the turn, so the approval round-trip can be tested.
-    if (typeof cmd.message === "string" && cmd.message.includes("approve")) {
+    // completing the turn, so the approval round-trip can be tested. The
+    // trigger is the exact token "approve" (word-bounded): the C5-3 root
+    // prompt legitimately contains "approves"/"approved" in its gate
+    // capability wording and must not be misread as a worker approval.
+    if (typeof cmd.message === "string" && /\bapprove\b/.test(cmd.message)) {
       emit({
         type: "extension_ui_request",
         id: "ui-req-" + Date.now() + "-" + process.pid + "-" + ++approvalSeq,
@@ -248,6 +293,34 @@ function handle(cmd) {
   }
   if (cmd.type === "extension_ui_response") {
     // Pi resolves the pending request internally; no ack response is sent back.
+    // A response for a reserved conversation-handoff control request completes
+    // the held turn: immediately for an accepted/rejected workflow result, or
+    // after the bounded root-gate hold when the result is pending (the steward
+    // confirms via the approve route while the run stays active).
+    if (waitingConversationHandoffId !== null && cmd.id === waitingConversationHandoffId) {
+      waitingConversationHandoffId = null;
+      let status = "";
+      try {
+        if (typeof cmd.value === "string") {
+          const parsed = JSON.parse(cmd.value);
+          if (parsed && typeof parsed.status === "string") status = parsed.status;
+        }
+      } catch {
+        // a malformed value still completes the held turn below
+      }
+      const complete = () => {
+        emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: " Handoff settled (" + (status || "unknown") + ")." } });
+        emit({ type: "queue_update", steering: [], followUp: [] });
+        emit({ type: "agent_end", messages: [] });
+        emit({ type: "agent_settled" });
+      };
+      if (status === "pending") {
+        setTimeout(complete, CONVERSATION_HANDOFF_ROOT_HOLD_MS);
+      } else {
+        complete();
+      }
+      return;
+    }
     // A response for a reserved handoff request completes the held turn.
     if (waitingHandoffId !== null && cmd.id === waitingHandoffId) {
       waitingHandoffId = null;
@@ -318,6 +391,7 @@ function handle(cmd) {
     // both events as stale and ignore them.
     waitingApprovalId = null;
     waitingHandoffId = null;
+    waitingConversationHandoffId = null;
     emit({ type: "agent_end", messages: [] });
     emit({ type: "agent_settled" });
     return;

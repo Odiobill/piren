@@ -73,8 +73,8 @@ export declare class TransportSessionManager<TClient extends TransportRpcClient 
     private readonly now;
     private readonly sessions;
     constructor(options: TransportSessionManagerOptions<TClient>);
-    getSession(transport: string, conversationId: string, agent?: string): Promise<TransportSession<TClient>>;
-    switchAgent(transport: string, conversationId: string, agent: string): Promise<TransportSession<TClient>>;
+    getSession(transport: string, conversationId: string, agent?: string, envOverrides?: Record<string, string>): Promise<TransportSession<TClient>>;
+    switchAgent(transport: string, conversationId: string, agent: string, envOverrides?: Record<string, string>): Promise<TransportSession<TClient>>;
     abort(transport: string, conversationId: string): Promise<boolean>;
     getActiveAgent(transport: string, conversationId: string): string | null;
     /**

@@ -21,6 +21,7 @@ import { listCronJobs, listCronRuns, claimCronJob, recordCronRun, executeScriptC
 import { checkVaultConformance, createRealVaultDirReader, formatVaultConformanceReport } from "./okf.js";
 import { buildAutoNudgeNotification, buildSelfImprovementReviewPrompt, collectReviewConversation, detectCorrectionTrigger, findConsolidationPromotionCandidates, formatCorrectionArtifactNudge, resolveAutoNudgeConfig, resolveReviewLoopConfig, suggestCorrectionArtifacts, } from "./self-improvement.js";
 import { ROOM_HANDOFF_REQUEST_TITLE, isRoomMentionEnabled, renderHandoffRequestPlaceholder, resolveRoomMentionToolResult, validateRoomMentionArgs, } from "./room-handoff-protocol.js";
+import { CONVERSATION_HANDOFF_REQUEST_TITLE, renderConversationHandoffRequestPlaceholder, resolveConversationHandoffRole, resolveConversationHandoffToolResult, validateConversationHandoffArgs, } from "./conversation-handoff-protocol.js";
 const PIREN_TOOL_NAMES = [
     "vault_read",
     "vault_read_cached",
@@ -1232,14 +1233,63 @@ export default async function pirenExtension(pi, testOptions = {}) {
             },
         });
     }
+    // C5-3: gated conversation_handoff tool. Registered ONLY when this extension
+    // process was spawned by the ConversationBroker for an active Conversation
+    // run with the exact broker-owned role flag (root lead or workflow stage),
+    // signalled by PIREN_CONVERSATION_HANDOFF_ENABLED=root|workflow in the
+    // spawn env. Any absent, empty, malformed, or other value registers no tool
+    // (the room-style "1" included). Root mode may only request the initial
+    // steward gate; workflow mode may only use the bounded C5-1 acceptance path
+    // — the broker decides, never the model. The tool accepts only {to, text}
+    // and never takes or derives conversation id, source identity, root
+    // correlation, budget, capability, or role fields.
+    const conversationHandoffRole = resolveConversationHandoffRole(env);
+    if (conversationHandoffRole !== null) {
+        const rootGate = conversationHandoffRole === "root";
+        pi.registerTool({
+            name: "conversation_handoff",
+            label: "Conversation Handoff",
+            description: rootGate
+                ? "Request the steward-approved initial conversation handoff. The broker raises a live approval card the steward confirms or rejects; nothing is dispatched before confirmation and this returns promptly while the approval is pending."
+                : "Hand off a bounded request to another locally runnable agent within the approved conversation workflow. The child stage launches only after this run completes; subject to the finite workflow budget.",
+            parameters: Type.Object({
+                to: Type.String({ description: "Target agent name (lowercase kebab-case)" }),
+                text: Type.String({ description: "Bounded request text for the target agent" }),
+            }),
+            async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+                // Validate arguments before ANY UI operation; malformed/blank/oversize
+                // input has no UI side effect.
+                const to = typeof params?.to === "string" ? params.to : "";
+                const text = typeof params?.text === "string" ? params.text : "";
+                const argError = validateConversationHandoffArgs(to, text);
+                if (argError !== null) {
+                    return errorResult(argError);
+                }
+                const ui = ctx?.ui;
+                if (typeof ui?.input !== "function") {
+                    return errorResult("conversation_handoff is unavailable: the reserved input UI method is not supported in this mode.");
+                }
+                // Emit the reserved versioned input envelope and accept only a valid
+                // bounded result. No fallback, retry, queue, reroute, or second
+                // attempt. The broker derives identity/root/budget/role server-side.
+                const value = await ui.input(CONVERSATION_HANDOFF_REQUEST_TITLE, renderConversationHandoffRequestPlaceholder(to, text));
+                const outcome = resolveConversationHandoffToolResult(value);
+                if (!outcome.ok) {
+                    return errorResult(outcome.error);
+                }
+                return textResult(outcome.reply);
+            },
+        });
+    }
     pi.registerCommand("piren_status", {
         description: "Show Piren agent, vault, runnable-agent policy, packages, tools, and degraded write mode",
         handler: async (_args, ctx) => {
             const report = await buildPirenStatusReport({
                 context,
                 // room_mention is registered only under the activation flag; reflect
-                // the actual registered tool set in the status report.
-                toolNames: roomMentionEnabled ? [...PIREN_TOOL_NAMES, "room_mention"] : PIREN_TOOL_NAMES,
+                // the actual registered tool set in the status report. C5-3 adds
+                // conversation_handoff under the exact root|workflow flag.
+                toolNames: roomMentionEnabled || conversationHandoffRole !== null ? [...PIREN_TOOL_NAMES, ...(roomMentionEnabled ? ["room_mention"] : []), ...(conversationHandoffRole !== null ? ["conversation_handoff"] : [])] : PIREN_TOOL_NAMES,
                 localOutboxDir: outboxDir,
                 localCacheDir: cacheDir,
                 skillCount: skills.length,

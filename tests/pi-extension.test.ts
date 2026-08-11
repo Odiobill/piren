@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import extension from "../src/pi-extension.js";
 import type { AlertMirrorSenders } from "../src/alert-mirror.js";
 import { ROOM_HANDOFF_MAX_REPLY_LENGTH, ROOM_HANDOFF_PROTOCOL_VERSION, ROOM_HANDOFF_REQUEST_TITLE } from "../src/room-handoff-protocol.js";
+import { CONVERSATION_HANDOFF_PROTOCOL_VERSION } from "../src/conversation-handoff.js";
+import { CONVERSATION_HANDOFF_REQUEST_TITLE, CONVERSATION_HANDOFF_ENABLED_ENV_VAR } from "../src/conversation-handoff-protocol.js";
 
 let root: string;
 let agentDir: string;
@@ -1754,5 +1756,144 @@ describe("room_mention tool error secrecy and oversized reply (R2b review)", () 
     // The oversized reply is not surfaced as a successful reply.
     const text = (result.content as { text: string }[])[0]!.text;
     expect(text).not.toBe(oversized);
+  });
+});
+
+describe("conversation_handoff gated extension tool (C5-3)", () => {
+  function inputCtx(canned: { value?: string | undefined; calls?: { title: unknown; placeholder: unknown }[] }) {
+    const calls = canned.calls ?? [];
+    return {
+      calls,
+      ctx: {
+        ui: {
+          input: async (title: unknown, placeholder: unknown) => {
+            calls.push({ title, placeholder });
+            return canned.value;
+          },
+        },
+      },
+    };
+  }
+
+  const rootEnv = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local", [CONVERSATION_HANDOFF_ENABLED_ENV_VAR]: "root" };
+  const workflowEnv = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local", [CONVERSATION_HANDOFF_ENABLED_ENV_VAR]: "workflow" };
+  const disabledEnv = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" };
+
+  it("does NOT register conversation_handoff for a normal (unflagged) extension", async () => {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: disabledEnv, configPath: join(root, "missing-config.yml") });
+    expect(pi.tools.conversation_handoff).toBeUndefined();
+    // Existing tools remain registered (tool set unchanged).
+    expect(pi.tools.vault_read).toBeDefined();
+    expect(pi.tools.wiki_update_concept).toBeDefined();
+  });
+
+  it("does NOT register conversation_handoff for absent, empty, or any non-exact value (including 1)", async () => {
+    for (const value of [undefined, "", "0", "1", "true", "yes", "ROOT"]) {
+      const pi = fakePi();
+      const env = value === undefined ? { ...disabledEnv } : { ...disabledEnv, [CONVERSATION_HANDOFF_ENABLED_ENV_VAR]: value };
+      await extension(pi as any, { cliAgentDir: agentDir, env, configPath: join(root, "missing-config.yml") });
+      expect(pi.tools.conversation_handoff).toBeUndefined();
+    }
+  });
+
+  it("registers conversation_handoff for exact root and workflow flags, with only to/text parameters", async () => {
+    for (const env of [rootEnv, workflowEnv]) {
+      const pi = fakePi();
+      await extension(pi as any, { cliAgentDir: agentDir, env, configPath: join(root, "missing-config.yml") });
+      const tool = pi.tools.conversation_handoff;
+      expect(tool).toBeDefined();
+      const params = tool.parameters as { properties?: Record<string, unknown>; required?: string[] };
+      expect(Object.keys(params.properties ?? {}).sort()).toEqual(["text", "to"]);
+    }
+  });
+
+  it("emits the exact reserved versioned input envelope with only to/text", async () => {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: rootEnv, configPath: join(root, "missing-config.yml") });
+    const { calls, ctx } = inputCtx({ value: JSON.stringify({ v: 1, status: "pending" }) });
+    const result = await pi.tools.conversation_handoff.execute("call-1", { to: "dipu", text: "Please review" }, undefined, undefined, ctx);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.title).toBe(CONVERSATION_HANDOFF_REQUEST_TITLE);
+    const placeholder = JSON.parse(String(calls[0]!.placeholder)) as Record<string, unknown>;
+    expect(placeholder).toEqual({ v: CONVERSATION_HANDOFF_PROTOCOL_VERSION, to: "dipu", text: "Please review" });
+    expect(Object.keys(placeholder).sort()).toEqual(["text", "to", "v"]);
+    // A pending (root gate) result is a bounded non-secret reply.
+    const text = (result.content as { text: string }[])[0]!.text;
+    expect(text).toMatch(/gate requested; awaiting steward approval/i);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it("makes no UI request for invalid tool arguments", async () => {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: rootEnv, configPath: join(root, "missing-config.yml") });
+    const { calls, ctx } = inputCtx({ value: undefined });
+    const badTo = await pi.tools.conversation_handoff.execute("c", { to: "Bad Name", text: "x" }, undefined, undefined, ctx);
+    const blank = await pi.tools.conversation_handoff.execute("c", { to: "dipu", text: "   " }, undefined, undefined, ctx);
+    const oversized = await pi.tools.conversation_handoff.execute("c", { to: "dipu", text: "x".repeat(5000) }, undefined, undefined, ctx);
+    for (const result of [badTo, blank, oversized]) {
+      expect(result.isError).toBe(true);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("turns cancelled, no-value, malformed, version-mismatched, and rejected responses into explicit errors with no fallback", async () => {
+    const cases: { name: string; value: string | undefined }[] = [
+      { name: "cancelled-undefined", value: undefined },
+      { name: "malformed", value: "{not json" },
+      { name: "version-mismatch", value: JSON.stringify({ v: 999, status: "ok" }) },
+      { name: "rejected", value: JSON.stringify({ v: 1, status: "rejected", reason: "budget exhausted: edges" }) },
+    ];
+    for (const testCase of cases) {
+      const pi = fakePi();
+      await extension(pi as any, { cliAgentDir: agentDir, env: workflowEnv, configPath: join(root, "missing-config.yml") });
+      const { calls, ctx } = inputCtx({ value: testCase.value });
+      const result = await pi.tools.conversation_handoff.execute("c", { to: "kimi", text: "x" }, undefined, undefined, ctx);
+      expect(result.isError).toBe(true);
+      // Exactly one UI request was made; no retry / no second attempt.
+      expect(calls.length).toBe(1);
+    }
+  });
+
+  it("a rejected response is a fixed non-secret error and never interpolates the broker reason", async () => {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: workflowEnv, configPath: join(root, "missing-config.yml") });
+    const { ctx } = inputCtx({ value: JSON.stringify({ v: 1, status: "rejected", reason: "conversation handoff could not grow the audience (another update holds the lock)" }) });
+    const result = await pi.tools.conversation_handoff.execute("c", { to: "kimi", text: "x" }, undefined, undefined, ctx);
+    const text = (result.content as { text: string }[])[0]!.text;
+    expect(result.isError).toBe(true);
+    expect(text).toMatch(/rejected by the conversation broker/);
+    // The broker-provided reason is never interpolated.
+    expect(text).not.toContain("audience");
+    expect(text).not.toContain("collaboration/conversations");
+  });
+
+  it("an ok result yields the bounded acceptance reply without internal ids", async () => {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: workflowEnv, configPath: join(root, "missing-config.yml") });
+    const { ctx } = inputCtx({ value: JSON.stringify({ v: 1, status: "ok" }) });
+    const result = await pi.tools.conversation_handoff.execute("c", { to: "kimi", text: "x" }, undefined, undefined, ctx);
+    const text = (result.content as { text: string }[])[0]!.text;
+    expect(result.isError).toBeFalsy();
+    expect(text).toMatch(/conversation handoff accepted/i);
+    expect(text).not.toContain("2026");
+    expect(text).not.toContain("collaboration");
+  });
+
+  it("flagged and unflagged extension instances are independent", async () => {
+    const flagged = fakePi();
+    await extension(flagged as any, { cliAgentDir: agentDir, env: rootEnv, configPath: join(root, "missing-config.yml") });
+    const unflagged = fakePi();
+    await extension(unflagged as any, { cliAgentDir: agentDir, env: disabledEnv, configPath: join(root, "missing-config.yml") });
+    expect(flagged.tools.conversation_handoff).toBeDefined();
+    expect(unflagged.tools.conversation_handoff).toBeUndefined();
+    expect(unflagged.tools.room_mention).toBeUndefined();
+  });
+
+  it("errors explicitly when the UI input method is unavailable", async () => {
+    const pi = fakePi();
+    await extension(pi as any, { cliAgentDir: agentDir, env: rootEnv, configPath: join(root, "missing-config.yml") });
+    const result = await pi.tools.conversation_handoff.execute("c", { to: "dipu", text: "x" }, undefined, undefined, { ui: {} });
+    expect(result.isError).toBe(true);
   });
 });

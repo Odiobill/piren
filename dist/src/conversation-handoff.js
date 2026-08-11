@@ -129,7 +129,7 @@ export function buildConversationStagePrompt(input) {
     return [
         `You are agent '${input.agent}' participating in an approved Piren conversation workflow (conversation '${input.conversationId}', workflow root '${input.rootEventId}', handoff '${input.handoffEventId}', stage depth ${input.depth}).`,
         `Agent '${input.sourceAgent}' has handed off a bounded request to you within the steward-approved workflow.`,
-        "Complete the request, then report your outcome visibly. You may hand off to another locally runnable agent only when that is needed, within the finite workflow budget.",
+        "Complete the request, then report your outcome visibly. You may use `conversation_handoff(to, text)` to hand off to another locally runnable agent only when that is needed, within the finite workflow budget.",
         "",
         "Prior conversation context (durable order):",
         context,

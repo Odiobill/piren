@@ -3,6 +3,22 @@ function sessionKey(transport, conversationId) {
     return `${transport}:${conversationId}`;
 }
 /**
+ * Merge per-spawn env overrides into a NEW target with a NEW env object: the
+ * caller's targetBuilder output and its env are never mutated, and the global
+ * `process.env` is never touched (mirrors the room broker's decorate helper).
+ * C5-3 uses this to stamp the broker-owned conversation handoff role flag on
+ * only its own Conversation run spawn targets.
+ */
+function withEnvOverrides(target, overrides) {
+    return {
+        ...target,
+        env: {
+            ...target.env,
+            ...overrides,
+        },
+    };
+}
+/**
  * Owns one Pi RPC client per messaging-platform conversation.
  *
  * Messaging platforms such as Telegram and Discord can have many concurrent
@@ -27,12 +43,12 @@ export class TransportSessionManager {
             this.assertRunnable(this.defaultAgent);
         }
     }
-    async getSession(transport, conversationId, agent) {
+    async getSession(transport, conversationId, agent, envOverrides) {
         const key = sessionKey(transport, conversationId);
         const existing = this.sessions.get(key);
         if (existing) {
             if (agent !== undefined && existing.agent !== agent) {
-                return await this.switchAgent(transport, conversationId, agent);
+                return await this.switchAgent(transport, conversationId, agent, envOverrides);
             }
             existing.lastUsedAt = this.now();
             return existing;
@@ -43,7 +59,8 @@ export class TransportSessionManager {
         }
         this.assertRunnable(requestedAgent);
         const target = await this.targetBuilder(requestedAgent);
-        const client = this.clientFactory(target);
+        const effectiveTarget = envOverrides !== undefined ? withEnvOverrides(target, envOverrides) : target;
+        const client = this.clientFactory(effectiveTarget);
         await client.start();
         const session = {
             transport,
@@ -56,7 +73,7 @@ export class TransportSessionManager {
         this.sessions.set(key, session);
         return session;
     }
-    async switchAgent(transport, conversationId, agent) {
+    async switchAgent(transport, conversationId, agent, envOverrides) {
         this.assertRunnable(agent);
         const key = sessionKey(transport, conversationId);
         const existing = this.sessions.get(key);
@@ -65,7 +82,8 @@ export class TransportSessionManager {
             return existing;
         }
         const target = await this.targetBuilder(agent);
-        const nextClient = this.clientFactory(target);
+        const effectiveTarget = envOverrides !== undefined ? withEnvOverrides(target, envOverrides) : target;
+        const nextClient = this.clientFactory(effectiveTarget);
         await nextClient.start();
         const nextSession = {
             transport,

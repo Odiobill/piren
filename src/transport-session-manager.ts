@@ -61,6 +61,23 @@ function sessionKey(transport: string, conversationId: string): string {
 }
 
 /**
+ * Merge per-spawn env overrides into a NEW target with a NEW env object: the
+ * caller's targetBuilder output and its env are never mutated, and the global
+ * `process.env` is never touched (mirrors the room broker's decorate helper).
+ * C5-3 uses this to stamp the broker-owned conversation handoff role flag on
+ * only its own Conversation run spawn targets.
+ */
+function withEnvOverrides(target: RpcSpawnTarget, overrides: Record<string, string>): RpcSpawnTarget {
+  return {
+    ...target,
+    env: {
+      ...target.env,
+      ...overrides,
+    },
+  };
+}
+
+/**
  * Owns one Pi RPC client per messaging-platform conversation.
  *
  * Messaging platforms such as Telegram and Discord can have many concurrent
@@ -88,12 +105,17 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
     }
   }
 
-  async getSession(transport: string, conversationId: string, agent?: string): Promise<TransportSession<TClient>> {
+  async getSession(
+    transport: string,
+    conversationId: string,
+    agent?: string,
+    envOverrides?: Record<string, string>,
+  ): Promise<TransportSession<TClient>> {
     const key = sessionKey(transport, conversationId);
     const existing = this.sessions.get(key);
     if (existing) {
       if (agent !== undefined && existing.agent !== agent) {
-        return await this.switchAgent(transport, conversationId, agent);
+        return await this.switchAgent(transport, conversationId, agent, envOverrides);
       }
       existing.lastUsedAt = this.now();
       return existing;
@@ -106,7 +128,8 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
     this.assertRunnable(requestedAgent);
 
     const target = await this.targetBuilder(requestedAgent);
-    const client = this.clientFactory(target);
+    const effectiveTarget = envOverrides !== undefined ? withEnvOverrides(target, envOverrides) : target;
+    const client = this.clientFactory(effectiveTarget);
     await client.start();
 
     const session: TransportSession<TClient> = {
@@ -121,7 +144,12 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
     return session;
   }
 
-  async switchAgent(transport: string, conversationId: string, agent: string): Promise<TransportSession<TClient>> {
+  async switchAgent(
+    transport: string,
+    conversationId: string,
+    agent: string,
+    envOverrides?: Record<string, string>,
+  ): Promise<TransportSession<TClient>> {
     this.assertRunnable(agent);
     const key = sessionKey(transport, conversationId);
     const existing = this.sessions.get(key);
@@ -131,7 +159,8 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
     }
 
     const target = await this.targetBuilder(agent);
-    const nextClient = this.clientFactory(target);
+    const effectiveTarget = envOverrides !== undefined ? withEnvOverrides(target, envOverrides) : target;
+    const nextClient = this.clientFactory(effectiveTarget);
     await nextClient.start();
 
     const nextSession: TransportSession<TClient> = {

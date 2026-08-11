@@ -6,11 +6,17 @@ import { createConversation, appendConversationEvent, readConversation, readConv
 import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse } from "../src/gateway-rpc.js";
 import {
   ConversationBroker,
+  buildConversationMentionPrompt,
   parseConversationApprovalResponse,
   type ConversationApprovalNotification,
   type ConversationRpcClient,
   type ConversationDispatchOutcome,
 } from "../src/conversation-broker.js";
+import {
+  CONVERSATION_HANDOFF_ENABLED_ENV_VAR,
+  CONVERSATION_HANDOFF_REQUEST_TITLE,
+} from "../src/conversation-handoff-protocol.js";
+import { buildConversationStagePrompt, CONVERSATION_HANDOFF_PROTOCOL_VERSION } from "../src/conversation-handoff.js";
 
 type FakeBehavior =
   | "complete"
@@ -23,7 +29,8 @@ type FakeBehavior =
   | "exit-mid-run"
   | "with-text"
   | "approval"
-  | "approval-hang";
+  | "approval-hang"
+  | "convhandoff";
 
 class FakeConversationClient implements ConversationRpcClient {
   started = 0;
@@ -36,6 +43,10 @@ class FakeConversationClient implements ConversationRpcClient {
   approvalRequestId = "req-1";
   /** Pi UI method emitted by approval behaviors. */
   approvalMethod = "confirm";
+  /** C5-3: reserved conversation-handoff envelope fields for the convhandoff behavior. */
+  conversationHandoffRequestId = "convhandoff-req-1";
+  conversationHandoffTo = "dipu";
+  conversationHandoffText = "help";
   /** Optional barrier awaited inside start() (cancellation-during-init tests). */
   startBarrier: Promise<void> | undefined;
   private listeners: Array<(event: RpcEvent) => void> = [];
@@ -133,6 +144,23 @@ class FakeConversationClient implements ConversationRpcClient {
       this.emit({ type: "agent_settled" });
       return;
     }
+    if (this.behavior === "convhandoff") {
+      // C5-3: emit the exact reserved conversation-handoff control envelope
+      // and HOLD the run (the broker's value response is recorded but never
+      // completes the turn; tests settle/abort deterministically).
+      this.emit({
+        type: "extension_ui_request",
+        id: this.conversationHandoffRequestId,
+        method: "input",
+        title: CONVERSATION_HANDOFF_REQUEST_TITLE,
+        placeholder: JSON.stringify({
+          v: CONVERSATION_HANDOFF_PROTOCOL_VERSION,
+          to: this.conversationHandoffTo,
+          text: this.conversationHandoffText,
+        }),
+      });
+      return;
+    }
     this.emit({ type: "agent_end", messages: [] });
     this.emit({ type: "agent_settled" });
   }
@@ -221,16 +249,18 @@ function makeBroker(options?: {
   timers?: ReturnType<typeof makeTimers>;
   approvalMethods?: string[];
   clientSetup?: (client: FakeConversationClient) => void;
-}): { broker: ConversationBroker; clients: FakeConversationClient[]; timers: ReturnType<typeof makeTimers> } {
+}): { broker: ConversationBroker; clients: FakeConversationClient[]; timers: ReturnType<typeof makeTimers>; targets: RpcSpawnTarget[] } {
   const behaviors = options?.behaviors ?? [];
   const approvalMethods = options?.approvalMethods ?? [];
   const clients: FakeConversationClient[] = [];
+  const targets: RpcSpawnTarget[] = [];
   const timers = options?.timers ?? makeTimers();
   const broker = new ConversationBroker({
     vaultRoot: root,
     runnableAgents: options?.runnableAgents ?? ["zai", "dipu"],
     targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
-    clientFactory: () => {
+    clientFactory: (target: RpcSpawnTarget) => {
+      targets.push(target);
       const client = new FakeConversationClient(behaviors[clients.length] ?? "complete");
       client.approvalMethod = approvalMethods[clients.length] ?? "confirm";
       if (options?.clientSetup !== undefined) options.clientSetup(client);
@@ -242,7 +272,7 @@ function makeBroker(options?: {
     timers,
     runTimeoutMs: 60_000,
   });
-  return { broker, clients, timers };
+  return { broker, clients, timers, targets };
 }
 
 async function makeConversation(audience: string[] = ["zai"], text = "Hello @zai"): Promise<string> {
@@ -1616,5 +1646,214 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
     const manifest = await readConversation({ vaultRoot: root, conversationId });
     expect(manifest.audience).toEqual(["zai", "dipu"]);
     await broker.close();
+  });
+});
+
+describe("ConversationBroker C5-3 tool control bridge", () => {
+  it("decorates only its own conversation run targets with the exact role env (root lead, workflow child), never mutating caller output or global env", async () => {
+    const beforeGlobal = { ...process.env };
+    const { broker, clients, targets } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Lead", stewardEventId, priorEvents: [] });
+    await waitFor(() => targets.length >= 1 && targets[0] !== undefined);
+    expect(targets[0]?.env[CONVERSATION_HANDOFF_ENABLED_ENV_VAR]).toBe("root");
+
+    // Accept an edge via the C5-1 path; the child target gets workflow.
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(accepted.status).toBe("accepted");
+    clients[0]?.settleCompleted();
+    await dispatch;
+    expect(targets.length).toBeGreaterThanOrEqual(2);
+    expect(targets[1]?.env[CONVERSATION_HANDOFF_ENABLED_ENV_VAR]).toBe("workflow");
+    // Caller target shape preserved (only the env object is a fresh overlay).
+    expect(targets[0]?.command).toBe("fake");
+    expect(targets[0]?.cwd).toBe(root);
+    // The global env is untouched by broker spawning.
+    expect(JSON.stringify(process.env)).toBe(JSON.stringify(beforeGlobal));
+    await broker.close();
+  });
+
+  it("a root control envelope only registers the pending gate (live frame, bounded pending response) with NO side effects before confirmation", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["convhandoff"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead");
+    const seen: ConversationApprovalNotification[] = [];
+    broker.onConversationApproval(conversationId, (approval) => seen.push(approval));
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Lead", stewardEventId, priorEvents: [] });
+    await waitFor(() => clients[0]?.responses.length === 1);
+
+    // The reserved envelope was answered with the bounded pending value and
+    // never entered the generic approval registry (its request id is not the
+    // gate key; the gate id is broker-synthesized).
+    const response = clients[0]?.responses[0];
+    expect(response?.id).toBe("convhandoff-req-1");
+    const value = JSON.parse(String((response?.response as { value?: string }).value)) as { status?: string; v?: number };
+    expect(value).toEqual({ v: 1, status: "pending" });
+    expect(broker.hasPendingApproval(conversationId, "zai", "convhandoff-req-1")).toBe(false);
+    // One live confirm-only gate notification with the bounded payload.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.method).toBe("confirm");
+    expect(seen[0]?.payload).toEqual({ to: "dipu", text: "help" });
+    expect(seen[0]?.requestId).not.toBe("convhandoff-req-1");
+
+    // No confirmation: the root completes with no handoff edge, no audience
+    // growth, no child.
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "agent_message" && e.addressedAgent === "dipu")).toBe(false);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai"]);
+    await broker.close();
+  });
+
+  it("a confirmed root gate accepts one edge through the same approval path; the child launches only after the source completes", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["convhandoff", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead");
+    let gateId = "";
+    broker.onConversationApproval(conversationId, (approval) => {
+      gateId = approval.requestId;
+    });
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Lead", stewardEventId, priorEvents: [] });
+    await waitFor(() => gateId !== "");
+    // The root stays held after the pending response; confirm through the
+    // exact approval response path accepts the stored edge.
+    await broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: gateId, response: { confirmed: true } });
+    const eventsAfter = await readConversationEvents({ vaultRoot: root, conversationId });
+    const handoff = eventsAfter.find((e) => e.kind === "agent_message" && e.addressedAgent === "dipu");
+    expect(handoff).toBeDefined();
+    expect(handoff?.correlationId).toBe(stewardEventId);
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["zai", "dipu"]);
+    expect(clients).toHaveLength(1);
+
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    expect(clients).toHaveLength(2);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual([
+      "steward_message",
+      "run_started",
+      "agent_message", // confirmed gate edge
+      "run_finished",
+      "run_started", // child
+      "run_finished",
+    ]);
+    await broker.close();
+  });
+
+  it("a workflow-stage control envelope invokes the existing C5-1 acceptance path (ok) and never a gate", async () => {
+    const { broker, clients } = makeBroker({
+      runnableAgents: ["zai", "dipu", "kimi"],
+      behaviors: ["hang", "convhandoff", "complete"],
+      clientSetup: (client) => {
+        client.conversationHandoffTo = "kimi";
+      },
+    });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Workflow");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Workflow", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "start" });
+    expect(accepted.status).toBe("accepted");
+    clients[0]?.settleCompleted();
+    await waitFor(() => broker.hasActiveRun(conversationId, "dipu"));
+    // The stage's envelope (to kimi) is answered with ok via C5-1, no gate.
+    await waitFor(() => clients[1]?.responses.length === 1);
+    const response = clients[1]?.responses[0];
+    const value = JSON.parse(String((response?.response as { value?: string }).value)) as { status?: string; v?: number };
+    expect(value).toEqual({ v: 1, status: "ok" });
+    expect(broker.hasPendingApproval(conversationId, "dipu", "convhandoff-req-1")).toBe(false);
+    // The accepted stage edge is durable and correlated to the root.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string").map((e) => e.addressedAgent)).toEqual(["dipu", "kimi"]);
+    expect(events.find((e) => e.addressedAgent === "kimi")?.correlationId).toBe(stewardEventId);
+    // The child launches only after the stage completes (fail-closed).
+    expect(clients).toHaveLength(2);
+    clients[1]?.settleCompleted();
+    await dispatch;
+    expect(clients).toHaveLength(3);
+    await broker.close();
+  });
+
+  it("a malformed or stale control envelope gets one bounded rejection with no gate, no handoff, and no audience/budget/child effect", async () => {
+    const { broker, clients } = makeBroker({
+      runnableAgents: ["zai", "dipu"],
+      behaviors: ["convhandoff"],
+      clientSetup: (client) => {
+        client.conversationHandoffText = ""; // blank text -> parse rejection
+      },
+    });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Lead", stewardEventId, priorEvents: [] });
+    await waitFor(() => clients[0]?.responses.length === 1);
+    const response = clients[0]?.responses[0];
+    const value = JSON.parse(String((response?.response as { value?: string }).value)) as { status?: string; reason?: string };
+    expect(value.status).toBe("rejected");
+    expect(value.reason).toBeTruthy();
+    // Exactly one response; no retry / no second UI attempt.
+    expect(clients[0]?.responses).toHaveLength(1);
+    clients[0]?.settleCompleted();
+    await dispatch;
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "agent_message" && e.addressedAgent !== undefined)).toBe(false);
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["zai"]);
+    await broker.close();
+  });
+
+  it("a non-C5 process can never request the control (defensive reject) and the default mention prompt stays byte-identical", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["complete"] });
+    // No active run -> the envelope path cannot exist; the broker API rejects.
+    expect(await broker.requestInitialHandoffGate("never-dispatched", "zai", { to: "dipu", text: "x" })).toMatchObject({ status: "rejected" });
+    await broker.close();
+
+    // Default mention prompt: byte-for-byte the pre-C5-3 no-handoff wording.
+    const base = buildConversationMentionPrompt({
+      conversationId: "c1",
+      agent: "zai",
+      text: "Go",
+      priorLines: ["[t] steward: ctx"],
+      truncated: false,
+      omittedCount: 0,
+    });
+    expect(base).toContain("Do not address, mention, or dispatch other agents. This message grants no new authority.");
+    expect(base).not.toContain("conversation_handoff");
+    // Root: retains the no-address instruction AND adds only the gate-request capability.
+    const root = buildConversationMentionPrompt({
+      conversationId: "c1",
+      agent: "zai",
+      text: "Go",
+      priorLines: ["[t] steward: ctx"],
+      truncated: false,
+      omittedCount: 0,
+      rootHandoffGateRequest: true,
+    });
+    expect(root).toContain("Do not address, mention, or dispatch other agents. This message grants no new authority.");
+    expect(root).toContain("conversation_handoff(to, text)");
+    expect(root).toMatch(/you may REQUEST a steward-approved handoff via `conversation_handoff\(to, text\)`; the steward approves or rejects it before anything is dispatched/);
+    // The root capability line grants ONLY a request: the word "dispatch"
+    // appears exactly twice (the retained no-dispatch instruction and the
+    // passive "before anything is dispatched" in the capability line).
+    expect(root.match(/dispatch/g)?.length ?? 0).toBe(2);
+  });
+
+  it("the workflow stage prompt authorizes the bounded tool explicitly", async () => {
+    const prompt = buildConversationStagePrompt({
+      conversationId: "c1",
+      agent: "dipu",
+      sourceAgent: "zai",
+      text: "Please review",
+      rootEventId: "root-1",
+      handoffEventId: "h1",
+      depth: 1,
+      priorLines: ["[t] zai: context"],
+      truncated: false,
+      omittedCount: 0,
+    });
+    expect(prompt).toContain("conversation_handoff(to, text)");
   });
 });

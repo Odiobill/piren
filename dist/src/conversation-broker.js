@@ -20,6 +20,7 @@
  */
 import { appendConversationEvent, readConversation, readConversationEvents, updateConversationAudience, } from "./conversations.js";
 import { buildConversationStagePrompt, buildConversationGateApprovalPayload, CONVERSATION_GATE_APPROVAL_METHOD, deriveConversationWorkflowState, parseConversationHandoffRequest, planConversationHandoffEdge, } from "./conversation-handoff.js";
+import { CONVERSATION_HANDOFF_ENABLED_ENV_VAR, isConversationHandoffInputRequest, parseConversationHandoffInputRequest, renderConversationHandoffResultValue, } from "./conversation-handoff-protocol.js";
 import { selectDurableTranscript, validateTranscriptBudget, } from "./conversation-contract.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { extractAssistantText } from "./gateway-rpc.js";
@@ -42,7 +43,10 @@ const APPROVABLE_METHODS = new Set(["confirm", "select", "input"]);
  * C2 bounded prior-transcript replay in durable order with an explicit
  * recipient-visible truncation notice; the current raw request is the
  * dispatch message and is never duplicated as "prior" context. Rendered
- * `@text` is never parsed; no new authority is granted.
+ * `@text` is never parsed; no new authority is granted. A C5 ROOT lead may
+ * additionally be offered ONLY the ability to REQUEST the steward-approved
+ * initial handoff gate (never a dispatch); every other run keeps the
+ * no-handoff wording byte-for-byte.
  */
 export function buildConversationMentionPrompt(input) {
     const context = input.priorLines.length === 0
@@ -51,10 +55,13 @@ export function buildConversationMentionPrompt(input) {
     const truncationNotice = input.truncated && input.omittedCount > 0
         ? `\ncontext_truncated: true (${input.omittedCount} earlier message(s) omitted)\n`
         : "";
+    const gateLine = input.rootHandoffGateRequest === true
+        ? " If this request requires team coordination, you may REQUEST a steward-approved handoff via `conversation_handoff(to, text)`; the steward approves or rejects it before anything is dispatched."
+        : "";
     return [
         `You are participating in Piren conversation '${input.conversationId}' as agent '${input.agent}'.`,
         "The steward has explicitly addressed you with one bounded request, recorded as an immutable conversation steward_message event.",
-        "Respond to this request only. Do not address, mention, or dispatch other agents. This message grants no new authority.",
+        `Respond to this request only. Do not address, mention, or dispatch other agents. This message grants no new authority.${gateLine}`,
         "",
         "Prior conversation context (durable order):",
         context,
@@ -303,6 +310,9 @@ export class ConversationBroker {
                 priorLines: context.lines,
                 truncated: context.truncated,
                 omittedCount: context.metadata.omittedCount,
+                // C5-3: a steward-dispatched ROOT lead may only REQUEST the initial
+                // gate; it never gains dispatch authority.
+                rootHandoffGateRequest: run.c5?.role === "root",
             }), context.metadata, done);
         }
         finally {
@@ -370,7 +380,14 @@ export class ConversationBroker {
         let session;
         let startupFailed = false;
         try {
-            session = await this.sessions.getSession("conversation", run.key, run.agent);
+            // C5-3: the broker stamps ONLY its own isolated Conversation run spawn
+            // targets with the exact handoff role. The role is part of the session
+            // identity so a role change for the same conversation×agent spawns a
+            // fresh client with the correct flag (never a stale reused env).
+            const role = run.c5 !== undefined ? run.c5.role : undefined;
+            const sessionKey = role !== undefined ? `${run.key}#${role}` : run.key;
+            const envOverrides = role !== undefined ? { [CONVERSATION_HANDOFF_ENABLED_ENV_VAR]: role } : undefined;
+            session = await this.sessions.getSession("conversation", sessionKey, run.agent, envOverrides);
         }
         catch {
             startupFailed = true;
@@ -382,7 +399,9 @@ export class ConversationBroker {
         if (run.settled) {
             if (session !== undefined) {
                 await session.client.stop().catch(() => { });
-                this.sessions.forgetSession("conversation", run.key, session.client);
+                const role = run.c5 !== undefined ? run.c5.role : undefined;
+                const sessionKey = role !== undefined ? `${run.key}#${role}` : run.key;
+                this.sessions.forgetSession("conversation", sessionKey, session.client);
             }
             return await this.finalizeCancelledDuringInit(run);
         }
@@ -442,6 +461,14 @@ export class ConversationBroker {
         run.events.push(event);
         run.attemptEvents.push(event);
         if (event.type === "extension_ui_request" && typeof event.id === "string") {
+            // C5-3: a reserved conversation-handoff control request is consumed only
+            // from this exact active run, BEFORE generic input approval forwarding.
+            // It never enters the approval registry or notifications and is never
+            // answerable through the public approval path (room R2 precedent).
+            if (isConversationHandoffInputRequest(event)) {
+                void this.handleConversationHandoffControlRequest(run, event);
+                return;
+            }
             // C3-C1: only approvable request kinds register; other Pi UI requests
             // (notify, setStatus, ...) never become conversation approvals. The
             // registry is keyed exactly conversation×agent×requestId and lives in
@@ -626,6 +653,56 @@ export class ConversationBroker {
                 this.settle(run, "ambiguous");
             }
             pendingOutcome = null; // await the next agent_settled
+        }
+    }
+    /**
+     * C5-3: bridge one reserved conversation-handoff control request from the
+     * flagged extension process to the broker's bounded core. Root mode may
+     * ONLY request the initial C5-2 steward gate (answered promptly `pending`
+     * with no side effect before confirmation); workflow mode may ONLY use the
+     * existing C5-1 bounded acceptance path (`ok`). A malformed or stale
+     * request gets exactly one bounded `rejected` response with no retry,
+     * queue, reroute, fallback, or second UI attempt.
+     */
+    async handleConversationHandoffControlRequest(run, event) {
+        const requestId = event.id;
+        const parsed = parseConversationHandoffInputRequest(event);
+        if (!parsed.ok) {
+            this.respondToConversationHandoffInput(run, requestId, { status: "rejected", reason: parsed.reason });
+            return;
+        }
+        const role = run.c5 !== undefined ? run.c5.role : undefined;
+        if (role !== "root" && role !== "workflow") {
+            // Defensive: the tool is registered only under the exact flag, so a
+            // non-C5 run should never emit this envelope; fail closed.
+            this.respondToConversationHandoffInput(run, requestId, {
+                status: "rejected",
+                reason: "conversation handoff is not available for this run",
+            });
+            return;
+        }
+        if (run.settled || this.activeRuns.get(run.key) !== run) {
+            this.respondToConversationHandoffInput(run, requestId, { status: "rejected", reason: "no eligible conversation handoff run" });
+            return;
+        }
+        const request = { to: parsed.to, text: parsed.text };
+        if (role === "root") {
+            const result = await this.requestInitialHandoffGate(run.conversationId, run.agent, request);
+            this.respondToConversationHandoffInput(run, requestId, result.status === "pending" ? { status: "pending" } : { status: "rejected", reason: result.reason });
+            return;
+        }
+        const result = await this.requestConversationHandoff(run.conversationId, run.agent, request);
+        this.respondToConversationHandoffInput(run, requestId, result.status === "accepted" ? { status: "ok" } : { status: "rejected", reason: result.reason });
+    }
+    /** Answer the source run's reserved input request id with a bounded structured value. */
+    respondToConversationHandoffInput(run, requestId, result) {
+        if (run.client === undefined)
+            return;
+        try {
+            run.client.respondToUiRequest(requestId, { value: renderConversationHandoffResultValue(result) });
+        }
+        catch {
+            // contained: a dead client cannot receive the response.
         }
     }
     settle(run, kind) {
