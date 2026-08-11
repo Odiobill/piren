@@ -69,6 +69,11 @@ export function ConversationDetailsModal({
     { phase: "idle" } | { phase: "busy" } | { phase: "error"; error: RenameError }
   >({ phase: "idle" });
   const busy = renameState.phase === "busy";
+  // Ref mirror so the one-time document keydown listener always sees the
+  // current in-flight state (the listener is registered once per onClose
+  // identity and must not close over a stale render's `busy`).
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const normalized = normalizeConversationTitle(titleDraft);
   // Truthful Save gate: the normalized value must differ from the last
   // gateway-authoritative title, and no request may be in flight.
@@ -88,6 +93,10 @@ export function ConversationDetailsModal({
       );
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // While a rename Save is in flight, Escape must never dismiss the
+        // modal: if the request then fails, the bounded failure and explicit
+        // Retry must stay visible on the mounted modal (U2 correction).
+        if (busyRef.current) return;
         event.preventDefault();
         onClose();
         return;
