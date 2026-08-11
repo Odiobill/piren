@@ -32,6 +32,8 @@ export interface ConversationActivityFrame {
 /** U4: bounded live-frame delta and transient partial-reply limits. */
 export const CONVERSATION_ACTIVITY_DELTA_MAX = 4096;
 export const CONVERSATION_ACTIVITY_PARTIAL_MAX = 16384;
+/** U4: bounded in-memory settled-run tombstones (delayed stale frames are ignored). */
+export const CONVERSATION_ACTIVITY_SETTLED_TOMBSTONES_MAX = 32;
 
 const ACTIVITY_OUTCOMES: readonly ConversationActivityOutcome[] = ["completed", "failed", "timed_out", "cancelled"];
 
@@ -98,10 +100,23 @@ export interface ConversationActivityRun {
 
 export interface ConversationActivityState {
   runs: ConversationActivityRun[];
+  /**
+   * Bounded in-memory settled-run tombstones (runIds). A delayed
+   * working/text_delta frame for a settled run is stale and is ignored, so
+   * it can never resurrect display state. Cleared together with the rest of
+   * the transient state on history reread/selection/stream end — never
+   * stored or durable.
+   */
+  settled: string[];
 }
 
 export function emptyConversationActivity(): ConversationActivityState {
-  return { runs: [] };
+  return { runs: [], settled: [] };
+}
+
+/** Fail-closed: remove every transient run while retaining the settled tombstones. */
+export function clearConversationActivity(state: ConversationActivityState): ConversationActivityState {
+  return { runs: [], settled: state.settled };
 }
 
 /**
@@ -113,29 +128,50 @@ export function emptyConversationActivity(): ConversationActivityState {
  * shows truthful typing (the browser tolerates reordered/lost frames).
  */
 export function applyConversationActivityFrame(state: ConversationActivityState, frame: ConversationActivityFrame): ConversationActivityState {
+  // A known runId (still active) receiving a structurally valid frame with a
+  // DIFFERENT agent is contradictory evidence: fail closed by clearing the
+  // transient activity rather than applying/mutating it.
+  const known = state.runs.find((run) => run.runId === frame.runId);
+  if (known !== undefined && known.agent !== frame.agent) {
+    return clearConversationActivity(state);
+  }
+  // A delayed frame for a settled run is stale: it must never recreate a
+  // typing/working run (tombstones are in-memory and bounded).
+  if (state.settled.includes(frame.runId)) {
+    return state;
+  }
   if (frame.kind === "settled") {
-    return { runs: state.runs.filter((run) => run.runId !== frame.runId) };
+    const runs = state.runs.filter((run) => run.runId !== frame.runId);
+    const settled = [...state.settled, frame.runId];
+    if (settled.length > CONVERSATION_ACTIVITY_SETTLED_TOMBSTONES_MAX) {
+      settled.shift();
+    }
+    return { runs, settled };
   }
   if (frame.kind === "working") {
     const others = state.runs.filter((run) => run.runId !== frame.runId);
-    return { runs: [...others, { runId: frame.runId, agent: frame.agent, phase: "working", partial: "", truncated: false }] };
+    return { runs: [...others, { runId: frame.runId, agent: frame.agent, phase: "working", partial: "", truncated: false }], settled: state.settled };
   }
   const delta = frame.delta ?? "";
   const existing = state.runs.find((run) => run.runId === frame.runId);
   if (existing === undefined) {
-    return { runs: [...state.runs, { runId: frame.runId, agent: frame.agent, phase: "typing", partial: delta, truncated: delta.length > CONVERSATION_ACTIVITY_PARTIAL_MAX }] };
+    return {
+      runs: [...state.runs, { runId: frame.runId, agent: frame.agent, phase: "typing", partial: delta, truncated: delta.length > CONVERSATION_ACTIVITY_PARTIAL_MAX }],
+      settled: state.settled,
+    };
   }
   const combined = existing.partial + delta;
   const truncated = existing.truncated || combined.length > CONVERSATION_ACTIVITY_PARTIAL_MAX;
   const partial = truncated ? combined.slice(0, CONVERSATION_ACTIVITY_PARTIAL_MAX) : combined;
   return {
     runs: state.runs.map((run) => (run.runId === frame.runId ? { ...run, phase: "typing", partial, truncated } : run)),
+    settled: state.settled,
   };
 }
 
 /** Clear every transient run for one agent. */
 export function clearConversationActivityForAgent(state: ConversationActivityState, agent: string): ConversationActivityState {
-  return { runs: state.runs.filter((run) => run.agent !== agent) };
+  return { runs: state.runs.filter((run) => run.agent !== agent), settled: state.settled };
 }
 
 /**

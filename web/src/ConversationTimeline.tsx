@@ -12,6 +12,7 @@ import {
 } from "./conversation-timeline";
 import {
   applyConversationActivityFrame,
+  clearConversationActivity,
   emptyConversationActivity,
   parseConversationActivityFrame,
   reconcileConversationActivity,
@@ -109,17 +110,20 @@ export function ConversationTimeline({
             onFrame: (frame) => {
               if (cancelled) return;
               // U4: a scoped broker-authoritative activity frame updates the
-              // transient surface. Malformed, foreign, stale, or contradictory
-              // frames are strictly ignored (no crash, no transient state).
+              // transient surface. FAIL CLOSED: malformed JSON, parser
+              // rejection (including foreign conversations), or an in-state
+              // contradiction CLEARS transient activity — it is never left
+              // visible.
               if (frame.event === "conversation_activity") {
+                let parsed: ReturnType<typeof parseConversationActivityFrame>;
                 try {
-                  const parsed = parseConversationActivityFrame(JSON.parse(frame.data), conversationId);
-                  if (parsed.ok) {
-                    setActivity((previous) => applyConversationActivityFrame(previous, parsed.frame));
-                  }
+                  parsed = parseConversationActivityFrame(JSON.parse(frame.data), conversationId);
                 } catch {
-                  // non-authoritative; ignored
+                  parsed = { ok: false, reason: "malformed frame" };
                 }
+                setActivity((previous) =>
+                  parsed.ok ? applyConversationActivityFrame(previous, parsed.frame) : clearConversationActivity(previous),
+                );
                 return;
               }
               // C3-C3: a scoped live `approval` frame is forwarded to the

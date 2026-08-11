@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyConversationActivityFrame,
+  clearConversationActivity,
   clearConversationActivityForAgent,
   CONVERSATION_ACTIVITY_DELTA_MAX,
   CONVERSATION_ACTIVITY_PARTIAL_MAX,
@@ -182,5 +183,58 @@ describe("runAgent durable metadata parsing (U4)", () => {
         runStatus: "cancelled", runAgent: "",
       }),
     ).toThrow(/runAgent/);
+  });
+});
+
+describe("fail-closed invalid/stale/contradictory activity (U4 correction)", () => {
+  it("clearConversationActivity removes every transient run while keeping settled tombstones", () => {
+    let state: ConversationActivityState = emptyConversationActivity();
+    state = applyConversationActivityFrame(state, frame("working", { runId: "r1" }));
+    state = applyConversationActivityFrame(state, frame("settled", { runId: "r1" }));
+    state = applyConversationActivityFrame(state, frame("working", { runId: "r2", agent: "zai" }));
+    const cleared = clearConversationActivity(state);
+    expect(cleared.runs).toHaveLength(0);
+    expect(cleared.settled).toContain("r1");
+  });
+
+  it("a delayed working/text_delta for a settled run is stale and never resurrects it", () => {
+    let state: ConversationActivityState = emptyConversationActivity();
+    state = applyConversationActivityFrame(state, frame("working", { runId: "r1" }));
+    state = applyConversationActivityFrame(state, frame("text_delta", { runId: "r1", delta: "Hel" }));
+    state = applyConversationActivityFrame(state, frame("settled", { runId: "r1" }));
+    expect(state.runs).toHaveLength(0);
+    // Delayed frames for the settled run are ignored (no typing recreation).
+    state = applyConversationActivityFrame(state, frame("working", { runId: "r1" }));
+    expect(state.runs).toHaveLength(0);
+    state = applyConversationActivityFrame(state, frame("text_delta", { runId: "r1", delta: "late" }));
+    expect(state.runs).toHaveLength(0);
+    // A fresh, never-settled runId still shows truthful typing.
+    state = applyConversationActivityFrame(state, frame("text_delta", { runId: "r9", delta: "fresh" }));
+    expect(state.runs[0]).toMatchObject({ runId: "r9", phase: "typing", partial: "fresh" });
+  });
+
+  it("a structurally valid frame with a different agent for a known runId is contradictory and clears activity", () => {
+    let state: ConversationActivityState = emptyConversationActivity();
+    state = applyConversationActivityFrame(state, frame("working", { runId: "r1", agent: "dipu" }));
+    state = applyConversationActivityFrame(state, frame("text_delta", { runId: "r1", agent: "dipu", delta: "Hel" }));
+    // Same runId, different agent: contradictory evidence — fail closed.
+    state = applyConversationActivityFrame(state, frame("text_delta", { runId: "r1", agent: "zai", delta: "x" }));
+    expect(state.runs).toHaveLength(0);
+    // A later consistent working frame for the same runId/agent starts fresh.
+    state = applyConversationActivityFrame(state, frame("working", { runId: "r1", agent: "dipu" }));
+    expect(state.runs[0]).toMatchObject({ runId: "r1", agent: "dipu", phase: "working" });
+  });
+
+  it("settled tombstones are bounded (never unbounded memory)", () => {
+    let state: ConversationActivityState = emptyConversationActivity();
+    for (let index = 0; index < 100; index += 1) {
+      const runId = `run-${String(index).padStart(4, "0")}`;
+      state = applyConversationActivityFrame(state, frame("working", { runId }));
+      state = applyConversationActivityFrame(state, frame("settled", { runId }));
+    }
+    expect(state.settled.length).toBeLessThanOrEqual(32);
+    // The earliest tombstone was dropped; the newest ones are retained.
+    expect(state.settled).toContain("run-0099");
+    expect(state.settled).not.toContain("run-0000");
   });
 });

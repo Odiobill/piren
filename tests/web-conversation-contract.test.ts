@@ -337,4 +337,15 @@ describe("U4 transient live activity surface (static)", () => {
     expect(timeline).toContain("!live");
     expect(timeline).toContain("no live stream");
   });
+
+  it("invalid/stale/contradictory activity frames fail closed (clear transient state, never resurrect settled runs)", async () => {
+    const activity = await readFile(join(webSrc, "conversation-activity.ts"), "utf8");
+    const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
+    // Malformed/foreign/contradictory frames clear the transient surface.
+    expect(timeline).toContain("clearConversationActivity");
+    expect(activity).toContain("export function clearConversationActivity");
+    // Settled-run tombstones are bounded and in-memory only.
+    expect(activity).toContain("CONVERSATION_ACTIVITY_SETTLED_TOMBSTONES_MAX");
+    expect(activity).toContain("settled");
+  });
 });
