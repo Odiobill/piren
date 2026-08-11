@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
   abortConversationRun,
   approveConversationApproval,
   archiveConversation,
   attachConversation,
   ConversationControlHttpError,
-  createConversation,
   fetchConversation,
   fetchRoomAgents,
   LifecycleHttpError,
@@ -564,33 +563,41 @@ export function ConversationNavigator({
         </h2>
         {active ? (
           <>
-            <ConversationApprovalCards
-              approvals={pendingApprovals}
-              submit={approvalSubmit}
-              onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
-            />
-            <ConversationAbortControls
-              members={selection.conversation.audience}
-              state={abortState}
-              onAbort={(agent) => void handleAbort(agent)}
-            />
-            <ConversationTimeline
-              conversationId={selection.conversation.id}
-              token={token}
-              live={true}
-              onUnauthorized={onUnauthorized}
-              onLifecycleTransition={handleLifecycleEvent}
-              onApproval={handleApprovalFrame}
-            />
-            {/* U2: the details action sits composer-right on the active surface. */}
-            <div className="composer-action-row">
-              <ConversationComposer
-                conversationId={selection.conversation.id}
-                token={token}
-                onUnauthorized={onUnauthorized}
-                onAnnounce={setAnnouncement}
-              />
-              <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
+            <div className="conversation-workspace">
+              <div className="conversation-scroll">
+                <ConversationApprovalCards
+                  approvals={pendingApprovals}
+                  submit={approvalSubmit}
+                  onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
+                />
+                <ConversationAbortControls
+                  members={selection.conversation.audience}
+                  state={abortState}
+                  onAbort={(agent) => void handleAbort(agent)}
+                />
+                <ConversationTimeline
+                  conversationId={selection.conversation.id}
+                  token={token}
+                  live={true}
+                  onUnauthorized={onUnauthorized}
+                  onLifecycleTransition={handleLifecycleEvent}
+                  onApproval={handleApprovalFrame}
+                />
+              </div>
+              {/* U3: the composer is anchored at the bottom of the full
+                  workspace; messages flow/scroll above it. U2's composer-right
+                  details action is preserved. */}
+              <div className="composer-action-row">
+                <ConversationComposer
+                  mode="active"
+                  conversationId={selection.conversation.id}
+                  token={token}
+                  agents={load.phase === "ready" ? load.agents : []}
+                  onUnauthorized={onUnauthorized}
+                  onAnnounce={setAnnouncement}
+                />
+                <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
+              </div>
             </div>
           </>
         ) : (
@@ -651,13 +658,18 @@ export function ConversationNavigator({
         New conversation
       </h2>
       {notice !== null && <p className="route-notice" role="status">{notice}</p>}
-      <p className="muted">Write the first message below, or pick a conversation from the sidebar.</p>
-      <ConversationCreateForm
+      <p className="muted">
+        This draft stays only in this window — nothing is saved until you send the first
+        message, which creates the conversation. Write it below, or pick a conversation from
+        the sidebar.
+      </p>
+      <ConversationComposer
+        mode="draft"
         token={token}
-        onCreated={(conversation) => void handleCreated(conversation)}
-        onError={(message) => setAnnouncement(message)}
+        agents={load.phase === "ready" ? load.agents : []}
         onUnauthorized={onUnauthorized}
-        busy={selection.phase === "attaching"}
+        onAnnounce={setAnnouncement}
+        onCreated={(conversation) => void handleCreated(conversation)}
       />
     </section>
   );
@@ -691,80 +703,6 @@ function DetailsToggleButton({
         <line x1="12" y1="8" x2="12.01" y2="8" />
       </svg>
     </button>
-  );
-}
-
-function ConversationCreateForm({
-  token,
-  onCreated,
-  onError,
-  onUnauthorized,
-  busy,
-}: {
-  token: string;
-  onCreated: (conversation: ConversationRecord) => void;
-  onError: (message: string) => void;
-  onUnauthorized: () => void;
-  busy: boolean;
-}) {
-  const [text, setText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmed = text.trim();
-    if (trimmed === "") {
-      setError("Enter the first message to start the conversation.");
-      textareaRef.current?.focus();
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    try {
-      const created = await createConversation(token, trimmed);
-      setText("");
-      onCreated(created.conversation);
-    } catch (cause) {
-      if (cause instanceof UnauthorizedError) {
-        onUnauthorized();
-        return;
-      }
-      const message = cause instanceof Error ? cause.message : String(cause);
-      setError(message);
-      onError(message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <form className="conversation-create" onSubmit={handleSubmit}>
-      <label htmlFor="conversation-first-message">First message</label>
-      <textarea
-        id="conversation-first-message"
-        ref={textareaRef}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        placeholder="The first message activates the conversation"
-        disabled={submitting || busy}
-      />
-      <p className="field-help">
-        This draft stays only in this window — nothing is saved until you send the first
-        message, which creates the conversation. Mention a locally runnable agent with{" "}
-        <code>@name</code> to add it as a member; the gateway alone resolves mentions.
-        Zero-mention context messages are fine too.
-      </p>
-      {error && (
-        <p className="error-message" role="status">
-          {error}
-        </p>
-      )}
-      <button type="submit" className="button button-primary" disabled={submitting || busy}>
-        Start conversation
-      </button>
-    </form>
   );
 }
 

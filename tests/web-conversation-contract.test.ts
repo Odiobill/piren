@@ -36,6 +36,7 @@ function conversationModuleFiles(): string[] {
     "conversations.ts",
     "attach.ts",
     "conversation-composer.ts",
+    "conversation-autocomplete.ts",
     "conversation-timeline.ts",
     "conversation-details.ts",
     "conversation-lifecycle.ts",
@@ -230,16 +231,74 @@ describe("C4-A hash deep links (static)", () => {
 describe("U1 local draft surface (static)", () => {
   it("the default Conversation main surface is the local new-conversation draft template, not the workspace greeting", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    const composer = await readFile(join(webSrc, "ConversationComposer.tsx"), "utf8");
     // The old "Your workspace" greeting is gone.
     expect(navigator).not.toContain("Your workspace");
-    // The home surface is the draft template: a heading, a first-message
-    // textarea, and the existing first-message activation call.
+    // The home surface is the draft template; U3 made the first-message
+    // surface the shared draft-mode composer (browser-local until Send).
     expect(navigator).toContain("New conversation");
-    expect(navigator).toContain("First message");
-    expect(navigator).toContain("createConversation");
     expect(navigator).toContain("formatConversationHash");
-    // Ephemeral by contract: the draft lives only in this window and is
-    // persisted only when its first message is sent (no storage anywhere).
     expect(navigator).toContain("only in this window");
+    expect(composer).toContain("First message");
+    expect(composer).toContain("createConversation");
+  });
+});
+
+describe("U3 Discord-like composer surface (static)", () => {
+  it("the composer core keeps the raw {text} body and never scans/resolves mentions", async () => {
+    const composerCore = await readFile(join(webSrc, "conversation-composer.ts"), "utf8");
+    const autocomplete = await readFile(join(webSrc, "conversation-autocomplete.ts"), "utf8");
+    expect(composerCore).toContain("text: text.trim()");
+    // The autocomplete convenience list never parses or resolves mentions for
+    // dispatch: no regex match call and no recipient resolution anywhere.
+    for (const content of [composerCore, autocomplete]) {
+      expect(content).not.toMatch(/match\(\s*\/@/);
+      expect(content).not.toContain("scanStewardMentions");
+      expect(content).not.toContain("resolveRecipients");
+    }
+  });
+
+  it("the autocomplete sources ONLY the locally runnable roster with keyboard/a11y affordances", async () => {
+    const autocomplete = await readFile(join(webSrc, "conversation-autocomplete.ts"), "utf8");
+    const composer = await readFile(join(webSrc, "ConversationComposer.tsx"), "utf8");
+    // Runnable-only source (local policy `online`), never a client membership
+    // or dispatch derivation.
+    expect(autocomplete).toContain("online");
+    expect(composer).toContain("ArrowDown");
+    expect(composer).toContain("ArrowUp");
+    expect(composer).toContain('"Escape"');
+    expect(composer).toContain('"Tab"');
+    expect(composer).toContain('role="listbox"');
+    expect(composer).toContain("aria-activedescendant");
+  });
+
+  it("the disabled + upload affordance is genuinely disabled with no file capability", async () => {
+    const sources = await readAllTs();
+    const composer = sources.get("ConversationComposer.tsx") ?? "";
+    expect(composer).toContain("composer-upload-placeholder");
+    expect(composer).toMatch(/disabled[^>]*aria-label|aria-label[^>]*disabled/);
+    for (const [name, content] of sources) {
+      expect(content, `${name} must not reference file picking`).not.toMatch(/type="file"|FileReader|accept=/);
+    }
+  });
+
+  it("the active composer is anchored at the bottom of a full-height workspace with a dedicated scroll region", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    const styles = await readFile(join(webSrc, "styles.css"), "utf8");
+    expect(navigator).toContain("conversation-workspace");
+    expect(navigator).toContain("conversation-scroll");
+    expect(styles).toMatch(/\.conversation-scroll\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*flex:\s*none/);
+  });
+
+  it("read-only inspection keeps no composer and the details action stays composer-right on active", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    // The composer appears only in the active branch and the draft surface;
+    // the read-only attach-banner section never renders it.
+    const banner = navigator.slice(navigator.indexOf("attach-banner"), navigator.indexOf("inspection-actions"));
+    expect(banner).not.toContain("ConversationComposer");
+    // U2's composer-right details placement is preserved on the active surface.
+    expect(navigator).toContain("composer-action-row");
+    expect(navigator).toContain("DetailsToggleButton");
   });
 });

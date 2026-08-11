@@ -13,5 +13,5 @@
     "noEmit": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["src", "vite.config.ts", "../tests/web-conversation-details-modal.test.ts"]
+  "include": ["src", "vite.config.ts", "../tests/web-conversation-details-modal.test.ts", "../tests/web-conversation-composer.test.ts"]
 }

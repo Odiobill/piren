@@ -15,6 +15,48 @@ export interface ConversationMessageRequest {
   text: string;
 }
 
+/**
+ * U3 — bounded auto-grow composer geometry (accepted 0.2.0 UX plan §U3).
+ * The runtime path reads the textarea `scrollHeight` and clamps it into this
+ * range; the estimate is the deterministic SSR/static fallback.
+ */
+export const COMPOSER_MIN_HEIGHT_PX = 44;
+export const COMPOSER_MAX_HEIGHT_PX = 200;
+export const COMPOSER_LINE_HEIGHT_PX = 22;
+export const COMPOSER_CHARS_PER_LINE = 60;
+
+/** Clamp a content height into the bounded composer range. */
+export function clampComposerHeight(height: number, min: number, max: number): number {
+  return Math.min(Math.max(height, min), max);
+}
+
+/**
+ * Deterministic estimated content height in px (newlines + a conservative
+ * wrap at `charsPerLine`), clamped into the bounded composer range. Used as
+ * the static/SSR fallback; the DOM `scrollHeight` path refines it at runtime.
+ */
+export function estimateComposerHeightPx(
+  text: string,
+  options?: { charsPerLine?: number; lineHeightPx?: number },
+): number {
+  const charsPerLine = options?.charsPerLine ?? COMPOSER_CHARS_PER_LINE;
+  const lineHeightPx = options?.lineHeightPx ?? COMPOSER_LINE_HEIGHT_PX;
+  const lines = text.split("\n");
+  const total = lines.reduce(
+    (sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(1, charsPerLine))),
+    0,
+  );
+  return clampComposerHeight(total * lineHeightPx, COMPOSER_MIN_HEIGHT_PX, COMPOSER_MAX_HEIGHT_PX);
+}
+
+/**
+ * U3 — keyboard submit decision: a plain Enter submits; Shift+Enter inserts
+ * a newline; ANY IME/composition state must prevent a premature submit.
+ */
+export function shouldSubmitOnEnter(input: { key: string; shiftKey: boolean; isComposing: boolean }): boolean {
+  return input.key === "Enter" && !input.shiftKey && !input.isComposing;
+}
+
 export type ConversationComposerValidation = { ok: true } | { ok: false; reason: "text required" };
 
 /** Send-enable gate: the trimmed raw text must be non-empty. */
