@@ -77,11 +77,13 @@ export function ConversationComposer({
   // explicitly dismissed (Escape); typing/editing re-syncs it.
   const mentionOpen = mentionVisible && mention.ok && matches.length > 0;
 
-  // Keep the popup in sync with the trigger (dismissal survives until the
-  // draft text or caret changes again).
+  // Keep the popup in sync with the trigger: any text/caret edit after an
+  // Escape dismissal must resynchronize a still-valid runnable-only picker
+  // (the validity booleans alone stay unchanged when the match count does
+  // not move, e.g. editing `@d` to `@di` with two matches).
   useEffect(() => {
     setMentionVisible(mention.ok && matches.length > 0);
-  }, [mention.ok, matches.length]);
+  }, [mention.ok, matches.length, text, caret]);
 
   // Reset keyboard selection when the visible list changes.
   useEffect(() => {

@@ -46,6 +46,7 @@ const AGENTS: RoomAgentEntry[] = [
 function Harness(props: {
   mode: "draft" | "active";
   conversationId?: string;
+  agents?: RoomAgentEntry[];
   onAnnounce?: (message: string) => void;
   onCreated?: (conversation: ConversationRecord) => void;
 }): ReactElement {
@@ -53,7 +54,7 @@ function Harness(props: {
     mode: props.mode,
     ...(props.conversationId !== undefined ? { conversationId: props.conversationId } : {}),
     token: "test-token",
-    agents: AGENTS,
+    agents: props.agents ?? AGENTS,
     onUnauthorized: () => {},
     onAnnounce: props.onAnnounce ?? (() => {}),
     ...(props.onCreated !== undefined ? { onCreated: props.onCreated } : {}),
@@ -206,6 +207,38 @@ describe("ConversationComposer (U3)", () => {
       const input = textarea();
       await act(async () => typeText(input, "@dipu "));
       expect(container.querySelector('[role="listbox"]')).toBeNull();
+    });
+
+    it("after an Escape dismissal, editing the token resynchronizes the picker even when the match count is unchanged", async () => {
+      // Two runnable agents match both "@d" and "@di": the match COUNT is
+      // identical before and after the token edit, so the picker must resync
+      // on the text/caret change (U3 correction).
+      const roster: RoomAgentEntry[] = [
+        { name: "dipu", online: true },
+        { name: "dima", online: true },
+        { name: "zora", online: false },
+      ];
+      render(createElement(Harness, { mode: "active", conversationId: "c1", agents: roster }));
+      const input = textarea();
+
+      await act(async () => typeText(input, "@d"));
+      const popup = container.querySelector<HTMLElement>('[role="listbox"]');
+      expect(popup).not.toBeNull();
+      expect(popup!.textContent).toContain("@dipu");
+      expect(popup!.textContent).toContain("@dima");
+
+      await act(async () => key(input, "Escape"));
+      expect(container.querySelector('[role="listbox"]')).toBeNull();
+
+      // Edit the token @d -> @di: the SAME two runnable matches (dipu and
+      // dima both start with "di"), but the picker must reopen on the edit.
+      await act(async () => typeText(input, "@di"));
+      const reopened = container.querySelector<HTMLElement>('[role="listbox"]');
+      expect(reopened).not.toBeNull();
+      expect(reopened!.textContent).toContain("@dipu");
+      expect(reopened!.textContent).toContain("@dima");
+      // The offline agent is never offered.
+      expect(reopened!.textContent).not.toContain("@zora");
     });
   });
 
