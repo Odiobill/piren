@@ -633,33 +633,6 @@ code {
   width: 100%;
 }
 
-.sidebar-create {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  margin-bottom: 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.sidebar-create label {
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
-.sidebar-create textarea {
-  min-height: 92px;
-  width: 100%;
-  resize: vertical;
-  padding: 8px 10px;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font: inherit;
-}
-
 .sidebar-conversation-list {
   gap: 5px;
 }
@@ -721,6 +694,25 @@ code {
 .nav-toggle {
   display: none;
   flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+/* Classic three-line hamburger icon (U1); the button keeps an sr-only label. */
+.hamburger {
+  display: grid;
+  gap: 5px;
+  width: 20px;
+}
+
+.hamburger-line {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
 }
 
 .drawer-backdrop {
@@ -743,7 +735,7 @@ code {
 }
 
 .workspace-panel {
-  display: block;
+  min-height: 100%;
 }
 
 .workspace-panel[hidden] {
@@ -754,8 +746,9 @@ code {
   margin-top: 16px;
 }
 
-.conversation-welcome {
+.conversation-draft {
   display: grid;
+  gap: 14px;
   align-content: center;
   min-height: min(48vh, 460px);
   padding: clamp(24px, 7vw, 72px);
@@ -764,12 +757,12 @@ code {
   background: radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 48%), var(--surface);
 }
 
-.conversation-welcome h2 {
+.conversation-draft h2 {
   margin: 0;
   font-size: clamp(1.5rem, 3vw, 2.4rem);
 }
 
-.conversation-welcome .muted {
+.conversation-draft .muted {
   max-width: 38rem;
   font-size: 1rem;
 }
@@ -912,14 +905,21 @@ code {
   font-size: 0.9rem;
 }
 
-.conversation-create input[type="text"] {
+.conversation-create input[type="text"],
+.conversation-create textarea {
   width: 100%;
-  padding: 9px 12px;
+  padding: 10px 12px;
   font-size: 1rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
   color: var(--text);
+  font-family: inherit;
+}
+
+.conversation-create textarea {
+  min-height: 130px;
+  resize: vertical;
 }
 
 .conversation-create .button {

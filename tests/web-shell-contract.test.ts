@@ -66,13 +66,24 @@ async function readSourceFiles(): Promise<Map<string, string>> {
 }
 
 describe("app shell source surface (static)", () => {
-  it("the sidebar owns conversation navigation and creation alongside the other pages", async () => {
+  it("the sidebar is the conversation switcher with no redundant Conversations nav link and no inline create form", async () => {
     const sources = await readSourceFiles();
     const sidebar = sources.get("Sidebar.tsx") ?? "";
-    expect(sidebar).toContain("Conversations");
+    // U1: the sidebar remains the conversation switcher and creation entry
+    // point, but the standalone "Conversations" nav item is redundant (the
+    // conversation list lives in the sidebar itself) and must be removed.
+    // (Note: `fetchConversations` legitimately contains that substring, so
+    // the pin is the nav-item label, not the bare word.)
+    expect(sidebar).not.toContain('label: "Conversations"');
+    expect(sidebar).not.toContain('{ page: "conversations", label');
+    // Creation entry remains, but it opens the main-window draft template
+    // (home hash) instead of an inline first-message form in the sidebar.
     expect(sidebar).toContain("+ New conversation");
+    expect(sidebar).toContain('window.location.hash = ""');
+    expect(sidebar).not.toContain("sidebar-create");
+    expect(sidebar).not.toContain("showCreate");
+    // The list fetch and the two remaining pages stay.
     expect(sidebar).toContain("fetchConversations");
-    expect(sidebar).toContain("createConversation");
     expect(sidebar).toContain("Agents");
     expect(sidebar).toContain("About");
     expect(sidebar).toContain("aria-current");
@@ -93,6 +104,9 @@ describe("app shell source surface (static)", () => {
     expect(styles).toMatch(/\.shell-header\s*\{[\s\S]*flex:\s*none/);
     expect(styles).toMatch(/\.sidebar-desktop\s*\{[\s\S]*overflow-y:\s*auto/);
     expect(styles).toMatch(/\.shell-main\s*\{[\s\S]*overflow-y:\s*auto/);
+    // U1: a selected conversation fills the full workspace height inside the
+    // shell-main dedicated scroll area.
+    expect(styles).toMatch(/\.workspace-panel\s*\{[\s\S]*min-height:\s*100%/);
   });
 
   it("the mobile drawer is labelled, aria-expanded, and closes on Escape with focus return", async () => {
@@ -101,6 +115,19 @@ describe("app shell source surface (static)", () => {
     expect(drawer).toContain("aria-expanded");
     expect(drawer).toContain("Escape");
     expect(drawer).toContain("Tab");
+  });
+
+  it("the narrow-layout menu toggle is an accessible three-line hamburger icon, not bare text", async () => {
+    const sources = await readSourceFiles();
+    const shell = sources.get("AppShell.tsx") ?? "";
+    // U1: the textual "Menu" becomes a classic three-line hamburger; the
+    // accessible name is preserved via a screen-reader-only label.
+    expect(shell).toContain("hamburger");
+    expect(shell).toContain('className="sr-only">Menu<');
+    expect(shell).not.toMatch(/nav-toggle[^>]*>\s*Menu\s*<\/button>/);
+    // The aria contract on the toggle is preserved.
+    expect(shell).toContain("aria-expanded");
+    expect(shell).toContain('aria-controls="mobile-drawer"');
   });
 
   it("About is read-only: no form controls and no configuration wording", async () => {

@@ -7,7 +7,6 @@ import {
   ConversationControlHttpError,
   createConversation,
   fetchConversation,
-  fetchConversations,
   fetchRoomAgents,
   LifecycleHttpError,
   reopenConversation,
@@ -34,7 +33,7 @@ import {
   type ConversationLifecycleAction,
   type LifecycleActionError,
 } from "./conversation-lifecycle";
-import { parseHashRoute, routeToIntent } from "./hash-route";
+import { formatConversationHash, parseHashRoute, routeToIntent } from "./hash-route";
 import type { RoomAgentEntry } from "./rooms";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
@@ -66,9 +65,9 @@ import { ConversationComposer } from "./ConversationComposer";
  * surface. Own navigations write the hash with history.pushState (which
  * fires no hashchange), so Back/Forward re-opens via the fresh gate without
  * duplicate writes, attaches, or stream subscriptions. Malformed/unknown
- * hashes and nonexistent conversations fail truthfully to the list with a
- * bounded message and never create a draft, dispatch, mutate, or fabricate
- * client state.
+ * hashes and nonexistent conversations fail truthfully to the new-conversation
+ * draft with a bounded message and never create a draft, dispatch, mutate, or
+ * fabricate client state.
  *
  * The browser never scans, resolves, or derives dispatch recipients from
  * `@text` — the gateway alone parses mentions. No approval or abort
@@ -79,7 +78,7 @@ import { ConversationComposer } from "./ConversationComposer";
 type LoadState =
   | { phase: "loading" }
   | { phase: "error"; message: string }
-  | { phase: "ready"; agents: RoomAgentEntry[]; conversations: ConversationRecord[] };
+  | { phase: "ready"; agents: RoomAgentEntry[] };
 
 type SelectionState =
   | { phase: "none" }
@@ -97,10 +96,13 @@ export function ConversationNavigator({
   token,
   onUnauthorized,
   onValidated,
+  onConversationCreated,
 }: {
   token: string;
   onUnauthorized: () => void;
   onValidated: () => void;
+  /** U1: the main-window draft created a durable conversation (sidebar list refresh). */
+  onConversationCreated: () => void;
 }) {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [selection, setSelection] = useState<SelectionState>({ phase: "none" });
@@ -157,8 +159,8 @@ export function ConversationNavigator({
 
   const loadData = useCallback(
     async (signal: AbortSignal) => {
-      const [agents, conversations] = await Promise.all([fetchRoomAgents(token, signal), fetchConversations(token, signal)]);
-      return { agents: agents.agents, conversations: conversations.conversations };
+      const response = await fetchRoomAgents(token, signal);
+      return { agents: response.agents };
     },
     [token],
   );
@@ -170,7 +172,7 @@ export function ConversationNavigator({
       try {
         const data = await loadData(controller.signal);
         if (cancelled) return;
-        setLoad({ phase: "ready", agents: data.agents, conversations: data.conversations });
+        setLoad({ phase: "ready", agents: data.agents });
         onValidated();
       } catch (error) {
         if (cancelled) return;
@@ -227,8 +229,8 @@ export function ConversationNavigator({
    * stateless attach gate. A successful attach presents the active surface;
    * a rejected attach (unavailable audience, archived, ...) presents visibly
    * read-only inspection with the fresh durable record. A nonexistent or
-   * unavailable conversation fails truthfully to the list — never a draft,
-   * dispatch, mutation, or fabricated client state.
+   * unavailable conversation fails truthfully to the draft surface — never a
+   * draft, dispatch, mutation, or fabricated client state.
    */
   const openConversationById = useCallback(
     async (conversationId: string) => {
@@ -285,11 +287,11 @@ export function ConversationNavigator({
         return;
       }
       if (intent.kind === "invalid-route") {
-        // Malformed/unknown hash: fail truthfully to the list, no request.
+        // Malformed/unknown hash: fail truthfully to the draft surface, no request.
         cancelPendingOpen();
         resetLifecycleControls();
         setSelection({ phase: "none" });
-        setNotice("Unknown route — showing the conversation list.");
+        setNotice("Unknown route — showing the new-conversation draft.");
         setAnnouncement("");
         listHeadingRef.current?.focus();
         return;
@@ -461,6 +463,18 @@ export function ConversationNavigator({
     [openConversationById],
   );
 
+  /**
+   * U1: the main-window draft's first message persisted a conversation. The
+   * sidebar refreshes its list; the durable hash route opens the conversation
+   * through the same fresh attach gate as any sidebar selection.
+   */
+  function handleCreated(conversation: ConversationRecord) {
+    onConversationCreated();
+    resetLifecycleControls();
+    setAnnouncement(`Conversation created: ${conversation.title}`);
+    window.location.hash = formatConversationHash(conversation.id);
+  }
+
   if (load.phase === "loading") {
     return (
       <section className="card" aria-live="polite">
@@ -562,15 +576,22 @@ export function ConversationNavigator({
   }
 
   return (
-    <section className="conversation-welcome" aria-labelledby="conversations-heading">
+    <section className="conversation-draft" aria-labelledby="conversations-heading">
       <p className="sr-only" role="status" aria-live="polite">
         {announcement}
       </p>
       <h2 id="conversations-heading" tabIndex={-1} ref={listHeadingRef}>
-        Your workspace
+        New conversation
       </h2>
       {notice !== null && <p className="route-notice" role="status">{notice}</p>}
-      <p className="muted">Choose a conversation from the sidebar, or begin a new one when you are ready.</p>
+      <p className="muted">Write the first message below, or pick a conversation from the sidebar.</p>
+      <ConversationCreateForm
+        token={token}
+        onCreated={(conversation) => void handleCreated(conversation)}
+        onError={(message) => setAnnouncement(message)}
+        onUnauthorized={onUnauthorized}
+        busy={selection.phase === "attaching"}
+      />
     </section>
   );
 }
@@ -693,14 +714,14 @@ function ConversationCreateForm({
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = text.trim();
     if (trimmed === "") {
       setError("Enter the first message to start the conversation.");
-      inputRef.current?.focus();
+      textareaRef.current?.focus();
       return;
     }
     setError(null);
@@ -724,20 +745,20 @@ function ConversationCreateForm({
 
   return (
     <form className="conversation-create" onSubmit={handleSubmit}>
-      <h3>Start a conversation</h3>
       <label htmlFor="conversation-first-message">First message</label>
-      <input
+      <textarea
         id="conversation-first-message"
-        ref={inputRef}
-        type="text"
+        ref={textareaRef}
         value={text}
         onChange={(event) => setText(event.target.value)}
         placeholder="The first message activates the conversation"
         disabled={submitting || busy}
       />
       <p className="field-help">
-        Mention a locally runnable agent with <code>@name</code> to add it as a member; the gateway
-        alone resolves mentions. Zero-mention context messages are fine too.
+        This draft stays only in this window — nothing is saved until you send the first
+        message, which creates the conversation. Mention a locally runnable agent with{" "}
+        <code>@name</code> to add it as a member; the gateway alone resolves mentions.
+        Zero-mention context messages are fine too.
       </p>
       {error && (
         <p className="error-message" role="status">

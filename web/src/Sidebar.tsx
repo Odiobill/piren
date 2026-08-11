@@ -1,35 +1,40 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { createConversation, fetchConversations, UnauthorizedError } from "./api";
+import { useEffect, useState } from "react";
+import { fetchConversations, UnauthorizedError } from "./api";
 import { formatConversationHash } from "./hash-route";
 import type { ConversationRecord } from "./conversations";
 import type { Page } from "./nav";
 
+/** U1: no standalone conversation nav item — the sidebar below is the switcher. */
 const NAV_ITEMS: ReadonlyArray<{ page: Page; label: string }> = [
-  { page: "conversations", label: "Conversations" },
   { page: "agents", label: "Agents" },
   { page: "about", label: "About" },
 ];
 
-/** The sidebar is the conversation switcher; the main workspace stays focused on one selected chat. */
+/**
+ * The sidebar is the conversation switcher and the creation entry point.
+ * "+ New conversation" opens the local draft template in the main workspace
+ * (home hash), never an inline first-message form in the sidebar. The list is
+ * re-fetched when `conversationsReloadKey` changes (for example after the
+ * main-window draft creates a conversation).
+ */
 export function Sidebar({
   page,
   token,
   onSelect,
   onValidated,
   onUnauthorized,
+  conversationsReloadKey,
 }: {
   page: Page;
   token: string;
   onSelect: (page: Page) => void;
   onValidated: () => void;
   onUnauthorized: () => void;
+  conversationsReloadKey: number;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,37 +60,22 @@ export function Sidebar({
       cancelled = true;
       controller.abort();
     };
-  }, [token, onValidated, onUnauthorized]);
+  }, [token, onValidated, onUnauthorized, conversationsReloadKey]);
 
   function openConversation(id: string) {
     onSelect("conversations");
     window.location.hash = formatConversationHash(id);
   }
 
-  async function handleCreate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const firstMessage = text.trim();
-    if (firstMessage === "") {
-      setError("Enter a first message to start the conversation.");
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      const created = await createConversation(token, firstMessage);
-      setConversations((previous) => [created.conversation, ...previous]);
-      setText("");
-      setShowCreate(false);
-      openConversation(created.conversation.id);
-    } catch (cause) {
-      if (cause instanceof UnauthorizedError) {
-        onUnauthorized();
-        return;
-      }
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSubmitting(false);
-    }
+  /**
+   * Open the main-window draft template: switching to the conversations page
+   * and clearing the hash fires a hashchange the navigator resolves to the
+   * home route, discarding any currently selected conversation. The draft is
+   * local-only and ephemeral.
+   */
+  function startNewConversation() {
+    onSelect("conversations");
+    window.location.hash = "";
   }
 
   return (
@@ -107,17 +97,10 @@ export function Sidebar({
       <section className="sidebar-conversations" aria-labelledby="sidebar-conversations-heading">
         <div className="sidebar-section-heading">
           <h2 id="sidebar-conversations-heading">Your conversations</h2>
-          <button type="button" className="button button-primary button-new-conversation" onClick={() => { onSelect("conversations"); setShowCreate(true); }}>
+          <button type="button" className="button button-primary button-new-conversation" onClick={startNewConversation}>
             + New conversation
           </button>
         </div>
-        {showCreate && (
-          <form className="sidebar-create" onSubmit={(event) => void handleCreate(event)}>
-            <label htmlFor="sidebar-first-message">First message</label>
-            <textarea id="sidebar-first-message" value={text} onChange={(event) => setText(event.target.value)} disabled={submitting} placeholder="What would you like to work on?" />
-            <button type="submit" className="button button-primary" disabled={submitting}>Start</button>
-          </form>
-        )}
         {error !== null && <p className="error-message" role="status">{error}</p>}
         {loading ? <p className="muted">Loading…</p> : conversations.length === 0 ? <p className="muted">No conversations yet.</p> : (
           <ul className="sidebar-conversation-list">

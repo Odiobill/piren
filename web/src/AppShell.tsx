@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import logoUrl from "./assets/piren-logo.png";
 import { closeDrawer, initialNavState, selectPage, shouldRestoreFocusAfterSelect, toggleDrawer, type Page } from "./nav";
 import { StatusBadge, type ShellPhase } from "./StatusBadge";
@@ -31,6 +31,9 @@ export function AppShell({
 }) {
   const [nav, setNav] = useState(initialNavState());
   const toggleRef = useRef<HTMLButtonElement>(null);
+  /** U1: bump when the main-window draft creates a conversation so the sidebar refreshes. */
+  const [conversationsReloadKey, setConversationsReloadKey] = useState(0);
+  const handleConversationCreated = useCallback(() => setConversationsReloadKey((key) => key + 1), []);
 
   function handleSelect(page: Page) {
     // A selection made from the open mobile drawer closes it and must return
@@ -65,18 +68,37 @@ export function AppShell({
           aria-controls="mobile-drawer"
           onClick={handleToggleDrawer}
         >
-          Menu
+          <span className="hamburger" aria-hidden="true">
+            <span className="hamburger-line" />
+            <span className="hamburger-line" />
+            <span className="hamburger-line" />
+          </span>
+          <span className="sr-only">Menu</span>
         </button>
         {phase !== "ready-local" && <StatusBadge phase={phase} />}
       </header>
 
       <div className="shell-body">
         <div className="sidebar-desktop">
-          <Sidebar page={nav.page} token={token} onSelect={handleSelect} onValidated={onValidated} onUnauthorized={onUnauthorized} />
+          <Sidebar
+            page={nav.page}
+            token={token}
+            onSelect={handleSelect}
+            onValidated={onValidated}
+            onUnauthorized={onUnauthorized}
+            conversationsReloadKey={conversationsReloadKey}
+          />
         </div>
 
         <MobileDrawer open={nav.drawerOpen} onClose={handleCloseDrawer} label="Navigation">
-          <Sidebar page={nav.page} token={token} onSelect={handleSelect} onValidated={onValidated} onUnauthorized={onUnauthorized} />
+          <Sidebar
+            page={nav.page}
+            token={token}
+            onSelect={handleSelect}
+            onValidated={onValidated}
+            onUnauthorized={onUnauthorized}
+            conversationsReloadKey={conversationsReloadKey}
+          />
         </MobileDrawer>
 
         <main className="shell-main">
@@ -98,7 +120,12 @@ export function AppShell({
             </section>
           )}
           <div className="workspace-panel" hidden={nav.page !== "conversations"}>
-            <ConversationNavigator token={token} onValidated={onValidated} onUnauthorized={onUnauthorized} />
+            <ConversationNavigator
+              token={token}
+              onValidated={onValidated}
+              onUnauthorized={onUnauthorized}
+              onConversationCreated={handleConversationCreated}
+            />
           </div>
           <div className="workspace-panel" hidden={nav.page !== "agents"}>
             <AgentsView token={token} onUnauthorized={onUnauthorized} />

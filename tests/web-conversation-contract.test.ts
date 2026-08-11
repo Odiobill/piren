@@ -220,3 +220,20 @@ describe("C4-A hash deep links (static)", () => {
     expect(navigator).toContain("Unknown route");
   });
 });
+
+describe("U1 local draft surface (static)", () => {
+  it("the default Conversation main surface is the local new-conversation draft template, not the workspace greeting", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    // The old "Your workspace" greeting is gone.
+    expect(navigator).not.toContain("Your workspace");
+    // The home surface is the draft template: a heading, a first-message
+    // textarea, and the existing first-message activation call.
+    expect(navigator).toContain("New conversation");
+    expect(navigator).toContain("First message");
+    expect(navigator).toContain("createConversation");
+    expect(navigator).toContain("formatConversationHash");
+    // Ephemeral by contract: the draft lives only in this window and is
+    // persisted only when its first message is sent (no storage anywhere).
+    expect(navigator).toContain("only in this window");
+  });
+});
