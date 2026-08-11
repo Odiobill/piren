@@ -549,10 +549,15 @@ export class ConversationBroker {
     }
   }
 
-  /** C5-1: launch a deferred handoff child only after a `completed` source terminal. */
+  /** C5-1 sequential defer-launch: launch a deferred handoff child only after a `completed` source terminal. */
   private async maybeLaunchDeferredChild(run: ActiveRun): Promise<void> {
-    if (run.deferredHandoff !== undefined && run.settleKind === "completed") {
-      await this.launchDeferredStageRun(run).catch(() => {});
+    const deferred = run.deferredHandoff;
+    if (deferred !== undefined && run.settleKind === "completed") {
+      // Consume the edge BEFORE launching: the dispatch-time call and a late
+      // accept-time recheck (the source settled while the accept was in
+      // flight) can never launch the same child twice.
+      run.deferredHandoff = undefined;
+      await this.launchDeferredStageRun(run, deferred).catch(() => {});
     }
   }
 
@@ -1007,7 +1012,12 @@ export class ConversationBroker {
       throw new Error(`Unknown or stale approval request '${input.requestId}' for conversation '${input.conversationId}' and agent '${input.agent}'.`);
     }
     if (pending.gate !== undefined) {
-      await this.resolveGateApproval(pending, approvalKey, response);
+      // C5-2: claim the gate entry synchronously BEFORE the async accept so
+      // a concurrent duplicate response observes the bounded stale rejection
+      // (response-at-most-once). Every gate resolution path is terminal: the
+      // claimed entry is never restored.
+      this.pendingApprovals.delete(approvalKey);
+      await this.resolveGateApproval(pending, response);
       return;
     }
     pending.run.client.respondToUiRequest(input.requestId, response);
@@ -1025,28 +1035,24 @@ export class ConversationBroker {
    */
   private async resolveGateApproval(
     pending: PendingApproval,
-    approvalKey: string,
     response: ExtensionUiResponse,
   ): Promise<void> {
     const run = pending.run;
     const gate = pending.gate;
     if (gate === undefined || run.c5 === undefined) {
-      // Unreachable: a gate entry is only ever created on a C5 root run.
-      this.pendingApprovals.delete(approvalKey);
+      // Unreachable: a gate entry is only ever created on a C5 root run; the
+      // caller has already claimed the entry.
       throw new Error("Unknown or stale approval request");
     }
     if ("value" in response) {
-      this.pendingApprovals.delete(approvalKey);
       throw new Error("a handoff gate approval accepts only confirmed or cancelled");
     }
     if (!("confirmed" in response) || response.confirmed === false) {
       // cancelled / confirmed:false — the steward declined: bounded
       // rejection with no event, no audience mutation, no budget, no child.
-      this.pendingApprovals.delete(approvalKey);
       return;
     }
     const result = await this.acceptHandoffEdge(run, gate.request, run.c5.rootEventId);
-    this.pendingApprovals.delete(approvalKey);
     if (result.status !== "accepted") {
       // A confirmed gate whose edge cannot be accepted now (state conflict:
       // target/budget/audience lock) is a bounded rejection, never a
@@ -1273,6 +1279,19 @@ export class ConversationBroker {
       text: request.text,
       depth: plan.depth,
     };
+    if (run.settled) {
+      // The source settled while this accept was in flight (an external gate
+      // confirm, or a timeout racing a stage's own handoff request): the
+      // dispatch-time defer-launch check may already have run and missed this
+      // edge. Await finalization — the source terminal is durable and that
+      // check has completed — then run the idempotent defer-launch: an
+      // accepted edge on a completed source still launches its child exactly
+      // once; any other terminal stays fail-closed. The launch itself is NOT
+      // awaited: the caller (e.g. the gate confirm route) must not block on
+      // the child's run.
+      await run.finalized;
+      void this.maybeLaunchDeferredChild(run);
+    }
     return { status: "accepted", to: request.to, handoffEventId: handoff.id };
   }
 
@@ -1284,9 +1303,10 @@ export class ConversationBroker {
    * correlated to the handoff event; the accepted handoff event stands as
    * the causality record. Non-throwing.
    */
-  private async launchDeferredStageRun(source: ActiveRun): Promise<void> {
-    const deferred = source.deferredHandoff;
-    if (deferred === undefined) return;
+  private async launchDeferredStageRun(
+    source: ActiveRun,
+    deferred: { handoffEventId: string; rootEventId: string; to: string; text: string; depth: number },
+  ): Promise<void> {
     const conversationId = source.conversationId;
     const recordLaunchFailure = async (): Promise<void> => {
       try {

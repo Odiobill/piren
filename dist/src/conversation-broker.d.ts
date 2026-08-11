@@ -226,7 +226,7 @@ export declare class ConversationBroker {
      * bounded run evidence only and never rolls the message back.
      */
     dispatchConversationMention(input: ConversationMentionInput): Promise<ConversationDispatchOutcome>;
-    /** C5-1: launch a deferred handoff child only after a `completed` source terminal. */
+    /** C5-1 sequential defer-launch: launch a deferred handoff child only after a `completed` source terminal. */
     private maybeLaunchDeferredChild;
     private reserveRun;
     private executeConversationRun;

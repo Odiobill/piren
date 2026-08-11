@@ -1216,6 +1216,10 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
       priorEvents: [],
     });
     await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    // Deterministic ordering: hasActiveRun flips at reserve time, before the
+    // durable run_started append; the prompt is handed to the client only
+    // after run_started is durable, which the assertions below rely on.
+    await waitFor(() => (clients[0]?.prompts.length ?? 0) > 0);
 
     const seen: ConversationApprovalNotification[] = [];
     broker.onConversationApproval(conversationId, (approval) => seen.push(approval));
@@ -1524,6 +1528,93 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
 
     await broker.abort(conversationId, "zai");
     await dispatch;
+    await broker.close();
+  });
+
+  it("a concurrent duplicate confirm is response-at-most-once: one accepts, the other gets the bounded stale rejection", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+    await waitFor(() => (clients[0]?.prompts.length ?? 0) > 0);
+
+    // Two confirm responses race the SAME pending gate (a steward double-click
+    // or retry while the first accept is still awaiting fs): exactly one may
+    // accept; the other must observe the bounded stale rejection.
+    const input = { conversationId, agent: "zai", requestId: gate.requestId, response: { confirmed: true } };
+    const [first, second] = await Promise.allSettled([
+      broker.respondToConversationApproval(input),
+      broker.respondToConversationApproval(input),
+    ]);
+    const settled = [first, second];
+    expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = settled.find((r) => r.status === "rejected");
+    expect(rejected).toBeDefined();
+    expect(String((rejected as PromiseRejectedResult).reason)).toMatch(/Unknown or stale approval request/);
+
+    // Exactly one durable edge, one additive audience growth, one deferred child.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message" && e.addressedAgent === "dipu")).toHaveLength(1);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai", "dipu"]);
+
+    clients[0]?.settleCompleted();
+    await dispatch;
+    expect(clients).toHaveLength(2);
+    await broker.close();
+  });
+
+  it("a confirm whose accept is in flight while the source settles completed still launches the child exactly once", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+    await waitFor(() => (clients[0]?.prompts.length ?? 0) > 0);
+
+    // Park the in-flight accept so the source's completed settlement (and its
+    // dispatch-time defer-launch check) strictly precede the edge write.
+    const seam = broker as unknown as {
+      acceptHandoffEdge: (run: unknown, request: unknown, rootEventId: string) => Promise<{ status: string }>;
+    };
+    const original = seam.acceptHandoffEdge.bind(broker);
+    let release!: () => void;
+    const park = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    seam.acceptHandoffEdge = async (run: unknown, request: unknown, rootEventId: string) => {
+      await park;
+      return original(run, request, rootEventId);
+    };
+
+    const confirm = broker.respondToConversationApproval({
+      conversationId,
+      agent: "zai",
+      requestId: gate.requestId,
+      response: { confirmed: true },
+    });
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    expect(clients).toHaveLength(1); // the accept is still parked: no edge, no child
+
+    release();
+    await confirm;
+
+    // The confirmed edge on the already-completed source launches its child
+    // exactly once (any other terminal would have stayed fail-closed).
+    await waitFor(() => clients.length === 2 && !broker.hasActiveRun(conversationId, "dipu"));
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const handoffs = events.filter((e) => e.kind === "agent_message" && e.addressedAgent === "dipu");
+    expect(handoffs).toHaveLength(1);
+    expect(events.filter((e) => e.kind === "run_started" && e.correlationId === handoffs[0]?.id)).toHaveLength(1);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai", "dipu"]);
     await broker.close();
   });
 });
