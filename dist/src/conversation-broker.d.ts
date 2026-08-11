@@ -149,6 +149,14 @@ export type ConversationHandoffRequestResult = {
     status: "rejected";
     reason: string;
 };
+/** C5-2: outcome of one initial handoff-gate request (pending or bounded-rejected). */
+export type ConversationGateRequestResult = {
+    status: "pending";
+    requestId: string;
+} | {
+    status: "rejected";
+    reason: string;
+};
 /**
  * The bounded prompt handed to Pi for one conversation mention. Renders the
  * C2 bounded prior-transcript replay in durable order with an explicit
@@ -196,6 +204,8 @@ export declare class ConversationBroker {
     /** C3-C1: in-memory pending approvals keyed exactly conversationId:agent:requestId. */
     private readonly pendingApprovals;
     private readonly approvalListeners;
+    /** C5-2: fallback synthesized gate-request id sequence when no nonce is injected. */
+    private gateSeq;
     private closed;
     constructor(options: ConversationBrokerOptions);
     hasActiveRun(conversationId: string, agent: string): boolean;
@@ -242,11 +252,27 @@ export declare class ConversationBroker {
      * client that raised it. The response is validated into the exactly-one
      * shape; unknown, stale, or already-settled requests reject with the
      * contract's bounded strict 409-ready message (the gateway mapping is a
-     * later slice). Calls `respondToUiRequest` at most once and cleans up the
-     * entry. Never auto-approves, never persists approval payloads, and never
-     * consults manifest lifecycle status (controls are run-scoped).
+     * later slice). A generic Pi UI approval calls `respondToUiRequest` at
+     * most once and cleans up the entry. A pending initial handoff gate
+     * (C5-2) resolves through this same exact path: `confirmed: true` awaits
+     * the shared C5-1 accept (M1 audience growth, durable handoff event,
+     * deferred defer-launch edge), every rejection stays bounded with no side
+     * effects, and the promise resolves only after the edge is durable so the
+     * approving route can truthfully return 200. Never auto-approves, never
+     * persists approval payloads, and never consults manifest lifecycle
+     * status (controls are run-scoped).
      */
-    respondToConversationApproval(input: ConversationApprovalInput): void;
+    respondToConversationApproval(input: ConversationApprovalInput): Promise<void>;
+    /**
+     * C5-2: resolve a pending initial handoff gate through the exact approval
+     * response path. `confirmed: true` accepts the stored root edge (shared
+     * C5-1 accept: M1 audience growth, durable handoff event, deferred
+     * defer-launch edge); `cancelled`/`confirmed:false` bounded-reject with
+     * no side effects; a `value` response is a bounded 400-family rejection.
+     * No durable approval evidence is ever written and no Pi request is ever
+     * fabricated.
+     */
+    private resolveGateApproval;
     /**
      * C3-C1: abort the active run for exactly one conversation × agent key. No
      * active run returns `no-active-run`. A real abort settles the run once
@@ -270,6 +296,28 @@ export declare class ConversationBroker {
      * event, no budget consumption, and no queue/retry/reroute.
      */
     requestConversationHandoff(conversationId: string, agent: string, request: ConversationHandoffRequest): Promise<ConversationHandoffRequestResult>;
+    /**
+     * C5-2: request the initial lead→first-stage steward confirmation gate
+     * from a broker-spawned C5 ROOT run (direct steward dispatch, depth 0, no
+     * handoff parent). Validates ONLY enough to create a bounded pending live
+     * `confirm` approval keyed exactly conversation×agent×requestId and
+     * notifies live SSE subscribers; the frame is answered through the
+     * existing approve route. Before explicit steward confirmation there is NO
+     * handoff event, NO audience mutation/lock acquisition, NO budget
+     * consumption, and NO child dispatch. Settlement (settle/abort/close/
+     * timeout) clears the pending gate under the existing C3 run-scoped
+     * semantics; a late response gets the bounded stale rejection.
+     */
+    requestInitialHandoffGate(conversationId: string, agent: string, request: ConversationHandoffRequest): Promise<ConversationGateRequestResult>;
+    /**
+     * C5-1/C5-2 shared accept: derive the durable workflow, plan the edge,
+     * grow the audience additively (M1) through the authoritative no-clobber
+     * lock path, append the exactly-one durable handoff event, and store the
+     * deferred edge on the source run. Every failure is a bounded rejection
+     * with no event, no audience mutation, no budget consumption, and no
+     * dispatch.
+     */
+    private acceptHandoffEdge;
     /**
      * C5-1 sequential defer-launch: start the accepted handoff child ONLY on
      * the current durable state (open conversation, member, runnable, no

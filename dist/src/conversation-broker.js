@@ -19,7 +19,7 @@
  * into the prompt and records the exact selection metadata on run_started.
  */
 import { appendConversationEvent, readConversation, readConversationEvents, updateConversationAudience, } from "./conversations.js";
-import { buildConversationStagePrompt, deriveConversationWorkflowState, parseConversationHandoffRequest, planConversationHandoffEdge, } from "./conversation-handoff.js";
+import { buildConversationStagePrompt, buildConversationGateApprovalPayload, CONVERSATION_GATE_APPROVAL_METHOD, deriveConversationWorkflowState, parseConversationHandoffRequest, planConversationHandoffEdge, } from "./conversation-handoff.js";
 import { selectDurableTranscript, validateTranscriptBudget, } from "./conversation-contract.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { extractAssistantText } from "./gateway-rpc.js";
@@ -158,6 +158,8 @@ export class ConversationBroker {
     /** C3-C1: in-memory pending approvals keyed exactly conversationId:agent:requestId. */
     pendingApprovals = new Map();
     approvalListeners = new Map();
+    /** C5-2: fallback synthesized gate-request id sequence when no nonce is injected. */
+    gateSeq = 0;
     closed = false;
     constructor(options) {
         this.vaultRoot = options.vaultRoot;
@@ -447,6 +449,7 @@ export class ConversationBroker {
                 agent: run.agent,
                 requestId: event.id,
                 run,
+                gate: undefined,
             });
             const { type: _type, id: _id, ...payload } = event;
             const notification = {
@@ -737,11 +740,17 @@ export class ConversationBroker {
      * client that raised it. The response is validated into the exactly-one
      * shape; unknown, stale, or already-settled requests reject with the
      * contract's bounded strict 409-ready message (the gateway mapping is a
-     * later slice). Calls `respondToUiRequest` at most once and cleans up the
-     * entry. Never auto-approves, never persists approval payloads, and never
-     * consults manifest lifecycle status (controls are run-scoped).
+     * later slice). A generic Pi UI approval calls `respondToUiRequest` at
+     * most once and cleans up the entry. A pending initial handoff gate
+     * (C5-2) resolves through this same exact path: `confirmed: true` awaits
+     * the shared C5-1 accept (M1 audience growth, durable handoff event,
+     * deferred defer-launch edge), every rejection stays bounded with no side
+     * effects, and the promise resolves only after the edge is durable so the
+     * approving route can truthfully return 200. Never auto-approves, never
+     * persists approval payloads, and never consults manifest lifecycle
+     * status (controls are run-scoped).
      */
-    respondToConversationApproval(input) {
+    async respondToConversationApproval(input) {
         const response = parseConversationApprovalResponse(input.response);
         if (response === null) {
             throw new Error("Exactly one of confirmed, value, or cancelled is required.");
@@ -755,8 +764,48 @@ export class ConversationBroker {
             this.pendingApprovals.delete(approvalKey);
             throw new Error(`Unknown or stale approval request '${input.requestId}' for conversation '${input.conversationId}' and agent '${input.agent}'.`);
         }
+        if (pending.gate !== undefined) {
+            await this.resolveGateApproval(pending, approvalKey, response);
+            return;
+        }
         pending.run.client.respondToUiRequest(input.requestId, response);
         this.pendingApprovals.delete(approvalKey);
+    }
+    /**
+     * C5-2: resolve a pending initial handoff gate through the exact approval
+     * response path. `confirmed: true` accepts the stored root edge (shared
+     * C5-1 accept: M1 audience growth, durable handoff event, deferred
+     * defer-launch edge); `cancelled`/`confirmed:false` bounded-reject with
+     * no side effects; a `value` response is a bounded 400-family rejection.
+     * No durable approval evidence is ever written and no Pi request is ever
+     * fabricated.
+     */
+    async resolveGateApproval(pending, approvalKey, response) {
+        const run = pending.run;
+        const gate = pending.gate;
+        if (gate === undefined || run.c5 === undefined) {
+            // Unreachable: a gate entry is only ever created on a C5 root run.
+            this.pendingApprovals.delete(approvalKey);
+            throw new Error("Unknown or stale approval request");
+        }
+        if ("value" in response) {
+            this.pendingApprovals.delete(approvalKey);
+            throw new Error("a handoff gate approval accepts only confirmed or cancelled");
+        }
+        if (!("confirmed" in response) || response.confirmed === false) {
+            // cancelled / confirmed:false — the steward declined: bounded
+            // rejection with no event, no audience mutation, no budget, no child.
+            this.pendingApprovals.delete(approvalKey);
+            return;
+        }
+        const result = await this.acceptHandoffEdge(run, gate.request, run.c5.rootEventId);
+        this.pendingApprovals.delete(approvalKey);
+        if (result.status !== "accepted") {
+            // A confirmed gate whose edge cannot be accepted now (state conflict:
+            // target/budget/audience lock) is a bounded rejection, never a
+            // fabricated accept and never a silent failure.
+            throw new Error(`conversation handoff gate could not be accepted: ${result.reason}`);
+        }
     }
     /**
      * C3-C1: abort the active run for exactly one conversation × agent key. No
@@ -822,6 +871,86 @@ export class ConversationBroker {
         if (!parsed.ok) {
             return { status: "rejected", reason: parsed.reason };
         }
+        return this.acceptHandoffEdge(run, parsed.request, run.c5.rootEventId);
+    }
+    /**
+     * C5-2: request the initial lead→first-stage steward confirmation gate
+     * from a broker-spawned C5 ROOT run (direct steward dispatch, depth 0, no
+     * handoff parent). Validates ONLY enough to create a bounded pending live
+     * `confirm` approval keyed exactly conversation×agent×requestId and
+     * notifies live SSE subscribers; the frame is answered through the
+     * existing approve route. Before explicit steward confirmation there is NO
+     * handoff event, NO audience mutation/lock acquisition, NO budget
+     * consumption, and NO child dispatch. Settlement (settle/abort/close/
+     * timeout) clears the pending gate under the existing C3 run-scoped
+     * semantics; a late response gets the bounded stale rejection.
+     */
+    async requestInitialHandoffGate(conversationId, agent, request) {
+        const key = `${conversationId}:${agent}`;
+        const run = this.activeRuns.get(key);
+        if (run === undefined || run.c5 === undefined) {
+            return { status: "rejected", reason: "no eligible conversation handoff run" };
+        }
+        // ONLY a steward-dispatched ROOT (depth 0, no handoff parent) may request
+        // the initial gate; workflow-stage runs use the C5-1 acceptance path.
+        if (run.c5.role !== "root") {
+            return { status: "rejected", reason: "only a steward-dispatched root run may request the initial handoff gate" };
+        }
+        if (run.deferredHandoff !== undefined) {
+            return { status: "rejected", reason: "a conversation handoff is already accepted and pending launch" };
+        }
+        if (run.settled || this.activeRuns.get(key) !== run) {
+            return { status: "rejected", reason: "no eligible conversation handoff run" };
+        }
+        const parsed = parseConversationHandoffRequest(request);
+        if (!parsed.ok) {
+            return { status: "rejected", reason: parsed.reason };
+        }
+        for (const approval of this.pendingApprovals.values()) {
+            if (approval.run === run && approval.gate !== undefined) {
+                return { status: "rejected", reason: "an initial handoff gate is already pending" };
+            }
+        }
+        const requestId = `gate-${this.nonce !== undefined ? this.nonce() : `r${++this.gateSeq}`}`;
+        this.pendingApprovals.set(`${key}:${requestId}`, {
+            conversationId,
+            agent,
+            requestId,
+            run,
+            gate: { request: parsed.request },
+        });
+        const notification = {
+            conversationId,
+            agent,
+            requestId,
+            method: CONVERSATION_GATE_APPROVAL_METHOD,
+            payload: buildConversationGateApprovalPayload(parsed.request),
+        };
+        const listeners = this.approvalListeners.get(conversationId);
+        if (listeners) {
+            for (const listener of [...listeners]) {
+                // Same containment as the Pi-request path: a throwing observer never
+                // affects the gate lifecycle or the run.
+                try {
+                    listener(notification);
+                }
+                catch {
+                    // contained
+                }
+            }
+        }
+        return { status: "pending", requestId };
+    }
+    /**
+     * C5-1/C5-2 shared accept: derive the durable workflow, plan the edge,
+     * grow the audience additively (M1) through the authoritative no-clobber
+     * lock path, append the exactly-one durable handoff event, and store the
+     * deferred edge on the source run. Every failure is a bounded rejection
+     * with no event, no audience mutation, no budget consumption, and no
+     * dispatch.
+     */
+    async acceptHandoffEdge(run, request, rootEventId) {
+        const conversationId = run.conversationId;
         let events;
         try {
             events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
@@ -829,11 +958,11 @@ export class ConversationBroker {
         catch {
             return { status: "rejected", reason: "conversation handoff could not read the workflow history" };
         }
-        const workflow = deriveConversationWorkflowState(events, run.c5.rootEventId);
+        const workflow = deriveConversationWorkflowState(events, rootEventId);
         const plan = planConversationHandoffEdge({
             conversationId,
-            sourceAgent: agent,
-            request: parsed.request,
+            sourceAgent: run.agent,
+            request,
             runnableAgents: this.runnableAgents,
             activeKeys: [...this.activeRuns.keys()],
             workflow,
@@ -843,13 +972,12 @@ export class ConversationBroker {
         }
         // M1: grow the durable audience additively through the authoritative
         // no-clobber lock path BEFORE the handoff event, so a busy lock can
-        // never leave an orphan handoff edge. A failure rejects the request
-        // with no event and no budget consumption.
+        // never leave an orphan handoff edge.
         try {
             await updateConversationAudience({
                 vaultRoot: this.vaultRoot,
                 conversationId,
-                additions: { __validatedRecipients: true, recipients: [parsed.request.to] },
+                additions: { __validatedRecipients: true, recipients: [request.to] },
                 kind: "handoff",
                 now: this.now,
             });
@@ -867,10 +995,10 @@ export class ConversationBroker {
             handoff = await this.appendAndPublish(conversationId, {
                 kind: "agent_message",
                 authorKind: "agent",
-                author: agent,
-                body: parsed.request.text,
-                addressedAgent: parsed.request.to,
-                correlationId: run.c5.rootEventId,
+                author: run.agent,
+                body: request.text,
+                addressedAgent: request.to,
+                correlationId: rootEventId,
             });
         }
         catch {
@@ -880,12 +1008,12 @@ export class ConversationBroker {
         }
         run.deferredHandoff = {
             handoffEventId: handoff.id,
-            rootEventId: run.c5.rootEventId,
-            to: parsed.request.to,
-            text: parsed.request.text,
+            rootEventId,
+            to: request.to,
+            text: request.text,
             depth: plan.depth,
         };
-        return { status: "accepted", to: parsed.request.to, handoffEventId: handoff.id };
+        return { status: "accepted", to: request.to, handoffEventId: handoff.id };
     }
     /**
      * C5-1 sequential defer-launch: start the accepted handoff child ONLY on

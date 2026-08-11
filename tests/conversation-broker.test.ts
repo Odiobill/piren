@@ -7,6 +7,7 @@ import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse } from "../src/gatew
 import {
   ConversationBroker,
   parseConversationApprovalResponse,
+  type ConversationApprovalNotification,
   type ConversationRpcClient,
   type ConversationDispatchOutcome,
 } from "../src/conversation-broker.js";
@@ -669,14 +670,14 @@ describe("ConversationBroker approval/abort core (C3-C1)", () => {
     expect(outcome.status).toBe("completed");
 
     // A second response to the now-resolved request is a bounded rejection.
-    expect(() =>
+    await expect(
       broker.respondToConversationApproval({
         conversationId,
         agent: "zai",
         requestId: "req-1",
         response: { confirmed: true },
       }),
-    ).toThrow(/Unknown or stale approval request 'req-1' for conversation '.*' and agent 'zai'\./);
+    ).rejects.toThrow(/Unknown or stale approval request 'req-1' for conversation '.*' and agent 'zai'\./);
     expect(clients[0]?.responses).toHaveLength(1);
 
     // Durable truth stays the ordinary run events; no approval record or
@@ -707,15 +708,15 @@ describe("ConversationBroker approval/abort core (C3-C1)", () => {
     });
     await waitFor(() => broker.hasPendingApproval(conversationId, "zai", "req-1"));
 
-    expect(() =>
+    await expect(
       broker.respondToConversationApproval({ conversationId: otherId, agent: "zai", requestId: "req-1", response: { confirmed: true } }),
-    ).toThrow(/Unknown or stale approval request/);
-    expect(() =>
+    ).rejects.toThrow(/Unknown or stale approval request/);
+    await expect(
       broker.respondToConversationApproval({ conversationId, agent: "dipu", requestId: "req-1", response: { confirmed: true } }),
-    ).toThrow(/Unknown or stale approval request/);
-    expect(() =>
+    ).rejects.toThrow(/Unknown or stale approval request/);
+    await expect(
       broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: "req-999", response: { confirmed: true } }),
-    ).toThrow(/Unknown or stale approval request/);
+    ).rejects.toThrow(/Unknown or stale approval request/);
     expect(clients[0]?.responses).toHaveLength(0);
     // No unintended side effects: no extra clients/sessions and no extra events.
     expect(clients).toHaveLength(1);
@@ -758,9 +759,9 @@ describe("ConversationBroker approval/abort core (C3-C1)", () => {
     const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
     await waitFor(() => broker.hasPendingApproval(conversationId, "zai", "req-1"));
 
-    expect(() =>
+    await expect(
       broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: "req-1", response: { confirmed: "yes" } }),
-    ).toThrow(/Exactly one of confirmed, value, or cancelled is required\./);
+    ).rejects.toThrow(/Exactly one of confirmed, value, or cancelled is required\./);
     expect(clients[0]?.responses).toHaveLength(0);
     // The pending entry survives the malformed attempt.
     expect(broker.hasPendingApproval(conversationId, "zai", "req-1")).toBe(true);
@@ -779,9 +780,9 @@ describe("ConversationBroker approval/abort core (C3-C1)", () => {
     // The run completed at agent_settled; the registry entry was removed.
     expect(broker.hasPendingApproval(conversationId, "zai", "req-1")).toBe(false);
     expect(clients[0]?.responses).toHaveLength(0);
-    expect(() =>
+    await expect(
       broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: "req-1", response: { confirmed: true } }),
-    ).toThrow(/Unknown or stale approval request/);
+    ).rejects.toThrow(/Unknown or stale approval request/);
     await broker.close();
   });
 
@@ -1198,6 +1199,331 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
     const events = await readConversationEvents({ vaultRoot: root, conversationId });
     expect(events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string")).toHaveLength(3);
     expect(events.filter((e) => e.kind === "run_finished" && e.runStatus === "completed")).toHaveLength(4);
+    await broker.close();
+  });
+});
+
+describe("ConversationBroker C5-2 initial steward gate", () => {
+  it("registers a pending live confirm approval for a root gate request with NO side effects before confirmation", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "Lead this workflow",
+      stewardEventId,
+      priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+
+    const seen: ConversationApprovalNotification[] = [];
+    broker.onConversationApproval(conversationId, (approval) => seen.push(approval));
+
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "Please review the diff" });
+    expect(gate).toMatchObject({ status: "pending" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    // The exact conversation×agent×requestId registry entry is pending and
+    // one live confirm-only notification carries the bounded payload.
+    expect(broker.hasPendingApproval(conversationId, "zai", gate.requestId)).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual({
+      conversationId,
+      agent: "zai",
+      requestId: gate.requestId,
+      method: "confirm",
+      payload: { to: "dipu", text: "Please review the diff" },
+    });
+
+    // Before explicit confirmation: NO handoff event, NO audience mutation,
+    // NO budget consumption (no derived workflow edge), NO child dispatch.
+    // (run_started is the already-active root run's own event, present before
+    // the gate request.)
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started"]);
+    expect(events.some((e) => e.kind === "agent_message")).toBe(false);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai"]);
+    expect(clients).toHaveLength(1);
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("gate confirmation accepts the stored root edge; the child launches only after the source completes", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "Lead this workflow",
+      stewardEventId,
+      priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "Please review the diff" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    // Confirmation through the exact approval response path accepts the edge
+    // durably: handoff event + M1 audience growth; the child stays deferred.
+    await broker.respondToConversationApproval({
+      conversationId,
+      agent: "zai",
+      requestId: gate.requestId,
+      response: { confirmed: true },
+    });
+    expect(broker.hasPendingApproval(conversationId, "zai", gate.requestId)).toBe(false);
+    const eventsAfterConfirm = await readConversationEvents({ vaultRoot: root, conversationId });
+    const handoff = eventsAfterConfirm.find((e) => e.kind === "agent_message" && e.addressedAgent === "dipu");
+    expect(handoff).toBeDefined();
+    expect(handoff?.author).toBe("zai");
+    expect(handoff?.correlationId).toBe(stewardEventId);
+    expect(handoff?.body).toBe("Please review the diff");
+    const manifestAfter = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifestAfter.audience).toEqual(["zai", "dipu"]);
+    expect(clients).toHaveLength(1); // child deferred until source completion
+
+    // The root cannot request another gate once the edge is accepted.
+    const second = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "again" });
+    expect(second).toMatchObject({ status: "rejected" });
+    if (second.status === "rejected") {
+      expect(second.reason).toBe("a conversation handoff is already accepted and pending launch");
+    }
+
+    // Source completes -> the deferred child launches with the C5-1 stage prompt.
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    expect(clients).toHaveLength(2);
+    const childPrompt = clients[1]?.prompts[0] ?? "";
+    expect(childPrompt).toContain("approved Piren conversation workflow");
+    expect(childPrompt).toContain("Please review the diff");
+
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toEqual([
+      "steward_message",
+      "run_started", // root source
+      "agent_message", // confirmed gate edge
+      "run_finished", // root completed
+      "run_started", // child
+      "run_finished", // child completed
+    ]);
+    const sourceTerminal = events.find((e) => e.kind === "run_finished" && e.correlationId === stewardEventId);
+    const childStarted = events.find((e) => e.kind === "run_started" && e.correlationId === handoff?.id);
+    expect(sourceTerminal).toBeDefined();
+    expect(childStarted).toBeDefined();
+    // Sequential: the child's run_started sequence is strictly after the source terminal.
+    expect(childStarted?.sequence ?? 0).toBeGreaterThan(sourceTerminal?.sequence ?? 0);
+    await broker.close();
+  });
+
+  it("a cancelled or declined gate is a bounded rejection with no side effects and may be re-requested", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    await broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: gate.requestId, response: { cancelled: true } });
+    expect(broker.hasPendingApproval(conversationId, "zai", gate.requestId)).toBe(false);
+
+    // A declined root may request a fresh card while still active; a
+    // confirmed:false response declines the same way.
+    const again = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help again" });
+    expect(again.status).toBe("pending");
+    if (again.status !== "pending") throw new Error("expected pending");
+    await broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: again.requestId, response: { confirmed: false } });
+    expect(broker.hasPendingApproval(conversationId, "zai", again.requestId)).toBe(false);
+
+    // No handoff event, no audience change, no child; the run completes normally.
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    expect(clients).toHaveLength(1);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    expect(events.some((e) => e.addressedAgent !== undefined)).toBe(false);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai"]);
+    await broker.close();
+  });
+
+  it("a value response to a gate approval is a bounded rejection and clears the entry", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    await expect(
+      broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: gate.requestId, response: { value: "ok" } }),
+    ).rejects.toThrow(/a handoff gate approval accepts only confirmed or cancelled/);
+    expect(broker.hasPendingApproval(conversationId, "zai", gate.requestId)).toBe(false);
+    // No side effects: never delivered to Pi, no handoff event, no audience change.
+    expect(clients[0]?.responses).toHaveLength(0);
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "agent_message")).toBe(false);
+    await broker.close();
+  });
+
+  it("stale gate responses after settlement, abort, or close are bounded rejections with no child", async () => {
+    // Source settles completed without confirmation: the pending gate is
+    // cleared and a late confirm is a bounded stale rejection.
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+    clients[0]?.settleCompleted();
+    await dispatch;
+    await expect(
+      broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: gate.requestId, response: { confirmed: true } }),
+    ).rejects.toThrow(/Unknown or stale approval request/);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "agent_message")).toBe(false);
+    const manifest = await readConversation({ vaultRoot: root, conversationId });
+    expect(manifest.audience).toEqual(["zai"]);
+    expect(clients).toHaveLength(1);
+    await broker.close();
+
+    // Abort while the gate is pending: exactly one run_cancelled, no child,
+    // and the late confirm is stale.
+    const { broker: brokerB, clients: clientsB } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationB = await makeConversation(["zai"], "Hello @zai B");
+    const stewardB = await makeStewardEvent(conversationB, "Go B");
+    const dispatchB = brokerB.dispatchConversationMention({ conversationId: conversationB, agent: "zai", text: "Go B", stewardEventId: stewardB, priorEvents: [] });
+    await waitFor(() => brokerB.hasActiveRun(conversationB, "zai"));
+    const gateB = await brokerB.requestInitialHandoffGate(conversationB, "zai", { to: "dipu", text: "help" });
+    if (gateB.status !== "pending") throw new Error("expected pending");
+    const abortOutcome = await brokerB.abort(conversationB, "zai");
+    expect(abortOutcome.status).toBe("cancelled");
+    await dispatchB;
+    const eventsB = await readConversationEvents({ vaultRoot: root, conversationId: conversationB });
+    expect(eventsB.filter((e) => e.kind === "run_cancelled")).toHaveLength(1);
+    expect(eventsB.some((e) => e.kind === "agent_message")).toBe(false);
+    expect(clientsB).toHaveLength(1);
+    await expect(
+      brokerB.respondToConversationApproval({ conversationId: conversationB, agent: "zai", requestId: gateB.requestId, response: { confirmed: true } }),
+    ).rejects.toThrow(/Unknown or stale approval request/);
+    await brokerB.close();
+
+    // close() while the gate is pending clears it with no child.
+    const { broker: brokerC, clients: clientsC } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationC = await makeConversation(["zai"], "Hello @zai C");
+    const stewardC = await makeStewardEvent(conversationC, "Go C");
+    const dispatchC = brokerC.dispatchConversationMention({ conversationId: conversationC, agent: "zai", text: "Go C", stewardEventId: stewardC, priorEvents: [] });
+    await waitFor(() => brokerC.hasActiveRun(conversationC, "zai"));
+    const gateC = await brokerC.requestInitialHandoffGate(conversationC, "zai", { to: "dipu", text: "help" });
+    if (gateC.status !== "pending") throw new Error("expected pending");
+    await brokerC.close();
+    expect(brokerC.hasPendingApproval(conversationC, "zai", gateC.requestId)).toBe(false);
+    await dispatchC;
+    expect(clientsC).toHaveLength(1);
+    const eventsC = await readConversationEvents({ vaultRoot: root, conversationId: conversationC });
+    expect(eventsC.some((e) => e.kind === "agent_message")).toBe(false);
+  });
+
+  it("timeout during a pending gate clears it and never launches a child", async () => {
+    const timers = makeTimers();
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"], timers });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    for (const handle of [...timers.pending.keys()]) timers.fire(handle);
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("timed_out");
+    expect(clients).toHaveLength(1);
+    await expect(
+      broker.respondToConversationApproval({ conversationId, agent: "zai", requestId: gate.requestId, response: { confirmed: true } }),
+    ).rejects.toThrow(/Unknown or stale approval request/);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    expect(events.at(-1)?.runStatus).toBe("timed_out");
+    expect(events.some((e) => e.kind === "agent_message")).toBe(false);
+    await broker.close();
+  });
+
+  it("a workflow-stage run cannot request the initial gate (no extra gate)", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Workflow");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Workflow", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    // The root uses the delivered C5-1 acceptance path; stages need no gate.
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "Please review" });
+    expect(accepted.status).toBe("accepted");
+    clients[0]?.settleCompleted();
+    await waitFor(() => broker.hasActiveRun(conversationId, "dipu"));
+
+    // The workflow stage cannot request a NEW initial gate: bounded rejection,
+    // no pending approval, no notification.
+    const seen: ConversationApprovalNotification[] = [];
+    broker.onConversationApproval(conversationId, (approval) => seen.push(approval));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "dipu", { to: "zai", text: "back" });
+    expect(gate).toMatchObject({ status: "rejected" });
+    if (gate.status === "rejected") {
+      expect(gate.reason).toBe("only a steward-dispatched root run may request the initial handoff gate");
+    }
+    expect(seen).toHaveLength(0);
+    expect(broker.hasPendingApproval(conversationId, "dipu", "gate-any")).toBe(false);
+
+    // The stage may still use the delivered C5-1 bounded handoff path.
+    const stageHandoff = await broker.requestConversationHandoff(conversationId, "dipu", { to: "zai", text: "back to lead" });
+    expect(stageHandoff.status).toBe("accepted");
+    await broker.abort(conversationId, "dipu");
+    await dispatch;
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string")).toHaveLength(2);
+    await broker.close();
+  });
+
+  it("gate requests are bounded: malformed, no eligible run, and duplicate-while-pending all reject", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+
+    // Malformed {to,text}: bounded rejection, nothing registered.
+    const malformed = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "", text: "" });
+    expect(malformed).toMatchObject({ status: "rejected" });
+    if (malformed.status === "rejected") expect(malformed.reason).toBeTruthy();
+    expect(broker.hasPendingApproval(conversationId, "zai", "gate-any")).toBe(false);
+
+    // No eligible run (never dispatched / no C5 context).
+    expect(await broker.requestInitialHandoffGate("never-dispatched", "zai", { to: "dipu", text: "help" })).toMatchObject({
+      status: "rejected",
+    });
+
+    // A valid request registers; a duplicate while pending is a bounded rejection.
+    const first = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(first.status).toBe("pending");
+    if (first.status !== "pending") throw new Error("expected pending");
+    const second = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help again" });
+    expect(second).toMatchObject({ status: "rejected" });
+    if (second.status === "rejected") {
+      expect(second.reason).toBe("an initial handoff gate is already pending");
+    }
+    expect(broker.hasPendingApproval(conversationId, "zai", first.requestId)).toBe(true);
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
     await broker.close();
   });
 });

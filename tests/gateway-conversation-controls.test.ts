@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GatewayServer, type GatewayHandle } from "../src/gateway-http.js";
 import { initVault } from "../src/init.js";
-import { readConversationEvents } from "../src/conversations.js";
+import { acquireAudienceLock, readConversation, readConversationEvents } from "../src/conversations.js";
+import { ConversationBroker } from "../src/conversation-broker.js";
 
 const fakePiScript = join(process.cwd(), "tests", "fixtures", "fake-pi-rpc.cjs");
 
@@ -439,5 +440,134 @@ describe("Gateway Conversation approval/abort surface (C3-C2)", () => {
     expect(attach.status).toBe(409);
     const message = await post(url(`/api/conversations/${convApprove}/messages`), { text: "More @fake" }, token);
     expect(message.status).toBe(409);
+  });
+
+  it("C5-2: a root pending gate raises a live approval SSE frame and confirm accepts one edge through the approve route", async () => {
+    await startServer({ runnableAgents: ["fake", "fake2"] });
+    const { id } = await createConversationViaApi("Seed no mention");
+
+    // Open the scoped live stream BEFORE the gate frame is emitted: approval
+    // frames are live-only with no replay (see the no-replay probe test).
+    const stream = await fetch(url(`/api/conversations/${id}/events/stream`), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(stream.status).toBe(200);
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let gateId = "";
+    const readLoop = (async () => {
+      while (gateId === "") {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frame = parseSseFrames(buffer).find((f) => f.type === "approval" && String(f.data.method ?? "") === "confirm");
+        if (frame) gateId = String(frame.data.requestId ?? "");
+      }
+    })();
+    void readLoop;
+
+    // Dispatch a steward message to the root lead; the fake Pi holds the run.
+    const dispatch = post(url(`/api/conversations/${id}/messages`), { text: "hang @fake" }, token);
+    await waitForStreamValue(async () => (await eventKinds(id)).includes("run_started"));
+
+    // C5-2 broker seam: the gated `conversation_handoff` tool (C5-3) calls
+    // requestInitialHandoffGate on the broker; the gateway test reaches the
+    // same seam directly because the tool is not registered until C5-3.
+    const broker = (server as unknown as { conversationBroker: ConversationBroker }).conversationBroker as ConversationBroker;
+    const gate = await broker.requestInitialHandoffGate(id, "fake", { to: "fake2", text: "Please review the diff" });
+    expect(gate.status).toBe("pending");
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    // Live-only gate frame with the bounded five-key approval shape.
+    await waitForStreamValue(async () => gateId !== "");
+    const frame = parseSseFrames(buffer).find((f) => f.type === "approval");
+    expect(frame?.data).toMatchObject({ conversationId: id, agent: "fake", method: "confirm" });
+    expect(Object.keys(frame?.data ?? {})).toEqual(["conversationId", "agent", "requestId", "method", "payload"]);
+    expect((frame?.data.payload as { to: string } | undefined)?.to).toBe("fake2");
+
+    // Before explicit confirmation: NO handoff event, NO audience growth.
+    expect((await eventKinds(id)).filter((k) => k === "agent_message")).toHaveLength(0);
+    const manifestBefore = await readConversation({ vaultRoot: root, conversationId: id });
+    expect(manifestBefore.audience).not.toContain("fake2");
+
+    // Confirmation through the existing approve route accepts the stored edge.
+    const approve = await post(url(`/api/conversations/${id}/approve`), { agent: "fake", request_id: gate.requestId, confirmed: true }, token);
+    expect(approve.status).toBe(200);
+    expect(await approve.json()).toEqual({ ok: true });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
+    const handoff = events.find((e) => e.kind === "agent_message" && e.addressedAgent === "fake2");
+    expect(handoff).toBeDefined();
+    expect(handoff?.author).toBe("fake");
+    const manifestAfter = await readConversation({ vaultRoot: root, conversationId: id });
+    expect(manifestAfter.audience).toContain("fake2");
+
+    // Abort the still-active root: fail-closed, no deferred child launches.
+    const abort = await post(url(`/api/conversations/${id}/abort`), { agent: "fake" }, token);
+    expect(abort.status).toBe(200);
+    expect(((await abort.json()) as { outcome: { status: string } }).outcome.status).toBe("cancelled");
+    const outcome = (await (await dispatch).json()) as { dispatch: { agent: string; status: string }[] };
+    expect(outcome.dispatch).toEqual([{ agent: "fake", status: "cancelled" }]);
+    // No child run started; no durable approval record ever existed.
+    expect((await eventKinds(id)).filter((k) => k === "run_started")).toHaveLength(1);
+    expect((await eventKinds(id)).some((k) => k.toLowerCase().includes("approval"))).toBe(false);
+    await reader.cancel().catch(() => {});
+  });
+
+  it("C5-2: a cancelled gate through the approve route stays bounded with no handoff event and no audience growth", async () => {
+    await startServer({ runnableAgents: ["fake", "fake2"] });
+    const { id } = await createConversationViaApi("Seed no mention");
+    const dispatch = post(url(`/api/conversations/${id}/messages`), { text: "hang @fake" }, token);
+    await waitForStreamValue(async () => (await eventKinds(id)).includes("run_started"));
+
+    const broker = (server as unknown as { conversationBroker: ConversationBroker }).conversationBroker as ConversationBroker;
+    const gate = await broker.requestInitialHandoffGate(id, "fake", { to: "fake2", text: "Please review the diff" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    const cancel = await post(url(`/api/conversations/${id}/approve`), { agent: "fake", request_id: gate.requestId, cancelled: true }, token);
+    expect(cancel.status).toBe(200);
+    expect(await cancel.json()).toEqual({ ok: true });
+    expect((await eventKinds(id)).filter((k) => k === "agent_message")).toHaveLength(0);
+    const manifest = await readConversation({ vaultRoot: root, conversationId: id });
+    expect(manifest.audience).not.toContain("fake2");
+
+    const abort = await post(url(`/api/conversations/${id}/abort`), { agent: "fake" }, token);
+    expect(abort.status).toBe(200);
+    const outcome = (await (await dispatch).json()) as { dispatch: { agent: string; status: string }[] };
+    expect(outcome.dispatch).toEqual([{ agent: "fake", status: "cancelled" }]);
+    expect((await eventKinds(id)).filter((k) => k === "run_started")).toHaveLength(1);
+  });
+
+  it("C5-2: a gate confirm whose audience accept is contended maps to the bounded 409 family with no edge", async () => {
+    await startServer({ runnableAgents: ["fake", "fake2"] });
+    const { id } = await createConversationViaApi("Seed no mention");
+    const dispatch = post(url(`/api/conversations/${id}/messages`), { text: "hang @fake" }, token);
+    await waitForStreamValue(async () => (await eventKinds(id)).includes("run_started"));
+
+    const broker = (server as unknown as { conversationBroker: ConversationBroker }).conversationBroker as ConversationBroker;
+    const gate = await broker.requestInitialHandoffGate(id, "fake", { to: "fake2", text: "Please review the diff" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    // Hold the audience lock so the C5-1 M1 accept cannot proceed.
+    const lock = await acquireAudienceLock({ vaultRoot: root, conversationId: id });
+    const approve = await post(url(`/api/conversations/${id}/approve`), { agent: "fake", request_id: gate.requestId, confirmed: true }, token);
+    expect(approve.status).toBe(409);
+    const body = (await approve.json()) as { error: string };
+    expect(body.error).toMatch(/conversation handoff gate could not be accepted/);
+    await lock.release();
+
+    // No edge was accepted: no handoff event, no audience growth, and the
+    // gate entry was cleared (a retry is now stale).
+    expect((await eventKinds(id)).filter((k) => k === "agent_message")).toHaveLength(0);
+    const manifest = await readConversation({ vaultRoot: root, conversationId: id });
+    expect(manifest.audience).not.toContain("fake2");
+    const retry = await post(url(`/api/conversations/${id}/approve`), { agent: "fake", request_id: gate.requestId, confirmed: true }, token);
+    expect(retry.status).toBe(409);
+    expect(((await retry.json()) as { error: string }).error).toMatch(/Unknown or stale approval request/);
+
+    const abort = await post(url(`/api/conversations/${id}/abort`), { agent: "fake" }, token);
+    expect(abort.status).toBe(200);
+    const outcome = (await (await dispatch).json()) as { dispatch: { agent: string; status: string }[] };
+    expect(outcome.dispatch).toEqual([{ agent: "fake", status: "cancelled" }]);
   });
 });

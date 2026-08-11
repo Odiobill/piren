@@ -2011,6 +2011,15 @@ export class GatewayServer {
         else if (message.startsWith("Unknown or stale approval request")) {
             this.writeJson(res, 409, { error: message });
         }
+        else if (message.startsWith("conversation handoff gate could not be accepted")) {
+            // C5-2: a confirmed gate whose edge cannot be accepted now (target /
+            // budget / audience-lock state conflict) is a bounded 409, never a 500.
+            this.writeJson(res, 409, { error: message });
+        }
+        else if (message.startsWith("a handoff gate approval accepts only")) {
+            // C5-2: the initial gate is confirm-only; a value response is a bounded 400.
+            this.writeJson(res, 400, { error: message });
+        }
         else {
             this.writeJson(res, 500, { error: "internal error" });
         }
@@ -2043,9 +2052,12 @@ export class GatewayServer {
             // C3-C2: absent conversation is a bounded 404 (contract §7.1),
             // distinct from an unknown/stale request on an existing conversation
             // (409). Existence is checked without consulting lifecycle status —
-            // the control itself stays run-scoped.
+            // the control itself stays run-scoped. C5-2: a pending initial gate
+            // resolves through this same exact path; the await guarantees the
+            // route truthfully reports success only after a confirmed gate's edge
+            // is durably accepted (or a bounded rejection).
             await readConversation({ vaultRoot: this.vaultRoot, conversationId });
-            this.conversationBroker.respondToConversationApproval({
+            await this.conversationBroker.respondToConversationApproval({
                 conversationId,
                 agent,
                 requestId,

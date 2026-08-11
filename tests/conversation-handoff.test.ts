@@ -4,6 +4,8 @@ import {
   CONVERSATION_HANDOFF_MAX_DEPTH,
   CONVERSATION_HANDOFF_MAX_EDGES,
   CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS,
+  CONVERSATION_GATE_APPROVAL_METHOD,
+  buildConversationGateApprovalPayload,
   buildConversationStagePrompt,
   deriveConversationWorkflowState,
   parseConversationHandoffRequest,
@@ -221,5 +223,14 @@ describe("buildConversationStagePrompt (pure, bounded)", () => {
     expect(prompt).toContain("context line");
     expect(prompt).toContain("workflow root 'root-1'");
     expect(prompt).toContain("handoff 'h1'");
+  });
+});
+
+describe("C5-2 initial steward gate (pure, bounded)", () => {
+  it("pins the confirm-only gate approval method and the bounded live payload", () => {
+    expect(CONVERSATION_GATE_APPROVAL_METHOD).toBe("confirm");
+    expect(
+      buildConversationGateApprovalPayload({ to: "dipu", text: "Please review the diff" }),
+    ).toEqual({ to: "dipu", text: "Please review the diff" });
   });
 });

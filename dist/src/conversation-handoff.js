@@ -1,5 +1,15 @@
 /** Wire protocol version. Bump only on an incompatible control-shape change. */
 export const CONVERSATION_HANDOFF_PROTOCOL_VERSION = 1;
+/** C5-2: the exactly-one approval method for the initial steward gate (confirm-only). */
+export const CONVERSATION_GATE_APPROVAL_METHOD = "confirm";
+/**
+ * C5-2: the bounded live-only notification payload for a pending gate
+ * request. Display-only (the broker re-validates target/budget server-side
+ * at confirmation); never durable, never authoritative.
+ */
+export function buildConversationGateApprovalPayload(request) {
+    return { to: request.to, text: request.text };
+}
 /** Fixed maximum handoff request text length (characters). Deliberately tiny. */
 export const CONVERSATION_HANDOFF_MAX_TEXT_LENGTH = 4000;
 /** Longest handoff chain from the steward root (lead = 0). Steward-decided. */
