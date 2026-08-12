@@ -94,12 +94,19 @@ class ScriptedClient {
   started = 0;
   stopped = 0;
   aborted = 0;
+  /** P5: recorded Pi RPC steer messages (facade requirement). */
+  steers: string[] = [];
   respondToUiCalls: Array<{ id: string; response: ExtensionUiResponse }> = [];
   private listeners: Array<(event: RpcEvent) => void> = [];
   private exitListeners: Array<() => void> = [];
 
   async start(): Promise<void> {
     this.started += 1;
+  }
+
+  /** P5: Pi RPC steer — records the message and acks (facade requirement). */
+  async steer(message: string): Promise<void> {
+    this.steers.push(message);
   }
 
   async stop(): Promise<void> {

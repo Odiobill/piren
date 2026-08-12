@@ -299,19 +299,6 @@ code {
   font-size: 0.85rem;
 }
 
-.shell-footer {
-  flex: none;
-  padding: 10px 24px;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 0.75rem;
-  background: var(--surface);
-}
-
-.shell-footer p {
-  margin: 0 auto;
-  max-width: 980px;
-}
 
 /* Screen-reader-only announcements */
 .sr-only {
@@ -747,39 +734,22 @@ code {
   display: none;
 }
 
-/* P1 — the Conversation surface uses the full available main-pane width:
-   the Conversations panel breaks the calm centered cap (agents/about keep
-   it), so the selected chat is one wide surface with fixed chrome. */
+/* P1 + P5 — the Conversation surface uses the full available main-pane width
+   and the workspace owns the pane: the Conversations panel breaks the calm
+   centered cap (agents/about keep it) and never scrolls independently — the
+   single transcript scroll region reaches the docked composer at the bottom. */
 .shell-main > .workspace-panel-conversations {
   width: 100%;
   max-width: none;
   margin-inline: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .workspace-panel .card + .card {
   margin-top: 16px;
 }
 
-.conversation-draft {
-  display: grid;
-  gap: 14px;
-  align-content: center;
-  min-height: min(48vh, 460px);
-  padding: clamp(24px, 7vw, 72px);
-  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
-  border-radius: 20px;
-  background: radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent), transparent 48%), var(--surface);
-}
-
-.conversation-draft h2 {
-  margin: 0;
-  font-size: clamp(1.5rem, 3vw, 2.4rem);
-}
-
-.conversation-draft .muted {
-  max-width: 38rem;
-  font-size: 1rem;
-}
 
 .about-list {
   display: grid;
@@ -831,9 +801,6 @@ code {
     padding: 16px;
   }
 
-  .shell-footer {
-    display: none;
-  }
 
   .status-badge {
     order: 3;
@@ -851,14 +818,18 @@ code {
 }
 
 /* C3-A — Conversation surface (mirrors the room surface styles) */
-/* P1 — the selected Conversation is a full-width uncarded surface, not a
+/* P1 + P5 — the selected Conversation is a full-width uncarded surface, not a
    card: it fills the main pane with dedicated transcript scrolling above a
-   bottom-docked one-line composer; the shell chrome stays fixed. */
+   bottom-docked one-line composer; the shell chrome stays fixed. P5 removes
+   any bordered/blue-outline selected container and eliminates independent
+   shell-main scrolling. */
 .conversation-surface {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  border: 0;
+  outline: none;
 }
 .conversation-list {
   list-style: none;
@@ -1012,8 +983,8 @@ code {
 
 .composer-upload-placeholder {
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1033,8 +1004,8 @@ code {
 /* P1 — compact accessible submit-shortcut toggle (page-local policy). */
 .composer-submit-toggle {
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1170,31 +1141,6 @@ code {
   margin-bottom: 10px;
 }
 
-.run-controls {
-  margin: 4px 0 12px;
-}
-
-.run-controls h3 {
-  margin: 0 0 8px;
-}
-
-.run-control-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.run-control-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-}
-
-.run-control-row .member-name {
-  min-width: 120px;
-}
 
 /* U2 + U3 — details modal + composer dock */
 /* U3 — full-height Conversation workspace: scrollable messages above a
@@ -1364,12 +1310,20 @@ code {
 }
 
 /* U4 — transient broker-authoritative activity surface */
-.conversation-activity {
+/* P5 — transient U4 activity-only temporary run panel (replaces the static
+   audience-derived Active run section: membership is not active-run authority).
+   Appears only for a valid current working/text_delta frame; clears on the
+   existing settled/terminal/reconnect/history/selection/malformed cleanup. */
+.transient-run-panel {
   display: grid;
   gap: 8px;
 }
 
-.activity-run {
+.transient-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
   border-left-width: 3px;
   border-left-color: var(--accent);
@@ -1378,26 +1332,65 @@ code {
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
 }
 
-.activity-status {
-  margin: 0;
+.transient-run-agent {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.transient-run-state {
   font-weight: 600;
   font-size: 0.9rem;
 }
 
-.activity-partial {
-  margin: 4px 0 0;
+.transient-run-partial {
+  flex: 1 1 220px;
+  min-width: 0;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   font-size: 0.9rem;
+  color: var(--text);
 }
 
-.activity-truncated {
+.transient-run-truncated {
   color: var(--muted);
   font-style: italic;
 }
 
-.activity-note {
-  margin: 4px 0 0;
+.transient-run-abort {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.transient-run-abort:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.transient-run-abort:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.transient-run-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--error);
+  font-size: 0.85rem;
+}
+
+.transient-run-note {
+  flex-basis: 100%;
+  margin: 0;
   color: var(--muted);
   font-size: 0.75rem;
 }

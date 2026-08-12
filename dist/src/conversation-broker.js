@@ -196,6 +196,56 @@ export class ConversationBroker {
     hasActiveRun(conversationId, agent) {
         return this.activeRuns.has(`${conversationId}:${agent}`);
     }
+    /**
+     * P5 — publish one ALREADY-DURABLE conversation event (a gateway-appended
+     * steward_message) to this conversation's scoped live subscribers BEFORE
+     * any broker dispatch. Publication-only: it never appends, mutates, or
+     * reorders durable evidence (the gateway keeps full append authority) and
+     * observer failures are contained observability issues that can never
+     * affect persistence, membership, or dispatch.
+     */
+    publishConversationEvent(conversationId, event) {
+        if (this.closed)
+            return;
+        const listeners = this.eventListeners.get(conversationId);
+        if (!listeners)
+            return;
+        for (const listener of [...listeners]) {
+            try {
+                listener(event);
+            }
+            catch {
+                // contained: a throwing observer never fails the caller's transaction
+            }
+        }
+    }
+    /**
+     * P5 — automatic steer of the EXACT active conversation×agent run via the
+     * existing Pi RPC `steer` capability: resolves once Pi acknowledges the
+     * delivery (no new run/queue/terminal/status/membership event or outcome
+     * claim). `no-active-run` means the caller should use existing dispatch;
+     * a rejection/failure after the message is durable returns the bounded
+     * `steer-failed` outcome — the original run keeps its own causal correlation.
+     */
+    async steerActiveConversationRun(conversationId, agent, text) {
+        if (this.closed)
+            return { status: "steer-failed" };
+        const run = this.activeRuns.get(`${conversationId}:${agent}`);
+        if (run === undefined)
+            return { status: "no-active-run" };
+        const client = run.client;
+        if (client === undefined) {
+            // Active but not yet bound to a live client: nothing to steer.
+            return { status: "steer-failed" };
+        }
+        try {
+            await client.steer(text);
+            return { status: "steered" };
+        }
+        catch {
+            return { status: "steer-failed" };
+        }
+    }
     /** C3-C1: whether an exact conversation×agent×requestId approval is pending. */
     hasPendingApproval(conversationId, agent, requestId) {
         return this.pendingApprovals.has(`${conversationId}:${agent}:${requestId}`);

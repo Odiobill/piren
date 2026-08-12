@@ -1769,6 +1769,23 @@ export class GatewayServer {
             mentions: resolved.recipients,
             nonce: () => randomUUID().slice(0, 8),
         });
+        // P5 durable live-event parity: publish the exact just-persisted steward
+        // event (the same complete durable record shape used for broker live
+        // events and history parsing) to scoped live subscribers BEFORE any
+        // broker dispatch. Publication is a contained observability path: it can
+        // never affect persistence, membership, or dispatch.
+        this.conversationBroker.publishConversationEvent(conversation.id, {
+            id: event.id,
+            conversationId: conversation.id,
+            kind: "steward_message",
+            authorKind: "steward",
+            author: "steward",
+            created: event.created,
+            sequence: event.sequence,
+            mentions: [...resolved.recipients],
+            body: text,
+            path: event.path,
+        });
         const dispatch = resolved.recipients.length > 0
             ? await this.dispatchConversationRecipients(conversation.id, resolved.recipients, text, event.id, [])
             : undefined;
@@ -1862,8 +1879,49 @@ export class GatewayServer {
             mentions: resolved.recipients,
             nonce: () => randomUUID().slice(0, 8),
         });
-        const dispatch = resolved.recipients.length > 0
-            ? await this.dispatchConversationRecipients(conversationId, resolved.recipients, text, event.id, prior)
+        // P5 durable live-event parity: publish the exact just-persisted steward
+        // event (the same complete durable record shape used for broker live
+        // events and history parsing) to scoped live subscribers BEFORE any
+        // broker dispatch.
+        this.conversationBroker.publishConversationEvent(conversationId, {
+            id: event.id,
+            conversationId,
+            kind: "steward_message",
+            authorKind: "steward",
+            author: "steward",
+            created: event.created,
+            sequence: event.sequence,
+            mentions: [...resolved.recipients],
+            body: text,
+            path: event.path,
+        });
+        // P5 single-member default: recipients are the explicit validated mentions,
+        // or the SOLE durable audience member for a zero-mention message, or none
+        // (multi-member zero-mention stays context-only). The browser never selects
+        // a recipient; this reads the just-read authoritative manifest only.
+        const recipients = resolved.recipients.length > 0
+            ? [...resolved.recipients]
+            : conversation.audience.length === 1
+                ? [conversation.audience[0]]
+                : [];
+        // P5 automatic steer: exactly one target whose exact conversation×agent run
+        // is active gets the existing Pi RPC `steer` (waits only the delivery ack;
+        // no new run/terminal/status/membership event or outcome claim). A bounded
+        // steer rejection/failure leaves the durable message and returns a truthful
+        // `steer-failed` entry; no active run falls through to existing dispatch.
+        if (recipients.length === 1) {
+            const steerOutcome = await this.conversationBroker.steerActiveConversationRun(conversationId, recipients[0], text);
+            if (steerOutcome.status === "steered" || steerOutcome.status === "steer-failed") {
+                this.writeJson(res, 200, {
+                    event: this.safeConversationEvent(event),
+                    dispatch: [{ agent: recipients[0], status: steerOutcome.status }],
+                });
+                return;
+            }
+            // no-active-run: fall through to the existing dispatch path below.
+        }
+        const dispatch = recipients.length > 0
+            ? await this.dispatchConversationRecipients(conversationId, recipients, text, event.id, prior)
             : undefined;
         if (dispatch?.conflictAgent !== null && dispatch !== undefined) {
             this.writeJson(res, 409, {

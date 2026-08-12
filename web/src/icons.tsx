@@ -71,3 +71,12 @@ export function InfoIcon({ size = 18 }: IconProps): ReactElement {
     </svg>
   );
 }
+
+/** P5: square stop glyph for the transient-run abort control. */
+export function StopIcon({ size = 14 }: IconProps): ReactElement {
+  return (
+    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}

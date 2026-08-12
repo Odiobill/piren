@@ -280,34 +280,39 @@ describe("Gateway Conversation API family (C2)", () => {
     expect(events.map((e) => e.kind)).toEqual(["steward_message"]);
   });
 
-  it("an active conversation×agent run conflict persists the message but returns non-secret 409", async () => {
-    await startServer({ runnableAgents: ["fake"] });
-    const { id } = await createConversationViaApi("Start @fake");
-    // Hang the first dispatch with the fake-Pi "hang" trigger (never awaited).
-    const first = post(url(`/api/conversations/${id}/messages`), { text: "hang @fake" }, token);
-    // Wait until the SECOND run_started is visible: the create dispatched @fake
-    // (first run_started), so we must wait for the hang POST's run_started to
-    // know the hang dispatch is the active run (its steward_message persists first).
+  it("a multi-recipient message with one active run persists the message but returns non-secret 409 (steer never guesses)", { timeout: 20000 }, async () => {
+    await startServer({ runnableAgents: ["fake", "fake2"] });
+    const { id } = await createConversationViaApi("Start @fake @fake2");
+    // Both runs complete from the seed; wait for the two terminals.
     await waitForStreamValue(async () => {
       const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
-      return events.filter((e) => e.kind === "run_started").length >= 2;
+      return events.filter((e) => e.kind === "run_finished").length >= 2;
     });
-    const conflict = await post(url(`/api/conversations/${id}/messages`), { text: "Again @fake" }, token);
+    // Hang BOTH agents with separate messages (fire-and-forget: each POST
+    // resolves only when its run settles after abort in cleanup). Dispatch is
+    // sequential per message, so two hang messages make both runs active.
+    void post(url(`/api/conversations/${id}/messages`), { text: "hang @fake" }, token).catch(() => {});
+    await waitForStreamValue(async () => {
+      const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
+      return events.filter((e) => e.kind === "run_started").length >= 3;
+    });
+    void post(url(`/api/conversations/${id}/messages`), { text: "hang @fake2" }, token).catch(() => {});
+    await waitForStreamValue(async () => {
+      const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
+      return events.filter((e) => e.kind === "run_started").length >= 4;
+    });
+    // TWO recipients with both runs active: P5 auto-steer only targets exactly
+    // one recipient, so this keeps the existing deterministic dispatch/conflict
+    // behavior — both active runs are a fail-closed 409 conflict, no guess.
+    const conflict = await post(url(`/api/conversations/${id}/messages`), { text: "Again @fake @fake2" }, token);
     expect(conflict.status).toBe(409);
     const body = (await conflict.json()) as { error: string };
-    // Either non-secret conflict is a valid fail-closed 409: the run-conflict
-    // case or the audience-lock contention case (both before any delivery).
-    expect(body.error).toMatch(/(already active|audience update is busy)/i);
-    // Durable-first invariant: the create message and the first POST message
-    // are always persisted. The second message's steward record exists ONLY
-    // in the run-conflict path (count 3); in the audience-lock contention path
-    // the contract requires NO steward_message (count 2). Either is honest;
-    // nothing durably written is ever rolled back.
+    expect(body.error).toMatch(/already active/i);
+    // Durable-first invariant: every steward message persisted (create + two
+    // hang messages + conflict = 4); nothing durably written is rolled back.
     const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
     const stewardCount = events.filter((e) => e.kind === "steward_message").length;
-    expect(stewardCount).toBeGreaterThanOrEqual(2);
-    expect(stewardCount).toBeLessThanOrEqual(3);
-    void first;
+    expect(stewardCount).toBe(4);
   });
 
   it("a held audience lock returns 409 before creating any event, audience change, or dispatch", async () => {

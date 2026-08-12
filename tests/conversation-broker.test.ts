@@ -37,6 +37,10 @@ class FakeConversationClient implements ConversationRpcClient {
   stopped = 0;
   aborted = 0;
   prompts: string[] = [];
+  /** P5: recorded steer messages (automatic steer tests). */
+  steers: string[] = [];
+  /** P5: when true, steer() rejects (bounded steer-failure containment). */
+  steerThrows = false;
   /** respondToUiRequest calls recorded for approval tests. */
   responses: { id: string; response: ExtensionUiResponse }[] = [];
   /** Pi request id emitted by approval behaviors (fixed for deterministic keys). */
@@ -84,6 +88,14 @@ class FakeConversationClient implements ConversationRpcClient {
     return () => {
       this.exitListeners = this.exitListeners.filter((l) => l !== listener);
     };
+  }
+
+  /** P5: Pi RPC steer — records the message; rejects when steerThrows is set. */
+  async steer(message: string): Promise<void> {
+    this.steers.push(message);
+    if (this.steerThrows) {
+      throw new Error("steer rejected (fake)");
+    }
   }
 
   async prompt(message: string): Promise<void> {
@@ -2019,3 +2031,100 @@ describe("broker-authoritative live activity (U4)", () => {
     await broker.close();
   });
 });
+
+describe("P5 broker seams (publish-only parity + automatic steer)", () => {
+  it("publishConversationEvent is publication-only: a throwing scoped observer is contained and never affects the caller", async () => {
+    const { broker } = makeBroker();
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "A durable steward message");
+    const events: unknown[] = [];
+    broker.onConversationEvent(conversationId, (event) => {
+      events.push(event);
+      throw new Error("observer boom");
+    });
+    const record = (await readConversationEvents({ vaultRoot: root, conversationId })).find((e) => e.id === stewardEventId) as NonNullable<Parameters<typeof broker.publishConversationEvent>[1]>;
+    expect(() => broker.publishConversationEvent(conversationId, record)).not.toThrow();
+    // The throwing observer still received the published record (contained).
+    expect(events).toHaveLength(1);
+    expect((events[0] as { body?: string }).body).toBe("A durable steward message");
+    // The seam never appends: the durable event count is unchanged.
+    expect(await readConversationEvents({ vaultRoot: root, conversationId })).toHaveLength(1);
+    await broker.close();
+  });
+
+  it("steerActiveConversationRun returns no-active-run for an idle exact conversation×agent", async () => {
+    const { broker } = makeBroker();
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const outcome = await broker.steerActiveConversationRun(conversationId, "zai", "steer text");
+    expect(outcome).toEqual({ status: "no-active-run" });
+    await broker.close();
+  });
+
+  it("steerActiveConversationRun steers the exact active client and fabricates no run/terminal evidence", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "hang @zai");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "hang @zai",
+      stewardEventId,
+      priorEvents: [],
+    });
+    // Wait until the run is active with a client.
+    await waitForRunActive(broker, conversationId, "zai");
+    const client = clients[0] as FakeConversationClient;
+    const outcome = await broker.steerActiveConversationRun(conversationId, "zai", "steer the active run");
+    expect(outcome).toEqual({ status: "steered" });
+    expect(client.steers).toEqual(["steer the active run"]);
+    // No terminal evidence is appended by the steer.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "run_finished")).toHaveLength(0);
+    // Clean up the held run.
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("a steer rejection/failure is contained and returns steer-failed", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "hang @zai");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "hang @zai", stewardEventId, priorEvents: [] });
+    await waitForRunActive(broker, conversationId, "zai");
+    clients[0]!.steerThrows = true;
+    const outcome = await broker.steerActiveConversationRun(conversationId, "zai", "steer text");
+    expect(outcome).toEqual({ status: "steer-failed" });
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("steerActiveConversationRun targets only the exact conversation×agent run", async () => {
+    const { broker, clients } = makeBroker({ behaviors: ["hang", "hang"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "hang @zai");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "hang @zai", stewardEventId, priorEvents: [] });
+    await waitForRunActive(broker, conversationId, "zai");
+    // Another agent's run is not active in this conversation: no-active-run.
+    expect(await broker.steerActiveConversationRun(conversationId, "dipu", "x")).toEqual({ status: "no-active-run" });
+    // The exact active client received the steer.
+    const outcome = await broker.steerActiveConversationRun(conversationId, "zai", "steer only zai");
+    expect(outcome).toEqual({ status: "steered" });
+    expect(clients[0]!.steers).toEqual(["steer only zai"]);
+    expect(clients[1]).toBeUndefined();
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+});
+
+/** Wait until the exact conversation×agent run is active (client assigned). */
+async function waitForRunActive(broker: { hasActiveRun: (c: string, a: string) => boolean }, conversationId: string, agent: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (broker.hasActiveRun(conversationId, agent)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("run never became active");
+}

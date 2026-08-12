@@ -80,7 +80,24 @@ export interface ConversationRpcClient extends TransportRpcClient {
   /** TB6: switch the active model on the same live client (optional; a
    * fallback attempt fails closed as an unavailable skip when absent). */
   setModel?(provider: string, modelId: string): Promise<unknown>;
+  /**
+   * P5 automatic steer: interrupt the current run on the same live client via
+   * the existing Pi RPC `steer` command. Resolves once Pi acknowledges the
+   * delivery; rejects on rejection/RPC failure (the caller contains it).
+   */
+  steer(message: string): Promise<void>;
 }
+
+/**
+ * P5 — outcome of steering an exact active conversation run: `steered` on a
+ * delivered Pi ack, `no-active-run` when the exact run is idle (caller falls
+ * back to existing dispatch), or `steer-failed` for a bounded rejection/
+ * failure (the durable message stands; no run/terminal/status fabrication).
+ */
+export type ConversationSteerOutcome =
+  | { status: "steered" }
+  | { status: "no-active-run" }
+  | { status: "steer-failed" };
 
 export interface ConversationBrokerTimers {
   setTimeout(callback: () => void, ms: number): unknown;
@@ -437,6 +454,52 @@ export class ConversationBroker {
 
   hasActiveRun(conversationId: string, agent: string): boolean {
     return this.activeRuns.has(`${conversationId}:${agent}`);
+  }
+
+  /**
+   * P5 — publish one ALREADY-DURABLE conversation event (a gateway-appended
+   * steward_message) to this conversation's scoped live subscribers BEFORE
+   * any broker dispatch. Publication-only: it never appends, mutates, or
+   * reorders durable evidence (the gateway keeps full append authority) and
+   * observer failures are contained observability issues that can never
+   * affect persistence, membership, or dispatch.
+   */
+  publishConversationEvent(conversationId: string, event: ConversationEventRecord): void {
+    if (this.closed) return;
+    const listeners = this.eventListeners.get(conversationId);
+    if (!listeners) return;
+    for (const listener of [...listeners]) {
+      try {
+        listener(event);
+      } catch {
+        // contained: a throwing observer never fails the caller's transaction
+      }
+    }
+  }
+
+  /**
+   * P5 — automatic steer of the EXACT active conversation×agent run via the
+   * existing Pi RPC `steer` capability: resolves once Pi acknowledges the
+   * delivery (no new run/queue/terminal/status/membership event or outcome
+   * claim). `no-active-run` means the caller should use existing dispatch;
+   * a rejection/failure after the message is durable returns the bounded
+   * `steer-failed` outcome — the original run keeps its own causal correlation.
+   */
+  async steerActiveConversationRun(conversationId: string, agent: string, text: string): Promise<ConversationSteerOutcome> {
+    if (this.closed) return { status: "steer-failed" };
+    const run = this.activeRuns.get(`${conversationId}:${agent}`);
+    if (run === undefined) return { status: "no-active-run" };
+    const client = run.client;
+    if (client === undefined) {
+      // Active but not yet bound to a live client: nothing to steer.
+      return { status: "steer-failed" };
+    }
+    try {
+      await client.steer(text);
+      return { status: "steered" };
+    } catch {
+      return { status: "steer-failed" };
+    }
   }
 
   /** C3-C1: whether an exact conversation×agent×requestId approval is pending. */

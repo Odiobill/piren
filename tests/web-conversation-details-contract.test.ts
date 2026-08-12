@@ -191,9 +191,12 @@ describe("details modal + toggle surface (static)", () => {
     // The modal is guarded by detailsOpen and rendered only inside the
     // active/read-only selection branch; the draft branch never references it.
     expect(navigator).toMatch(/detailsOpen\s*&&\s*\(\s*<ConversationDetailsModal/);
-    const draftIndex = navigator.indexOf("conversation-draft");
+    // P5: the empty draft is the shared full-height chat surface; its branch
+    // never references the details modal (no durable details for a draft).
+    const draftIndex = navigator.indexOf('aria-label="New conversation"');
     expect(draftIndex).toBeGreaterThan(-1);
     const draftSection = navigator.slice(draftIndex, draftIndex + 700);
+    expect(draftSection).not.toContain("ConversationDetailsModal");
     expect(draftSection).not.toContain("Conversation details");
   });
 

@@ -22,6 +22,7 @@ import {
 } from "./conversation-activity";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
 import type { ConversationReaction } from "./conversation-reactions";
+import { StopIcon } from "./icons";
 import {
   conversationAuthorInitial,
   conversationStatusSymbol,
@@ -59,6 +60,8 @@ export function ConversationTimeline({
   onUnauthorized,
   onLifecycleTransition,
   onApproval,
+  onAbortRun,
+  abortState,
 }: {
   conversationId: string;
   token: string;
@@ -68,6 +71,17 @@ export function ConversationTimeline({
   onLifecycleTransition?: (event: ConversationEventRecord) => void;
   /** C3-C3: forward a scoped live approval frame for the selected conversation. */
   onApproval?: (approval: PendingApproval) => void;
+  /**
+   * P5: transient-run abort — the existing abort request for the broker-
+   * provided active agent ONLY (never an audience guess). Absent on
+   * read-only inspection.
+   */
+  onAbortRun?: (agent: string) => void;
+  /** P5: current abort control state (busy/error for the active agent). */
+  abortState?:
+    | { phase: "idle" }
+    | { phase: "busy"; agent: string }
+    | { phase: "error"; agent: string; error: { message: string } };
 }) {
   const [phase, setPhase] = useState<TimelinePhase>({ phase: "loading" });
   const [announcement, setAnnouncement] = useState("");
@@ -262,7 +276,11 @@ export function ConversationTimeline({
             </p>
           )}
           {phase.message !== null && phase.stream === "disconnected" && <p className="muted">{phase.message}</p>}
-          <ConversationActivityDisplay activity={activity} />
+          <ConversationActivityDisplay
+            activity={activity}
+            {...(onAbortRun !== undefined ? { onAbortRun } : {})}
+            {...(abortState !== undefined ? { abortState } : {})}
+          />
           <ConversationTimelineItems items={phase.items} />
         </>
       )}
@@ -276,24 +294,68 @@ export function ConversationTimeline({
  * a real text delta, and a clearly TRANSIENT bounded partial reply that is
  * replaced by the correlated durable agent_message. Never a read/seen/claim.
  */
-function ConversationActivityDisplay({ activity }: { activity: ConversationActivityState }) {
+/**
+ * P5 — transient U4 activity-only temporary run panel (replaces the static
+ * audience-derived Active run section: membership is not active-run
+ * authority). It appears ONLY for a valid current broker `conversation_activity`
+ * working/text_delta frame, identifies the exact broker-provided agent, shows
+ * the real streamed partial text, and clears on the existing settled/
+ * terminal/reconnect/history/selection/malformed-frame cleanup. Its abort
+ * control is an accessible labelled inline SVG icon that sends the existing
+ * abort request for the CURRENT transient agent only. Never an audience guess
+ * or history reconstruction; no private reasoning.
+ */
+function ConversationActivityDisplay({
+  activity,
+  onAbortRun,
+  abortState,
+}: {
+  activity: ConversationActivityState;
+  onAbortRun?: (agent: string) => void;
+  abortState?:
+    | { phase: "idle" }
+    | { phase: "busy"; agent: string }
+    | { phase: "error"; agent: string; error: { message: string } };
+}) {
   if (activity.runs.length === 0) return null;
   return (
-    <div className="conversation-activity" aria-live="polite">
-      {activity.runs.map((run) => (
-        <div key={run.runId} className={`activity-run activity-${run.phase}`}>
-          <p className="activity-status">
-            {run.agent} is {run.phase === "working" ? "working" : "typing"}…
-          </p>
-          {run.phase === "typing" && run.partial !== "" && (
-            <p className="activity-partial">
-              {run.partial}
-              {run.truncated && <span className="activity-truncated"> … (truncated)</span>}
-            </p>
-          )}
-          <p className="activity-note">Transient — only durable events are saved.</p>
-        </div>
-      ))}
+    <div className="transient-run-panel" aria-live="polite" aria-label="Active run">
+      {activity.runs.map((run) => {
+        const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
+        const failed = abortState?.phase === "error" && abortState.agent === run.agent;
+        return (
+          <div key={run.runId} className={`transient-run transient-${run.phase}`}>
+            <span className="transient-run-agent">{run.agent}</span>
+            <span className="transient-run-state">
+              {run.phase === "working" ? "is working…" : "is typing…"}
+            </span>
+            {run.phase === "typing" && run.partial !== "" && (
+              <span className="transient-run-partial">
+                {run.partial}
+                {run.truncated && <span className="transient-run-truncated"> …</span>}
+              </span>
+            )}
+            {onAbortRun !== undefined && (
+              <button
+                type="button"
+                className="transient-run-abort"
+                aria-label={`Abort ${run.agent} run`}
+                title={`Abort ${run.agent} run`}
+                disabled={aborting}
+                onClick={() => onAbortRun(run.agent)}
+              >
+                <StopIcon size={14} />
+              </button>
+            )}
+            {failed && (
+              <p className="transient-run-error" role="alert">
+                {abortState?.phase === "error" ? abortState.error.message : ""}
+              </p>
+            )}
+            <p className="transient-run-note">Transient — only durable events are saved.</p>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -241,6 +241,16 @@ function handle(cmd) {
       return;
     }
 
+    // P5 empty-output diagnosis: a COMPLETED run that emits no assistant text
+    // (no message_update.text_delta) so the broker must persist no
+    // agent_message and still append the completed terminal.
+    if (typeof cmd.message === "string" && cmd.message.includes("emptyoutput")) {
+      emit({ type: "queue_update", steering: [], followUp: [] });
+      emit({ type: "agent_end", messages: [] });
+      emit({ type: "agent_settled" });
+      return;
+    }
+
     // If the message requests a BLOCKING approval ("waitapprove"), emit an
     // extension_ui_request and hold agent_end until the matching
     // extension_ui_response (or abort) arrives. This models a real approval
@@ -284,6 +294,12 @@ function handle(cmd) {
     return;
   }
   if (cmd.type === "steer") {
+    // P5 steer-rejection trigger: a steer whose message names steerfail is
+    // rejected by Pi (ack success:false), modeling a bounded steer failure.
+    if (typeof cmd.message === "string" && cmd.message.includes("steerfail")) {
+      emit({ type: "response", command: "steer", success: false, id: cmd.id, error: "steer rejected (fake)" });
+      return;
+    }
     emit({ type: "response", command: "steer", success: true, id: cmd.id });
     return;
   }

@@ -118,7 +118,6 @@ export function ConversationNavigator({
   /** Visible bounded route/error notice shown above the conversation list. */
   const [notice, setNotice] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
-  const listHeadingRef = useRef<HTMLHeadingElement>(null);
   /** P2: focus target for the uncarded selected-conversation surface. */
   const surfaceRef = useRef<HTMLElement>(null);
   /**
@@ -303,7 +302,7 @@ export function ConversationNavigator({
         // P2: the draft keeps the calm generic shell subtitle.
         onSelectionChange?.(null);
         setNotice(error instanceof Error ? error.message : String(error));
-        listHeadingRef.current?.focus();
+        surfaceRef.current?.focus();
       }
     },
     [token, onUnauthorized, onSelectionChange],
@@ -335,7 +334,7 @@ export function ConversationNavigator({
         setNotice("Unknown route — showing the new-conversation draft.");
         setAnnouncement("");
         onSelectionChange?.(null);
-        listHeadingRef.current?.focus();
+        surfaceRef.current?.focus();
         return;
       }
       resetLifecycleControls();
@@ -385,7 +384,7 @@ export function ConversationNavigator({
           setLifecycle({ phase: "idle" });
           setSelection({ phase: "none" });
           setNotice("Conversation not found.");
-          listHeadingRef.current?.focus();
+          surfaceRef.current?.focus();
           return;
         }
         if (cause.kind === "server") {
@@ -632,11 +631,6 @@ export function ConversationNavigator({
                   submit={approvalSubmit}
                   onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
                 />
-                <ConversationAbortControls
-                  members={selection.conversation.audience}
-                  state={abortState}
-                  onAbort={(agent) => void handleAbort(agent)}
-                />
                 <ConversationTimeline
                   conversationId={selection.conversation.id}
                   token={token}
@@ -644,6 +638,8 @@ export function ConversationNavigator({
                   onUnauthorized={onUnauthorized}
                   onLifecycleTransition={handleLifecycleEvent}
                   onApproval={handleApprovalFrame}
+                  onAbortRun={(agent) => void handleAbort(agent)}
+                  abortState={abortState}
                 />
               </div>
               {/* U3: the composer is anchored at the bottom of the full
@@ -713,27 +709,32 @@ export function ConversationNavigator({
   }
 
   return (
-    <section className="conversation-draft" aria-labelledby="conversations-heading">
+    <section
+      className="conversation-surface"
+      aria-label="New conversation"
+      tabIndex={-1}
+      ref={surfaceRef}
+    >
       <p className="sr-only" role="status" aria-live="polite">
         {announcement}
       </p>
-      <h2 id="conversations-heading" tabIndex={-1} ref={listHeadingRef}>
-        New conversation
-      </h2>
       {notice !== null && <p className="route-notice" role="status">{notice}</p>}
-      <p className="muted">
-        This draft stays only in this window — nothing is saved until you send the first
-        message, which creates the conversation. Write it below, or pick a conversation from
-        the sidebar.
-      </p>
-      <ConversationComposer
-        mode="draft"
-        token={token}
-        agents={load.phase === "ready" ? load.agents : []}
-        onUnauthorized={onUnauthorized}
-        onAnnounce={setAnnouncement}
-        onCreated={(conversation) => void handleCreated(conversation)}
-      />
+      {/* P5: the empty draft uses the SAME full-height chat layout and docked
+          composer as an active Conversation — no durable title/details/stream/
+          activity/status until the first accepted send creates the record. */}
+      <div className="conversation-workspace">
+        <div className="conversation-scroll" aria-label="Conversation history" />
+        <div className="composer-action-row">
+          <ConversationComposer
+            mode="draft"
+            token={token}
+            agents={load.phase === "ready" ? load.agents : []}
+            onUnauthorized={onUnauthorized}
+            onAnnounce={setAnnouncement}
+            onCreated={(conversation) => void handleCreated(conversation)}
+          />
+        </div>
+      </div>
     </section>
   );
 }
@@ -891,56 +892,6 @@ function ApprovalCard({
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-/**
- * C3-C3: Abort control for the selected ACTIVE conversation only. One Abort
- * per audience member sends only `{agent}` to the declared route; the bounded
- * cancelled|no-active-run outcome is announced truthfully. Never shown on
- * read-only/archived/gate-rejected inspection.
- */
-function ConversationAbortControls({
-  members,
-  state,
-  onAbort,
-}: {
-  members: string[];
-  state:
-    | { phase: "idle" }
-    | { phase: "busy"; agent: string }
-    | { phase: "error"; agent: string; error: ConversationControlError };
-  onAbort: (agent: string) => void;
-}) {
-  if (members.length === 0) return null;
-  return (
-    <div className="run-controls" aria-label="Active run controls">
-      <h3>Active run</h3>
-      <ul className="run-control-list">
-        {members.map((agent) => (
-          <li key={agent} className="run-control-row">
-            <span className="member-name">{agent}</span>
-            <button
-              type="button"
-              className="button button-small"
-              disabled={state.phase === "busy"}
-              onClick={() => onAbort(agent)}
-            >
-              Abort
-            </button>
-            {state.phase === "busy" && state.agent === agent && <span className="muted">Aborting…</span>}
-            {state.phase === "error" && state.agent === agent && (
-              <div className="lifecycle-error" role="alert">
-                <p className="error-message">{state.error.message}</p>
-                <button type="button" className="button button-small" onClick={() => onAbort(agent)}>
-                  Retry
-                </button>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

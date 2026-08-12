@@ -142,13 +142,6 @@ export function AppShell({
           </div>
         </main>
       </div>
-
-      <footer className="shell-footer">
-        <p>
-          Piren — the browser is an untrusted UI client; Pi owns live sessions and the vault owns
-          durable knowledge.
-        </p>
-      </footer>
     </div>
   );
 }

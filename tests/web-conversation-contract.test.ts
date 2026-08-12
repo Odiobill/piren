@@ -241,11 +241,14 @@ describe("U1 local draft surface (static)", () => {
     const composer = await readFile(join(webSrc, "ConversationComposer.tsx"), "utf8");
     // The old "Your workspace" greeting is gone.
     expect(navigator).not.toContain("Your workspace");
-    // The home surface is the draft template; U3 made the first-message
-    // surface the shared draft-mode composer (browser-local until Send).
-    expect(navigator).toContain("New conversation");
+    // P5: the home surface is the SAME empty full-height chat layout with the
+    // docked draft composer (no separate explanatory card, no durable title/
+    // details/stream/activity/status until the first accepted send).
+    expect(navigator).toContain('aria-label="New conversation"');
+    expect(navigator).toContain("conversation-workspace");
     expect(navigator).toContain("formatConversationHash");
-    expect(navigator).toContain("only in this window");
+    expect(navigator).not.toContain("conversation-draft");
+    expect(navigator).not.toContain("only in this window");
     expect(composer).toContain("First message");
     expect(composer).toContain("createConversation");
   });
