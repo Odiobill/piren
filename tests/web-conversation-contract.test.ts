@@ -38,6 +38,7 @@ function conversationModuleFiles(): string[] {
     "conversation-composer.ts",
     "conversation-autocomplete.ts",
     "conversation-activity.ts",
+    "conversation-reactions.ts",
     "conversation-timeline.ts",
     "conversation-details.ts",
     "conversation-lifecycle.ts",
@@ -347,5 +348,41 @@ describe("U4 transient live activity surface (static)", () => {
     // Settled-run tombstones are bounded and in-memory only.
     expect(activity).toContain("CONVERSATION_ACTIVITY_SETTLED_TOMBSTONES_MAX");
     expect(activity).toContain("settled");
+  });
+});
+
+describe("U5 bounded lifecycle/status reactions (static)", () => {
+  it("the reaction core is pure, durable-only, and never a read/seen/picker surface", async () => {
+    const reactions = await readFile(join(webSrc, "conversation-reactions.ts"), "utf8");
+    expect(reactions).toContain("export function conversationReactionForEvent");
+    expect(reactions).toContain("runAgent");
+    // Bounded vocabulary only: no picker/selection surface, no actual emoji
+    // characters, and no read/seen/delivery claim.
+    for (const forbidden of ["picker", "has read", "read receipt", "seen by", "delivered to"]) {
+      expect(reactions, `must not contain ${forbidden}`).not.toContain(forbidden);
+    }
+    expect(reactions).not.toMatch(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
+  });
+
+  it("the timeline renders compact reaction chips from durable events only (never activity/transient state)", async () => {
+    const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
+    expect(timeline).toContain("conversationReactionForEvent");
+    expect(timeline).toContain("conversation-reaction");
+    // The reaction is derived from the DURABLE event record, never from the
+    // transient activity state (no live/typing manufacture of status).
+    const entryIndex = timeline.indexOf("function ConversationTimelineEntry");
+    expect(entryIndex).toBeGreaterThan(-1);
+    const entrySection = timeline.slice(entryIndex, entryIndex + 1600);
+    expect(entrySection).toContain("conversationReactionForEvent");
+    expect(entrySection).not.toMatch(/activity\.runs|setActivity|applyConversationActivityFrame/);
+  });
+
+  it("inspection mode stays read-only: reactions come only from the durable whole-history reread", async () => {
+    const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
+    // Read-only inspection renders replaceConversationHistoric events; the
+    // same shared entry renders durable-derived reaction chips. No live
+    // stream, so no live/transient state can manufacture status.
+    expect(timeline).toContain("no live stream");
+    expect(timeline).toContain("replaceConversationHistoric");
   });
 });

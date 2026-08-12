@@ -19,6 +19,7 @@ import {
   type ConversationActivityState,
 } from "./conversation-activity";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
+import { conversationReactionForEvent } from "./conversation-reactions";
 import type { ConversationEventRecord } from "./conversations";
 
 /**
@@ -319,9 +320,18 @@ function ConversationTimelineEntry({ item }: { item: ConversationTimelineItem })
     );
   }
   const { event } = item;
+  // U5: a bounded broker-authoritative status reaction derived ONLY from the
+  // durable event record (never from activity/transient state, text, or event
+  // order). Old/unknown evidence maps to null and renders no chip.
+  const reaction = conversationReactionForEvent(event);
   return (
     <li className={`timeline-entry timeline-${event.kind}`}>
       <span className="timeline-kind">{conversationEventLabel(event)}</span>
+      {reaction !== null && (
+        <span className={`conversation-reaction conversation-reaction-${reaction.kind}`} aria-label={reaction.label} title={reaction.label}>
+          {reaction.status}
+        </span>
+      )}
       <time className="timeline-time" dateTime={event.created}>
         {event.created}
       </time>

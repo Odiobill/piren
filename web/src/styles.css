@@ -1353,3 +1353,38 @@ code {
   color: var(--muted);
   font-size: 0.75rem;
 }
+
+/* U5 — bounded lifecycle/status reaction chips (durable-evidence derived) */
+.conversation-reaction {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  cursor: default;
+}
+
+.conversation-reaction-received {
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.conversation-reaction-completed {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.conversation-reaction-failed {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.conversation-reaction-cancelled {
+  color: var(--warn);
+  border-color: var(--warn);
+}
