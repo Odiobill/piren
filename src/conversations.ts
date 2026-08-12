@@ -6,9 +6,9 @@
  * sibling tree: it never writes, scans, renames, or deletes
  * `collaboration/rooms/**`, and no room code is generalized or changed. The
  * semantics deliberately mirror the proven room record conventions (atomic
- * no-clobber writes, deterministic compact-UTC ids, tolerant list, strict
- * manifest/event validation naming their path) without importing or altering
- * room types.
+ * no-clobber writes, P2 neutral server-generated compact-UTC ids with a
+ * bounded collision retry, tolerant list, strict manifest/event validation
+ * naming their path) without importing or altering room types.
  *
  * A Conversation exists only after activation (first message); a draft has no
  * record. The manifest carries the additive `audience` membership, which grows
@@ -18,6 +18,7 @@
  * unit-testable without Pi auth or a real filesystem beyond the caller's io.
  */
 
+import { randomBytes } from "node:crypto";
 import { link, mkdir, open, readdir, readFile, rm, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -62,9 +63,42 @@ const CONVERSATION_SLUG_MAX = 48;
 /** U2: bounded rename title length in UTF-16 code units (contract §Rename input). */
 export const CONVERSATION_TITLE_MAX = 120;
 
+/** P2: the neutral Conversation id suffix is exactly 12 lowercase hex characters. */
+export const CONVERSATION_GENERIC_SUFFIX_HEX_LENGTH = 12;
+/** P2: bounded no-clobber candidate attempts before the safe 409 collision result. */
+export const CONVERSATION_GENERIC_MAX_CANDIDATES = 3;
+const CONVERSATION_GENERIC_SUFFIX_PATTERN = /^[0-9a-f]{12}$/;
+
+/** P2: fixed neutral Conversation discriminator between timestamp and nonce. */
+const CONVERSATION_GENERIC_DISCRIMINATOR = "c";
+
 /** Deterministic compact-UTC timestamp: `20260805T131530000Z`. */
 export function compactConversationTimestamp(date: Date): string {
   return date.toISOString().replace(/[-:.]/g, "");
+}
+
+/**
+ * P2 — neutral generic Conversation id: `<compact-UTC>-c-<12-lowercase-hex>`.
+ * The suffix must be exactly 12 lowercase hexadecimal characters (fail-closed;
+ * production uses `randomConversationSuffix`, tests inject a deterministic
+ * suffix through the durable-core seam that is never HTTP-exposed). No message
+ * text, title, mention, agent, or browser input ever appears in the id.
+ */
+export function conversationGenericId(now: Date, suffix: string): string {
+  if (!CONVERSATION_GENERIC_SUFFIX_PATTERN.test(suffix)) {
+    throw new Error(
+      `Invalid conversation id suffix: must be exactly ${CONVERSATION_GENERIC_SUFFIX_HEX_LENGTH} lowercase hexadecimal characters.`,
+    );
+  }
+  return `${compactConversationTimestamp(now)}-${CONVERSATION_GENERIC_DISCRIMINATOR}-${suffix}`;
+}
+
+/**
+ * P2 — production suffix source: Node's cryptographic random source, 6 bytes
+ * encoded as exactly 12 lowercase hexadecimal characters (48-bit nonce).
+ */
+export function randomConversationSuffix(): string {
+  return randomBytes(6).toString("hex");
 }
 
 function plainPrefix(text: string): string {
@@ -82,7 +116,12 @@ function slug(text: string): string {
   return slugged || "conversation";
 }
 
-/** Deterministic conversation id from the first message (no LLM). */
+/**
+ * Legacy deterministic slug conversation id from the first message (pre-P2).
+ * Kept for backward compatibility: existing slug-based ids remain valid
+ * forever under existing parse/read/list/deep-link rules. New Conversations
+ * use the P2 neutral generic id (`conversationGenericId`).
+ */
 export function conversationIdFromText(text: string, now: Date): string {
   return `${compactConversationTimestamp(now)}-${slug(text)}`;
 }
@@ -214,6 +253,11 @@ export interface CreateConversationOptions {
   audience: readonly string[];
   now?: () => Date;
   nonce?: () => string;
+  /**
+   * P2 deterministic 12-lowercase-hex suffix seam for tests ONLY; never
+   * exposed through HTTP. Production uses `randomConversationSuffix`.
+   */
+  suffix?: () => string;
   io?: ConversationWriteIo;
 }
 
@@ -333,35 +377,50 @@ export async function createConversation(options: CreateConversationOptions): Pr
 
   const root = resolve(options.vaultRoot);
   const created = (options.now ?? (() => new Date()))().toISOString();
-  const id = conversationIdFromText(text, new Date(created));
-  assertValidConversationId(id);
+  const createdDate = new Date(created);
+  // P2: the browser never supplies an id. The server generates the neutral
+  // id immediately before the no-clobber manifest boundary; a suffix
+  // collision regenerates and retries (bounded candidates), then fails with
+  // the existing safe 409 collision result — no overwrite, event,
+  // membership, or dispatch for a failed candidate.
+  const suffix = options.suffix ?? randomConversationSuffix;
 
-  const conversationDir = resolve(root, "collaboration", "conversations", id);
-  assertInside(root, conversationDir);
+  let id = "";
+  let bytes = 0;
+  for (let attempt = 0; attempt < CONVERSATION_GENERIC_MAX_CANDIDATES; attempt += 1) {
+    id = conversationGenericId(createdDate, suffix());
+    assertValidConversationId(id);
 
-  await mkdir(join(conversationDir, "events"), { recursive: true });
-  const manifest = renderConversationManifest({ id, title: conversationTitleFromText(text, new Date(created)), audience, status: "open", timestamp: created });
-  const absolutePath = join(conversationDir, "index.md");
-  let bytes: number;
-  try {
-    bytes = await atomicCreateNoClobber(absolutePath, manifest, options.io ?? NODE_CONVERSATION_WRITE_IO, options.now ?? (() => new Date()), options.nonce);
-  } catch (error) {
-    if (isEexist(error)) {
-      throw new Error(`Conversation already exists: ${id}. Refusing to overwrite existing conversation evidence.`);
+    const conversationDir = resolve(root, "collaboration", "conversations", id);
+    assertInside(root, conversationDir);
+
+    await mkdir(join(conversationDir, "events"), { recursive: true });
+    const manifest = renderConversationManifest({ id, title: conversationTitleFromText(text, createdDate), audience, status: "open", timestamp: created });
+    const absolutePath = join(conversationDir, "index.md");
+    try {
+      bytes = await atomicCreateNoClobber(absolutePath, manifest, options.io ?? NODE_CONVERSATION_WRITE_IO, options.now ?? (() => new Date()), options.nonce);
+      break;
+    } catch (error) {
+      if (!isEexist(error)) throw error;
+      // Collision: regenerate a fresh candidate and retry (no overwrite).
     }
-    throw error;
+  }
+  if (bytes === 0) {
+    throw new Error(
+      `Conversation already exists (${CONVERSATION_GENERIC_MAX_CANDIDATES} id candidates exhausted). Refusing to overwrite existing conversation evidence.`,
+    );
   }
 
   return {
     id,
-    title: conversationTitleFromText(text, new Date(created)),
+    title: conversationTitleFromText(text, createdDate),
     audience,
     status: "open",
     createdBy: "steward",
     created,
     updated: created,
-    path: relative(root, absolutePath),
-    absolutePath,
+    path: relative(root, join(root, "collaboration", "conversations", id, "index.md")),
+    absolutePath: join(root, "collaboration", "conversations", id, "index.md"),
     bytes,
   };
 }

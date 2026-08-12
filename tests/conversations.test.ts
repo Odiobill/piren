@@ -58,9 +58,10 @@ describe("createConversation", () => {
       text: "Hello @zai",
       audience: ["zai"],
       now: () => NOW,
+      suffix: () => "4fa21bc093de",
     });
 
-    expect(conversation.id).toBe("20260805T131530000Z-hello-zai");
+    expect(conversation.id).toBe("20260805T131530000Z-c-4fa21bc093de");
     expect(conversation.status).toBe("open");
     expect(conversation.createdBy).toBe("steward");
     expect(conversation.audience).toEqual(["zai"]);
@@ -72,17 +73,17 @@ describe("createConversation", () => {
     expect(raw).toContain("- zai");
   });
 
-  it("rejects a missing id collision atomically (no-clobber)", async () => {
-    const options = { vaultRoot: root, text: "Same text", audience: [], now: () => NOW };
+  it("rejects a missing id collision atomically (no-clobber, bounded exhaustion)", async () => {
+    const options = { vaultRoot: root, text: "Same text", audience: [], now: () => NOW, suffix: () => "4fa21bc093de" };
     await createConversation(options);
     await expect(createConversation(options)).rejects.toThrow(/Conversation already exists/i);
   });
 
   it("never writes under collaboration/rooms", async () => {
-    await createConversation({ vaultRoot: root, text: "Hello", audience: [], now: () => NOW });
+    await createConversation({ vaultRoot: root, text: "Hello", audience: [], now: () => NOW, suffix: () => "4fa21bc093de" });
     await expect(stat(join(root, "collaboration", "rooms"))).rejects.toThrow();
     const conversationsDir = await readdir(join(root, "collaboration", "conversations"));
-    expect(conversationsDir).toEqual(["20260805T131530000Z-hello"]);
+    expect(conversationsDir).toEqual(["20260805T131530000Z-c-4fa21bc093de"]);
   });
 });
 
@@ -180,8 +181,8 @@ describe("readConversation / listConversations", () => {
 
   it("lists empty when the namespace is missing and rejects malformed manifests naming their path", async () => {
     await expect(listConversations({ vaultRoot: root })).resolves.toEqual([]);
-    await createConversation({ vaultRoot: root, text: "Hi", audience: [], now: () => NOW });
-    const id = "20260805T131530000Z-hi";
+    await createConversation({ vaultRoot: root, text: "Hi", audience: [], now: () => NOW, suffix: () => "4fa21bc093de" });
+    const id = "20260805T131530000Z-c-4fa21bc093de";
     await writeFile(join(root, "collaboration", "conversations", id, "index.md"), "---\nnot: a manifest\n---\n", "utf8");
     await expect(readConversation({ vaultRoot: root, conversationId: id })).rejects.toThrow(/Conversation Manifest/);
   });

@@ -22,6 +22,41 @@ export interface ConversationListResponse {
   conversations: ConversationRecord[];
 }
 
+/**
+ * P2 — sidebar audience summary fit bound (characters): title-cased names
+ * render when the joined list fits one sidebar row; longer audiences use the
+ * deterministic honest compact fallback.
+ */
+export const SIDEBAR_AUDIENCE_SUMMARY_FIT_CHARS = 28;
+
+/** Lowercase-kebab agent name → Title Case (`piren-agent` → `Piren Agent`). */
+export function conversationMemberTitle(name: string): string {
+  return name
+    .split("-")
+    .filter((part) => part !== "")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+/**
+ * P2 — deterministic sidebar audience summary from the gateway-authoritative
+ * audience (never a client membership derivation; it only formats the durable
+ * list): title-cased names when they fit one row, otherwise `First +N`, and
+ * only when even that would overflow, the plain member count (`3 members`).
+ */
+export function conversationAudienceSummary(audience: readonly string[], options?: { fitChars?: number }): string {
+  const fitChars = options?.fitChars ?? SIDEBAR_AUDIENCE_SUMMARY_FIT_CHARS;
+  if (audience.length === 0) return "No agents yet";
+  const names = audience.map(conversationMemberTitle);
+  if (audience.length === 1) return names[0] ?? "1 member";
+  const joined = names.join(", ");
+  if (joined.length <= fitChars) return joined;
+  const first = names[0] ?? "";
+  const compact = `${first} +${audience.length - 1}`;
+  if (compact.length <= fitChars) return compact;
+  return `${audience.length} members`;
+}
+
 export interface ConversationEventRecord {
   id: string;
   conversationId: string;

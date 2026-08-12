@@ -33,6 +33,12 @@ export function AppShell({
   const toggleRef = useRef<HTMLButtonElement>(null);
   /** U1/U2: bump when a conversation is created or renamed so the sidebar refreshes. */
   const [conversationsReloadKey, setConversationsReloadKey] = useState(0);
+  /**
+   * P2: the shell subtitle is contextual while a Conversation is selected
+   * (active or read-only); the draft keeps the calm generic subtitle. Set
+   * from the navigator's re-gated gateway-authoritative manifest only.
+   */
+  const [contextualTitle, setContextualTitle] = useState<string | null>(null);
   const handleConversationsChanged = useCallback(() => setConversationsReloadKey((key) => key + 1), []);
 
   function handleSelect(page: Page) {
@@ -58,7 +64,7 @@ export function AppShell({
         <img src={logoUrl} alt="Piren logo" className="shell-logo" width={48} height={48} />
         <div className="shell-heading">
           <h1>Piren Workbench</h1>
-          <p className="shell-subtitle">A calm workspace for your local-first agent team</p>
+          <p className="shell-subtitle">{contextualTitle ?? "A calm workspace for your local-first agent team"}</p>
         </div>
         <button
           type="button"
@@ -125,6 +131,7 @@ export function AppShell({
               onValidated={onValidated}
               onUnauthorized={onUnauthorized}
               onConversationsChanged={handleConversationsChanged}
+              onSelectionChange={setContextualTitle}
             />
           </div>
           <div className="workspace-panel" hidden={nav.page !== "agents"}>

@@ -53,6 +53,7 @@ export function ConversationComposer({
   onUnauthorized,
   onAnnounce,
   onCreated,
+  onSent,
 }: {
   mode: "draft" | "active";
   /** Active surface only: the selected durable conversation. */
@@ -64,6 +65,12 @@ export function ConversationComposer({
   onAnnounce: (message: string) => void;
   /** Draft mode only: called with the created conversation after its first send. */
   onCreated?: (conversation: ConversationRecord) => void;
+  /**
+   * P2 active surface only: called after an accepted send so the navigator
+   * can refresh the list/selected manifest from existing gateway reads.
+   * Never called on a bounded failure or for a mention-completion insertion.
+   */
+  onSent?: () => void;
 }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
@@ -158,9 +165,11 @@ export function ConversationComposer({
         onCreated?.(created.conversation);
       }
       // Quiet success: durable events arrive via the live stream / re-gate.
-      // The composer only clears its input.
+      // The composer only clears its input; the P2 navigator refresh is a
+      // separate gateway-truth read (onSent), never an optimistic write.
       setText("");
       setCaret(0);
+      onSent?.();
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
         onUnauthorized();

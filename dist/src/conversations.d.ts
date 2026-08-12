@@ -6,9 +6,9 @@
  * sibling tree: it never writes, scans, renames, or deletes
  * `collaboration/rooms/**`, and no room code is generalized or changed. The
  * semantics deliberately mirror the proven room record conventions (atomic
- * no-clobber writes, deterministic compact-UTC ids, tolerant list, strict
- * manifest/event validation naming their path) without importing or altering
- * room types.
+ * no-clobber writes, P2 neutral server-generated compact-UTC ids with a
+ * bounded collision retry, tolerant list, strict manifest/event validation
+ * naming their path) without importing or altering room types.
  *
  * A Conversation exists only after activation (first message); a draft has no
  * record. The manifest carries the additive `audience` membership, which grows
@@ -30,9 +30,31 @@ export declare const CONVERSATION_RUN_FAILURE_KINDS: readonly ["launch_failure",
 export type ConversationRunFailureKind = (typeof CONVERSATION_RUN_FAILURE_KINDS)[number];
 /** U2: bounded rename title length in UTF-16 code units (contract §Rename input). */
 export declare const CONVERSATION_TITLE_MAX = 120;
+/** P2: the neutral Conversation id suffix is exactly 12 lowercase hex characters. */
+export declare const CONVERSATION_GENERIC_SUFFIX_HEX_LENGTH = 12;
+/** P2: bounded no-clobber candidate attempts before the safe 409 collision result. */
+export declare const CONVERSATION_GENERIC_MAX_CANDIDATES = 3;
 /** Deterministic compact-UTC timestamp: `20260805T131530000Z`. */
 export declare function compactConversationTimestamp(date: Date): string;
-/** Deterministic conversation id from the first message (no LLM). */
+/**
+ * P2 — neutral generic Conversation id: `<compact-UTC>-c-<12-lowercase-hex>`.
+ * The suffix must be exactly 12 lowercase hexadecimal characters (fail-closed;
+ * production uses `randomConversationSuffix`, tests inject a deterministic
+ * suffix through the durable-core seam that is never HTTP-exposed). No message
+ * text, title, mention, agent, or browser input ever appears in the id.
+ */
+export declare function conversationGenericId(now: Date, suffix: string): string;
+/**
+ * P2 — production suffix source: Node's cryptographic random source, 6 bytes
+ * encoded as exactly 12 lowercase hexadecimal characters (48-bit nonce).
+ */
+export declare function randomConversationSuffix(): string;
+/**
+ * Legacy deterministic slug conversation id from the first message (pre-P2).
+ * Kept for backward compatibility: existing slug-based ids remain valid
+ * forever under existing parse/read/list/deep-link rules. New Conversations
+ * use the P2 neutral generic id (`conversationGenericId`).
+ */
 export declare function conversationIdFromText(text: string, now: Date): string;
 /** Deterministic display title from the first message (no LLM). */
 export declare function conversationTitleFromText(text: string, now: Date): string;
@@ -80,6 +102,11 @@ export interface CreateConversationOptions {
     audience: readonly string[];
     now?: () => Date;
     nonce?: () => string;
+    /**
+     * P2 deterministic 12-lowercase-hex suffix seam for tests ONLY; never
+     * exposed through HTTP. Production uses `randomConversationSuffix`.
+     */
+    suffix?: () => string;
     io?: ConversationWriteIo;
 }
 export interface CreateConversationResult extends ConversationManifest {

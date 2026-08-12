@@ -87,3 +87,13 @@ export function routeToIntent(route: HashRoute): HashRouteIntent {
   if (route.kind === "conversation") return { kind: "open-conversation", conversationId: route.conversationId };
   return { kind: "invalid-route", hash: route.hash };
 }
+
+/**
+ * P2 — the selected conversation id from a location hash, or null for the
+ * home/invalid routes (no selection). The sidebar uses this to visibly
+ * distinguish the selected row; it mirrors the navigator's own route parse.
+ */
+export function selectedConversationIdFromHash(hash: string): string | null {
+  const route = parseHashRoute(hash);
+  return route.kind === "conversation" ? route.conversationId : null;
+}

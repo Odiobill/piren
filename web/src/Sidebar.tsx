@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchConversations, UnauthorizedError } from "./api";
-import { formatConversationHash } from "./hash-route";
-import type { ConversationRecord } from "./conversations";
+import { formatConversationHash, selectedConversationIdFromHash } from "./hash-route";
+import { conversationAudienceSummary, type ConversationRecord } from "./conversations";
 import type { Page } from "./nav";
 
 /** U1: no standalone conversation nav item — the sidebar below is the switcher. */
@@ -35,6 +35,17 @@ export function Sidebar({
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** P2: the selected row comes from the same durable hash route the navigator gates. */
+  const [selectedId, setSelectedId] = useState<string | null>(() => selectedConversationIdFromHash(window.location.hash));
+
+  // The selection is hash-driven (the navigator's sole durable route), so the
+  // sidebar tracks hash changes to visibly distinguish the selected row. No
+  // polling: this is a browser hashchange event only.
+  useEffect(() => {
+    const handleHash = () => setSelectedId(selectedConversationIdFromHash(window.location.hash));
+    window.addEventListener("hashchange", handleHash);
+    return () => window.removeEventListener("hashchange", handleHash);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,14 +115,22 @@ export function Sidebar({
         {error !== null && <p className="error-message" role="status">{error}</p>}
         {loading ? <p className="muted">Loading…</p> : conversations.length === 0 ? <p className="muted">No conversations yet.</p> : (
           <ul className="sidebar-conversation-list">
-            {conversations.map((conversation) => (
-              <li key={conversation.id}>
-                <button type="button" className="sidebar-conversation-entry" onClick={() => openConversation(conversation.id)}>
-                  <span>{conversation.title}</span>
-                  <small>{conversation.audience.length === 0 ? "No agents yet" : `${conversation.audience.length} member${conversation.audience.length === 1 ? "" : "s"}`}</small>
-                </button>
-              </li>
-            ))}
+            {conversations.map((conversation) => {
+              const selected = conversation.id === selectedId;
+              return (
+                <li key={conversation.id}>
+                  <button
+                    type="button"
+                    className={selected ? "sidebar-conversation-entry active" : "sidebar-conversation-entry"}
+                    aria-current={selected ? "true" : undefined}
+                    onClick={() => openConversation(conversation.id)}
+                  >
+                    <span>{conversation.title}</span>
+                    <small>{conversationAudienceSummary(conversation.audience)}</small>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

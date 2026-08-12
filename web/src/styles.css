@@ -99,6 +99,9 @@ body {
 .shell-subtitle {
   margin: 2px 0 0;
   color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.875rem;
 }
 
@@ -659,6 +662,15 @@ code {
 .sidebar-conversation-entry small {
   color: var(--muted);
   font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* P2 — the selected sidebar row is visibly distinguished (hash-selected). */
+.sidebar-conversation-entry.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
 }
 
 .nav-item {

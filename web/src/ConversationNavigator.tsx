@@ -99,12 +99,18 @@ export function ConversationNavigator({
   onUnauthorized,
   onValidated,
   onConversationsChanged,
+  onSelectionChange,
 }: {
   token: string;
   onUnauthorized: () => void;
   onValidated: () => void;
   /** U1/U2: a conversation was created or renamed (sidebar list refresh). */
   onConversationsChanged: () => void;
+  /**
+   * P2: the shell subtitle follows the selected gateway-authoritative title
+   * (active or read-only), or null when the draft/list is shown.
+   */
+  onSelectionChange?: (title: string | null) => void;
 }) {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [selection, setSelection] = useState<SelectionState>({ phase: "none" });
@@ -113,8 +119,13 @@ export function ConversationNavigator({
   const [notice, setNotice] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
-  /** P1: focus target for the uncarded selected-conversation surface. */
+  /** P2: focus target for the uncarded selected-conversation surface. */
   const surfaceRef = useRef<HTMLElement>(null);
+  /**
+   * P2: a silent manifest refresh (accepted message) must not steal focus or
+   * re-announce the attach; only the manifest/subtitle follow the fresh read.
+   */
+  const silentRefreshRef = useRef(false);
   /** Generation guard so only the newest open flow applies its result. */
   const openSeqRef = useRef(0);
   /** L3 lifecycle state + archive confirmation. */
@@ -202,15 +213,23 @@ export function ConversationNavigator({
 
   useEffect(() => {
     if (selection.phase === "active" || selection.phase === "read-only") {
-      surfaceRef.current?.focus();
+      // P2: the subtitle follows the re-gated gateway-authoritative title.
+      onSelectionChange?.(selection.conversation.title);
+      const silent = silentRefreshRef.current;
+      silentRefreshRef.current = false;
+      if (!silent) {
+        surfaceRef.current?.focus();
+      }
       // U2: a rename re-gate announces the returned authoritative title;
       // otherwise the L3 lifecycle notice or the attach-based presentation
-      // announcement is used.
+      // announcement is used. A silent P2 manifest refresh announces nothing.
       const renameNotice = renameNoticeRef.current;
       renameNoticeRef.current = null;
       const lifecycleNotice = lifecycleNoticeRef.current;
       lifecycleNoticeRef.current = null;
-      if (renameNotice !== null) {
+      if (silent) {
+        // no announcement for a silent refresh
+      } else if (renameNotice !== null) {
         setAnnouncement(renameAnnouncement(renameNotice));
       } else if (lifecycleNotice === "archive") {
         setAnnouncement("Conversation archived.");
@@ -224,7 +243,7 @@ export function ConversationNavigator({
         setAnnouncement(`Conversation open in read-only inspection: ${selection.conversation.title}`);
       }
     }
-  }, [selection]);
+  }, [selection, onSelectionChange]);
 
   // L3: opening the archive confirmation moves focus to the Confirm button;
   // cancelling returns focus to the Archive button (usable focus path).
@@ -281,11 +300,13 @@ export function ConversationNavigator({
         lifecycleNoticeRef.current = null;
         renameNoticeRef.current = null;
         setSelection({ phase: "none" });
+        // P2: the draft keeps the calm generic shell subtitle.
+        onSelectionChange?.(null);
         setNotice(error instanceof Error ? error.message : String(error));
         listHeadingRef.current?.focus();
       }
     },
-    [token, onUnauthorized],
+    [token, onUnauthorized, onSelectionChange],
   );
 
   // Initial hash navigation + every later browser hashchange (Back/Forward,
@@ -302,6 +323,8 @@ export function ConversationNavigator({
         setSelection({ phase: "none" });
         setNotice(null);
         setAnnouncement("");
+        // P2: the draft keeps the calm generic shell subtitle.
+        onSelectionChange?.(null);
         return;
       }
       if (intent.kind === "invalid-route") {
@@ -311,6 +334,7 @@ export function ConversationNavigator({
         setSelection({ phase: "none" });
         setNotice("Unknown route — showing the new-conversation draft.");
         setAnnouncement("");
+        onSelectionChange?.(null);
         listHeadingRef.current?.focus();
         return;
       }
@@ -343,6 +367,9 @@ export function ConversationNavigator({
     lifecycleNoticeRef.current = action;
     try {
       await (action === "archive" ? archiveConversation(conversationId, token) : reopenConversation(conversationId, token));
+      // P2: after an accepted lifecycle action, refresh the sidebar list from
+      // the existing list read, then the fresh manifest/attach re-gate.
+      onConversationsChanged();
       await openConversationById(conversationId);
       setLifecycle({ phase: "idle" });
     } catch (cause) {
@@ -364,8 +391,10 @@ export function ConversationNavigator({
         if (cause.kind === "server") {
           // Bounded L2 500: the manifest may already have transitioned (the
           // L2 event-append residual). Fresh-gate before presenting any
-          // status; never assume rollback or fabricate an event/status.
+          // status; never assume rollback or fabricate an event/status. The
+          // sidebar list also refreshes to the gateway truth.
           lifecycleNoticeRef.current = "derived";
+          onConversationsChanged();
           void openConversationById(conversationId);
           setLifecycle({ phase: "error", action, error: cause });
           return;
@@ -494,6 +523,35 @@ export function ConversationNavigator({
   }
 
   /**
+   * P2 — after an accepted ACTIVE send (including a validated membership
+   * addition), refresh the sidebar list and the selected manifest strictly
+   * from existing gateway reads: never an optimistic/invented audience and
+   * never a new API/schema. A bounded read failure keeps the last known
+   * gateway manifest (no fabrication, no retry) and never steals focus or
+   * re-announces the attach (silent refresh).
+   */
+  const handleMessageSent = useCallback(() => {
+    if (selection.phase !== "active") return;
+    const conversationId = selection.conversation.id;
+    onConversationsChanged();
+    void (async () => {
+      try {
+        const conversation = await fetchConversation(conversationId, token);
+        silentRefreshRef.current = true;
+        setSelection((previous) =>
+          previous.phase === "active" && previous.conversation.id === conversationId ? { ...previous, conversation } : previous,
+        );
+      } catch (cause) {
+        if (cause instanceof UnauthorizedError) {
+          onUnauthorized();
+          return;
+        }
+        // Bounded: keep the last known gateway manifest; never fabricate.
+      }
+    })();
+  }, [selection, token, onUnauthorized, onConversationsChanged]);
+
+  /**
    * U2: the details modal invokes this with the normalized title. The raw
    * title goes to the authenticated rename route only; on success the
    * sidebar refreshes, the modal closes, and the C4-A fresh re-read/re-gate
@@ -599,6 +657,7 @@ export function ConversationNavigator({
                   agents={load.phase === "ready" ? load.agents : []}
                   onUnauthorized={onUnauthorized}
                   onAnnounce={setAnnouncement}
+                  onSent={handleMessageSent}
                 />
                 <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
               </div>

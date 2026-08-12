@@ -49,6 +49,7 @@ function Harness(props: {
   agents?: RoomAgentEntry[];
   onAnnounce?: (message: string) => void;
   onCreated?: (conversation: ConversationRecord) => void;
+  onSent?: () => void;
 }): ReactElement {
   return createElement(ConversationComposer, {
     mode: props.mode,
@@ -58,6 +59,7 @@ function Harness(props: {
     onUnauthorized: () => {},
     onAnnounce: props.onAnnounce ?? (() => {}),
     ...(props.onCreated !== undefined ? { onCreated: props.onCreated } : {}),
+    ...(props.onSent !== undefined ? { onSent: props.onSent } : {}),
   });
 }
 
@@ -265,6 +267,37 @@ describe("ConversationComposer (U3)", () => {
       await act(async () => typeText(input, "   "));
       await act(async () => key(input, "Enter"));
       expect(createConversation).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("P2 gateway-truth refresh hook (onSent)", () => {
+    it("fires onSent exactly once after an accepted active send and never on failure", async () => {
+      const onSent = vi.fn();
+      render(createElement(Harness, { mode: "active", conversationId: "c1", onSent }));
+      const input = textarea();
+
+      await act(async () => typeText(input, "hello"));
+      await act(async () => key(input, "Enter"));
+      expect(sendConversationMessage).toHaveBeenCalledTimes(1);
+      expect(onSent).toHaveBeenCalledTimes(1);
+
+      // A bounded send failure fires no onSent (the error stays visible).
+      vi.mocked(sendConversationMessage).mockRejectedValueOnce(new Error("boom"));
+      await act(async () => typeText(input, "again"));
+      await act(async () => key(input, "Enter"));
+      expect(sendConversationMessage).toHaveBeenCalledTimes(2);
+      expect(onSent).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires no onSent when a mention completion is chosen instead of a submit", async () => {
+      const onSent = vi.fn();
+      render(createElement(Harness, { mode: "active", conversationId: "c1", onSent }));
+      const input = textarea();
+      await act(async () => typeText(input, "@d"));
+      await act(async () => key(input, "Enter"));
+      expect(input.value).toBe("@dipu ");
+      expect(sendConversationMessage).not.toHaveBeenCalled();
+      expect(onSent).not.toHaveBeenCalled();
     });
   });
 });
