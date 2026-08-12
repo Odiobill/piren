@@ -44,6 +44,8 @@ function conversationModuleFiles(): string[] {
     "conversation-details.ts",
     "conversation-lifecycle.ts",
     "hash-route.ts",
+    "safe-markdown.ts",
+    "SafeMarkdown.tsx",
   ];
 }
 

@@ -17,5 +17,5 @@
     "rootDir": "."
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["dist", "node_modules", "tests/web-conversation-details-modal.test.ts", "tests/web-conversation-composer.test.ts", "tests/web-p1-conversation-surface.test.ts"]
+  "exclude": ["dist", "node_modules", "tests/web-conversation-details-modal.test.ts", "tests/web-conversation-composer.test.ts", "tests/web-p1-conversation-surface.test.ts", "tests/p4-safe-markdown-jsdom.test.ts"]
 }

@@ -29,6 +29,7 @@ import {
   type ConversationStatusAttachment,
   type ConversationTranscriptRow,
 } from "./conversation-transcript";
+import { SafeMarkdownBody } from "./SafeMarkdown";
 import type { ConversationEventRecord } from "./conversations";
 
 /**
@@ -384,7 +385,10 @@ function ConversationTranscriptRow({ row }: { row: ConversationTranscriptRow }) 
           {event.created}
         </time>
       </div>
-      <p className="transcript-body">{event.body}</p>
+      {/* P4: ordinary agent bodies render the safe bounded Markdown subset;
+          steward bodies stay literal (handoff evidence rows above are literal
+          too, preserving their explicit evidence identity). */}
+      {steward ? <p className="transcript-body">{event.body}</p> : <SafeMarkdownBody text={event.body} />}
       {statuses.length > 0 && <StatusCluster statuses={statuses} />}
     </li>
   );

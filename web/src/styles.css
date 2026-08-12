@@ -1556,3 +1556,112 @@ code {
 .status-cluster-cancelled {
   border-color: var(--warn);
 }
+
+/* P4 — safe agent-message Markdown typography (transcript-local; no broad
+   cards/Timeline/Live chrome). Agent body headings map to h4–h6 so they
+   never compete with the shell h1. Code wraps long unbroken text without
+   horizontal page overflow; no copy/download/file action. */
+.markdown-body {
+  display: grid;
+  gap: 8px;
+}
+
+.markdown-paragraph {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.markdown-heading {
+  margin: 6px 0 0;
+  line-height: 1.3;
+}
+
+.markdown-h1,
+.markdown-h2 {
+  font-size: 1.05rem;
+}
+
+.markdown-h3 {
+  font-size: 0.98rem;
+}
+
+.markdown-blockquote {
+  margin: 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--muted);
+}
+
+.markdown-list {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.markdown-list-item {
+  margin: 2px 0;
+}
+
+.markdown-inline-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86em;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  overflow-wrap: anywhere;
+}
+
+.markdown-code {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 82%, var(--surface));
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.markdown-code code {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.markdown-code-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.markdown-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.markdown-overflow-literal {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-overflow-notice {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
