@@ -49,7 +49,11 @@ function renderBlock(block: SafeMarkdownBlock, key: number): ReactElement {
         renderInline(block.children),
       );
     case "blockquote":
-      return <blockquote className="markdown-blockquote">{renderInline(block.children)}</blockquote>;
+      return (
+        <blockquote className="markdown-blockquote" key={key}>
+          {renderInline(block.children)}
+        </blockquote>
+      );
     case "code-block":
       return (
         <pre className="markdown-code" key={key}>

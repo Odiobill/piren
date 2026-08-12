@@ -211,10 +211,21 @@ class SafeMarkdownParser {
       const item = listItemLine(line);
       if (item !== null) {
         const run = [item];
+        const rawLines = [line];
         index += 1;
         while (index < lines.length && listItemLine(lines[index] as string) !== null) {
           run.push(listItemLine(lines[index] as string) as ItemLine);
+          rawLines.push(lines[index] as string);
           index += 1;
+        }
+        if ((run[0] as ItemLine).depth > 0) {
+          // Orphaned indented run: no parent list context exists (the run
+          // starts at a 2/4-space indent), so every source line fails closed
+          // to ordinary literal paragraph text — durable evidence is never
+          // silently dropped (P4 correction).
+          this.bumpBlock();
+          blocks.push({ type: "paragraph", children: this.parseInline(rawLines.join("\n"), { allowLinks: true }) });
+          continue;
         }
         for (const list of this.buildListTree(run)) {
           this.bumpBlock();

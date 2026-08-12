@@ -135,6 +135,16 @@ describe("parseSafeMarkdown — approved blocks", () => {
     expect(mixed.ok && (mixed.blocks as SafeMarkdownBlock[])).toHaveLength(2);
   });
 
+  it("orphaned indented list runs fail closed to literal paragraph text (never dropped)", () => {
+    // A run starting at an indented depth has no parent list context; every
+    // source line must remain visible as literal text (P4 correction).
+    expect(parseSafeMarkdown("  - orphaned indented item")).toEqual({ ok: true, blocks: [paragraph("  - orphaned indented item")] });
+    expect(parseSafeMarkdown("    - deeper orphan")).toEqual({ ok: true, blocks: [paragraph("    - deeper orphan")] });
+    expect(parseSafeMarkdown("  - a\n  1. b")).toEqual({ ok: true, blocks: [paragraph("  - a\n  1. b")] });
+    expect(parseSafeMarkdown("  - a\n- b")).toEqual({ ok: true, blocks: [paragraph("  - a\n- b")] });
+    expect(parseSafeMarkdown("intro\n  - x")).toEqual({ ok: true, blocks: [paragraph("intro"), paragraph("  - x")] });
+  });
+
   it("does not treat deep or malformed list markers as lists (literal)", () => {
     for (const literal of ["      - too deep", " - odd indent", "0. zero", "1000. big", "-no space", "1.2 no marker"]) {
       expect(parseSafeMarkdown(literal)).toEqual({ ok: true, blocks: [paragraph(literal)] });
