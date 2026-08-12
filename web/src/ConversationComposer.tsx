@@ -4,9 +4,12 @@ import {
   clampComposerHeight,
   COMPOSER_MAX_HEIGHT_PX,
   COMPOSER_MIN_HEIGHT_PX,
-  shouldSubmitOnEnter,
+  shouldSubmitForPolicy,
+  submitPolicyAccessibleName,
+  submitPolicyTooltip,
   toConversationMessageRequest,
   validateConversationText,
+  type ConversationSubmitPolicy,
 } from "./conversation-composer";
 import {
   applyMentionCompletion,
@@ -14,18 +17,23 @@ import {
   findMentionTrigger,
   nextCompletionIndex,
 } from "./conversation-autocomplete";
+import { ReturnKeyIcon } from "./icons";
 import type { ConversationRecord } from "./conversations";
 import type { RoomAgentEntry } from "./rooms";
 
 /**
- * U3 — Discord-like Conversation composer (accepted 0.2.0 UX plan §U3).
+ * U3 + P1 — Discord-like Conversation composer (accepted 0.2.0 UX plan §U3
+ * and the P1 submit-shortcut contract).
  *
  * One comfortable composer powers both the ACTIVE conversation surface and
- * the browser-local draft's first-message surface. It auto-grows, submits on
- * a plain Enter (Shift+Enter inserts a newline, and any IME/composition state
- * prevents a premature submit), and carries a genuinely disabled labelled `+`
- * button as a visual future-upload affordance — no file picker or capability
- * behind it.
+ * the browser-local draft's first-message surface. It auto-grows, carries a
+ * clean one-line dock (disabled labelled `+` upload affordance left,
+ * textarea middle, compact submit-shortcut icon right), and submits only on
+ * the page-local selected policy: Enter to send (Shift+Enter newline) or
+ * Ctrl+Enter to send (Enter newline; Ctrl+Enter sends). Any IME/composition
+ * state always prevents a premature submit. The submit policy is component
+ * state only — it never sends, persists, changes the URL, the gateway, the
+ * agent, the Conversation, or browser storage, and a fresh mount resets it.
  *
  * The `@` convenience list offers ONLY locally runnable agents from the
  * current roster (keyboard navigable, text-only insertion). The browser never
@@ -62,6 +70,8 @@ export function ConversationComposer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  /** P1: page-local submit policy (component state only; resets on mount). */
+  const [submitPolicy, setSubmitPolicy] = useState<ConversationSubmitPolicy>("enter");
   /** Explicit popup visibility: Escape dismisses it until the draft changes. */
   const [mentionVisible, setMentionVisible] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -167,18 +177,25 @@ export function ConversationComposer({
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
     const composing = event.nativeEvent.isComposing || composingRef.current || event.keyCode === 229;
     if (event.key === "Enter" && !composing) {
-      if (mentionOpen) {
-        // Enter inside the open picker selects the active completion instead
-        // of submitting (text-only insertion).
+      // An open picker keeps its Enter-to-choose semantics under either
+      // policy; the policy's submit key (Ctrl+Enter in Ctrl+Enter mode)
+      // still submits past an open picker.
+      if (mentionOpen && !event.ctrlKey && !event.shiftKey && !event.metaKey) {
         event.preventDefault();
         chooseCompletion(matches[Math.min(Math.max(activeIndex, 0), matches.length - 1)] ?? matches[0] ?? "");
         return;
       }
-      if (shouldSubmitOnEnter({ key: event.key, shiftKey: event.shiftKey, isComposing: composing })) {
+      if (
+        shouldSubmitForPolicy(
+          { key: event.key, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, isComposing: composing },
+          submitPolicy,
+        )
+      ) {
         event.preventDefault();
         void handleSubmit();
       }
-      // Shift+Enter: let the browser insert the newline (never submits).
+      // Any other Enter (Shift/Ctrl/Meta newline, or the non-submit key in
+      // the active policy) lets the browser insert the newline.
       return;
     }
     if (mentionOpen && event.key === "ArrowDown") {
@@ -270,14 +287,17 @@ export function ConversationComposer({
             </div>
           )}
         </div>
-        <button type="submit" className="button button-primary composer-send" disabled={busy}>
-          Send
+        <button
+          type="button"
+          className="composer-submit-toggle"
+          aria-pressed={submitPolicy === "enter"}
+          aria-label={submitPolicyAccessibleName(submitPolicy)}
+          title={submitPolicyTooltip(submitPolicy)}
+          onClick={() => setSubmitPolicy((policy) => (policy === "enter" ? "ctrl-enter" : "enter"))}
+        >
+          <ReturnKeyIcon size={16} />
         </button>
       </div>
-      <p className="field-help">
-        Mentions are resolved by the gateway: <code>@name</code> a locally runnable agent to dispatch
-        to it. The browser never reads recipient names from your text.
-      </p>
       {error && (
         <p className="error-message" role="status">
           {error}

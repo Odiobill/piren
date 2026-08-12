@@ -34,6 +34,7 @@ import {
 } from "./conversation-lifecycle";
 import { formatConversationHash, parseHashRoute, routeToIntent } from "./hash-route";
 import { renameAnnouncement, type RenameError } from "./conversation-details";
+import { InfoIcon } from "./icons";
 import type { RoomAgentEntry } from "./rooms";
 import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
@@ -112,7 +113,8 @@ export function ConversationNavigator({
   const [notice, setNotice] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
-  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
+  /** P1: focus target for the uncarded selected-conversation surface. */
+  const surfaceRef = useRef<HTMLElement>(null);
   /** Generation guard so only the newest open flow applies its result. */
   const openSeqRef = useRef(0);
   /** L3 lifecycle state + archive confirmation. */
@@ -200,7 +202,7 @@ export function ConversationNavigator({
 
   useEffect(() => {
     if (selection.phase === "active" || selection.phase === "read-only") {
-      detailHeadingRef.current?.focus();
+      surfaceRef.current?.focus();
       // U2: a rename re-gate announces the returned authoritative title;
       // otherwise the L3 lifecycle notice or the attach-based presentation
       // announcement is used.
@@ -554,13 +556,15 @@ export function ConversationNavigator({
   if (selection.phase === "active" || selection.phase === "read-only") {
     const active = selection.phase === "active";
     return (
-      <section className="card" aria-labelledby="conversation-detail-heading">
+      <section
+        className="conversation-surface"
+        aria-label={`Conversation: ${selection.conversation.title}`}
+        tabIndex={-1}
+        ref={surfaceRef}
+      >
         <p className="sr-only" role="status" aria-live="polite">
           {announcement}
         </p>
-        <h2 id="conversation-detail-heading" tabIndex={-1} ref={detailHeadingRef}>
-          {selection.conversation.title}
-        </h2>
         {active ? (
           <>
             <div className="conversation-workspace">
@@ -697,11 +701,7 @@ function DetailsToggleButton({
       aria-label="Conversation details"
       onClick={onClick}
     >
-      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="16" x2="12" y2="12" />
-        <line x1="12" y1="8" x2="12.01" y2="8" />
-      </svg>
+      <InfoIcon size={18} />
     </button>
   );
 }

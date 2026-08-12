@@ -498,14 +498,6 @@ code {
   margin: 0 0 10px;
 }
 
-.timeline-status-connecting {
-  color: var(--warn);
-}
-
-.timeline-status-live {
-  color: var(--ok);
-}
-
 .timeline-status-disconnected {
   color: var(--error);
 }
@@ -743,6 +735,15 @@ code {
   display: none;
 }
 
+/* P1 — the Conversation surface uses the full available main-pane width:
+   the Conversations panel breaks the calm centered cap (agents/about keep
+   it), so the selected chat is one wide surface with fixed chrome. */
+.shell-main > .workspace-panel-conversations {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+}
+
 .workspace-panel .card + .card {
   margin-top: 16px;
 }
@@ -838,6 +839,15 @@ code {
 }
 
 /* C3-A — Conversation surface (mirrors the room surface styles) */
+/* P1 — the selected Conversation is a full-width uncarded surface, not a
+   card: it fills the main pane with dedicated transcript scrolling above a
+   bottom-docked one-line composer; the shell chrome stays fixed. */
+.conversation-surface {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 .conversation-list {
   list-style: none;
   margin: 0 0 18px;
@@ -1008,12 +1018,28 @@ code {
   cursor: not-allowed;
 }
 
-.composer-send {
+/* P1 — compact accessible submit-shortcut toggle (page-local policy). */
+.composer-submit-toggle {
   flex: none;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
 }
 
-.composer-send:disabled {
-  cursor: not-allowed;
+.composer-submit-toggle:hover {
+  border-color: var(--accent);
+}
+
+.composer-submit-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
 
 /* U3 — @ mention convenience popup (runnable roster only, keyboard navigable). */
@@ -1158,10 +1184,10 @@ code {
   min-width: 120px;
 }
 
-/* U2 — details modal + composer-right details action */
+/* U2 + U3 — details modal + composer dock */
 /* U3 — full-height Conversation workspace: scrollable messages above a
    bottom-anchored composer bar; desktop chrome stays fixed. */
-.card.conversation-workspace {
+.conversation-workspace {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1248,6 +1274,16 @@ code {
 .details-modal-header h2 {
   margin: 0;
   font-size: 1.1rem;
+}
+
+/* P1 — icon-only labelled modal close (X primitive). */
+.details-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
 }
 
 .details-rename {

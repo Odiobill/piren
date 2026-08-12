@@ -50,11 +50,41 @@ export function estimateComposerHeightPx(
 }
 
 /**
- * U3 — keyboard submit decision: a plain Enter submits; Shift+Enter inserts
- * a newline; ANY IME/composition state must prevent a premature submit.
+ * U3 + P1 — keyboard submit decision. Two page-local policies (accepted
+ * workbench chat-surface polish plan P1): `enter` submits on a plain Enter
+ * (Shift/Ctrl/Meta+Enter insert a newline); `ctrl-enter` submits only on
+ * Ctrl+Enter (Enter/Shift+Enter insert newlines). ANY IME/composition state
+ * must prevent a premature submit in either mode.
  */
-export function shouldSubmitOnEnter(input: { key: string; shiftKey: boolean; isComposing: boolean }): boolean {
-  return input.key === "Enter" && !input.shiftKey && !input.isComposing;
+export type ConversationSubmitPolicy = "enter" | "ctrl-enter";
+
+/** The full key state needed for a deterministic submit decision. */
+export interface ConversationSubmitKeyState {
+  key: string;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  isComposing: boolean;
+}
+
+export function shouldSubmitForPolicy(state: ConversationSubmitKeyState, policy: ConversationSubmitPolicy): boolean {
+  if (state.key !== "Enter" || state.isComposing) return false;
+  if (policy === "enter") {
+    return !state.shiftKey && !state.ctrlKey && !state.metaKey;
+  }
+  return state.ctrlKey && !state.shiftKey && !state.metaKey;
+}
+
+/** Accessible name that discloses the currently selected submit policy. */
+export function submitPolicyAccessibleName(policy: ConversationSubmitPolicy): string {
+  return policy === "enter" ? "Submit with Enter" : "Submit with Ctrl+Enter";
+}
+
+/** Tooltip that discloses the exact key semantics of the selected policy. */
+export function submitPolicyTooltip(policy: ConversationSubmitPolicy): string {
+  return policy === "enter"
+    ? "Enter sends the message; Shift+Enter inserts a newline."
+    : "Ctrl+Enter sends the message; Enter inserts a newline.";
 }
 
 export type ConversationComposerValidation = { ok: true } | { ok: false; reason: "text required" };

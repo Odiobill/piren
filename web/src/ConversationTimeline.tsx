@@ -217,11 +217,10 @@ export function ConversationTimeline({
   }
 
   return (
-    <section className="timeline" aria-labelledby="timeline-heading">
+    <section className="timeline" aria-label="Conversation history">
       <p className="sr-only" role="status" aria-live="polite">
         {announcement}
       </p>
-      <h3 id="timeline-heading">Timeline</h3>
       {phase.phase === "loading" && (
         <p className="muted" role="status">
           Loading conversation history…
@@ -239,19 +238,19 @@ export function ConversationTimeline({
       )}
       {phase.phase === "ready" && (
         <>
-          <p className={`timeline-status timeline-status-${phase.stream}`}>
-            {phase.stream === "connecting" && "Connecting to live stream…"}
-            {phase.stream === "live" && "Live"}
-            {phase.stream === "inspection" && "Read-only inspection — history only"}
-            {phase.stream === "disconnected" && (
-              <>
-                Disconnected — showing last known history.{" "}
-                <button type="button" className="button button-small" onClick={handleReconnect}>
-                  Reconnect
-                </button>
-              </>
-            )}
-          </p>
+          {/* P1: the healthy live/connecting states render no routine status
+              label; only truthful non-routine states stay visible. */}
+          {phase.stream === "inspection" && (
+            <p className="timeline-status timeline-status-inspection">Read-only inspection — history only</p>
+          )}
+          {phase.stream === "disconnected" && (
+            <p className="timeline-status timeline-status-disconnected">
+              Disconnected — showing last known history.{" "}
+              <button type="button" className="button button-small" onClick={handleReconnect}>
+                Reconnect
+              </button>
+            </p>
+          )}
           {phase.message !== null && phase.stream === "disconnected" && <p className="muted">{phase.message}</p>}
           <ConversationActivityDisplay activity={activity} />
           <ConversationTimelineItems items={phase.items} />

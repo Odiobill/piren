@@ -119,7 +119,7 @@ export function AppShell({
               </p>
             </section>
           )}
-          <div className="workspace-panel" hidden={nav.page !== "conversations"}>
+          <div className="workspace-panel workspace-panel-conversations" hidden={nav.page !== "conversations"}>
             <ConversationNavigator
               token={token}
               onValidated={onValidated}

@@ -4,33 +4,70 @@ import {
   COMPOSER_MAX_HEIGHT_PX,
   COMPOSER_MIN_HEIGHT_PX,
   estimateComposerHeightPx,
-  shouldSubmitOnEnter,
+  shouldSubmitForPolicy,
+  submitPolicyAccessibleName,
+  submitPolicyTooltip,
 } from "../web/src/conversation-composer.js";
 
 /**
- * U3 — pure composer UX core (accepted 0.2.0 UX plan §U3): Enter submits
- * only for a plain Enter (Shift+Enter inserts a newline; any IME composition
- * state must prevent premature submit), and the auto-growing height math is
- * bounded and deterministic.
+ * U3 + P1 — pure composer UX core (accepted 0.2.0 UX plan §U3 and the P1
+ * submit-shortcut contract): the Enter-to-send policy submits only on a
+ * plain Enter (Shift/Ctrl/Meta+Enter insert a newline; any IME composition
+ * state prevents premature submit); the Ctrl+Enter-to-send policy submits
+ * only on Ctrl+Enter (Enter/Shift+Enter insert newlines; IME still blocks).
+ * The auto-growing height math is bounded and deterministic.
  */
 
-describe("shouldSubmitOnEnter (keyboard semantics)", () => {
-  it("a plain Enter submits", () => {
-    expect(shouldSubmitOnEnter({ key: "Enter", shiftKey: false, isComposing: false })).toBe(true);
+describe("shouldSubmitForPolicy (keyboard semantics)", () => {
+  const base = { key: "Enter", shiftKey: false, ctrlKey: false, metaKey: false, isComposing: false };
+
+  it("Enter policy: a plain Enter submits", () => {
+    expect(shouldSubmitForPolicy(base, "enter")).toBe(true);
   });
 
-  it("Shift+Enter inserts a newline and never submits", () => {
-    expect(shouldSubmitOnEnter({ key: "Enter", shiftKey: true, isComposing: false })).toBe(false);
+  it("Enter policy: Shift/Ctrl/Meta+Enter insert a newline and never submit", () => {
+    expect(shouldSubmitForPolicy({ ...base, shiftKey: true }, "enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, ctrlKey: true }, "enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, metaKey: true }, "enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, shiftKey: true, ctrlKey: true }, "enter")).toBe(false);
   });
 
-  it("any IME/composition state prevents premature submit", () => {
-    expect(shouldSubmitOnEnter({ key: "Enter", shiftKey: false, isComposing: true })).toBe(false);
-    expect(shouldSubmitOnEnter({ key: "Enter", shiftKey: true, isComposing: true })).toBe(false);
+  it("Enter policy: any IME/composition state prevents premature submit", () => {
+    expect(shouldSubmitForPolicy({ ...base, isComposing: true }, "enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, shiftKey: true, isComposing: true }, "enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, ctrlKey: true, isComposing: true }, "enter")).toBe(false);
   });
 
-  it("non-Enter keys never submit", () => {
-    expect(shouldSubmitOnEnter({ key: "a", shiftKey: false, isComposing: false })).toBe(false);
-    expect(shouldSubmitOnEnter({ key: "", shiftKey: false, isComposing: false })).toBe(false);
+  it("Ctrl+Enter policy: only Ctrl+Enter submits; plain/Shift/Meta variants never submit", () => {
+    expect(shouldSubmitForPolicy({ ...base, ctrlKey: true }, "ctrl-enter")).toBe(true);
+    expect(shouldSubmitForPolicy(base, "ctrl-enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, shiftKey: true }, "ctrl-enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, ctrlKey: true, shiftKey: true }, "ctrl-enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, ctrlKey: true, metaKey: true }, "ctrl-enter")).toBe(false);
+  });
+
+  it("Ctrl+Enter policy: IME composition blocks the submit key too", () => {
+    expect(shouldSubmitForPolicy({ ...base, ctrlKey: true, isComposing: true }, "ctrl-enter")).toBe(false);
+  });
+
+  it("non-Enter keys never submit in either policy", () => {
+    expect(shouldSubmitForPolicy({ ...base, key: "a" }, "enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, key: "a", ctrlKey: true }, "ctrl-enter")).toBe(false);
+    expect(shouldSubmitForPolicy({ ...base, key: "" }, "enter")).toBe(false);
+  });
+});
+
+describe("submit policy labels (accessible disclosure)", () => {
+  it("the accessible name discloses the current submit mode", () => {
+    expect(submitPolicyAccessibleName("enter")).toBe("Submit with Enter");
+    expect(submitPolicyAccessibleName("ctrl-enter")).toBe("Submit with Ctrl+Enter");
+  });
+
+  it("the tooltip discloses the exact key semantics of each mode", () => {
+    expect(submitPolicyTooltip("enter")).toContain("Enter sends");
+    expect(submitPolicyTooltip("enter")).toContain("Shift+Enter");
+    expect(submitPolicyTooltip("ctrl-enter")).toContain("Ctrl+Enter sends");
+    expect(submitPolicyTooltip("ctrl-enter")).toContain("Enter");
   });
 });
 

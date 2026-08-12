@@ -4,6 +4,7 @@ import { classifyAudienceMembers } from "./attach";
 import type { RoomAgentEntry } from "./rooms";
 import type { ConversationLifecycleAction, LifecycleActionError } from "./conversation-lifecycle";
 import { normalizeConversationTitle, type RenameError } from "./conversation-details";
+import { XIcon } from "./icons";
 
 /**
  * U2 — Conversation details modal (accepted
@@ -154,8 +155,14 @@ export function ConversationDetailsModal({
       >
         <div className="details-modal-header">
           <h2 id="conversation-details-heading">Conversation details</h2>
-          <button type="button" className="button button-small" aria-label="Close conversation details" onClick={onClose} disabled={busy}>
-            Close
+          <button
+            type="button"
+            className="button button-small details-close"
+            aria-label="Close conversation details"
+            onClick={onClose}
+            disabled={busy}
+          >
+            <XIcon size={14} />
           </button>
         </div>
 

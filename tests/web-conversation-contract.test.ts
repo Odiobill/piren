@@ -145,8 +145,10 @@ describe("raw-text composer (browser never derives recipients)", () => {
     expect(composerCore).toContain("text: text.trim()");
     expect(component).not.toMatch(/agent\s*:/);
     expect(component).not.toContain("participants");
-    // The UI copy states the gateway resolves mentions; no scanning happens.
-    expect(component).toContain("gateway");
+    // P1 removed the gateway/mention-authority tutorial copy from the app
+    // (it remains documented); the routine surface must not repeat it.
+    expect(component).not.toContain("Mentions are resolved by the gateway");
+    expect(component).not.toContain("The browser never reads recipient names");
     expect(component).toMatch(/textarea/);
   });
 
