@@ -40,6 +40,7 @@ function conversationModuleFiles(): string[] {
     "conversation-activity.ts",
     "conversation-reactions.ts",
     "conversation-timeline.ts",
+    "conversation-transcript.ts",
     "conversation-details.ts",
     "conversation-lifecycle.ts",
     "hash-route.ts",
@@ -366,17 +367,16 @@ describe("U5 bounded lifecycle/status reactions (static)", () => {
     expect(reactions).not.toMatch(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
   });
 
-  it("the timeline renders compact reaction chips from durable events only (never activity/transient state)", async () => {
+  it("the transcript groups durable run status into requester clusters (never activity/transient state)", async () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
-    expect(timeline).toContain("conversationReactionForEvent");
-    expect(timeline).toContain("conversation-reaction");
-    // The reaction is derived from the DURABLE event record, never from the
-    // transient activity state (no live/typing manufacture of status).
-    const entryIndex = timeline.indexOf("function ConversationTimelineEntry");
-    expect(entryIndex).toBeGreaterThan(-1);
-    const entrySection = timeline.slice(entryIndex, entryIndex + 1600);
-    expect(entrySection).toContain("conversationReactionForEvent");
-    expect(entrySection).not.toMatch(/activity\.runs|setActivity|applyConversationActivityFrame/);
+    const transcript = await readFile(join(webSrc, "conversation-transcript.ts"), "utf8");
+    // The P3 message-first transcript renders through the pure durable
+    // grouping core; the cluster is derived ONLY from durable evidence.
+    expect(timeline).toContain("groupConversationTranscript");
+    expect(timeline).toContain("status-cluster");
+    expect(transcript).toContain("conversationReactionForEvent");
+    expect(transcript).not.toMatch(/activity\.runs|setActivity|applyConversationActivityFrame/);
+    expect(transcript).not.toMatch(/localStorage|sessionStorage|new EventSource|fetch\(/);
   });
 
   it("inspection mode stays read-only: reactions come only from the durable whole-history reread", async () => {

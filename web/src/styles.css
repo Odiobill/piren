@@ -1402,37 +1402,157 @@ code {
   font-size: 0.75rem;
 }
 
-/* U5 — bounded lifecycle/status reaction chips (durable-evidence derived) */
-.conversation-reaction {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  vertical-align: middle;
-  cursor: default;
+/* P3 — message-first transcript (ADR-0043 replaces the bordered Conversation
+   run-event cards; the shared .timeline-* classes remain for the Rooms
+   surface). Durable messages are compact chat rows; run/system evidence is
+   compact attention rows; fixed non-interactive status clusters attach to
+   their durable requester row. */
+.transcript-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
 }
 
-.conversation-reaction-received {
+.transcript-row {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.transcript-message {
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-left-width: 3px;
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+}
+
+.transcript-steward {
+  border-left-color: var(--accent);
+}
+
+.transcript-agent {
+  border-left-color: var(--ok);
+}
+
+.transcript-message-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Deterministic decorative circular initial (aria-hidden; the author name
+   remains text). */
+.transcript-initial {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--ok) 18%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--ok) 40%, var(--border));
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.transcript-author {
+  font-weight: 650;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-time {
   color: var(--muted);
+  font-size: 0.72rem;
+  margin-left: auto;
+  flex: none;
+}
+
+.transcript-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-size: 0.95rem;
+}
+
+.transcript-evidence,
+.transcript-handoff,
+.transcript-error {
+  border: 1px dashed color-mix(in srgb, var(--border) 82%, transparent);
+  border-left-width: 3px;
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--bg));
+}
+
+.transcript-evidence .transcript-kind,
+.transcript-handoff .transcript-kind {
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.transcript-error {
+  border-left-color: var(--error);
+  opacity: 0.85;
+}
+
+.transcript-evidence .transcript-time,
+.transcript-handoff .transcript-time {
+  margin-left: 0;
+}
+
+.transcript-note {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+/* P3 — fixed non-interactive status cluster (exact U5 labels, presentation
+   symbols only). */
+.status-cluster {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.status-cluster-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.status-cluster-received {
   border-color: var(--border);
 }
 
-.conversation-reaction-completed {
-  color: var(--ok);
+.status-cluster-completed {
   border-color: var(--ok);
 }
 
-.conversation-reaction-failed {
-  color: var(--error);
+.status-cluster-failed {
   border-color: var(--error);
 }
 
-.conversation-reaction-cancelled {
-  color: var(--warn);
+.status-cluster-cancelled {
   border-color: var(--warn);
 }

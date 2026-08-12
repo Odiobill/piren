@@ -4,7 +4,9 @@ import {
   appendConversationLiveItem,
   conversationEventLabel,
   conversationFrameToItem,
+  conversationHandoffEventLabel,
   initialReconnectBudget,
+  isConversationHandoffEvent,
   replaceConversationHistoric,
   streamEnded,
   type ConversationTimelineItem,
@@ -19,7 +21,14 @@ import {
   type ConversationActivityState,
 } from "./conversation-activity";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
-import { conversationReactionForEvent } from "./conversation-reactions";
+import type { ConversationReaction } from "./conversation-reactions";
+import {
+  conversationAuthorInitial,
+  conversationStatusSymbol,
+  groupConversationTranscript,
+  type ConversationStatusAttachment,
+  type ConversationTranscriptRow,
+} from "./conversation-transcript";
 import type { ConversationEventRecord } from "./conversations";
 
 /**
@@ -289,52 +298,122 @@ function ConversationActivityDisplay({ activity }: { activity: ConversationActiv
 }
 
 function ConversationTimelineItems({ items }: { items: ConversationTimelineItem[] }) {
-  const content = items.filter((item) => item.type !== "error");
+  // P3: the pure durable grouping decides message rows (with their fixed
+  // requester status clusters) versus compact evidence/attention rows.
+  const rows = groupConversationTranscript(items);
+  const content = rows.filter((row) => row.type !== "error");
   if (content.length === 0) {
     return (
       <>
         <p className="muted">No events yet. New conversation events appear here live after attach.</p>
-        {items.map((item) => (
-          <ConversationTimelineEntry key={item.id} item={item} />
+        {rows.map((row) => (
+          <ConversationTranscriptRow key={transcriptRowId(row)} row={row} />
         ))}
       </>
     );
   }
   return (
-    <ol className="timeline-list">
-      {items.map((item) => (
-        <ConversationTimelineEntry key={item.id} item={item} />
+    <ol className="transcript-list">
+      {rows.map((row) => (
+        <ConversationTranscriptRow key={transcriptRowId(row)} row={row} />
       ))}
     </ol>
   );
 }
 
-function ConversationTimelineEntry({ item }: { item: ConversationTimelineItem }) {
-  if (item.type === "error") {
+function transcriptRowId(row: ConversationTranscriptRow): string {
+  if (row.type === "error") return row.id;
+  return row.event.id;
+}
+
+/**
+ * P3 — one transcript row. Steward/ordinary agent messages are compact chat
+ * rows; a C5 handoff agent_message stays an explicit labeled evidence/system
+ * row (never an ordinary authored reply); ineligible run/system evidence
+ * fails safe to a compact attention row; error frames stay non-authoritative
+ * diagnostics. Bodies are literal text — no Markdown/HTML/link rendering.
+ */
+function ConversationTranscriptRow({ row }: { row: ConversationTranscriptRow }) {
+  if (row.type === "error") {
     return (
-      <li className="timeline-entry timeline-error">
-        <span className="timeline-kind">unreadable frame (non-authoritative)</span>
-        <span className="timeline-note">{item.message}</span>
+      <li className="transcript-row transcript-error">
+        <span className="transcript-kind">unreadable frame (non-authoritative)</span>
+        <span className="transcript-note">{row.message}</span>
       </li>
     );
   }
-  const { event } = item;
-  // U5: a bounded broker-authoritative status reaction derived ONLY from the
-  // durable event record (never from activity/transient state, text, or event
-  // order). Old/unknown evidence maps to null and renders no chip.
-  const reaction = conversationReactionForEvent(event);
+  if (row.type === "evidence") {
+    return (
+      <li className={`transcript-row transcript-evidence transcript-${row.event.kind}`}>
+        <span className="transcript-kind">{conversationEventLabel(row.event)}</span>
+        {row.reaction !== null && <StatusClusterItem reaction={row.reaction} />}
+        <time className="transcript-time" dateTime={row.event.created}>
+          {row.event.created}
+        </time>
+        {row.event.body !== "" && <p className="transcript-body">{row.event.body}</p>}
+      </li>
+    );
+  }
+  const { event, statuses } = row;
+  // C5 handoff: the durable handoff label is the evidence identity; the row
+  // remains a compact system row but is still a requester for its own child
+  // run when the child correlates to this durable handoff event.
+  if (isConversationHandoffEvent(event)) {
+    return (
+      <li className="transcript-row transcript-handoff">
+        <span className="transcript-kind">{conversationHandoffEventLabel(event)}</span>
+        <time className="transcript-time" dateTime={event.created}>
+          {event.created}
+        </time>
+        <p className="transcript-body">{event.body}</p>
+        {statuses.length > 0 && <StatusCluster statuses={statuses} />}
+      </li>
+    );
+  }
+  const steward = event.kind === "steward_message";
   return (
-    <li className={`timeline-entry timeline-${event.kind}`}>
-      <span className="timeline-kind">{conversationEventLabel(event)}</span>
-      {reaction !== null && (
-        <span className={`conversation-reaction conversation-reaction-${reaction.kind}`} aria-label={reaction.label} title={reaction.label}>
-          {reaction.status}
-        </span>
-      )}
-      <time className="timeline-time" dateTime={event.created}>
-        {event.created}
-      </time>
-      <p className="timeline-body">{event.body}</p>
+    <li className={`transcript-row transcript-message ${steward ? "transcript-steward" : "transcript-agent"}`}>
+      <div className="transcript-message-header">
+        {!steward && (
+          <span className="transcript-initial" aria-hidden="true">
+            {conversationAuthorInitial(event.author)}
+          </span>
+        )}
+        <span className="transcript-author">{steward ? "You" : event.author}</span>
+        <time className="transcript-time" dateTime={event.created}>
+          {event.created}
+        </time>
+      </div>
+      <p className="transcript-body">{event.body}</p>
+      {statuses.length > 0 && <StatusCluster statuses={statuses} />}
     </li>
+  );
+}
+
+/**
+ * P3 — fixed non-interactive status cluster on a requester row. Each item
+ * exposes the exact U5 durable label via aria-label/title; symbols are
+ * presentation only (never buttons, pickers, or agent tools) and never a
+ * read/seen/delivery claim.
+ */
+function StatusCluster({ statuses }: { statuses: ConversationStatusAttachment[] }) {
+  return (
+    <span className="status-cluster" role="group" aria-label="Run status">
+      {statuses.map((attachment) => (
+        <StatusClusterItem key={attachment.eventId} reaction={attachment.reaction} />
+      ))}
+    </span>
+  );
+}
+
+function StatusClusterItem({ reaction }: { reaction: ConversationReaction }) {
+  return (
+    <span
+      className={`status-cluster-item status-cluster-${reaction.kind}`}
+      aria-label={reaction.label}
+      title={reaction.label}
+    >
+      {conversationStatusSymbol(reaction.kind)}
+    </span>
   );
 }
