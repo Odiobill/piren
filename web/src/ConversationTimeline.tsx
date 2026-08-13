@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchConversationEvents, streamConversationEvents, UnauthorizedError } from "./api";
 import {
   appendConversationLiveItem,
@@ -109,12 +109,35 @@ export function ConversationTimeline({
   /** U4: transient broker-authoritative activity (working/typing + partial). */
   const [activity, setActivity] = useState<ConversationActivityState>(emptyConversationActivity);
   /**
+   * P8 acceptance-blocker fix: the durable-terminal capture must read the
+   * CURRENT validated U4 activity at that exact terminal. The stream effect
+   * does not depend on `activity` (re-renders never replace the live frame
+   * callback), so the render closure would stay stale — and post-commit ref
+   * effects would still miss batched frame bursts (several frames from one
+   * SSE chunk commit together). The ref is therefore updated SYNCHRONOUSLY
+   * at every activity mutation point (updateActivity), so frame order is
+   * exact and the terminal capture always sees the pre-reconcile state.
+   */
+  const activityRef = useRef<ConversationActivityState>(emptyConversationActivity());
+  /** Update the synchronous activity ref AND the render state together. */
+  const updateActivity = useCallback((next: ConversationActivityState) => {
+    activityRef.current = next;
+    setActivity(next);
+  }, []);
+  /**
    * P8 (§4): collapsed bounded in-memory run summaries for the CURRENT
    * selected conversation only — captured at the durable terminal from
    * already-received U4 partial text + terminal truth; never durable,
    * stored, or reconstructed from history; cleared wherever activity clears.
    */
   const [runSummaries, setRunSummaries] = useState<ConversationRunSummary[]>(emptyConversationRunSummaries);
+  /**
+   * P8 acceptance-blocker fix (continued): the terminal capture is computed
+   * SYNCHRONOUSLY against activityRef.current (pre-reconcile) and the latest
+   * in-memory summaries — a deferred functional updater would run at commit
+   * time, AFTER updateActivity cleared the ref, dropping the partial again.
+   */
+  const runSummariesRef = useRef<ConversationRunSummary[]>(emptyConversationRunSummaries());
 
   // The reconnect budget is scoped to the selection lifecycle: selecting a
   // conversation (or a token change) starts a fresh lifecycle. Opening a
@@ -151,6 +174,8 @@ export function ConversationTimeline({
       // and are discarded on the same lifecycle paths — never reconstructed.
       setActivity(emptyConversationActivity());
       setRunSummaries([]);
+      runSummariesRef.current = [];
+      activityRef.current = emptyConversationActivity();
       setPhase((previous) => (previous.phase === "loading" ? previous : { phase: "loading" }));
       try {
         const events = await fetchConversationEvents(conversationId, token, controller.signal);
@@ -192,9 +217,7 @@ export function ConversationTimeline({
                 } catch {
                   parsed = { ok: false, reason: "malformed frame" };
                 }
-                setActivity((previous) =>
-                  parsed.ok ? applyConversationActivityFrame(previous, parsed.frame) : clearConversationActivity(previous),
-                );
+                updateActivity(parsed.ok ? applyConversationActivityFrame(activityRef.current, parsed.frame) : clearConversationActivity(activityRef.current));
                 // P6: permissible transient activity appends participate in the
                 // bottom-anchor decision like durable items.
                 onAppend?.();
@@ -227,9 +250,14 @@ export function ConversationTimeline({
                   typeof item.event.runAgent === "string" &&
                   item.event.runAgent !== ""
                 ) {
-                  setRunSummaries((previous) => captureConversationRunSummary(previous, activity, item.event));
+                  runSummariesRef.current = captureConversationRunSummary(
+                    runSummariesRef.current,
+                    activityRef.current,
+                    item.event,
+                  );
+                  setRunSummaries(runSummariesRef.current);
                 }
-                setActivity((previous) => reconcileConversationActivity(previous, item.event));
+                updateActivity(reconcileConversationActivity(activityRef.current, item.event));
               }
               // L3: a durable lifecycle_transition for this selected
               // conversation requests the navigator's fresh re-gate exactly
@@ -260,6 +288,8 @@ export function ConversationTimeline({
         // discarded on the same path (never reconstructed).
         setActivity(emptyConversationActivity());
         setRunSummaries([]);
+        runSummariesRef.current = [];
+        activityRef.current = emptyConversationActivity();
         setPhase((previous) =>
           previous.phase === "ready"
             ? { ...previous, stream: "disconnected", message: "Live stream ended. Showing last known history." }
@@ -275,6 +305,8 @@ export function ConversationTimeline({
         if (error instanceof DOMException && error.name === "AbortError") return;
         setActivity(emptyConversationActivity());
         setRunSummaries([]);
+        runSummariesRef.current = [];
+        activityRef.current = emptyConversationActivity();
         setPhase((previous) => {
           if (previous.phase === "ready") {
             return { ...previous, stream: "disconnected", message: error instanceof Error ? error.message : String(error) };
