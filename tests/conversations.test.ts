@@ -43,9 +43,9 @@ describe("conversationIdFromText / conversationTitleFromText (deterministic, no 
     expect(conversationIdFromText("   ", NOW)).toBe("20260805T131530000Z-conversation");
   });
 
-  it("builds a deterministic title with a bounded plain-text prefix", () => {
-    expect(conversationTitleFromText("Hello world", NOW)).toBe("Conversation 2026-08-05 13:15 - Hello world");
-    expect(conversationTitleFromText("", NOW)).toBe("Conversation 2026-08-05 13:15");
+  it("builds a deterministic title with a bounded plain-text prefix (P6: no literal `Conversation ` prefix)", () => {
+    expect(conversationTitleFromText("Hello world", NOW)).toBe("2026-08-05 13:15 - Hello world");
+    expect(conversationTitleFromText("", NOW)).toBe("2026-08-05 13:15");
     const long = "A".repeat(60);
     expect(conversationTitleFromText(long, NOW)).toContain("A".repeat(48));
   });
@@ -65,7 +65,7 @@ describe("createConversation", () => {
     expect(conversation.status).toBe("open");
     expect(conversation.createdBy).toBe("steward");
     expect(conversation.audience).toEqual(["zai"]);
-    expect(conversation.title).toBe("Conversation 2026-08-05 13:15 - Hello @zai");
+    expect(conversation.title).toBe("2026-08-05 13:15 - Hello @zai");
 
     const raw = await readFile(join(root, "collaboration", "conversations", conversation.id, "index.md"), "utf8");
     expect(raw).toContain("type: Conversation Manifest");
@@ -165,7 +165,7 @@ describe("readConversation / listConversations", () => {
     expect(conversations).toHaveLength(1);
     expect(conversations[0]?.audience).toEqual(["zai", "dipu"]);
     const read = await readConversation({ vaultRoot: root, conversationId: conversations[0]!.id });
-    expect(read.title).toBe("Conversation 2026-08-05 13:15 - Hello @zai @dipu");
+    expect(read.title).toBe("2026-08-05 13:15 - Hello @zai @dipu");
   });
 
   it("lists newest-first with a deterministic tiebreak", async () => {
@@ -174,8 +174,8 @@ describe("readConversation / listConversations", () => {
     await createConversation({ vaultRoot: root, text: "Newer", audience: [], now: () => base });
     const conversations = await listConversations({ vaultRoot: root });
     expect(conversations.map((c) => c.title)).toEqual([
-      "Conversation 2026-08-05 10:01 - Older",
-      "Conversation 2026-08-05 10:00 - Newer",
+      "2026-08-05 10:01 - Older",
+      "2026-08-05 10:00 - Newer",
     ]);
   });
 

@@ -103,11 +103,17 @@ function slug(text) {
 export function conversationIdFromText(text, now) {
     return `${compactConversationTimestamp(now)}-${slug(text)}`;
 }
-/** Deterministic display title from the first message (no LLM). */
+/**
+ * Deterministic display title from the first message (no LLM). P6: the
+ * literal `Conversation ` prefix is removed — the default title is exactly
+ * `<UTC stamp>` or `<UTC stamp> - <prefix text>`. Applies only to new
+ * creations; existing manifest titles are never migrated or rewritten, and a
+ * user rename is stored verbatim and never re-prefixed.
+ */
 export function conversationTitleFromText(text, now) {
     const stamp = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")} ${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}`;
     const prefix = plainPrefix(text);
-    return prefix === "" ? `Conversation ${stamp}` : `Conversation ${stamp} - ${prefix}`;
+    return prefix === "" ? `${stamp}` : `${stamp} - ${prefix}`;
 }
 export function normalizeConversationTitle(raw) {
     const title = raw.trim();

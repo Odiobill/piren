@@ -698,10 +698,22 @@ export class ConversationBroker {
                 return;
         }
         const policy = run.fallbackPolicy;
+        // P6 (accepted contract §5): classify the settled attempt BEFORE the
+        // no-policy completed short-circuit. A fully settled zero-side-effect
+        // provider error (the pilot's empty 403 outcome) is a provider error even
+        // when no fallback policy/continuation exists — it must never be durably
+        // mislabeled "completed". Fallback rotation stays exactly policy-gated.
+        const pendingOutcome = classifyRunOutcome(run.attemptEvents);
+        const eligibleProviderError = pendingOutcome !== null && isFallbackEligibleOutcome(pendingOutcome);
         // Sam's dc81a41 guard: without a configured primary identity the broker
         // cannot prove a fallback differs from the just-failed Pi model; stay
         // inert (never risk a same-model re-prompt). Absent/malformed/disabled
-        // policy is equally inert.
+        // policy is equally inert. Inert means NO rotation — but an eligible
+        // provider error still gets the truthful bounded provider_error terminal.
+        if (eligibleProviderError && (policy === null || policy.primaryModelId === null || !policy.fallback.ok || !policy.fallback.present)) {
+            this.settle(run, "provider_error");
+            return;
+        }
         if (policy === null || policy.primaryModelId === null || !policy.fallback.ok || !policy.fallback.present) {
             this.settle(run, "completed");
             return;
@@ -710,8 +722,8 @@ export class ConversationBroker {
         if (run.currentModelId === null) {
             run.currentModelId = policy.primaryModelId;
         }
-        let pendingOutcome = classifyRunOutcome(run.attemptEvents);
-        while (pendingOutcome !== null) {
+        let pendingOutcome2 = pendingOutcome;
+        while (pendingOutcome2 !== null) {
             if (run.settled)
                 return;
             const plan = planFallbackAttempt({
@@ -719,21 +731,24 @@ export class ConversationBroker {
                 autoSwitch: config.autoSwitch,
                 explicitModelSelected: false,
                 aborted: false,
-                outcome: pendingOutcome,
+                outcome: pendingOutcome2,
                 currentModelId: run.currentModelId ?? "",
                 attemptedModelIds: run.attemptedModelIds,
             });
             if (plan.kind === "no-attempt") {
-                this.settle(run, "completed");
+                // P6: an eligible provider error with no fallback continuation (for
+                // example auto-switch disabled) is a truthful provider_error
+                // terminal; only non-eligible settles keep the completed outcome.
+                this.settle(run, eligibleProviderError ? "provider_error" : "completed");
                 return;
             }
-            if (!isFallbackEligibleOutcome(pendingOutcome)) {
+            if (!isFallbackEligibleOutcome(pendingOutcome2)) {
                 this.settle(run, "completed");
                 return;
             }
             if (plan.kind === "exhausted") {
                 run.exhaustion = {
-                    category: pendingOutcome.category,
+                    category: pendingOutcome2.category,
                     lastModelId: run.currentModelId ?? "",
                     attemptedCount: plan.attemptedCount,
                 };
@@ -747,7 +762,7 @@ export class ConversationBroker {
                     kind: "model_fallback",
                     authorKind: "system",
                     author: "system",
-                    body: `Model ${run.currentModelId ?? ""} failed (${pendingOutcome.category}) on attempt ${plan.attemptNumber}; switching to ${plan.modelId}`,
+                    body: `Model ${run.currentModelId ?? ""} failed (${pendingOutcome2.category}) on attempt ${plan.attemptNumber}; switching to ${plan.modelId}`,
                     correlationId: run.stewardEventId,
                 });
             }
@@ -798,12 +813,12 @@ export class ConversationBroker {
             }
             run.attemptEvents = [];
             try {
-                await client.prompt(buildFallbackHandoffPrompt(run.originalPrompt, plan.modelId, pendingOutcome.category));
+                await client.prompt(buildFallbackHandoffPrompt(run.originalPrompt, plan.modelId, pendingOutcome2.category));
             }
             catch {
                 this.settle(run, "ambiguous");
             }
-            pendingOutcome = null; // await the next agent_settled
+            pendingOutcome2 = null; // await the next agent_settled
         }
     }
     /**

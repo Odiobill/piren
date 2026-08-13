@@ -65,11 +65,20 @@ describe("P5 full-height chat layout and empty draft (static)", () => {
     expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*flex:\s*none/);
   });
 
-  it("the composer dock controls share consistent 44px heights and vertical alignment", async () => {
+  it("the composer dock controls share consistent 44px heights and vertical alignment via shared geometry tokens (P6)", async () => {
     const styles = await readFile(join(webSrc, "styles.css"), "utf8");
-    expect(styles).toMatch(/\.composer-upload-placeholder\s*\{[\s\S]*width:\s*44px[\s\S]*height:\s*44px/);
-    expect(styles).toMatch(/\.composer-submit-toggle\s*\{[\s\S]*width:\s*44px[\s\S]*height:\s*44px/);
-    expect(styles).toMatch(/\.conversation-details-toggle\s*\{[\s\S]*width:\s*44px[\s\S]*height:\s*44px/);
+    // One shared token set drives every dock control (no per-breakpoint
+    // pixel guessing) — the P5 44px guarantee is preserved through the token.
+    expect(styles).toMatch(/--composer-control-size:\s*44px/);
+    expect(styles).toMatch(/--composer-dock-gap:\s*10px/);
+    expect(styles).toMatch(/--composer-control-gap:\s*8px/);
+    for (const selector of ["composer-upload-placeholder", "composer-submit-toggle", "conversation-details-toggle"]) {
+      const widthPattern = new RegExp(String.raw`\.${selector}\s*\{[\s\S]*width:\s*var\(--composer-control-size\)`);
+      const heightPattern = new RegExp(String.raw`\.${selector}\s*\{[\s\S]*height:\s*var\(--composer-control-size\)`);
+      expect(styles).toMatch(widthPattern);
+      expect(styles).toMatch(heightPattern);
+    }
+    expect(styles).toMatch(new RegExp(String.raw`\.composer-action-row\s*\{[\s\S]*align-items:\s*flex-end`));
   });
 
   it("the empty draft reuses the same chat layout and docked composer with no explanatory card", async () => {

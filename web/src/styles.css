@@ -12,6 +12,18 @@
   --warn: #9a6700;
   --error: #cf222e;
   --radius: 10px;
+  /* P6 (contract §2): one shared dock geometry token set — 44px controls,
+     gaps, radii, and bottom alignment. No per-viewport pixel guessing. */
+  --composer-control-size: 44px;
+  --composer-textarea-min-height: 44px;
+  --composer-textarea-max-height: 200px;
+  --composer-dock-gap: 10px;
+  --composer-control-gap: 8px;
+  --composer-radius-input: 10px;
+  --composer-radius-icon: 8px;
+  --composer-textarea-padding-y: 10px;
+  --composer-textarea-padding-x: 12px;
+  --composer-textarea-line-height: 1.4;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -492,6 +504,11 @@ code {
   color: var(--error);
 }
 
+/* P6 — the browser-local draft's truthful status line (shared surface path). */
+.timeline-status-draft {
+  color: var(--muted);
+}
+
 .button-small {
   padding: 4px 10px;
   font-size: 0.8125rem;
@@ -950,7 +967,7 @@ code {
 
 .composer-controls {
   display: flex;
-  gap: 8px;
+  gap: var(--composer-control-gap);
   align-items: flex-end;
 }
 
@@ -962,14 +979,14 @@ code {
 
 .conversation-composer textarea {
   width: 100%;
-  min-height: 44px;
-  max-height: 200px;
-  padding: 10px 12px;
+  min-height: var(--composer-textarea-min-height);
+  max-height: var(--composer-textarea-max-height);
+  padding: var(--composer-textarea-padding-y) var(--composer-textarea-padding-x);
   font-size: 1rem;
   font-family: inherit;
-  line-height: 1.4;
+  line-height: var(--composer-textarea-line-height);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--composer-radius-input);
   background: var(--bg);
   color: var(--text);
   resize: none;
@@ -983,15 +1000,15 @@ code {
 
 .composer-upload-placeholder {
   flex: none;
-  width: 44px;
-  height: 44px;
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 1.3rem;
   line-height: 1;
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: var(--composer-radius-input);
   background: var(--surface);
   color: var(--muted);
 }
@@ -1004,13 +1021,13 @@ code {
 /* P1 — compact accessible submit-shortcut toggle (page-local policy). */
 .composer-submit-toggle {
   flex: none;
-  width: 44px;
-  height: 44px;
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--composer-radius-icon);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -1167,7 +1184,7 @@ code {
 .composer-action-row {
   flex: none;
   display: flex;
-  gap: 10px;
+  gap: var(--composer-dock-gap);
   align-items: flex-end;
 }
 
@@ -1178,16 +1195,21 @@ code {
 
 .conversation-details-toggle {
   flex: none;
-  width: 44px;
-  height: 44px;
+  width: var(--composer-control-size);
+  height: var(--composer-control-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--composer-radius-icon);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
+}
+
+.conversation-details-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .conversation-details-toggle:hover {

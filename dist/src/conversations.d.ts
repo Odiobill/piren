@@ -56,7 +56,13 @@ export declare function randomConversationSuffix(): string;
  * use the P2 neutral generic id (`conversationGenericId`).
  */
 export declare function conversationIdFromText(text: string, now: Date): string;
-/** Deterministic display title from the first message (no LLM). */
+/**
+ * Deterministic display title from the first message (no LLM). P6: the
+ * literal `Conversation ` prefix is removed — the default title is exactly
+ * `<UTC stamp>` or `<UTC stamp> - <prefix text>`. Applies only to new
+ * creations; existing manifest titles are never migrated or rewritten, and a
+ * user rename is stored verbatim and never re-prefixed.
+ */
 export declare function conversationTitleFromText(text: string, now: Date): string;
 /**
  * U2 — bounded rename title validation and trim normalization (contract

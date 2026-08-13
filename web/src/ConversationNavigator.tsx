@@ -39,6 +39,11 @@ import type { RoomAgentEntry } from "./rooms";
 import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
+import {
+  nextScrollTopForAppend,
+  reducedMotionPreferred,
+  scrollBehaviorFor,
+} from "./conversation-scroll-anchor";
 
 /**
  * Conversation navigator (C3-A + C4-A + L3): the Conversation Workbench
@@ -139,6 +144,45 @@ export function ConversationNavigator({
   /** U2 details modal: open state + the invoking button for focus return. */
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsButtonRef = useRef<HTMLButtonElement>(null);
+  /** P6: the single transcript scroll region (bottom-anchored by default). */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  /** P6: last-known pre-append scrollHeight for the anchor decision. */
+  const lastScrollHeightRef = useRef(0);
+
+  /**
+   * P6 (contract §3): apply the bottom-anchor decision after content appends
+   * or after the initial history load. The pre-append scrollHeight is the
+   * last-known value (appending grows scrollHeight without moving scrollTop,
+   * so the decision must use the PRE-append bottom). Upward readers keep
+   * their exact position; scrolling back to the bottom re-anchors; reduced
+   * motion is honored. Initial history load always anchors to the bottom.
+   */
+  const handleTimelineContent = useCallback((initial: boolean) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      const current = {
+        scrollTop: el.scrollTop,
+        clientHeight: el.clientHeight,
+        scrollHeight: el.scrollHeight,
+      };
+      const target =
+        initial || lastScrollHeightRef.current === 0
+          ? current.scrollHeight
+          : nextScrollTopForAppend(
+              { ...current, scrollHeight: lastScrollHeightRef.current },
+              current.scrollHeight,
+            );
+      lastScrollHeightRef.current = current.scrollHeight;
+      if (target === null) return;
+      const reduce = reducedMotionPreferred(
+        typeof window !== "undefined" && typeof window.matchMedia === "function"
+          ? window.matchMedia("(prefers-reduced-motion: reduce)")
+          : undefined,
+      );
+      el.scrollTo?.({ top: target, behavior: scrollBehaviorFor(reduce) });
+    });
+  }, []);
   /** C3-C3: pending approval cards derived ONLY from scoped live frames. */
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   /** C3-C3: in-flight/errored approval response per request id (manual Retry). */
@@ -625,7 +669,7 @@ export function ConversationNavigator({
         {active ? (
           <>
             <div className="conversation-workspace">
-              <div className="conversation-scroll">
+              <div className="conversation-scroll" ref={scrollRef}>
                 <ConversationApprovalCards
                   approvals={pendingApprovals}
                   submit={approvalSubmit}
@@ -640,6 +684,8 @@ export function ConversationNavigator({
                   onApproval={handleApprovalFrame}
                   onAbortRun={(agent) => void handleAbort(agent)}
                   abortState={abortState}
+                  onAppend={() => handleTimelineContent(false)}
+                  onHistoryLoaded={() => handleTimelineContent(true)}
                 />
               </div>
               {/* U3: the composer is anchored at the bottom of the full
@@ -671,6 +717,7 @@ export function ConversationNavigator({
               token={token}
               live={false}
               onUnauthorized={onUnauthorized}
+              onHistoryLoaded={() => handleTimelineContent(true)}
             />
             {/* U2: read-only inspection has no composer, so the details action
                 lives in a minimal inspection action row (Archive/Reopen stay
@@ -719,11 +766,22 @@ export function ConversationNavigator({
         {announcement}
       </p>
       {notice !== null && <p className="route-notice" role="status">{notice}</p>}
-      {/* P5: the empty draft uses the SAME full-height chat layout and docked
-          composer as an active Conversation — no durable title/details/stream/
-          activity/status until the first accepted send creates the record. */}
+      {/* P5+P6: the empty draft uses the SAME full-height chat layout, the SAME
+          timeline component path (zero history: no fetch/stream/durable
+          state), and the SAME docked composer as an active Conversation. The
+          shared dock includes the details action DISABLED with a truthful
+          title — no modal, no durable title/state until the first accepted
+          send creates the record. */}
       <div className="conversation-workspace">
-        <div className="conversation-scroll" aria-label="Conversation history" />
+        <div className="conversation-scroll" ref={scrollRef} aria-label="Conversation history">
+          <ConversationTimeline
+            conversationId=""
+            token={token}
+            live={false}
+            onUnauthorized={onUnauthorized}
+            draft
+          />
+        </div>
         <div className="composer-action-row">
           <ConversationComposer
             mode="draft"
@@ -732,6 +790,11 @@ export function ConversationNavigator({
             onUnauthorized={onUnauthorized}
             onAnnounce={setAnnouncement}
             onCreated={(conversation) => void handleCreated(conversation)}
+          />
+          <DetailsToggleButton
+            buttonRef={detailsButtonRef}
+            disabled
+            title="Conversation details become available after the first message is sent"
           />
         </div>
       </div>
@@ -743,15 +806,22 @@ export function ConversationNavigator({
  * U2: the details action — a familiar information icon button with the
  * accessible name "Conversation details". On the active surface it sits
  * composer-right; on read-only inspection it lives in the minimal inspection
- * action row (no composer exists there). The navigator keeps its ref so
- * dismissing the modal returns focus to the invoking button.
+ * action row (no composer exists there); on the browser-local draft dock it
+ * is present but DISABLED with a truthful title (P6). The navigator keeps
+ * its ref so dismissing the modal returns focus to the invoking button.
  */
-function DetailsToggleButton({
+export function DetailsToggleButton({
   buttonRef,
   onClick,
+  disabled,
+  title,
 }: {
   buttonRef: RefObject<HTMLButtonElement | null>;
-  onClick: () => void;
+  onClick?: () => void;
+  /** P6: the empty draft dock carries the details action disabled (truthful). */
+  disabled?: boolean;
+  /** P6: truthful accessible disabled reason (draft has no durable title yet). */
+  title?: string;
 }) {
   return (
     <button
@@ -759,6 +829,8 @@ function DetailsToggleButton({
       ref={buttonRef}
       className="conversation-details-toggle"
       aria-label="Conversation details"
+      disabled={disabled}
+      title={title}
       onClick={onClick}
     >
       <InfoIcon size={18} />

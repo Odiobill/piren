@@ -84,8 +84,9 @@ describe("createConversation with the injected suffix seam", () => {
     expect(entries).toEqual(["events", "index.md"]);
     const raw = await readFile(join(dir, "index.md"), "utf8");
     expect(raw).toContain(`id: ${conversation.id}`);
-    // The display title behavior is unchanged (P2 changes the id only).
-    expect(conversation.title).toBe("Conversation 2026-08-05 13:15 - Please review the C2 contract @zai and @ghost");
+    // The display title drops only the literal `Conversation ` prefix (P6);
+    // the id remains neutral and first-message-free (P2).
+    expect(conversation.title).toBe("2026-08-05 13:15 - Please review the C2 contract @zai and @ghost");
   });
 
   it("retries a forced collision on the second candidate (atomic no-clobber preserved)", async () => {

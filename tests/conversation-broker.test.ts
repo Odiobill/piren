@@ -28,6 +28,7 @@ type FakeBehavior =
   | "start-fail"
   | "exit-mid-run"
   | "with-text"
+  | "provider-error-empty"
   | "approval"
   | "approval-hang"
   | "convhandoff";
@@ -115,6 +116,24 @@ class FakeConversationClient implements ConversationRpcClient {
         type: "message_update",
         assistantMessageEvent: { type: "text_delta", delta: "Visible agent reply." },
       });
+    }
+    if (this.behavior === "provider-error-empty") {
+      // P6: the pilot's real shape — a fully settled run whose final assistant
+      // record is a provider error with EMPTY content (no text deltas, no
+      // auto_retry). With no valid fallback policy the terminal must be a
+      // truthful bounded failed/provider_error, never "completed".
+      const record = {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "403 provider error (fake)",
+      };
+      this.emit({ type: "message_start", message: record });
+      this.emit({ type: "message_end", message: record });
+      this.emit({ type: "turn_end", message: { ...record, toolResults: [] } });
+      this.emit({ type: "agent_end", messages: [record], willRetry: false });
+      this.emit({ type: "agent_settled" });
+      return;
     }
     if (this.behavior === "end-only") {
       // TB0/G1: agent_end alone is NEVER terminal; the run stays active until
@@ -434,6 +453,60 @@ describe("ConversationBroker dispatch outcomes", () => {
     await broker.close();
   });
 
+  it("P6: a settled provider-error-empty run with no fallback policy records a truthful failed/provider_error terminal and no agent_message", async () => {
+    // Accepted P6 contract §5: the pilot's 403 runs (settled assistant final
+    // error record, empty content, no fallback policy) must never be durably
+    // mislabeled "completed". Today (pre-fix) this settles completed.
+    const { broker } = makeBroker({ behaviors: ["provider-error-empty"] });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go @zai");
+    const outcome = await broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [],
+    });
+    expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") return;
+    expect(outcome.failureKind).toBe("provider_error");
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    const terminal = events.at(-1);
+    expect(terminal?.runStatus).toBe("failed");
+    expect(terminal?.failureKind).toBe("provider_error");
+    // N3: the exhaustion-less provider_error body is exact and never carries
+    // raw provider text.
+    expect(terminal?.body).toBe("Run ended with a provider error.");
+    expect(terminal?.body).not.toContain("403");
+    expect(terminal?.body).not.toContain("provider error (fake)");
+    await broker.close();
+  });
+
+  it("P6: no-policy ambiguous stays ambiguous (N1) and no-policy empty completion stays completed with no message", async () => {
+    // N1 pin: a prompt rejection with no policy remains ambiguous (never
+    // completed, never provider_error).
+    const { broker: brokerA } = makeBroker({ behaviors: ["prompt-fail"] });
+    const conversationIdA = await makeConversation(["zai"], "Hello @zai A");
+    const stewardEventIdA = await makeStewardEvent(conversationIdA, "Go A");
+    const outcomeA = await brokerA.dispatchConversationMention({
+      conversationId: conversationIdA, agent: "zai", text: "Go A", stewardEventId: stewardEventIdA, priorEvents: [],
+    });
+    expect(outcomeA.status).toBe("failed");
+    if (outcomeA.status === "failed") expect(outcomeA.failureKind).toBe("ambiguous");
+    await brokerA.close();
+
+    // P5 pin: a genuinely empty normal completion stays completed with no
+    // fabricated agent_message.
+    const { broker: brokerB } = makeBroker({ behaviors: ["empty"] });
+    const conversationIdB = await makeConversation(["zai"], "Hello @zai B");
+    const stewardEventIdB = await makeStewardEvent(conversationIdB, "Go B");
+    const outcomeB = await brokerB.dispatchConversationMention({
+      conversationId: conversationIdB, agent: "zai", text: "Go B", stewardEventId: stewardEventIdB, priorEvents: [],
+    });
+    expect(outcomeB.status).toBe("completed");
+    const eventsB = await readConversationEvents({ vaultRoot: root, conversationId: conversationIdB });
+    expect(eventsB.map((e) => e.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    expect(eventsB.at(-1)?.runStatus).toBe("completed");
+    await brokerB.close();
+  });
+
   it("completes exactly once at agent_settled across compaction/summarization maintenance traffic", async () => {
     const { broker } = makeBroker({ behaviors: ["maintenance-settle"] });
     const conversationId = await makeConversation();
@@ -447,8 +520,7 @@ describe("ConversationBroker dispatch outcomes", () => {
     const agentEvent = events.find((e) => e.kind === "agent_message");
     expect(agentEvent?.body).toBe("Settled.");
     expect(events.at(-1)?.runStatus).toBe("completed");
-    // Exactly one completion: maintenance lifecycle events never created an
-    // extra terminal record.
+    // Exactly one completion: maintenance lifecycle events never created an    // extra terminal record.
     expect(events.filter((e) => e.kind === "run_finished")).toHaveLength(1);
     await broker.close();
   });

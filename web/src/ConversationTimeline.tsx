@@ -46,7 +46,12 @@ import type { ConversationEventRecord } from "./conversations";
 type TimelinePhase =
   | { phase: "loading" }
   | { phase: "error"; message: string }
-  | { phase: "ready"; items: ConversationTimelineItem[]; stream: "connecting" | "live" | "disconnected" | "inspection"; message: string | null };
+  | {
+      phase: "ready";
+      items: ConversationTimelineItem[];
+      stream: "connecting" | "live" | "disconnected" | "inspection" | "draft";
+      message: string | null;
+    };
 
 function announcementFor(item: ConversationTimelineItem): string {
   if (item.type === "event") return `New conversation event: ${conversationEventLabel(item.event)}`;
@@ -62,6 +67,9 @@ export function ConversationTimeline({
   onApproval,
   onAbortRun,
   abortState,
+  draft,
+  onAppend,
+  onHistoryLoaded,
 }: {
   conversationId: string;
   token: string;
@@ -82,6 +90,22 @@ export function ConversationTimeline({
     | { phase: "idle" }
     | { phase: "busy"; agent: string }
     | { phase: "error"; agent: string; error: { message: string } };
+  /**
+   * P6: the browser-local empty draft renders the SAME surface component
+   * path with zero history: no fetch, no stream, no durable state until the
+   * first accepted send creates the record.
+   */
+  draft?: boolean;
+  /**
+   * P6: called after a durable item or permissible transient activity
+   * appended at the bottom (anchor decision is applied by the surface).
+   */
+  onAppend?: () => void;
+  /**
+   * P6: called once after the initial whole-history read renders (default
+   * anchor at the bottom near the docked composer).
+   */
+  onHistoryLoaded?: () => void;
 }) {
   const [phase, setPhase] = useState<TimelinePhase>({ phase: "loading" });
   const [announcement, setAnnouncement] = useState("");
@@ -104,6 +128,13 @@ export function ConversationTimeline({
     const announce = (item: ConversationTimelineItem) => setAnnouncement(announcementFor(item));
 
     (async () => {
+      // P6: the browser-local empty draft is the SAME surface component path
+      // with zero history — no fetch, no stream, no durable state until the
+      // first accepted send creates the record.
+      if (draft) {
+        setPhase({ phase: "ready", items: [], stream: "draft", message: null });
+        return;
+      }
       // U4: transient activity/partial replies are cleared before EVERY
       // whole-history reread (fresh attempt, reconnect, or selection change).
       setActivity(emptyConversationActivity());
@@ -119,9 +150,11 @@ export function ConversationTimeline({
             stream: "inspection",
             message: "Read-only inspection — no live stream.",
           });
+          onHistoryLoaded?.();
           return;
         }
         setPhase({ phase: "ready", items: replaceConversationHistoric(events), stream: "connecting", message: null });
+        onHistoryLoaded?.();
         await streamConversationEvents(
           conversationId,
           token,
@@ -149,6 +182,9 @@ export function ConversationTimeline({
                 setActivity((previous) =>
                   parsed.ok ? applyConversationActivityFrame(previous, parsed.frame) : clearConversationActivity(previous),
                 );
+                // P6: permissible transient activity appends participate in the
+                // bottom-anchor decision like durable items.
+                onAppend?.();
                 return;
               }
               // C3-C3: a scoped live `approval` frame is forwarded to the
@@ -186,6 +222,9 @@ export function ConversationTimeline({
                 if (next !== previous.items) announce(item);
                 return { ...previous, items: next };
               });
+              // P6: a durable item appended at the bottom participates in the
+              // bottom-anchor decision (no forced jump for an upward reader).
+              onAppend?.();
             },
           },
           controller.signal,
@@ -276,12 +315,17 @@ export function ConversationTimeline({
             </p>
           )}
           {phase.message !== null && phase.stream === "disconnected" && <p className="muted">{phase.message}</p>}
+          {phase.stream === "draft" && (
+            <p className="timeline-status timeline-status-draft">
+              Draft — your first message creates this conversation.
+            </p>
+          )}
           <ConversationActivityDisplay
             activity={activity}
             {...(onAbortRun !== undefined ? { onAbortRun } : {})}
             {...(abortState !== undefined ? { abortState } : {})}
           />
-          <ConversationTimelineItems items={phase.items} />
+          <ConversationTimelineItems items={phase.items} draft={draft === true} />
         </>
       )}
     </section>
@@ -360,12 +404,17 @@ function ConversationActivityDisplay({
   );
 }
 
-function ConversationTimelineItems({ items }: { items: ConversationTimelineItem[] }) {
+function ConversationTimelineItems({ items, draft }: { items: ConversationTimelineItem[]; draft?: boolean }) {
   // P3: the pure durable grouping decides message rows (with their fixed
   // requester status clusters) versus compact evidence/attention rows.
   const rows = groupConversationTranscript(items);
   const content = rows.filter((row) => row.type !== "error");
   if (content.length === 0) {
+    // P6: the browser-local draft has zero history — it renders the same
+    // component path with no placeholder claiming live appends will arrive.
+    if (draft) {
+      return null;
+    }
     return (
       <>
         <p className="muted">No events yet. New conversation events appear here live after attach.</p>

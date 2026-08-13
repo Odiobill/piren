@@ -241,6 +241,39 @@ function handle(cmd) {
       return;
     }
 
+    // P6: settled zero-side-effect provider error with EMPTY text (the pilot's
+    // 403 shape: real assistant final error record, no text deltas, no
+    // auto_retry). With no valid fallback policy the broker must record the
+    // truthful bounded failed/provider_error terminal, never "completed", and
+    // persist no fabricated agent_message. Reuses the existing settled
+    // provider-error emission unchanged.
+    if (typeof cmd.message === "string" && cmd.message.includes("providererror-empty")) {
+      emitSettledProviderError(false);
+      return;
+    }
+
+    // P6: exact real nested Pi 0.83 RPC assistant-text shape —
+    // message_update.assistantMessageEvent.text_delta carries contentIndex and
+    // a partial snapshot alongside delta (verified against the Pi 0.83.0
+    // binary). The broker must extract exactly one durable agent_message from
+    // these nested deltas.
+    if (typeof cmd.message === "string" && cmd.message.includes("realnested")) {
+      const partial = { role: "assistant", content: [{ type: "text", text: "Real nested." }] };
+      emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Real ", partial },
+        message: partial,
+      });
+      emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "nested.", partial },
+        message: partial,
+      });
+      emit({ type: "agent_end", messages: [], willRetry: false });
+      emit({ type: "agent_settled" });
+      return;
+    }
+
     // P5 empty-output diagnosis: a COMPLETED run that emits no assistant text
     // (no message_update.text_delta) so the broker must persist no
     // agent_message and still append the completed terminal.

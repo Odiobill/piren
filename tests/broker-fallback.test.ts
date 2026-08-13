@@ -756,7 +756,7 @@ describe("ConversationBroker TB6 model fallback", () => {
     expect(records.filter((event) => event.kind === "run_finished")).toHaveLength(0);
   });
 
-  it("inert no-primary policy and no approval/agent-address surface", async () => {
+  it("P6: inert no-primary policy keeps rotation inert but records the truthful provider_error terminal", async () => {
     const client = new ScriptedClient();
     client.scripts = [providerErrorEvents(false)];
     const broker = makeConversationBroker(client, NO_PRIMARY);
@@ -769,11 +769,17 @@ describe("ConversationBroker TB6 model fallback", () => {
       stewardEventId,
       priorEvents: [],
     });
-    expect(outcome.status).toBe("completed");
+    // P6: no fallback continuation for a zero-side-effect provider error is a
+    // truthful failed/provider_error terminal, never "completed". Rotation
+    // semantics stay inert: no set_model, no re-prompt, no Model- evidence.
+    expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") return;
+    expect(outcome.failureKind).toBe("provider_error");
     expect(client.setModelCalls).toEqual([]);
     expect(client.prompts).toHaveLength(1);
     expect(client.respondToUiCalls).toEqual([]);
     const bodies = await readConversationEventBodies(conversationId);
     expect(bodies.some((body) => body.startsWith("Model "))).toBe(false);
+    expect(bodies.at(-1)).toBe("Run ended with a provider error.");
   });
 });
