@@ -62,16 +62,19 @@ describe("P6 shared surface path and disabled draft details (static)", () => {
   });
 });
 
-describe("P6 single bottom-anchored transcript scroll (static)", () => {
-  it("the navigator wires the pure anchor core to the sole conversation scroll region", async () => {
+describe("P6+P8 single bottom-anchored transcript scroll (static)", () => {
+  it("the navigator wires the pure anchor core to the sole conversation scroll region at COMMIT time (P8 §5)", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    expect(navigator).toContain('from "./conversation-scroll-anchor"');
-    expect(navigator).toContain("nextScrollTopForAppend");
-    expect(navigator).toContain("reducedMotionPreferred");
-    expect(navigator).toContain("scrollBehaviorFor");
+    // P8: the anchor decision runs in a commit-time layout effect via the
+    // wiring module, using the pure core's pre-commit metrics semantics.
+    expect(navigator).toContain('from "./conversation-scroll-wiring"');
+    expect(navigator).toContain("applyConversationScrollWiring");
+    expect(navigator).toContain("EMPTY_CONVERSATION_SCROLL_WIRING");
+    expect(navigator).toContain("useLayoutEffect");
+    expect(navigator).toContain("contentVersion");
     expect(navigator).toContain("ref={scrollRef}");
-    expect(navigator).toContain("onAppend={() => handleTimelineContent(false)}");
-    expect(navigator).toContain("onHistoryLoaded={() => handleTimelineContent(true)}");
+    expect(navigator).toContain("onAppend={bumpContentVersion}");
+    expect(navigator).toContain("initialAnchor: true");
     // No forced jump and no reorder/invention: the anchor core is the only
     // scroll mechanism and the transcript order stays server-durable.
     expect(navigator).not.toContain("scrollIntoView");

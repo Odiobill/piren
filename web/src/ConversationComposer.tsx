@@ -54,6 +54,7 @@ export function ConversationComposer({
   onAnnounce,
   onCreated,
   onSent,
+  initialFocus,
 }: {
   mode: "draft" | "active";
   /** Active surface only: the selected durable conversation. */
@@ -71,6 +72,13 @@ export function ConversationComposer({
    * Never called on a bounded failure or for a mention-completion insertion.
    */
   onSent?: () => void;
+  /**
+   * P8 (§1): one-shot focus intent consumed EXACTLY once on mount — set by
+   * the navigator ONLY for the draft-first-send -> active transition. Never
+   * set for navigation, reselect, modal/lifecycle/approval paths, or a
+   * deliberate user focus change.
+   */
+  initialFocus?: boolean;
 }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
@@ -84,6 +92,12 @@ export function ConversationComposer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const pendingCaretRef = useRef<number | null>(null);
+  /** P8 (§1): consumed-exactly-once guard for the one-shot initialFocus intent. */
+  const initialFocusConsumedRef = useRef(false);
+  /** P8 (§1): restore-focus intent set ONLY after an accepted ACTIVE send. */
+  const restoreFocusRef = useRef(false);
+  /** P8 (§1): the focused element when the send started (deliberate-focus guard). */
+  const activeAtSubmitRef = useRef<Element | null>(null);
   const inputId = mode === "draft" ? "conversation-draft-message" : `conversation-message-${conversationId ?? "active"}`;
   const popupId = `${inputId}-mention-popup`;
 
@@ -106,6 +120,32 @@ export function ConversationComposer({
   useEffect(() => {
     setActiveIndex(0);
   }, [mentionOpen, matches.length]);
+
+  // P8 (§1): the one-shot first-draft-send focus intent, consumed exactly once
+  // after mount (the navigator clears the prop on the next commit).
+  useEffect(() => {
+    if (initialFocus !== true || initialFocusConsumedRef.current) return;
+    initialFocusConsumedRef.current = true;
+    inputRef.current?.focus({ preventScroll: true });
+  }, [initialFocus]);
+
+  // P8 (§1): restore textarea focus after an ACCEPTED ACTIVE send, deferred to
+  // the commit that re-enables the textarea (busy -> false). Never fires for a
+  // rejected/failed send (no intent), never in draft mode (the active surface
+  // owns first-send focus), and never over a deliberate user focus move (the
+  // activeElement guard). preventScroll keeps the transcript/dock position.
+  useEffect(() => {
+    if (busy) return;
+    if (mode !== "active") return;
+    if (!restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    const input = inputRef.current;
+    if (!input) return;
+    const active = document.activeElement;
+    const submitTarget = activeAtSubmitRef.current;
+    if (active !== document.body && active !== input && active !== submitTarget) return;
+    input.focus({ preventScroll: true });
+  }, [busy, mode]);
 
   // Auto-grow: content height bounded by the composer range; scrolls once capped.
   useEffect(() => {
@@ -149,10 +189,14 @@ export function ConversationComposer({
     const validation = validateConversationText(text);
     if (!validation.ok) {
       setError(mode === "draft" ? "Enter the first message to start the conversation." : "Enter a message first.");
-      inputRef.current?.focus();
+      // P8 (§1): a rejected send never moves focus (the textarea already owns
+      // it when the user pressed Enter; the error is announced via role=status).
       return;
     }
     setError(null);
+    // P8 (§1): record where focus was when the send started — a deliberate
+    // user focus move during the in-flight request always wins.
+    activeAtSubmitRef.current = document.activeElement;
     setBusy(true);
     try {
       // The browser sends ONLY the existing raw {text} body; the gateway
@@ -169,6 +213,11 @@ export function ConversationComposer({
       // separate gateway-truth read (onSent), never an optimistic write.
       setText("");
       setCaret(0);
+      // P8 (§1): only an ACCEPTED ACTIVE send requests focus restoration; the
+      // draft first send is owned by the navigator's one-shot initialFocus.
+      if (mode === "active") {
+        restoreFocusRef.current = true;
+      }
       onSent?.();
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {

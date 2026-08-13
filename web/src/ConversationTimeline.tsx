@@ -12,14 +12,9 @@ import {
   type ConversationTimelineItem,
   type ReconnectBudget,
 } from "./conversation-timeline";
-import {
-  applyConversationActivityFrame,
-  clearConversationActivity,
-  emptyConversationActivity,
-  parseConversationActivityFrame,
-  reconcileConversationActivity,
-  type ConversationActivityState,
-} from "./conversation-activity";
+import { applyConversationActivityFrame, clearConversationActivity, emptyConversationActivity, parseConversationActivityFrame, reconcileConversationActivity, type ConversationActivityState } from "./conversation-activity";
+import { captureConversationRunSummary, emptyConversationRunSummaries, type ConversationRunSummary } from "./conversation-summary";
+import { ConversationRunSummaries } from "./conversation-summary-disclosure";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
 import type { ConversationReaction } from "./conversation-reactions";
 import { StopIcon } from "./icons";
@@ -113,6 +108,13 @@ export function ConversationTimeline({
   const budgetRef = useRef<ReconnectBudget>(initialReconnectBudget());
   /** U4: transient broker-authoritative activity (working/typing + partial). */
   const [activity, setActivity] = useState<ConversationActivityState>(emptyConversationActivity);
+  /**
+   * P8 (§4): collapsed bounded in-memory run summaries for the CURRENT
+   * selected conversation only — captured at the durable terminal from
+   * already-received U4 partial text + terminal truth; never durable,
+   * stored, or reconstructed from history; cleared wherever activity clears.
+   */
+  const [runSummaries, setRunSummaries] = useState<ConversationRunSummary[]>(emptyConversationRunSummaries);
 
   // The reconnect budget is scoped to the selection lifecycle: selecting a
   // conversation (or a token change) starts a fresh lifecycle. Opening a
@@ -120,6 +122,14 @@ export function ConversationTimeline({
   useEffect(() => {
     budgetRef.current = initialReconnectBudget();
   }, [conversationId, token]);
+
+  // P8 (§5): the retained run summary participates in the commit-time
+  // content-version anchor behavior — updates and clears (and the initial
+  // mount no-op) notify the surface so the anchored reader stays at the
+  // newest content immediately above the dock.
+  useEffect(() => {
+    onAppend?.();
+  }, [runSummaries]);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,7 +147,10 @@ export function ConversationTimeline({
       }
       // U4: transient activity/partial replies are cleared before EVERY
       // whole-history reread (fresh attempt, reconnect, or selection change).
+      // P8 (§4): the in-memory run summaries are session-scoped display state
+      // and are discarded on the same lifecycle paths — never reconstructed.
       setActivity(emptyConversationActivity());
+      setRunSummaries([]);
       setPhase((previous) => (previous.phase === "loading" ? previous : { phase: "loading" }));
       try {
         const events = await fetchConversationEvents(conversationId, token, controller.signal);
@@ -205,6 +218,17 @@ export function ConversationTimeline({
               // (agent_message replaces the partial; runAgent terminals clear
               // it). History rereads already cleared activity.
               if (item.type === "event") {
+                // P8 (§4): capture the bounded in-memory run summary at the
+                // durable terminal BEFORE the reconcile clears the run — the
+                // exact broker agent, the already-permitted U4 partial text
+                // (if still displayed), and the truthful terminal state.
+                if (
+                  (item.event.kind === "run_finished" || item.event.kind === "run_cancelled") &&
+                  typeof item.event.runAgent === "string" &&
+                  item.event.runAgent !== ""
+                ) {
+                  setRunSummaries((previous) => captureConversationRunSummary(previous, activity, item.event));
+                }
                 setActivity((previous) => reconcileConversationActivity(previous, item.event));
               }
               // L3: a durable lifecycle_transition for this selected
@@ -232,8 +256,10 @@ export function ConversationTimeline({
         if (cancelled) return;
         // The stream ended without an abort: disconnect and reconnect via a
         // fresh whole-history reread + re-subscription (no replay). Transient
-        // activity is cleared on stream end.
+        // activity is cleared on stream end; the P8 in-memory summaries are
+        // discarded on the same path (never reconstructed).
         setActivity(emptyConversationActivity());
+        setRunSummaries([]);
         setPhase((previous) =>
           previous.phase === "ready"
             ? { ...previous, stream: "disconnected", message: "Live stream ended. Showing last known history." }
@@ -248,6 +274,7 @@ export function ConversationTimeline({
         }
         if (error instanceof DOMException && error.name === "AbortError") return;
         setActivity(emptyConversationActivity());
+        setRunSummaries([]);
         setPhase((previous) => {
           if (previous.phase === "ready") {
             return { ...previous, stream: "disconnected", message: error instanceof Error ? error.message : String(error) };
@@ -320,12 +347,16 @@ export function ConversationTimeline({
               Draft — your first message creates this conversation.
             </p>
           )}
+          {/* P8 (§3): durable transcript items first (chronological), then the
+              bounded in-memory run summaries, then the transient activity
+              panel at the chronological bottom immediately above the dock. */}
+          <ConversationTimelineItems items={phase.items} draft={draft === true} />
+          <ConversationRunSummaries summaries={runSummaries} />
           <ConversationActivityDisplay
             activity={activity}
             {...(onAbortRun !== undefined ? { onAbortRun } : {})}
             {...(abortState !== undefined ? { abortState } : {})}
           />
-          <ConversationTimelineItems items={phase.items} draft={draft === true} />
         </>
       )}
     </section>

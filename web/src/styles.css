@@ -13,7 +13,12 @@
   --error: #cf222e;
   --radius: 10px;
   /* P6 (contract §2): one shared dock geometry token set — 44px controls,
-     gaps, radii, and bottom alignment. No per-viewport pixel guessing. */
+     gaps, radii, and bottom alignment. No per-viewport pixel guessing.
+     P8 (§2): line-height 1.375 makes the one-line textarea border-box
+     EXACTLY 44px (16×1.375 + 2×10 + 2×1 = 44); the textarea is a block so
+     .composer-input-wrap hugs it exactly (no inline-block line-box strut) —
+     the rendered bottom edge is flush with the 44px control bottoms at one
+     line and while autosizing. */
   --composer-control-size: 44px;
   --composer-textarea-min-height: 44px;
   --composer-textarea-max-height: 200px;
@@ -23,7 +28,7 @@
   --composer-radius-icon: 8px;
   --composer-textarea-padding-y: 10px;
   --composer-textarea-padding-x: 12px;
-  --composer-textarea-line-height: 1.4;
+  --composer-textarea-line-height: 1.375;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -979,6 +984,7 @@ code {
 
 .conversation-composer textarea {
   width: 100%;
+  display: block;
   min-height: var(--composer-textarea-min-height);
   max-height: var(--composer-textarea-max-height);
   padding: var(--composer-textarea-padding-y) var(--composer-textarea-padding-x);

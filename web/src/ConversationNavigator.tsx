@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import {
   abortConversationRun,
   approveConversationApproval,
@@ -40,10 +40,10 @@ import { ConversationDetailsModal, ConversationLifecycleControls } from "./Conve
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
 import {
-  nextScrollTopForAppend,
-  reducedMotionPreferred,
-  scrollBehaviorFor,
-} from "./conversation-scroll-anchor";
+  applyConversationScrollWiring,
+  EMPTY_CONVERSATION_SCROLL_WIRING,
+  type ConversationScrollWiringState,
+} from "./conversation-scroll-wiring";
 
 /**
  * Conversation navigator (C3-A + C4-A + L3): the Conversation Workbench
@@ -146,43 +146,51 @@ export function ConversationNavigator({
   const detailsButtonRef = useRef<HTMLButtonElement>(null);
   /** P6: the single transcript scroll region (bottom-anchored by default). */
   const scrollRef = useRef<HTMLDivElement>(null);
-  /** P6: last-known pre-append scrollHeight for the anchor decision. */
-  const lastScrollHeightRef = useRef(0);
+  /** P8 (§5): commit-time anchor wiring — pre-commit metrics ref + one-shot
+      initial-anchor flag, driven by the content-version layout effect. */
+  const scrollWiringRef = useRef<ConversationScrollWiringState>(EMPTY_CONVERSATION_SCROLL_WIRING);
+  /** P8 (§5): bumped by every durable/activity/summary append and the initial
+      history load; the layout effect applies the anchor decision per commit. */
+  const [contentVersion, setContentVersion] = useState(0);
+  const bumpContentVersion = useCallback(() => setContentVersion((version) => version + 1), []);
+  /** P8 (§1): one-shot first-draft-send focus intent for the ACTIVE composer. */
+  const [justCreatedFocus, setJustCreatedFocus] = useState(false);
 
   /**
-   * P6 (contract §3): apply the bottom-anchor decision after content appends
-   * or after the initial history load. The pre-append scrollHeight is the
-   * last-known value (appending grows scrollHeight without moving scrollTop,
-   * so the decision must use the PRE-append bottom). Upward readers keep
-   * their exact position; scrolling back to the bottom re-anchors; reduced
-   * motion is honored. Initial history load always anchors to the bottom.
+   * P8 (§5): apply the commit-time bottom-anchor decision in a layout effect
+   * that runs AFTER React commits appended content (durable items, permitted
+   * activity, retained summaries). The pure core decides with the PRE-commit
+   * metrics ref: anchored reader follows to the new bottom (auto behavior);
+   * an upward reader keeps the exact position; batch appends in one commit
+   * produce one decision; reduced-motion stays auto. The initial whole-history
+   * load forces the bottom. Focus restoration uses preventScroll and the
+   * composer lives outside the scroll region, so it never breaks anchoring.
    */
-  const handleTimelineContent = useCallback((initial: boolean) => {
+  const surfaceKey =
+    selection.phase === "active"
+      ? selection.conversation.id
+      : selection.phase === "read-only"
+        ? selection.conversation.id
+        : "draft";
+
+  useEffect(() => {
+    scrollWiringRef.current = EMPTY_CONVERSATION_SCROLL_WIRING;
+  }, [surfaceKey]);
+
+  useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    requestAnimationFrame(() => {
-      const current = {
-        scrollTop: el.scrollTop,
-        clientHeight: el.clientHeight,
-        scrollHeight: el.scrollHeight,
-      };
-      const target =
-        initial || lastScrollHeightRef.current === 0
-          ? current.scrollHeight
-          : nextScrollTopForAppend(
-              { ...current, scrollHeight: lastScrollHeightRef.current },
-              current.scrollHeight,
-            );
-      lastScrollHeightRef.current = current.scrollHeight;
-      if (target === null) return;
-      const reduce = reducedMotionPreferred(
-        typeof window !== "undefined" && typeof window.matchMedia === "function"
-          ? window.matchMedia("(prefers-reduced-motion: reduce)")
-          : undefined,
-      );
-      el.scrollTo?.({ top: target, behavior: scrollBehaviorFor(reduce) });
-    });
-  }, []);
+    scrollWiringRef.current = applyConversationScrollWiring(el, scrollWiringRef.current);
+  }, [contentVersion, surfaceKey]);
+
+  // P8 (§1): the one-shot first-draft-send focus intent is consumed by the
+  // freshly mounted ACTIVE composer (child effect runs before this one) and
+  // then cleared so it can never re-fire on re-render, reselect, or nav.
+  useEffect(() => {
+    if (selection.phase === "active" && justCreatedFocus) {
+      setJustCreatedFocus(false);
+    }
+  }, [selection, justCreatedFocus]);
   /** C3-C3: pending approval cards derived ONLY from scoped live frames. */
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   /** C3-C3: in-flight/errored approval response per request id (manual Retry). */
@@ -561,6 +569,9 @@ export function ConversationNavigator({
   function handleCreated(conversation: ConversationRecord) {
     onConversationsChanged();
     resetLifecycleControls();
+    // P8 (§1): the one-shot focus intent for the freshly mounted ACTIVE
+    // composer — consumed exactly once on mount, never for nav/reselect.
+    setJustCreatedFocus(true);
     setAnnouncement(`Conversation created: ${conversation.title}`);
     window.location.hash = formatConversationHash(conversation.id);
   }
@@ -684,8 +695,11 @@ export function ConversationNavigator({
                   onApproval={handleApprovalFrame}
                   onAbortRun={(agent) => void handleAbort(agent)}
                   abortState={abortState}
-                  onAppend={() => handleTimelineContent(false)}
-                  onHistoryLoaded={() => handleTimelineContent(true)}
+                  onAppend={bumpContentVersion}
+                  onHistoryLoaded={() => {
+                    scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
+                    bumpContentVersion();
+                  }}
                 />
               </div>
               {/* U3: the composer is anchored at the bottom of the full
@@ -697,6 +711,7 @@ export function ConversationNavigator({
                   conversationId={selection.conversation.id}
                   token={token}
                   agents={load.phase === "ready" ? load.agents : []}
+                  initialFocus={justCreatedFocus}
                   onUnauthorized={onUnauthorized}
                   onAnnounce={setAnnouncement}
                   onSent={handleMessageSent}
@@ -717,7 +732,10 @@ export function ConversationNavigator({
               token={token}
               live={false}
               onUnauthorized={onUnauthorized}
-              onHistoryLoaded={() => handleTimelineContent(true)}
+              onHistoryLoaded={() => {
+                scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
+                bumpContentVersion();
+              }}
             />
             {/* U2: read-only inspection has no composer, so the details action
                 lives in a minimal inspection action row (Archive/Reopen stay
