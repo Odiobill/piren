@@ -18,8 +18,13 @@
  *   `stopReason: "error"` AND a string `errorMessage` field, observed in a
  *   settled stream.
  * - The zero-side-effect gate is conservative: ANY text delta, `tool_execution_*`
- *   event, or `extension_ui_request` makes a provider error `ambiguous` (never
- *   completed, never fallback-safe).
+ *   event, or interactive DIALOG `extension_ui_request` (select/confirm/input/
+ *   editor) makes a provider error `ambiguous` (never completed, never
+ *   fallback-safe). P7: the documented Pi 0.83 fire-and-forget `extension_ui_request`
+ *   methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`)
+ *   are NOT run side effects (rpc.md: "do not expect a response. The client can
+ *   display the information or ignore it") — they never contaminate. Unknown,
+ *   missing, or malformed methods fail closed and still contaminate.
  * - `provider_error_transient_exhausted` requires the safe provider-error gate
  *   AND a structured `auto_retry_end` with `success:false`. An `auto_retry_start`
  *   alone or `auto_retry_end success:true` never proves exhaustion; a safe
@@ -84,6 +89,17 @@ export type ProviderErrorOutcome =
 
 const NORMAL_STOP_REASONS = new Set(["stop", "length", "toolUse"]);
 
+/**
+ * P7: Pi 0.83 documented fire-and-forget `extension_ui_request` methods
+ * (docs/rpc.md — "do not expect a response. The client can display the
+ * information or ignore it"). The Piren extension emits a session-start
+ * `notify` on `session_start`; informational fire-and-forget traffic is NOT a
+ * run side effect and must never downgrade a zero-side-effect provider error.
+ * Everything else (dialog methods, unknown/future methods, missing/malformed
+ * method fields) fails closed and still contaminates.
+ */
+const FIRE_AND_FORGET_UI_METHODS = new Set(["notify", "setStatus", "setWidget", "setTitle", "set_editor_text"]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -136,9 +152,16 @@ export function classifyRunOutcome(events: readonly RpcEvent[]): RunOutcome {
       case "tool_execution_end":
         sawTool = true;
         break;
-      case "extension_ui_request":
+      case "extension_ui_request": {
+        // P7: only non-fire-and-forget extension_ui_request methods are run side
+        // effects. A known documented fire-and-forget method (notify/setStatus/
+        // setWidget/setTitle/set_editor_text) never contaminates; unknown,
+        // missing, or malformed methods fail closed and still contaminate.
+        const method = isRecord(event) ? event.method : undefined;
+        if (typeof method === "string" && FIRE_AND_FORGET_UI_METHODS.has(method)) break;
         sawUiRequest = true;
         break;
+      }
       case "auto_retry_end":
         if (event.success === false) sawRetryExhausted = true;
         break;

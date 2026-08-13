@@ -18,8 +18,13 @@
  *   `stopReason: "error"` AND a string `errorMessage` field, observed in a
  *   settled stream.
  * - The zero-side-effect gate is conservative: ANY text delta, `tool_execution_*`
- *   event, or `extension_ui_request` makes a provider error `ambiguous` (never
- *   completed, never fallback-safe).
+ *   event, or interactive DIALOG `extension_ui_request` (select/confirm/input/
+ *   editor) makes a provider error `ambiguous` (never completed, never
+ *   fallback-safe). P7: the documented Pi 0.83 fire-and-forget `extension_ui_request`
+ *   methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`)
+ *   are NOT run side effects (rpc.md: "do not expect a response. The client can
+ *   display the information or ignore it") — they never contaminate. Unknown,
+ *   missing, or malformed methods fail closed and still contaminate.
  * - `provider_error_transient_exhausted` requires the safe provider-error gate
  *   AND a structured `auto_retry_end` with `success:false`. An `auto_retry_start`
  *   alone or `auto_retry_end success:true` never proves exhaustion; a safe

@@ -241,6 +241,48 @@ function handle(cmd) {
       return;
     }
 
+    // P7: EXACT real Pi 0.83 production-protocol trace (captured read-only
+    // from `/tmp/p7-probe/stdout2.jsonl` with the real binary and the exact
+    // production invocation, deterministic 403): a session-start
+    // fire-and-forget `extension_ui_request{method:"notify"}` lands in the
+    // broker's run window BEFORE agent_start, followed by user + custom
+    // piren-context messages, the repeated assistant error record in
+    // message_start/message_end/turn_end/agent_end.messages, then settled.
+    // Under P6 the notify contaminated the zero-side-effect gate -> ambiguous
+    // -> no-policy completed (the pilot bug). Under P7 the fire-and-forget
+    // notify must not contaminate: truthful provider_error terminal.
+    if (typeof cmd.message === "string" && cmd.message.includes("providererror-real")) {
+      emit({
+        type: "extension_ui_request",
+        id: "p7-notify-" + process.pid,
+        method: "notify",
+        message: "Piren loaded: fake at /tmp; vault_root=fake; device=fake",
+        notifyType: "info",
+      });
+      emit({ type: "agent_start" });
+      emit({ type: "turn_start" });
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: "prior" }] } });
+      emit({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "prior" }] } });
+      emit({ type: "message_start", message: { role: "custom", customType: "piren-context", content: "# Piren Context\nagent_name: fake" } });
+      emit({ type: "message_end", message: { role: "custom", customType: "piren-context", content: "# Piren Context\nagent_name: fake" } });
+      const errorRecord = {
+        role: "assistant",
+        content: [],
+        api: "openai-completions",
+        provider: "opencode-go",
+        model: "deepseek-v4-flash",
+        usage: { input: 0, output: 0, totalTokens: 0 },
+        stopReason: "error",
+        errorMessage: "403: {\"type\":\"RegionError\",\"message\":\"redacted\"}",
+      };
+      emit({ type: "message_start", message: errorRecord });
+      emit({ type: "message_end", message: errorRecord });
+      emit({ type: "turn_end", message: Object.assign({ toolResults: [] }, errorRecord) });
+      emit({ type: "agent_end", messages: [{ role: "user", content: [{ type: "text", text: "prior" }] }, { role: "custom", customType: "piren-context", content: "# Piren Context\nagent_name: fake" }, errorRecord], willRetry: false });
+      emit({ type: "agent_settled" });
+      return;
+    }
+
     // P6: settled zero-side-effect provider error with EMPTY text (the pilot's
     // 403 shape: real assistant final error record, no text deltas, no
     // auto_retry). With no valid fallback policy the broker must record the

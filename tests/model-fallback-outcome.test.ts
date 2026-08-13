@@ -138,10 +138,42 @@ describe("classifyRunOutcome", () => {
     expect(isFallbackEligibleOutcome(outcome)).toBe(false);
   });
 
-  it("treats any extension_ui_request as side-effect contamination: ambiguous", () => {
-    const outcome = classifyRunOutcome(errEvents([{ type: "extension_ui_request", id: "r1", method: "confirm" }]));
-    expect(outcome.category).toBe("ambiguous");
-    expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+  it("treats a DIALOG extension_ui_request as side-effect contamination: ambiguous (P7 R2)", () => {
+    for (const method of ["select", "confirm", "input", "editor"]) {
+      const outcome = classifyRunOutcome(errEvents([{ type: "extension_ui_request", id: "r1", method }]));
+      expect(outcome.category, `expected ambiguous for dialog method ${method}`).toBe("ambiguous");
+      expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+    }
+  });
+
+  it("P7: known fire-and-forget extension_ui_request methods never contaminate: provider error stays eligible", () => {
+    // Pi 0.83 docs/rpc.md: fire-and-forget methods (notify, setStatus,
+    // setWidget, setTitle, set_editor_text) "do not expect a response. The
+    // client can display the information or ignore it". The Piren extension
+    // emits a session-start notify; it is NOT a run side effect and must not
+    // downgrade the zero-side-effect provider error to ambiguous.
+    for (const method of ["notify", "setStatus", "setWidget", "setTitle", "set_editor_text"]) {
+      const outcome = classifyRunOutcome(errEvents([{ type: "extension_ui_request", id: "r1", method }]));
+      expect(outcome.category, `expected provider_error_other for fire-and-forget method ${method}`).toBe("provider_error_other");
+      expect(isFallbackEligibleOutcome(outcome)).toBe(true);
+    }
+  });
+
+  it("P7: unknown, missing, or malformed extension_ui_request methods fail closed: ambiguous", () => {
+    // Unknown/future methods, a missing method field, and non-string method
+    // values are NOT documented fire-and-forget methods and must keep
+    // contaminating (fail closed), per P7 R2.
+    const malformed = [
+      { type: "extension_ui_request", id: "r1", method: "future-dialog" },
+      { type: "extension_ui_request", id: "r1" },
+      { type: "extension_ui_request", id: "r1", method: 42 },
+      { type: "extension_ui_request", id: "r1", method: "" },
+    ];
+    for (const event of malformed) {
+      const outcome = classifyRunOutcome(errEvents([event as unknown as RpcEvent]));
+      expect(outcome.category, `expected ambiguous for malformed method ${JSON.stringify((event as { method?: unknown }).method)}`).toBe("ambiguous");
+      expect(isFallbackEligibleOutcome(outcome)).toBe(false);
+    }
   });
 
   it("fails closed when the provider error has no structured errorMessage field", () => {
