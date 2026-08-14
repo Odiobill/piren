@@ -5,7 +5,7 @@ import { useEffect, useRef, type ReactNode } from "react";
  * overlay for the main navigation: opening moves focus into it, Tab cycles
  * inside (focus trap), Escape closes it. Closing returns focus to the toggle
  * (handled by the caller). The drawer is a view-layer overlay only — it
- * never blocks or cancels an active room/chat run.
+ * never blocks or cancels an active Conversation run.
  */
 export function MobileDrawer({
   open,

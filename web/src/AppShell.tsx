@@ -9,10 +9,10 @@ import { AgentsView } from "./AgentsView";
 import { AboutView } from "./AboutView";
 
 /**
- * Workbench app shell (ADR-0041 R3b-2.5; C3-A replaces the Rooms page with
- * the Conversation surface): persistent desktop sidebar (Conversations →
- * Agents roster → About), responsive mobile burger drawer, and a main
- * workspace. ConversationNavigator stays MOUNTED across view switches
+ * Workbench app shell (ADR-0041 R3b-2.5; C3-A): persistent desktop sidebar
+ * (Conversations → Agents roster → About), responsive mobile burger drawer,
+ * and a main workspace. ConversationNavigator stays MOUNTED across view
+ * switches
  * (hidden toggling) so a view change never cancels a conversation run and
  * never creates client-side delivery/approval/retry truth.
  */

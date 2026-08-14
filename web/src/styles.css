@@ -234,36 +234,6 @@ code {
   font-size: 0.8125rem;
 }
 
-.composer {
-  margin-top: 16px;
-}
-
-.composer-field {
-  margin: 10px 0;
-}
-
-.composer-field label {
-  display: block;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.composer-field select,
-.composer-field textarea {
-  width: 100%;
-  max-width: 560px;
-  padding: 9px 12px;
-  font-size: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-}
-
-.composer-field textarea {
-  resize: vertical;
-}
-
 .error-message {
   margin: 8px 0 0;
   color: var(--error);
@@ -338,74 +308,6 @@ code {
 
 .shell-main .card + .card {
   margin-top: 16px;
-}
-
-/* Room list */
-.room-list {
-  list-style: none;
-  margin: 0 0 18px;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.room-entry {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  text-align: left;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 0.9375rem;
-}
-
-.room-entry:hover {
-  border-color: var(--accent);
-}
-
-.room-title {
-  font-weight: 600;
-}
-
-.room-meta {
-  color: var(--muted);
-  font-size: 0.8125rem;
-}
-
-/* Create form */
-.room-create {
-  border-top: 1px solid var(--border);
-  padding-top: 14px;
-}
-
-.room-create h3 {
-  margin: 0 0 8px;
-}
-
-.room-create label {
-  display: block;
-  font-weight: 600;
-  margin: 10px 0 4px;
-  font-size: 0.9rem;
-}
-
-.room-create input[type="text"] {
-  width: 100%;
-  padding: 9px 12px;
-  font-size: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-}
-
-.room-create .button {
-  margin-top: 12px;
 }
 
 /* Participant picker / roster */
@@ -489,12 +391,9 @@ code {
   font-size: 0.8125rem;
 }
 
-.participant-list {
-  margin: 8px 0;
-  padding-left: 20px;
-}
-
-/* Room timeline (R3b-3) */
+/* Conversation timeline (C3-A): shared status-line styles used by the active
+   Workbench; the Room-only entry-list rules were removed with the Rooms
+   product decommission. */
 .timeline {
   margin-top: 16px;
 }
@@ -526,76 +425,6 @@ code {
   margin-left: 6px;
   text-transform: none;
   letter-spacing: normal;
-}
-
-.timeline-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.timeline-entry {
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  border-left-width: 3px;
-  border-radius: 12px;
-  padding: 13px 15px;
-  list-style: none;
-  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
-}
-
-.timeline-entry.timeline-steward_message {
-  border-left-color: var(--accent);
-}
-
-.timeline-entry.timeline-agent_message {
-  border-left-color: var(--ok);
-}
-
-.timeline-entry.timeline-run_started {
-  border-left-color: var(--warn);
-}
-
-.timeline-entry.timeline-run_finished,
-.timeline-entry.timeline-run_cancelled {
-  border-left-color: var(--muted);
-}
-
-.timeline-entry.timeline-approval {
-  border-left-color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 8%, transparent);
-}
-
-.timeline-entry.timeline-error {
-  border-left-color: var(--error);
-  opacity: 0.8;
-}
-
-.timeline-kind {
-  display: block;
-  font-weight: 700;
-  font-size: 0.875rem;
-}
-
-.timeline-time {
-  display: block;
-  color: var(--muted);
-  font-size: 0.75rem;
-  margin-top: 2px;
-}
-
-.timeline-body {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.timeline-note {
-  display: block;
-  color: var(--muted);
-  font-size: 0.8125rem;
-  margin-top: 4px;
 }
 
 /* App shell (R3b-2.5): sidebar + workspace + mobile drawer */
@@ -887,7 +716,7 @@ code {
   }
 }
 
-/* C3-A — Conversation surface (mirrors the room surface styles) */
+/* C3-A — Conversation surface */
 /* P1 + P5 — the selected Conversation is a full-width uncarded surface, not a
    card: it fills the main pane with dedicated transcript scrolling above a
    bottom-docked one-line composer; the shell chrome stays fixed. P5 removes
@@ -1453,11 +1282,9 @@ code {
   font-size: 0.85rem;
 }
 
-/* P3 — message-first transcript (ADR-0043 replaces the bordered Conversation
-   run-event cards; the shared .timeline-* classes remain for the Rooms
-   surface). Durable messages are compact chat rows; run/system evidence is
-   compact attention rows; fixed non-interactive status clusters attach to
-   their durable requester row. */
+/* P3 — message-first transcript: durable messages are compact chat rows;
+   run/system evidence is compact attention rows; fixed non-interactive
+   status clusters attach to their durable requester row. */
 .transcript-list {
   list-style: none;
   margin: 0;

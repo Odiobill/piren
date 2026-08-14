@@ -6,13 +6,13 @@ import { StatusBadge, type ShellPhase } from "./StatusBadge";
 import { AppShell } from "./AppShell";
 
 /**
- * Workbench entry (ADR-0041 R3b-1/R3b-2/R3b-2.5). R3b-1 shipped the build
- * foundation and the in-memory Bearer-token entry; R3b-2 added the room
- * navigator with the local-policy agent roster; R3b-2.5 adds the responsive
- * app shell (sidebar, mobile drawer, read-only About) with a stable
- * workspace. Still excluded: timeline, composer, dispatch, approvals, abort,
- * direct chat, vault browser/graph, model/config controls, service worker,
- * offline behavior, and any storage of the token.
+ * Workbench entry (ADR-0041 R3b-1/R3b-2/R3b-2.5; C3-A, C5, R1/R2). The
+ * shipped Workbench surface is Conversation-only: the build foundation with
+ * the in-memory Bearer-token entry, the responsive app shell (sidebar,
+ * mobile drawer, read-only About), and the Conversation navigator (timeline,
+ * composer, approvals, abort, agent handoff) with the local-policy agent
+ * roster. Still excluded: vault browser/graph, model/config controls,
+ * service worker, offline behavior, and any storage of the token.
  *
  * Honest auth state: the shell never claims a token is authenticated before
  * a protected request succeeds. It distinguishes a no-token localhost shell

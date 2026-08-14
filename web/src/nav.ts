@@ -1,6 +1,5 @@
 /**
- * Pure nav-state model for the workbench app shell (ADR-0041 R3b-2.5;
- * C3-A replaces the Rooms page with the Conversation surface).
+ * Pure nav-state model for the workbench app shell (ADR-0041 R3b-2.5; C3-A).
  * Framework-free so shell transitions are directly unit-testable. The drawer
  * is a mobile/portrait overlay; selecting a page always closes it.
  */
