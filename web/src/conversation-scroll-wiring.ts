@@ -43,6 +43,16 @@ export function rootScrollTarget(doc: Document): ConversationScrollTarget | null
   return doc.scrollingElement;
 }
 
+/**
+ * The navigator remains mounted while another Workbench page is selected so
+ * a live Conversation run is never cancelled. Root-scroll anchoring must not
+ * therefore scroll the browser away from that selected page on an unseen
+ * append. The shell's existing `[hidden]` panel state is the source of truth.
+ */
+export function shouldApplyConversationRootScroll(surface: Element | null): boolean {
+  return surface !== null && surface.closest(".workspace-panel[hidden]") === null;
+}
+
 export const EMPTY_CONVERSATION_SCROLL_WIRING: ConversationScrollWiringState = { metrics: null, initialAnchor: false };
 
 export function applyConversationScrollWiring(

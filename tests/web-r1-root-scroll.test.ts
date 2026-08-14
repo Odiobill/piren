@@ -2,7 +2,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { rootScrollTarget, type ConversationScrollTarget } from "../web/src/conversation-scroll-wiring.js";
+import {
+  rootScrollTarget,
+  shouldApplyConversationRootScroll,
+  type ConversationScrollTarget,
+} from "../web/src/conversation-scroll-wiring.js";
 
 /**
  * R1 (accepted `workbench-conversation-canvas-refinement-contract.md`) — the
@@ -75,6 +79,7 @@ describe("R1 root-scroll structure (static)", () => {
     expect(wiring).toContain("EMPTY_CONVERSATION_SCROLL_WIRING");
     expect(navigator).toContain("useLayoutEffect");
     expect(navigator).toContain("contentVersion");
+    expect(navigator).toContain("shouldApplyConversationRootScroll(surfaceRef.current)");
     expect(navigator).not.toContain("scrollIntoView");
     expect(navigator).not.toContain(".sort(");
   });
@@ -94,6 +99,35 @@ describe("R1 root-scroll structure (static)", () => {
       ]) {
         expect(content, `${name} must not contain ${forbidden}`).not.toContain(forbidden);
       }
+    }
+  });
+});
+
+describe("R1 root-scroll visibility gate (pure)", () => {
+  it("never applies document-root anchoring while the persistent Conversation surface is hidden by another Workbench page", () => {
+    const surface = document.createElement("section");
+    const panel = document.createElement("div");
+    panel.className = "workspace-panel";
+    panel.hidden = true;
+    panel.append(surface);
+    document.body.append(panel);
+    try {
+      expect(shouldApplyConversationRootScroll(surface)).toBe(false);
+    } finally {
+      panel.remove();
+    }
+  });
+
+  it("allows root anchoring while the Conversation workspace is visible", () => {
+    const surface = document.createElement("section");
+    const panel = document.createElement("div");
+    panel.className = "workspace-panel";
+    panel.append(surface);
+    document.body.append(panel);
+    try {
+      expect(shouldApplyConversationRootScroll(surface)).toBe(true);
+    } finally {
+      panel.remove();
     }
   });
 });

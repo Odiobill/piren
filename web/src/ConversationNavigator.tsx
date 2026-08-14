@@ -43,6 +43,7 @@ import {
   applyConversationScrollWiring,
   EMPTY_CONVERSATION_SCROLL_WIRING,
   rootScrollTarget,
+  shouldApplyConversationRootScroll,
   type ConversationScrollWiringState,
 } from "./conversation-scroll-wiring";
 
@@ -178,6 +179,9 @@ export function ConversationNavigator({
   }, [surfaceKey]);
 
   useLayoutEffect(() => {
+    // The persistent Conversation surface may be hidden while the steward is
+    // using Agents/About. A live append must not root-scroll that other page.
+    if (!shouldApplyConversationRootScroll(surfaceRef.current)) return;
     const el = rootScrollTarget(document);
     if (!el) return;
     scrollWiringRef.current = applyConversationScrollWiring(el, scrollWiringRef.current);
