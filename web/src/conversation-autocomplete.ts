@@ -10,7 +10,7 @@
  * the sole mention parser, recipient resolver, and atomic invalid-mention
  * rejector. The request body the browser sends stays exactly `{text}`.
  */
-import type { RoomAgentEntry } from "./rooms.js";
+import type { ConversationAgentEntry } from "./conversation-agents.js";
 
 export interface MentionTrigger {
   /** Index of the `@` that starts the token. */
@@ -45,7 +45,7 @@ export function findMentionTrigger(text: string, caret: number): MentionTriggerR
  * starts with the token (case-insensitive), deterministically sorted. An
  * offline/excluded agent is never offered.
  */
-export function filterRunnableCompletions(roster: readonly RoomAgentEntry[], token: string): string[] {
+export function filterRunnableCompletions(roster: readonly ConversationAgentEntry[], token: string): string[] {
   const needle = token.toLowerCase();
   return roster
     .filter((entry) => entry.online)

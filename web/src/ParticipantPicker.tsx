@@ -1,4 +1,4 @@
-import type { RoomAgentEntry } from "./rooms";
+import type { ConversationAgentEntry } from "./conversation-agents";
 
 /**
  * Roster-aware participant picker (ADR-0041 R3b-2). Every vault-defined agent
@@ -14,7 +14,7 @@ export function ParticipantPicker({
   onToggle,
   disabled,
 }: {
-  agents: RoomAgentEntry[];
+  agents: ConversationAgentEntry[];
   selected: ReadonlySet<string>;
   onToggle: (name: string, checked: boolean) => void;
   disabled?: boolean;
@@ -31,7 +31,7 @@ export function ParticipantPicker({
       <legend>Participants</legend>
       <p className="field-help" id="participant-help">
         Online means runnable on this installation (local policy, not a live status probe). Offline
-        agents stay visible but cannot be added to a room.
+        agents stay visible but cannot be added.
       </p>
       <ul className="agent-roster" aria-describedby="participant-help">
         {agents.map((agent) => {

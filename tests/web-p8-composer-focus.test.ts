@@ -7,7 +7,7 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationComposer } from "../web/src/ConversationComposer.js";
 import { sendConversationMessage, createConversation } from "../web/src/api.js";
-import type { RoomAgentEntry } from "../web/src/rooms.js";
+import type { ConversationAgentEntry } from "../web/src/conversation-agents.js";
 import type { ConversationRecord } from "../web/src/conversations.js";
 
 /**
@@ -39,7 +39,7 @@ const CONVERSATION: ConversationRecord = {
   created: "2026-08-11T00:00:00.000Z",
   updated: "2026-08-11T00:00:00.000Z",
 };
-const AGENTS: RoomAgentEntry[] = [{ name: "dipu", online: true }];
+const AGENTS: ConversationAgentEntry[] = [{ name: "dipu", online: true }];
 
 function Harness(props: {
   mode: "draft" | "active";

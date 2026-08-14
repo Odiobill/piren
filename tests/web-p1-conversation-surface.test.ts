@@ -16,7 +16,7 @@ import {
   submitPolicyTooltip,
   type ConversationSubmitPolicy,
 } from "../web/src/conversation-composer.js";
-import type { RoomAgentEntry } from "../web/src/rooms.js";
+import type { ConversationAgentEntry } from "../web/src/conversation-agents.js";
 import type { ConversationRecord } from "../web/src/conversations.js";
 
 /**
@@ -48,7 +48,7 @@ const CONVERSATION: ConversationRecord = {
   created: "2026-08-11T00:00:00.000Z",
   updated: "2026-08-11T00:00:00.000Z",
 };
-const AGENTS: RoomAgentEntry[] = [
+const AGENTS: ConversationAgentEntry[] = [
   { name: "dipu", online: true },
   { name: "zora", online: false },
 ];

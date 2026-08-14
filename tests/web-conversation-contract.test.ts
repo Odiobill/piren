@@ -58,7 +58,7 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
       label: "Conversations",
       navOrder: 0,
       page: "conversations",
-      consumes: ["conversations", "room-agents"],
+      consumes: ["conversations", "conversation-agents"],
       emits: [],
     });
   });
@@ -95,7 +95,7 @@ describe("declared C2 endpoints (static)", () => {
     expect(api).toContain("/attach");
     expect(api).toContain("/messages");
     expect(api).toContain("/events/stream");
-    expect(api).toContain("/api/room-agents");
+    expect(api).toContain("/api/conversation-agents");
   });
 
   it("the Conversation surface files never reference room/chat/vault endpoints (C3-C3 authorizes approve/abort)", async () => {

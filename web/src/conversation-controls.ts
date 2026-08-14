@@ -60,7 +60,7 @@ export function parseConversationApprovalFrame(json: unknown): PendingApproval {
   };
 }
 
-/** The room-precedent exactly-one response shapes (contract §4.2). */
+/** The accepted exactly-one response shapes (contract §4.2). */
 export type ApprovalResponse =
   | { confirmed: boolean }
   | { value: string }

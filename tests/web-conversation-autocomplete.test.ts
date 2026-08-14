@@ -5,7 +5,7 @@ import {
   findMentionTrigger,
   nextCompletionIndex,
 } from "../web/src/conversation-autocomplete.js";
-import type { RoomAgentEntry } from "../web/src/rooms.js";
+import type { ConversationAgentEntry } from "../web/src/conversation-agents.js";
 
 /**
  * U3 — server-authoritative mention autocomplete pure core (accepted 0.2.0
@@ -15,7 +15,7 @@ import type { RoomAgentEntry } from "../web/src/rooms.js";
  * the sole mention parser and recipient authority.
  */
 
-const ROSTER: RoomAgentEntry[] = [
+const ROSTER: ConversationAgentEntry[] = [
   { name: "dipu", online: true },
   { name: "kimi", online: true },
   { name: "sam", online: false },

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import extension from "../src/pi-extension.js";
 import type { AlertMirrorSenders } from "../src/alert-mirror.js";
-import { ROOM_HANDOFF_MAX_REPLY_LENGTH, ROOM_HANDOFF_PROTOCOL_VERSION, ROOM_HANDOFF_REQUEST_TITLE } from "../src/room-handoff-protocol.js";
 import { CONVERSATION_HANDOFF_PROTOCOL_VERSION } from "../src/conversation-handoff.js";
 import { CONVERSATION_HANDOFF_REQUEST_TITLE, CONVERSATION_HANDOFF_ENABLED_ENV_VAR } from "../src/conversation-handoff-protocol.js";
 
@@ -1575,187 +1574,17 @@ describe("Pi extension alert mirror (ADR-0039 E1 M3)", () => {
   });
 });
 
-describe("room_mention gated extension tool (ADR-0041 R2b)", () => {
-  function inputCtx(canned: { value?: string | undefined; calls?: { title: unknown; placeholder: unknown }[] }) {
-    const calls = canned.calls ?? [];
-    return {
-      calls,
-      ctx: {
-        ui: {
-          input: async (title: unknown, placeholder: unknown) => {
-            calls.push({ title, placeholder });
-            return canned.value;
-          },
-        },
-      },
-    };
-  }
-
-  const enabledEnv = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local", PIREN_ROOM_MENTION_ENABLED: "1" };
-  const disabledEnv = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" };
-
-  it("does NOT register room_mention for a normal (unflagged) extension", async () => {
+describe("Rooms decommission: room_mention is never registered", () => {
+  it("does NOT register room_mention even with PIREN_ROOM_MENTION_ENABLED=1", async () => {
     const pi = fakePi();
-    await extension(pi as any, { cliAgentDir: agentDir, env: disabledEnv, configPath: join(root, "missing-config.yml") });
-    expect(pi.tools.room_mention).toBeUndefined();
-    // Existing tools remain registered (tool set unchanged).
-    expect(pi.tools.vault_read).toBeDefined();
-    expect(pi.tools.wiki_update_concept).toBeDefined();
-  });
-
-  it("does NOT register room_mention when the flag is present but not exactly enabled", async () => {
-    for (const value of ["0", "true", "yes", ""]) {
-      const pi = fakePi();
-      await extension(pi as any, {
-        cliAgentDir: agentDir,
-        env: { ...disabledEnv, PIREN_ROOM_MENTION_ENABLED: value },
-        configPath: join(root, "missing-config.yml"),
-      });
-      expect(pi.tools.room_mention).toBeUndefined();
-    }
-  });
-
-  it("registers room_mention for a flagged room extension, with only to/text parameters", async () => {
-    const pi = fakePi();
-    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-    const tool = pi.tools.room_mention;
-    expect(tool).toBeDefined();
-    // Only to/text are model-supplied; no source/room/root/correlation/budget fields.
-    const params = tool.parameters as { properties?: Record<string, unknown>; required?: string[] };
-    expect(Object.keys(params.properties ?? {}).sort()).toEqual(["text", "to"]);
-  });
-
-  it("emits the exact reserved versioned input envelope with only to/text", async () => {
-    const pi = fakePi();
-    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-    const { calls, ctx } = inputCtx({ value: JSON.stringify({ v: 1, status: "ok", reply: "Worker done." }) });
-    const result = await pi.tools.room_mention.execute("call-1", { to: "thor", text: "Summarize." }, undefined, undefined, ctx);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.title).toBe(ROOM_HANDOFF_REQUEST_TITLE);
-    const placeholder = JSON.parse(String(calls[0]!.placeholder)) as Record<string, unknown>;
-    expect(placeholder).toEqual({ v: ROOM_HANDOFF_PROTOCOL_VERSION, to: "thor", text: "Summarize." });
-    expect(Object.keys(placeholder).sort()).toEqual(["text", "to", "v"]);
-    // A valid ok returns only the bounded reply.
-    const text = (result.content as { text: string }[])[0]!.text;
-    expect(text).toBe("Worker done.");
-    expect(result.isError).toBeFalsy();
-  });
-
-  it("makes no UI request for invalid tool arguments", async () => {
-    const pi = fakePi();
-    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-    const { calls, ctx } = inputCtx({ value: undefined });
-    const badTo = await pi.tools.room_mention.execute("c", { to: "Bad Name", text: "x" }, undefined, undefined, ctx);
-    const blank = await pi.tools.room_mention.execute("c", { to: "thor", text: "   " }, undefined, undefined, ctx);
-    const oversized = await pi.tools.room_mention.execute("c", { to: "thor", text: "x".repeat(5000) }, undefined, undefined, ctx);
-    for (const result of [badTo, blank, oversized]) {
-      expect(result.isError).toBe(true);
-    }
-    expect(calls).toHaveLength(0);
-  });
-
-  it("turns cancelled, no-value, malformed, version-mismatched, rejected, failed, and timed_out responses into explicit errors with no fallback", async () => {
-    const cases: { name: string; value: string | undefined }[] = [
-      { name: "cancelled-undefined", value: undefined },
-      { name: "malformed", value: "{not json" },
-      { name: "version-mismatch", value: JSON.stringify({ v: 999, status: "ok", reply: "x" }) },
-      { name: "rejected", value: JSON.stringify({ v: 1, status: "rejected", reason: "target not runnable" }) },
-      { name: "failed-ambiguous", value: JSON.stringify({ v: 1, status: "failed", reason: "x", failureKind: "ambiguous" }) },
-      { name: "timed_out", value: JSON.stringify({ v: 1, status: "timed_out" }) },
-      { name: "cancelled-status", value: JSON.stringify({ v: 1, status: "cancelled" }) },
-    ];
-    for (const testCase of cases) {
-      const pi = fakePi();
-      await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-      const { calls, ctx } = inputCtx({ value: testCase.value });
-      const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, ctx);
-      expect(result.isError).toBe(true);
-      // Exactly one UI request was made; no retry / no second attempt.
-      expect(calls.length).toBe(1);
-    }
-  });
-
-  it("a rejected response is a fixed non-secret error and never interpolates the broker reason", async () => {
-    const pi = fakePi();
-    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-    const { ctx } = inputCtx({ value: JSON.stringify({ v: 1, status: "rejected", reason: "target not runnable" }) });
-    const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, ctx);
-    const text = (result.content as { text: string }[])[0]!.text;
-    expect(result.isError).toBe(true);
-    expect(text).toMatch(/rejected/i);
-    // The broker-provided reason is never interpolated (R2b no-internal-id boundary).
-    expect(text).not.toContain("target not runnable");
-    expect(text).not.toContain("collaboration/rooms");
-    expect(text).not.toContain("2026");
-  });
-
-  it("flagged and unflagged extension instances are independent", async () => {
-    const flagged = fakePi();
-    await extension(flagged as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-    const unflagged = fakePi();
-    await extension(unflagged as any, { cliAgentDir: agentDir, env: disabledEnv, configPath: join(root, "missing-config.yml") });
-    expect(flagged.tools.room_mention).toBeDefined();
-    expect(unflagged.tools.room_mention).toBeUndefined();
-  });
-
-  it("errors explicitly when the UI input method is unavailable", async () => {
-    const pi = fakePi();
-    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-    // ctx without ui.input (e.g. print mode).
-    const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, { ui: {} });
-    expect(result.isError).toBe(true);
-  });
-});
-
-describe("room_mention tool error secrecy and oversized reply (R2b review)", () => {
-  const enabledEnv = { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local", PIREN_ROOM_MENTION_ENABLED: "1" };
-
-  function inputCtx(canned: { value?: string | undefined; calls?: { title: unknown; placeholder: unknown }[] }) {
-    const calls = canned.calls ?? [];
-    return {
-      calls,
-      ctx: {
-        ui: {
-          input: async (title: unknown, placeholder: unknown) => {
-            calls.push({ title, placeholder });
-            return canned.value;
-          },
-        },
-      },
-    };
-  }
-
-  it("a rejected handoff whose broker reason contains a room id is shown as a fixed non-secret error (content and details.error)", async () => {
-    const roomId = "20260803T110000000Z-secret-room-xyzzy";
-    const pi = fakePi();
-    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-    const { calls, ctx } = inputCtx({
-      value: JSON.stringify({ v: 1, status: "rejected", reason: `a run is already active for room '${roomId}' and agent 'thor'` }),
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local", PIREN_ROOM_MENTION_ENABLED: "1" },
+      configPath: join(root, "missing-config.yml"),
     });
-    const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, ctx);
-    expect(result.isError).toBe(true);
-    const text = (result.content as { text: string }[])[0]!.text;
-    expect(text).not.toContain(roomId);
-    expect(text).not.toContain("secret-room-xyzzy");
-    expect(text).toMatch(/rejected/i);
-    const detailsError = (result.details as { error?: string }).error ?? "";
-    expect(detailsError).not.toContain(roomId);
-    expect(detailsError).not.toContain("secret-room-xyzzy");
-    // Exactly one input attempt; no retry.
-    expect(calls).toHaveLength(1);
-  });
-
-  it("an oversized ok.reply in the broker response is an explicit error after exactly one input attempt", async () => {
-    const pi = fakePi();
-    await extension(pi as any, { cliAgentDir: agentDir, env: enabledEnv, configPath: join(root, "missing-config.yml") });
-    const oversized = "R".repeat(ROOM_HANDOFF_MAX_REPLY_LENGTH + 10);
-    const { calls, ctx } = inputCtx({ value: JSON.stringify({ v: 1, status: "ok", reply: oversized }) });
-    const result = await pi.tools.room_mention.execute("c", { to: "thor", text: "x" }, undefined, undefined, ctx);
-    expect(result.isError).toBe(true);
-    expect(calls).toHaveLength(1);
-    // The oversized reply is not surfaced as a successful reply.
-    const text = (result.content as { text: string }[])[0]!.text;
-    expect(text).not.toBe(oversized);
+    expect(pi.tools.room_mention).toBeUndefined();
+    // The Conversation tool set stays intact.
+    expect(pi.tools.vault_read).toBeDefined();
   });
 });
 
@@ -1887,7 +1716,6 @@ describe("conversation_handoff gated extension tool (C5-3)", () => {
     await extension(unflagged as any, { cliAgentDir: agentDir, env: disabledEnv, configPath: join(root, "missing-config.yml") });
     expect(flagged.tools.conversation_handoff).toBeDefined();
     expect(unflagged.tools.conversation_handoff).toBeUndefined();
-    expect(unflagged.tools.room_mention).toBeUndefined();
   });
 
   it("errors explicitly when the UI input method is unavailable", async () => {

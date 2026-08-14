@@ -1,5 +1,7 @@
 /**
- * ADR-0041 R3b-2 room-agent roster (pure core).
+ * Decommission (ADR-0043 2026-08-14) — Conversation-neutral local-policy
+ * roster core (replaces the retired room-agent roster; served only at
+ * `GET /api/conversation-agents`, never aliased).
  *
  * `online` is local installation policy only: membership in this gateway
  * machine's already-resolved `runnableAgents` set. It is NOT Pi-process
@@ -9,12 +11,12 @@
  * policy); there is no config reread, no directory creation, no probing, and
  * no polling here.
  */
-export interface RoomAgentEntry {
+export interface ConversationAgentEntry {
     name: string;
     online: boolean;
 }
-export interface RoomAgentsResponse {
-    agents: RoomAgentEntry[];
+export interface ConversationAgentsResponse {
+    agents: ConversationAgentEntry[];
 }
 /**
  * Build the deterministic roster response. Names come from the supplied
@@ -23,4 +25,4 @@ export interface RoomAgentsResponse {
  * returns an empty list; runnable agents absent from the roster are not
  * added (the roster, not the runnable set, drives membership).
  */
-export declare function buildRoomAgentsResponse(vaultAgents: readonly string[], runnableAgents: readonly string[]): RoomAgentsResponse;
+export declare function buildConversationAgentsResponse(vaultAgents: readonly string[], runnableAgents: readonly string[]): ConversationAgentsResponse;

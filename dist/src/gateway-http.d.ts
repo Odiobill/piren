@@ -15,11 +15,11 @@ export interface GatewayServerOptions {
     runnableAgents?: string[] | undefined;
     /**
      * Vault-defined agent roster (`team/<agent>/` names) for GET
-     * /api/room-agents (ADR-0041 R3b-2). Explicitly supplied by the caller
-     * (the CLI passes the already-resolved local-policy report); the server
-     * never rereads local config or creates directories to derive it. When
-     * absent, the roster route returns an empty list. `online` is local
-     * installation policy only — membership in `runnableAgents`.
+     * /api/conversation-agents (decommission rename, ADR-0043). Explicitly
+     * supplied by the caller (the CLI passes the already-resolved local-policy
+     * report); the server never rereads local config or creates directories to
+     * derive it. When absent, the roster route returns an empty list. `online`
+     * is local installation policy only — membership in `runnableAgents`.
      */
     vaultAgents?: string[] | undefined;
     /** Initial active agent. Defaults to the first runnable agent or null. */
@@ -75,10 +75,7 @@ export declare class GatewayServer {
     private readonly targetBuilder;
     private readonly authToken;
     private readonly publicDir;
-    private readonly roomBroker;
     private readonly conversationBroker;
-    /** Idempotent cleanup callbacks for live room SSE handlers. */
-    private readonly roomStreamCleanups;
     /** Idempotent cleanup callbacks for live conversation SSE handlers. */
     private readonly conversationStreamCleanups;
     private shuttingDown;
@@ -205,50 +202,13 @@ export declare class GatewayServer {
      * Configured vaultRoot is required, otherwise 403 (no write surface).
      */
     private handleVaultInbox;
-    /** Safe durable manifest shape: no absolutePath, no byte counts. */
-    private safeRoom;
     /**
-     * Map room core/broker errors to HTTP statuses with non-secret messages.
-     * Unknown errors become a generic 500: filesystem paths, raw Pi errors,
-     * stderr, tokens, and tracebacks never reach the response.
+     * GET /api/conversation-agents (ADR-0043 decommission rename of the old
+     * /api/room-agents roster). Deterministic vault-agent roster where
+     * `online` is local installation policy only (membership in the resolved
+     * runnableAgents set) — never Pi/transport/provider presence.
      */
-    private roomError;
-    /**
-     * Room route family (ADR-0041 R1c). Requires the wired room broker;
-     * without room capability every room route is a 404.
-     */
-    private handleRooms;
-    private handleRoomCreate;
-    private handleRoomList;
-    /**
-     * GET /api/room-agents (ADR-0041 R3b-2). Deterministic vault-agent roster
-     * where `online` is local installation policy only (membership in the
-     * resolved runnableAgents set) — never Pi/transport/provider presence.
-     */
-    private handleRoomAgents;
-    private handleRoomRead;
-    private handleRoomEvents;
-    /**
-     * Structured steward-to-one-agent mention. The dispatch agent comes only
-     * from body.agent (never text parsing) and is revalidated by the broker
-     * against room participants and local runnable policy. Awaits the bounded
-     * outcome; an active room × agent conflict is a 409 with no queue.
-     */
-    private handleRoomMessage;
-    /** Abort the active run for exactly this room × agent. */
-    private handleRoomAbort;
-    /**
-     * Forward an approval response to the exact pending room-agent request.
-     * Exactly one of confirmed, value, or cancelled must be present.
-     */
-    private handleRoomApprove;
-    /**
-     * Scoped SSE stream for exactly one room: live committed room records as
-     * `room_event`, live pending approvals as `approval`. Historic events are
-     * served by GET .../events; this is a live broker subscription, not
-     * polling and not a replay. Heartbeat + disconnect cleanup required.
-     */
-    private handleRoomEventStream;
+    private handleConversationAgents;
     private safeConversation;
     private safeConversationEvent;
     private conversationError;

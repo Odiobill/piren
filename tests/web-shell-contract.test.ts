@@ -15,8 +15,8 @@ import {
  * ADR-0041 R3b-2.5: responsive workbench app shell contract.
  * Pure nav-state transitions plus static a11y/behavior guards for the
  * sidebar, mobile drawer, read-only About page, and the stable-workspace
- * rule (RoomNavigator stays mounted across view switches; a view change
- * never cancels a room run or creates client-side truth).
+ * rule (ConversationNavigator stays mounted across view switches; a view
+ * change never cancels a conversation run or creates client-side truth).
  */
 const webSrc = join(process.cwd(), "web", "src");
 
@@ -152,7 +152,7 @@ describe("app shell source surface (static)", () => {
     const sources = await readSourceFiles();
     const agents = sources.get("AgentsView.tsx") ?? "";
     expect(agents.length).toBeGreaterThan(0);
-    expect(agents).toContain("/api/room-agents");
+    expect(agents).toContain("/api/conversation-agents");
     expect(agents).toContain("not available");
     expect(agents).not.toMatch(/onClick|onSubmit|<button/);
   });

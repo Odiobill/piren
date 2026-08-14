@@ -20,7 +20,7 @@ vault/
 ├── templates/
 ├── agent-groups/
 ├── collaboration/
-│   └── rooms/
+│   └── conversations/
 ├── cron/
 │   ├── jobs/
 │   └── runs/
@@ -61,25 +61,7 @@ Operational directories:
 
 Do not put `.env` or `AGENTS.md` under `team/<agent>/`. Secrets live outside the vault, and Piren identity is `SOUL.md`.
 
-## Collaboration rooms
-
-`collaboration/rooms/` is the vault-owned room collaboration area. Fresh vaults create only the empty `collaboration/rooms/` directory; rooms are never created automatically.
-
-```text
-collaboration/rooms/<room-id>/
-├── index.md            # mutable room manifest (type: Room Manifest)
-├── events/
-│   └── <event-id>.md   # immutable raw evidence (type: Room Event)
-└── summary.md          # curated summary, explicit promotion only (type: Room Summary)
-```
-
-The manifest records the room id, title, `created_by: steward`, explicit participants, `status: open|closed`, and timestamps. Event files are append-only raw evidence: a response, correction, or state change is a new event, never an edit. Event kinds are `steward_message`, `run_started`, `agent_message`, `run_finished`, and `run_cancelled`. System run events carry a bounded typed outcome: `run_started` requires `run_status: running`; `run_finished` requires `run_status: completed|failed|timed_out` (`failure_kind: launch_failure|ambiguous` only when failed); `run_cancelled` requires `run_status: cancelled`. `summary.md` is a curated artifact written only by explicit promotion; it is distinct from raw events and from the Pi transcript.
-
-The room-run broker core (`src/room-broker.ts`) processes one explicit steward-to-one-runnable-participant mention on an isolated `room × agent` Pi RPC client, appending only immutable correlated events and scoping approvals/abort to that exact client. The gateway serves an authenticated room HTTP/SSE API over the broker (see [API reference](api.md)); a room UI is a later slice and is not implemented yet.
-
-Structured agent-to-agent handoff (room handoff, slice R2) appends an immutable causality chain: a steward root `S` (steward_message addressed to the lead) → lead run records correlated to `S` → a handoff `H` (agent_message authored by the lead, `addressed_agent`: worker, correlated to `S`) → the worker's `run_started`, reply, and terminal records all correlated to `H`, never directly to `S`. The handoff is driven only by the reserved `room_mention` extension tool available inside broker-spawned flagged room runs; it is never derived from message text. There is no queue, retry, catch-up, or fallback, and the internal handoff request never enters the room approval surface.
-
-Raw `collaboration/rooms/*/events/` documents are excluded from the Knowledge Graph (like inbox/cron/session records); typed manifests and summaries remain graph-visible. The record API lives in `src/rooms.ts` (`createRoom`, `listRooms`, `readRoom`, `appendRoomEvent`, `listRoomEvents`).
+The retired Rooms collaboration area (`collaboration/rooms/`) is decommissioned (Rooms product decommission): the Workbench is Conversation-only, and fresh vaults no longer create the obsolete directory. Historical vault data is not deleted by the decommission.
 
 ## Agent groups
 

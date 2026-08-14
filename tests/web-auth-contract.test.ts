@@ -87,17 +87,20 @@ describe("web auth shell contract (R3b-1)", () => {
       expect(combined).toMatch(/not been validated/i);
     });
 
-    it("the shell calls only its authorized endpoints (auth-info + room-agents + rooms)", async () => {
+    it("the shell calls only its authorized endpoints (auth-info + conversation-agents + conversations)", async () => {
       const [app, api] = await Promise.all([
         readFile(join(process.cwd(), "web", "src", "App.tsx"), "utf8"),
         readFile(join(process.cwd(), "web", "src", "api.ts"), "utf8"),
       ]);
       const combined = `${app}\n${api}`;
-      // R3b-1 authorized the public auth probe; R3b-2 authorized the
-      // room-agents roster and room list/create/read routes.
+      // R3b-1 authorized the public auth probe; ADR-0043 renamed the
+      // roster route to the neutral /api/conversation-agents (the old
+      // /api/room-agents route is gone).
       expect(combined).toContain("/api/auth/info");
-      expect(combined).toContain("/api/room-agents");
-      expect(combined).toContain("/api/rooms");
+      expect(combined).toContain("/api/conversation-agents");
+      // The retired room routes never appear in the shell client.
+      expect(combined).not.toContain("/api/room-agents");
+      expect(combined).not.toContain("/api/rooms/");
       // Chat, vault, and completions endpoints stay outside the workbench shell.
       for (const forbidden of ["/api/chat", "/api/vault", "/api/v1/"]) {
         expect(combined, `${forbidden} must not be called by the shell`).not.toContain(forbidden);

@@ -19,7 +19,7 @@ import {
 } from "./conversation-autocomplete";
 import { ReturnKeyIcon } from "./icons";
 import type { ConversationRecord } from "./conversations";
-import type { RoomAgentEntry } from "./rooms";
+import type { ConversationAgentEntry } from "./conversation-agents";
 
 /**
  * U3 + P1 — Discord-like Conversation composer (accepted 0.2.0 UX plan §U3
@@ -61,7 +61,7 @@ export function ConversationComposer({
   conversationId?: string;
   token: string;
   /** Current locally runnable roster (autocomplete convenience list only). */
-  agents: readonly RoomAgentEntry[];
+  agents: readonly ConversationAgentEntry[];
   onUnauthorized: () => void;
   onAnnounce: (message: string) => void;
   /** Draft mode only: called with the created conversation after its first send. */

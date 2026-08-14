@@ -7,7 +7,7 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationComposer } from "../web/src/ConversationComposer.js";
 import { createConversation, sendConversationMessage } from "../web/src/api.js";
-import type { RoomAgentEntry } from "../web/src/rooms.js";
+import type { ConversationAgentEntry } from "../web/src/conversation-agents.js";
 import type { ConversationRecord } from "../web/src/conversations.js";
 
 /**
@@ -38,7 +38,7 @@ const CONVERSATION: ConversationRecord = {
   created: "2026-08-11T00:00:00.000Z",
   updated: "2026-08-11T00:00:00.000Z",
 };
-const AGENTS: RoomAgentEntry[] = [
+const AGENTS: ConversationAgentEntry[] = [
   { name: "dipu", online: true },
   { name: "zora", online: false },
 ];
@@ -46,7 +46,7 @@ const AGENTS: RoomAgentEntry[] = [
 function Harness(props: {
   mode: "draft" | "active";
   conversationId?: string;
-  agents?: RoomAgentEntry[];
+  agents?: ConversationAgentEntry[];
   onAnnounce?: (message: string) => void;
   onCreated?: (conversation: ConversationRecord) => void;
   onSent?: () => void;
@@ -215,7 +215,7 @@ describe("ConversationComposer (U3)", () => {
       // Two runnable agents match both "@d" and "@di": the match COUNT is
       // identical before and after the token edit, so the picker must resync
       // on the text/caret change (U3 correction).
-      const roster: RoomAgentEntry[] = [
+      const roster: ConversationAgentEntry[] = [
         { name: "dipu", online: true },
         { name: "dima", online: true },
         { name: "zora", online: false },

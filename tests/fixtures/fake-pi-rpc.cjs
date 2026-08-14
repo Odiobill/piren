@@ -40,11 +40,6 @@ let waitingApprovalId = null;
 // DIFFERENT processes must never collide across keys. Every emitted id
 // carries the process id plus a process-local sequence suffix.
 let approvalSeq = 0;
-// Blocking reserved room-handoff state (ADR-0041 R2b): set by a
-// "roomhandoff" prompt, cleared by the matching extension_ui_response or by
-// abort. The id is deterministic so gateway proofs can assert the internal
-// handoff request is never answerable through the public approval path.
-let waitingHandoffId = null;
 // C5-3: reserved conversation-handoff control state (root gate or workflow
 // accept). Set by a "conversationhandoff" marker in the active prompt section,
 // cleared by the matching extension_ui_response or by abort. The completion
@@ -107,7 +102,7 @@ function handle(cmd) {
     // TB4 deterministic provider-error scripts (checked BEFORE the default
     // completion so handoff re-prompts and error triggers are distinct; the
     // trigger words avoid "fail"/"approve"/"hang"/"waitapprove"/
-    // "roomhandoff"/"steer"/"follow_up" substrings).
+    // "steer"/"follow_up" substrings).
 
     // (d) Fallback handoff re-prompt: the replacement model receives the
     // TB3 handoff-wrapped original request and completes normally, naming the
@@ -142,7 +137,7 @@ function handle(cmd) {
     }
 
     // TB0 deterministic settlement scripts (trigger words avoid "fail"/"approve"/
-    // "hang"/"waitapprove"/"roomhandoff"/"steer"/"follow_up" substrings).
+    // "hang"/"waitapprove"/"steer"/"follow_up" substrings).
 
     // (a) Multiple agent_end where the first has willRetry:true: Pi announces an
     // automatic retry, re-runs, and only then fully settles.
@@ -181,27 +176,6 @@ function handle(cmd) {
       emit({ type: "summarization_retry_finished" });
       emit({ type: "agent_end", messages: [], willRetry: false });
       return; // deliberately no agent_settled
-    }
-
-    // Reserved R2b room_mention handoff: emit the exact reserved input
-    // envelope (deterministic id, reserved title, versioned placeholder with
-    // only to/text) and hold agent_end until the matching
-    // extension_ui_response (or abort) arrives. This models a broker-spawned
-    // flagged room client whose extension called ctx.ui.input() with the
-    // reserved envelope.
-    if (typeof cmd.message === "string" && cmd.message.includes("roomhandoff")) {
-      waitingHandoffId = "handoff-req-1";
-      const match = cmd.message.match(/roomhandoff(?:->([a-z0-9-]+))?(?::([\s\S]*))?/);
-      const target = match?.[1] ?? "thor";
-      const text = (match?.[2] ?? "").trim() || "help from the lead";
-      emit({
-        type: "extension_ui_request",
-        id: waitingHandoffId,
-        method: "input",
-        title: "piren:room-handoff",
-        placeholder: JSON.stringify({ v: 1, to: target, text }),
-      });
-      return;
     }
 
     // C5-3: reserved conversation_handoff control request. The active section
@@ -412,15 +386,6 @@ function handle(cmd) {
       }
       return;
     }
-    // A response for a reserved handoff request completes the held turn.
-    if (waitingHandoffId !== null && cmd.id === waitingHandoffId) {
-      waitingHandoffId = null;
-      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Lead done." } });
-      emit({ type: "queue_update", steering: [], followUp: [] });
-      emit({ type: "agent_end", messages: [] });
-      emit({ type: "agent_settled" });
-      return;
-    }
     // A response for a blocking waitapprove request completes the held turn.
     if (waitingApprovalId !== null && cmd.id === waitingApprovalId) {
       waitingApprovalId = null;
@@ -481,7 +446,6 @@ function handle(cmd) {
     // close cleanly. Brokers that already settled the run as cancelled treat
     // both events as stale and ignore them.
     waitingApprovalId = null;
-    waitingHandoffId = null;
     waitingConversationHandoffId = null;
     emit({ type: "agent_end", messages: [] });
     emit({ type: "agent_settled" });

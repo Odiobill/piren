@@ -4,9 +4,8 @@
  * workspace surface with a declared identity, capability surface, and page.
  * The registry is a compile-time const array — no runtime discovery, no
  * dynamic module loading, no gateway/vault-driven module lookup, no plugin
- * installation. The Rooms presentation is replaced by the Conversation
- * surface; room source/API/data stays in place (deletion is a separately
- * gated decommission slice).
+ * installation. The Conversation surface is the sole module; the old Rooms
+ * presentation/source/API is decommissioned (ADR-0043).
  */
 import type { Page } from "./nav.js";
 
@@ -32,7 +31,7 @@ export const WORKBENCH_MODULES: readonly WorkbenchModule[] = [
     label: "Conversations",
     navOrder: 0,
     page: "conversations",
-    consumes: ["conversations", "room-agents"],
+    consumes: ["conversations", "conversation-agents"],
     emits: [],
   },
 ];

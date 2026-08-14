@@ -9,11 +9,9 @@ import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
 import { createInboxTask } from "./inbox.js";
 import { buildOkfGraph } from "./okf-graph.js";
-import { RoomBroker } from "./room-broker.js";
-import { createRoom, listRoomEvents, listRooms, readRoom } from "./rooms.js";
-import { buildRoomAgentsResponse } from "./room-agents.js";
+import { ConversationBroker } from "./conversation-broker.js";
+import { buildConversationAgentsResponse } from "./conversation-agents.js";
 import { checkActiveGate, formatActiveGateRejection, resolveStewardMentions } from "./conversation-contract.js";
-import { ConversationBroker, } from "./conversation-broker.js";
 import { appendConversationEvent, createConversation, listConversations, readConversation, readConversationEvents, renameConversation, transitionConversationLifecycle, updateConversationAudience, } from "./conversations.js";
 import { classifyRunOutcome, isFallbackEligibleOutcome } from "./model-fallback-outcome.js";
 import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
@@ -91,10 +89,7 @@ export class GatewayServer {
     targetBuilder;
     authToken;
     publicDir;
-    roomBroker;
     conversationBroker;
-    /** Idempotent cleanup callbacks for live room SSE handlers. */
-    roomStreamCleanups = new Set();
     /** Idempotent cleanup callbacks for live conversation SSE handlers. */
     conversationStreamCleanups = new Set();
     shuttingDown = false;
@@ -115,18 +110,11 @@ export class GatewayServer {
         this.authToken = options.authToken ?? "";
         this.publicDir = options.publicDir;
         this.fallbackPolicyLoader = options.fallbackPolicyLoader;
-        // ADR-0041 R1c: the room broker is wired only when all required room
-        // runtime options are present. Room runs use isolated room × agent
-        // clients via the broker, never the global gateway chat client.
+        // C2: the conversation broker is wired with the same runtime options;
+        // conversation runs use isolated conversation × agent clients, never the
+        // global gateway chat client. (The retired room broker is gone — no
+        // Rooms product surface remains, ADR-0043.)
         if (options.vaultRoot !== undefined && options.targetBuilder !== undefined && this.runnableAgents.length > 0) {
-            this.roomBroker = new RoomBroker({
-                vaultRoot: options.vaultRoot,
-                runnableAgents: this.runnableAgents,
-                targetBuilder: options.targetBuilder,
-            });
-            // C2: the conversation broker is a sibling capability wired with the
-            // same runtime options; conversation runs use isolated conversation ×
-            // agent clients, never the global gateway chat client.
             this.conversationBroker = new ConversationBroker({
                 vaultRoot: options.vaultRoot,
                 runnableAgents: this.runnableAgents,
@@ -159,20 +147,12 @@ export class GatewayServer {
     }
     async close() {
         this.shuttingDown = true;
-        // Room runs get their durable cancellation evidence before the server
-        // stops listening.
-        if (this.roomBroker) {
-            await this.roomBroker.close();
-        }
         if (this.conversationBroker) {
             await this.conversationBroker.close();
         }
-        // Persistent room SSE connections would otherwise keep server.close()
-        // waiting forever: wake/end every live room stream, unsubscribe its
-        // broker listeners, and stop its heartbeat. Cleanups are idempotent.
-        for (const cleanup of [...this.roomStreamCleanups]) {
-            cleanup();
-        }
+        // Persistent conversation SSE connections would otherwise keep
+        // server.close() waiting forever: wake/end every live stream, unsubscribe
+        // its broker listeners, and stop its heartbeat. Cleanups are idempotent.
         for (const cleanup of [...this.conversationStreamCleanups]) {
             cleanup();
         }
@@ -238,8 +218,8 @@ export class GatewayServer {
         else if (req.method === "GET" && url.pathname === "/api/chat/agents") {
             await this.handleAgents(res);
         }
-        else if (req.method === "GET" && url.pathname === "/api/room-agents") {
-            await this.handleRoomAgents(res);
+        else if (req.method === "GET" && url.pathname === "/api/conversation-agents") {
+            await this.handleConversationAgents(res);
         }
         else if (req.method === "POST" && url.pathname === "/api/chat/switch") {
             await this.handleSwitch(req, res);
@@ -276,9 +256,6 @@ export class GatewayServer {
         }
         else if (req.method === "POST" && url.pathname === "/api/vault/inbox") {
             await this.handleVaultInbox(req, res);
-        }
-        else if (url.pathname === "/api/rooms" || url.pathname.startsWith("/api/rooms/")) {
-            await this.handleRooms(req, res, url);
         }
         else if (url.pathname === "/api/conversations" || url.pathname.startsWith("/api/conversations/")) {
             await this.handleConversations(req, res, url);
@@ -1255,338 +1232,14 @@ export class GatewayServer {
             }
         }
     }
-    /** Safe durable manifest shape: no absolutePath, no byte counts. */
-    safeRoom(room) {
-        return {
-            id: room.id,
-            path: room.path,
-            title: room.title,
-            createdBy: room.createdBy,
-            participants: room.participants,
-            status: room.status,
-            created: room.created,
-            updated: room.updated,
-        };
-    }
     /**
-     * Map room core/broker errors to HTTP statuses with non-secret messages.
-     * Unknown errors become a generic 500: filesystem paths, raw Pi errors,
-     * stderr, tokens, and tracebacks never reach the response.
+     * GET /api/conversation-agents (ADR-0043 decommission rename of the old
+     * /api/room-agents roster). Deterministic vault-agent roster where
+     * `online` is local installation policy only (membership in the resolved
+     * runnableAgents set) — never Pi/transport/provider presence.
      */
-    roomError(res, error) {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-            this.writeJson(res, 404, { error: "room not found" });
-            return;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.startsWith("Room not found") || message.startsWith("Invalid room id")) {
-            this.writeJson(res, 404, { error: message });
-        }
-        else if (message.startsWith("Unknown room approval")) {
-            this.writeJson(res, 404, { error: message });
-        }
-        else if (message.includes("already active") || message.startsWith("Room already exists") || message.includes("is stale") || message.startsWith("Room broker is closed") || (message.startsWith("Room '") && message.includes("is closed"))) {
-            this.writeJson(res, 409, { error: message });
-        }
-        else if (message.includes("title is required") ||
-            message.includes("text is required") ||
-            message.includes("Invalid agent name") ||
-            message.includes("Duplicate room participant") ||
-            message.includes("not a participant") ||
-            message.includes("not in the runnable set")) {
-            this.writeJson(res, 400, { error: message });
-        }
-        else {
-            this.writeJson(res, 500, { error: "internal error" });
-        }
-    }
-    /**
-     * Room route family (ADR-0041 R1c). Requires the wired room broker;
-     * without room capability every room route is a 404.
-     */
-    async handleRooms(req, res, url) {
-        if (!this.roomBroker || !this.vaultRoot) {
-            this.writeJson(res, 404, { error: "not found" });
-            return;
-        }
-        const segments = url.pathname.split("/").filter((segment) => segment !== "");
-        // segments: ["api", "rooms", roomId?, ...rest]
-        let roomId = "";
-        if (segments.length >= 3) {
-            try {
-                roomId = decodeURIComponent(segments[2] ?? "");
-            }
-            catch {
-                // Malformed percent-encoding: controlled non-secret rejection before
-                // any vault access or event/client side effect.
-                this.writeJson(res, 400, { error: "malformed room id" });
-                return;
-            }
-        }
-        const rest = segments.slice(3);
-        if (segments.length === 2 && req.method === "POST") {
-            await this.handleRoomCreate(req, res);
-        }
-        else if (segments.length === 2 && req.method === "GET") {
-            await this.handleRoomList(res);
-        }
-        else if (segments.length === 3 && req.method === "GET") {
-            await this.handleRoomRead(res, roomId);
-        }
-        else if (rest[0] === "events" && rest.length === 2 && rest[1] === "stream" && req.method === "GET") {
-            await this.handleRoomEventStream(req, res, roomId);
-        }
-        else if (rest[0] === "events" && rest.length === 1 && req.method === "GET") {
-            await this.handleRoomEvents(res, roomId);
-        }
-        else if (rest[0] === "messages" && rest.length === 1 && req.method === "POST") {
-            await this.handleRoomMessage(req, res, roomId);
-        }
-        else if (rest[0] === "abort" && rest.length === 1 && req.method === "POST") {
-            await this.handleRoomAbort(req, res, roomId);
-        }
-        else if (rest[0] === "approve" && rest.length === 1 && req.method === "POST") {
-            await this.handleRoomApprove(req, res, roomId);
-        }
-        else {
-            this.writeJson(res, 404, { error: "not found" });
-        }
-    }
-    async handleRoomCreate(req, res) {
-        const parsed = await this.readJsonBody(req);
-        if (!parsed.ok) {
-            this.writeJson(res, parsed.status, { error: parsed.error });
-            return;
-        }
-        const title = parsed.value.title;
-        if (typeof title !== "string" || title.trim() === "") {
-            this.writeJson(res, 400, { error: "title is required" });
-            return;
-        }
-        const participants = parsed.value.participants;
-        if (participants !== undefined && (!Array.isArray(participants) || participants.some((p) => typeof p !== "string"))) {
-            this.writeJson(res, 400, { error: "participants must be an array of agent name strings" });
-            return;
-        }
-        // R3b-2 participant enforcement: every explicitly supplied participant
-        // must be in this gateway's runnable set, so the offline UI rule is not
-        // bypassable by a direct POST. Reuses the broker's non-secret 400
-        // vocabulary (roomError maps "not in the runnable set" to 400).
-        if (Array.isArray(participants)) {
-            for (const participant of participants) {
-                if (!this.runnableAgents.includes(participant)) {
-                    this.roomError(res, new Error(`Agent '${participant}' is not in the runnable set.`));
-                    return;
-                }
-            }
-        }
-        try {
-            const room = await createRoom({
-                vaultRoot: this.vaultRoot,
-                title,
-                ...(participants !== undefined ? { participants: participants } : {}),
-            });
-            this.writeJson(res, 201, { room: this.safeRoom(room) });
-        }
-        catch (error) {
-            this.roomError(res, error);
-        }
-    }
-    async handleRoomList(res) {
-        try {
-            const rooms = await listRooms({ vaultRoot: this.vaultRoot });
-            this.writeJson(res, 200, { rooms: rooms.map((room) => this.safeRoom(room)) });
-        }
-        catch (error) {
-            this.roomError(res, error);
-        }
-    }
-    /**
-     * GET /api/room-agents (ADR-0041 R3b-2). Deterministic vault-agent roster
-     * where `online` is local installation policy only (membership in the
-     * resolved runnableAgents set) — never Pi/transport/provider presence.
-     */
-    async handleRoomAgents(res) {
-        this.writeJson(res, 200, buildRoomAgentsResponse(this.vaultAgents, this.runnableAgents));
-    }
-    async handleRoomRead(res, roomId) {
-        try {
-            const room = await readRoom({ vaultRoot: this.vaultRoot, roomId });
-            this.writeJson(res, 200, { room: this.safeRoom(room) });
-        }
-        catch (error) {
-            this.roomError(res, error);
-        }
-    }
-    async handleRoomEvents(res, roomId) {
-        try {
-            const events = await listRoomEvents({ vaultRoot: this.vaultRoot, roomId });
-            this.writeJson(res, 200, { events });
-        }
-        catch (error) {
-            this.roomError(res, error);
-        }
-    }
-    /**
-     * Structured steward-to-one-agent mention. The dispatch agent comes only
-     * from body.agent (never text parsing) and is revalidated by the broker
-     * against room participants and local runnable policy. Awaits the bounded
-     * outcome; an active room × agent conflict is a 409 with no queue.
-     */
-    async handleRoomMessage(req, res, roomId) {
-        const parsed = await this.readJsonBody(req);
-        if (!parsed.ok) {
-            this.writeJson(res, parsed.status, { error: parsed.error });
-            return;
-        }
-        const agent = parsed.value.agent;
-        const text = parsed.value.text;
-        if (typeof agent !== "string" || agent.trim() === "") {
-            this.writeJson(res, 400, { error: "agent is required" });
-            return;
-        }
-        if (typeof text !== "string" || text.trim() === "") {
-            this.writeJson(res, 400, { error: "text is required" });
-            return;
-        }
-        try {
-            const outcome = await this.roomBroker.dispatchRoomMention({ roomId, agent, text });
-            this.writeJson(res, 200, { outcome });
-        }
-        catch (error) {
-            this.roomError(res, error);
-        }
-    }
-    /** Abort the active run for exactly this room × agent. */
-    async handleRoomAbort(req, res, roomId) {
-        const parsed = await this.readJsonBody(req);
-        if (!parsed.ok) {
-            this.writeJson(res, parsed.status, { error: parsed.error });
-            return;
-        }
-        const agent = parsed.value.agent;
-        if (typeof agent !== "string" || agent.trim() === "") {
-            this.writeJson(res, 400, { error: "agent is required" });
-            return;
-        }
-        try {
-            const outcome = await this.roomBroker.abort(roomId, agent);
-            this.writeJson(res, 200, { outcome });
-        }
-        catch (error) {
-            this.roomError(res, error);
-        }
-    }
-    /**
-     * Forward an approval response to the exact pending room-agent request.
-     * Exactly one of confirmed, value, or cancelled must be present.
-     */
-    async handleRoomApprove(req, res, roomId) {
-        const parsed = await this.readJsonBody(req);
-        if (!parsed.ok) {
-            this.writeJson(res, parsed.status, { error: parsed.error });
-            return;
-        }
-        const agent = parsed.value.agent;
-        const requestId = parsed.value.request_id;
-        if (typeof agent !== "string" || agent.trim() === "") {
-            this.writeJson(res, 400, { error: "agent is required" });
-            return;
-        }
-        if (typeof requestId !== "string" || requestId === "") {
-            this.writeJson(res, 400, { error: "request_id is required" });
-            return;
-        }
-        const confirmed = parsed.value.confirmed;
-        const value = parsed.value.value;
-        const cancelled = parsed.value.cancelled;
-        let response;
-        if (cancelled === true && confirmed === undefined && value === undefined) {
-            response = { cancelled: true };
-        }
-        else if (typeof confirmed === "boolean" && value === undefined && cancelled === undefined) {
-            response = { confirmed };
-        }
-        else if (typeof value === "string" && confirmed === undefined && cancelled === undefined) {
-            response = { value };
-        }
-        else {
-            this.writeJson(res, 400, { error: "exactly one of confirmed, value, or cancelled is required" });
-            return;
-        }
-        try {
-            this.roomBroker.respondToRoomApproval({ roomId, agent, requestId, response });
-            this.writeJson(res, 200, { ok: true });
-        }
-        catch (error) {
-            this.roomError(res, error);
-        }
-    }
-    /**
-     * Scoped SSE stream for exactly one room: live committed room records as
-     * `room_event`, live pending approvals as `approval`. Historic events are
-     * served by GET .../events; this is a live broker subscription, not
-     * polling and not a replay. Heartbeat + disconnect cleanup required.
-     */
-    async handleRoomEventStream(req, res, roomId) {
-        // Validate the room exists before opening the stream.
-        try {
-            await readRoom({ vaultRoot: this.vaultRoot, roomId });
-        }
-        catch (error) {
-            this.roomError(res, error);
-            return;
-        }
-        res.writeHead(200, {
-            "content-type": "text/event-stream",
-            "cache-control": "no-cache",
-            connection: "keep-alive",
-        });
-        res.flushHeaders?.();
-        const stream = { queue: [], closed: false, waiters: [] };
-        const broker = this.roomBroker;
-        const unsubscribeEvents = broker.onRoomEvent(roomId, (event) => {
-            enqueue(stream, { type: "room_event", data: event });
-        });
-        const unsubscribeApprovals = broker.onRoomApproval(roomId, (approval) => {
-            enqueue(stream, { type: "approval", data: approval });
-        });
-        const heartbeat = setInterval(() => {
-            res.write(": heartbeat\n\n");
-        }, HEARTBEAT_INTERVAL_MS);
-        const cleanup = () => {
-            if (cleaned)
-                return;
-            cleaned = true;
-            clearInterval(heartbeat);
-            unsubscribeEvents();
-            unsubscribeApprovals();
-            this.roomStreamCleanups.delete(cleanup);
-            closeStream(stream);
-        };
-        let cleaned = false;
-        this.roomStreamCleanups.add(cleanup);
-        req.on("close", cleanup);
-        try {
-            while (true) {
-                while (stream.queue.length > 0) {
-                    const event = stream.queue.shift();
-                    if (!event)
-                        break;
-                    this.writeSse(res, event);
-                }
-                if (stream.closed) {
-                    return;
-                }
-                await new Promise((resolve) => {
-                    stream.waiters.push(resolve);
-                });
-            }
-        }
-        finally {
-            cleanup();
-            res.end();
-        }
+    async handleConversationAgents(res) {
+        this.writeJson(res, 200, buildConversationAgentsResponse(this.vaultAgents, this.runnableAgents));
     }
     // -------------------------------------------------------------------------
     // C2 — Conversation API family (ADR-0042, accepted C2 contract §3)
@@ -2255,7 +1908,7 @@ export class GatewayServer {
         });
         // C3-C2: scoped live `approval` frames only (never durable, never
         // replayed in historic events); delivered only to this conversation's
-        // attached/live stream. Mirrors the room stream.
+        // attached/live stream.
         const unsubscribeApprovals = broker.onConversationApproval(conversationId, (approval) => {
             enqueue(stream, { type: "approval", data: approval });
         });

@@ -12,7 +12,7 @@
  * and stateless (no vault write, membership update, dispatch, or session).
  */
 import { parseConversationRecord, type ConversationRecord } from "./conversations.js";
-import type { RoomAgentEntry } from "./rooms.js";
+import type { ConversationAgentEntry } from "./conversation-agents.js";
 
 export interface AttachGate {
   ok: boolean;
@@ -77,7 +77,7 @@ export interface MemberRunnableStatus {
  * member is runnable exactly when the roster has it marked online. This is
  * presentation-only — the authoritative gate is the attach route.
  */
-export function classifyAudienceMembers(audience: readonly string[], roster: readonly RoomAgentEntry[]): MemberRunnableStatus[] {
+export function classifyAudienceMembers(audience: readonly string[], roster: readonly ConversationAgentEntry[]): MemberRunnableStatus[] {
   const online = new Set(roster.filter((entry) => entry.online).map((entry) => entry.name));
   return audience.map((name) => ({ name, runnable: online.has(name) }));
 }

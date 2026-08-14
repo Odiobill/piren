@@ -1,8 +1,8 @@
 import { type BootstrapOptions } from "./bootstrap.js";
 import { type AlertMirrorSenders } from "./alert-mirror.js";
 /**
- * The narrow tool-execution context the `room_mention` tool needs: Pi's
- * documented `ctx.ui.input()` reserved-envelope dialog (ADR-0041 R2b).
+ * The narrow tool-execution context the gated handoff tools need: Pi's
+ * documented `ctx.ui.input()` reserved-envelope dialog (C5-3).
  */
 interface ExtensionToolContext {
     ui?: {

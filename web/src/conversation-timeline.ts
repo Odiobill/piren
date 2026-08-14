@@ -1,7 +1,7 @@
 /**
  * C3-A: immutable Conversation timeline core.
  *
- * Mirrors the accepted room timeline discipline (ADR-0041 R3b-3) over the
+ * Mirrors the accepted conversation timeline discipline over the
  * C2 Conversation event surface: durable historic events are the
  * chronological authority; live SSE frames only append valid records in
  * arrival order; malformed/unknown frames become non-authoritative display

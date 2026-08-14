@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import type { ConversationRecord } from "./conversations";
 import { classifyAudienceMembers } from "./attach";
-import type { RoomAgentEntry } from "./rooms";
+import type { ConversationAgentEntry } from "./conversation-agents";
 import type { ConversationLifecycleAction, LifecycleActionError } from "./conversation-lifecycle";
 import { normalizeConversationTitle, type RenameError } from "./conversation-details";
 import { XIcon } from "./icons";
@@ -48,7 +48,7 @@ export function ConversationDetailsModal({
   onClose,
 }: {
   conversation: ConversationRecord;
-  agents: RoomAgentEntry[];
+  agents: ConversationAgentEntry[];
   lifecyclePhase: "idle" | "busy" | "error";
   lifecycleError: LifecycleActionError | null;
   confirmingArchive: boolean;
@@ -252,7 +252,7 @@ const CONVERSATION_TITLE_MAX_DISPLAY = 120;
  * conversation flow). "Offline" means not locally runnable on this
  * installation (local policy only, never a live probe).
  */
-function AudienceMembers({ audience, agents }: { audience: string[]; agents: RoomAgentEntry[] }) {
+function AudienceMembers({ audience, agents }: { audience: string[]; agents: ConversationAgentEntry[] }) {
   const members = classifyAudienceMembers(audience, agents);
   if (members.length === 0) {
     return <p className="muted">No members yet — mention a locally runnable agent to add one.</p>;

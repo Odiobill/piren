@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { fetchRoomAgents, UnauthorizedError } from "./api";
-import type { RoomAgentEntry } from "./rooms";
+import { fetchConversationAgents, UnauthorizedError } from "./api";
+import type { ConversationAgentEntry } from "./conversation-agents";
 
 /**
  * Read-only agent roster page (ADR-0041 R3b-2.5). Shows the local-policy
- * roster from GET /api/room-agents: online means runnable on this
+ * roster from GET /api/conversation-agents: online means runnable on this
  * installation (never a live probe); offline agents are labelled and
  * explained. Direct chat is NOT implemented here — the entries are
  * non-interactive, and this page never calls the chat API surface,
@@ -14,7 +14,7 @@ export function AgentsView({ token, onUnauthorized }: { token: string; onUnautho
   const [state, setState] = useState<
     | { phase: "loading" }
     | { phase: "error"; message: string }
-    | { phase: "ready"; agents: RoomAgentEntry[] }
+    | { phase: "ready"; agents: ConversationAgentEntry[] }
   >({ phase: "loading" });
 
   useEffect(() => {
@@ -22,7 +22,7 @@ export function AgentsView({ token, onUnauthorized }: { token: string; onUnautho
     const controller = new AbortController();
     (async () => {
       try {
-        const roster = await fetchRoomAgents(token, controller.signal);
+        const roster = await fetchConversationAgents(token, controller.signal);
         if (cancelled) return;
         setState({ phase: "ready", agents: roster.agents });
       } catch (error) {

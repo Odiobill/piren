@@ -6,7 +6,7 @@ import {
   attachConversation,
   ConversationControlHttpError,
   fetchConversation,
-  fetchRoomAgents,
+  fetchConversationAgents,
   LifecycleHttpError,
   RenameHttpError,
   renameConversation,
@@ -35,7 +35,7 @@ import {
 import { formatConversationHash, parseHashRoute, routeToIntent } from "./hash-route";
 import { renameAnnouncement, type RenameError } from "./conversation-details";
 import { InfoIcon, StopIcon } from "./icons";
-import type { RoomAgentEntry } from "./rooms";
+import type { ConversationAgentEntry } from "./conversation-agents";
 import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
@@ -91,7 +91,7 @@ import {
 type LoadState =
   | { phase: "loading" }
   | { phase: "error"; message: string }
-  | { phase: "ready"; agents: RoomAgentEntry[] };
+  | { phase: "ready"; agents: ConversationAgentEntry[] };
 
 type SelectionState =
   | { phase: "none" }
@@ -255,7 +255,7 @@ export function ConversationNavigator({
 
   const loadData = useCallback(
     async (signal: AbortSignal) => {
-      const response = await fetchRoomAgents(token, signal);
+      const response = await fetchConversationAgents(token, signal);
       return { agents: response.agents };
     },
     [token],

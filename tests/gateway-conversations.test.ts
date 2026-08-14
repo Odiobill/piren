@@ -141,9 +141,8 @@ describe("Gateway Conversation API family (C2)", () => {
     expect(body.error).toMatch(/Unrecognized agent/i);
     // No conversation namespace, no event, no dispatch side effect.
     await expect(stat(join(root, "collaboration", "conversations"))).rejects.toThrow();
-    // init scaffolds an EMPTY rooms directory; the failed request must not
-    // have added anything under it.
-    await expect(readdir(join(root, "collaboration", "rooms"))).resolves.toEqual([]);
+    // ADR-0043: the retired Rooms namespace is never scaffolded or written.
+    await expect(stat(join(root, "collaboration", "rooms"))).rejects.toThrow();
   });
 
   it("appends later messages with the same atomic validation and replays prior context", async () => {
@@ -340,11 +339,11 @@ describe("Gateway Conversation API family (C2)", () => {
     expect(read.conversation.audience).toEqual([]);
   });
 
-  it("never writes under collaboration/rooms (sibling namespace only)", async () => {
+  it("never writes under collaboration/rooms (the retired Rooms namespace is absent)", async () => {
     await startServer();
     await createConversationViaApi("Hello @fake");
-    // init scaffolds an empty rooms directory; conversation activity never populates it.
-    await expect(readdir(join(root, "collaboration", "rooms"))).resolves.toEqual([]);
+    // ADR-0043: the Rooms namespace is decommissioned — never scaffolded or written.
+    await expect(stat(join(root, "collaboration", "rooms"))).rejects.toThrow();
     const conversationsDir = await readdir(join(root, "collaboration", "conversations"));
     expect(conversationsDir).toHaveLength(1);
   });
