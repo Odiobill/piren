@@ -86,6 +86,18 @@ describe("R2 run-summary removal and partial-content removal (static)", () => {
     expect(activity).toContain('"is typing…"');
   });
 
+  it("a fresh Conversation attach clears compact dock state before the new selection renders", async () => {
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    const resetStart = navigator.indexOf("function resetApprovalControls()");
+    const resetEnd = navigator.indexOf("function cancelPendingOpen()", resetStart);
+    expect(resetStart).toBeGreaterThanOrEqual(0);
+    expect(resetEnd).toBeGreaterThan(resetStart);
+    // openConversationById calls this synchronous reset before it presents
+    // the attaching/new selection, so a prior Conversation's live status is
+    // never briefly displayed in the new dock.
+    expect(navigator.slice(resetStart, resetEnd)).toContain("setDockRuns([]);");
+  });
+
   it("the dock abort preserves the exact existing agent-scoped route/request and adds no new surface", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     expect(navigator).toContain("abortConversationRun(");
