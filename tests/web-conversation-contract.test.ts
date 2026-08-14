@@ -318,12 +318,19 @@ describe("U3 Discord-like composer surface (static)", () => {
 });
 
 describe("U4 transient live activity surface (static)", () => {
-  it("the timeline shows truthful working/typing language and marks partial replies as transient", async () => {
+  it("the truthful working/typing language lives in the pure activity core and the compact dock (R2: no partial-reply panel in the transcript)", async () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
     const activity = await readFile(join(webSrc, "conversation-activity.ts"), "utf8");
-    expect(timeline).toContain("is working");
-    expect(timeline).toContain("is typing");
-    expect(timeline).toContain("transient");
+    const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
+    // R2 — the labels are rendered in the bottom dock via the pure core; the
+    // transcript no longer hosts a transient panel or partial work content.
+    expect(activity).toContain('"is working…"');
+    expect(activity).toContain('"is typing…"');
+    expect(navigator).toContain("conversationActivityRunStateLabel(run.phase)");
+    expect(navigator).toContain("dock-run-status");
+    expect(timeline).not.toContain("transient-run-panel");
+    expect(timeline).not.toContain("is working");
+    expect(timeline).not.toContain("is typing");
     // Never a read/seen/delivery-to-model claim and never a durable event
     // per token or activity replay from history.
     expect(timeline).not.toMatch(/has read|read receipt|seen by|delivered to model/i);

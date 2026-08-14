@@ -13,30 +13,35 @@ import { describe, expect, it } from "vitest";
 
 const webSrc = join(process.cwd(), "web", "src");
 
-describe("P5 transient run panel (static)", () => {
-  it("the timeline renders an activity-only temporary panel with an accessible labelled abort icon, never an audience-derived run section", async () => {
+describe("P5+R2 transient live run state (static)", () => {
+  it("compact live run state lives in the bottom dock with an accessible labelled abort icon, never a transcript panel or audience-derived run section", async () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    // The panel is transient-activity-driven and identifies the broker agent.
-    expect(timeline).toContain("transient-run-panel");
-    expect(timeline).toContain("activity.runs.length === 0");
-    expect(timeline).toContain("run.agent");
-    expect(timeline).toContain("is working…");
-    expect(timeline).toContain("is typing…");
-    expect(timeline).toContain("Transient — only durable events are saved.");
+    // R2 — the transcript renders NO transient activity panel: the compact
+    // dock state is broker-activity-driven and identifies the exact agent.
+    expect(timeline).not.toContain("transient-run-panel");
+    expect(timeline).not.toContain("ConversationActivityDisplay");
+    expect(navigator).toContain("dock-run-status");
+    expect(navigator).toContain("run.agent");
+    // The truthful working/typing labels come from the pure activity core
+    // (conversationActivityRunStateLabel), never partial work content.
+    expect(navigator).toContain("conversationActivityRunStateLabel(run.phase)");
+    const activity = await readFile(join(webSrc, "conversation-activity.ts"), "utf8");
+    expect(activity).toContain('"is working…"');
+    expect(activity).toContain('"is typing…"');
     // The accessible labelled inline-SVG abort targets the broker-provided
-    // agent only via the existing abort route.
-    expect(timeline).toContain("Abort ${run.agent} run");
-    expect(timeline).toContain("StopIcon");
-    expect(timeline).toContain("onClick={() => onAbortRun(run.agent)}");
-    expect(navigator).toContain("onAbortRun={(agent) => void handleAbort(agent)}");
+    // agent only via the existing abort route, moved into the dock.
+    expect(navigator).toContain("Abort ${run.agent} run");
+    expect(navigator).toContain("StopIcon");
+    expect(navigator).toContain("handleAbort(run.agent)");
+    expect(navigator).toContain("abortConversationRun(");
     // The static audience-derived Active run section is gone.
     expect(navigator).not.toContain("ConversationAbortControls");
     expect(navigator).not.toContain("run-controls");
     expect(navigator).not.toContain("Active run");
   });
 
-  it("the panel clears only on the existing U4 cleanup (no audience guess or history reconstruction)", async () => {
+  it("the compact dock state clears only on the existing U4 cleanup (no audience guess or history reconstruction)", async () => {
     const activity = await readFile(join(webSrc, "conversation-activity.ts"), "utf8");
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
     // The panel reads the broker-authoritative activity state only.

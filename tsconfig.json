@@ -17,5 +17,5 @@
     "rootDir": "."
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["dist", "node_modules", "tests/web-p8-run-summary-integration.test.ts", "tests/web-p8-browser-layout.test.ts", "tests/web-p8-run-summary-surface.test.ts", "tests/web-p8-autoscroll-wiring.test.ts", "tests/web-p8-composer-focus.test.ts", "tests/web-conversation-details-modal.test.ts", "tests/web-conversation-composer.test.ts", "tests/web-p1-conversation-surface.test.ts", "tests/p4-safe-markdown-jsdom.test.ts", "tests/web-conversation-scroll-anchor.test.ts", "tests/web-p6-details-toggle.test.ts", "tests/web-r1-root-scroll.test.ts"]
+  "exclude": ["dist", "node_modules", "tests/web-p8-browser-layout.test.ts", "tests/web-p8-autoscroll-wiring.test.ts", "tests/web-p8-composer-focus.test.ts", "tests/web-conversation-details-modal.test.ts", "tests/web-conversation-composer.test.ts", "tests/web-p1-conversation-surface.test.ts", "tests/p4-safe-markdown-jsdom.test.ts", "tests/web-conversation-scroll-anchor.test.ts", "tests/web-p6-details-toggle.test.ts", "tests/web-r1-root-scroll.test.ts", "tests/web-r2-transient-cleanup.test.ts"]
 }

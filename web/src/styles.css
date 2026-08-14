@@ -1389,52 +1389,37 @@ code {
   word-break: break-word;
 }
 
-/* U4 — transient broker-authoritative activity surface */
-/* P5 — transient U4 activity-only temporary run panel (replaces the static
-   audience-derived Active run section: membership is not active-run authority).
-   Appears only for a valid current working/text_delta frame; clears on the
-   existing settled/terminal/reconnect/history/selection/malformed cleanup. */
-.transient-run-panel {
-  display: grid;
-  gap: 8px;
+/* U4/R2 — broker-authoritative live activity, compact in the bottom dock */
+/* R2 — the transcript renders NO transient activity panel and NO partial work
+   content; the stable bottom dock shows compact source-truthful live state
+   for each currently valid broker-provided run (exact agent + working/typing)
+   with the scoped abort control. Partial/truncation presentation and the
+   old panel are removed; durable replies/terminals are the only visible
+   record of work. */
+.dock-run-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  align-self: center;
 }
 
-.transient-run {
-  display: flex;
+.dock-run {
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
-  border-left-width: 3px;
-  border-left-color: var(--accent);
-  border-radius: 8px;
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
 }
 
-.transient-run-agent {
+.dock-run-agent {
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
-.transient-run-state {
+.dock-run-state {
   font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.transient-run-partial {
-  flex: 1 1 220px;
-  min-width: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  font-size: 0.9rem;
-  color: var(--text);
-}
-
-.transient-run-truncated {
+  font-size: 0.875rem;
   color: var(--muted);
-  font-style: italic;
 }
 
 .transient-run-abort {
@@ -1466,13 +1451,6 @@ code {
   margin: 0;
   color: var(--error);
   font-size: 0.85rem;
-}
-
-.transient-run-note {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.75rem;
 }
 
 /* P3 — message-first transcript (ADR-0043 replaces the bordered Conversation

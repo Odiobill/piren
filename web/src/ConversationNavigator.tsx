@@ -34,7 +34,7 @@ import {
 } from "./conversation-lifecycle";
 import { formatConversationHash, parseHashRoute, routeToIntent } from "./hash-route";
 import { renameAnnouncement, type RenameError } from "./conversation-details";
-import { InfoIcon } from "./icons";
+import { InfoIcon, StopIcon } from "./icons";
 import type { RoomAgentEntry } from "./rooms";
 import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
@@ -46,6 +46,10 @@ import {
   shouldApplyConversationRootScroll,
   type ConversationScrollWiringState,
 } from "./conversation-scroll-wiring";
+import {
+  conversationActivityRunStateLabel,
+  type ConversationCompactActivityRun,
+} from "./conversation-activity";
 
 /**
  * Conversation navigator (C3-A + C4-A + L3): the Conversation Workbench
@@ -155,6 +159,19 @@ export function ConversationNavigator({
   const bumpContentVersion = useCallback(() => setContentVersion((version) => version + 1), []);
   /** P8 (§1): one-shot first-draft-send focus intent for the ACTIVE composer. */
   const [justCreatedFocus, setJustCreatedFocus] = useState(false);
+  /**
+   * R2 — compact source-truthful live run state for the stable bottom dock:
+   * reported by the subscribed timeline (agent + working/typing only, never
+   * partial work content); cleared on every fail-closed cleanup path and on
+   * every fresh open flow. Dock-height changes participate in the existing
+   * content-version anchor wiring so an anchored reader stays at the newest
+   * content immediately above the dock (R1 contract §6).
+   */
+  const [dockRuns, setDockRuns] = useState<ConversationCompactActivityRun[]>([]);
+  const handleActivityChange = useCallback((runs: ConversationCompactActivityRun[]) => setDockRuns(runs), []);
+  useEffect(() => {
+    bumpContentVersion();
+  }, [dockRuns]);
 
   /**
    * R1 — apply the commit-time bottom-anchor decision to the BROWSER ROOT
@@ -226,6 +243,9 @@ export function ConversationNavigator({
     setPendingApprovals([]);
     setApprovalSubmit({ phase: "idle" });
     setAbortState({ phase: "idle" });
+    // R2: the compact dock live state is session-scoped and never survives a
+    // fresh open flow (the timeline also clears it on reread/selection).
+    setDockRuns([]);
   }
 
   /** Invalidate any in-flight open flow (navigation home/back/invalid). */
@@ -700,18 +720,49 @@ export function ConversationNavigator({
                 onUnauthorized={onUnauthorized}
                 onLifecycleTransition={handleLifecycleEvent}
                 onApproval={handleApprovalFrame}
-                onAbortRun={(agent) => void handleAbort(agent)}
-                abortState={abortState}
+                onActivityChange={handleActivityChange}
                 onAppend={bumpContentVersion}
                 onHistoryLoaded={() => {
                   scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
                   bumpContentVersion();
                 }}
               />
-              {/* U3: the composer is the stable bottom dock; messages flow/
-                  scroll in the document above it. U2's composer-right
-                  details action is preserved. */}
+              {/* U3/R2: the composer is the stable bottom dock; messages flow/
+                  scroll in the document above it. U2's composer-right details
+                  action is preserved. R2 — compact source-truthful live run
+                  state (agent + working/typing + scoped abort) renders in the
+                  dock, never as a transcript panel; partial work content is
+                  gone. */}
               <div className="composer-action-row">
+                {dockRuns.length > 0 && (
+                  <div className="dock-run-status" aria-label="Live agent runs" aria-live="polite">
+                    {dockRuns.map((run) => {
+                      const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
+                      const failed = abortState?.phase === "error" && abortState.agent === run.agent;
+                      return (
+                        <div key={run.runId} className={`dock-run dock-run-${run.phase}`}>
+                          <span className="dock-run-agent">{run.agent}</span>
+                          <span className="dock-run-state">{conversationActivityRunStateLabel(run.phase)}</span>
+                          <button
+                            type="button"
+                            className="transient-run-abort"
+                            aria-label={`Abort ${run.agent} run`}
+                            title={`Abort ${run.agent} run`}
+                            disabled={aborting}
+                            onClick={() => void handleAbort(run.agent)}
+                          >
+                            <StopIcon size={14} />
+                          </button>
+                          {failed && (
+                            <p className="transient-run-error" role="alert">
+                              {abortState?.phase === "error" ? abortState.error.message : ""}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 <ConversationComposer
                   mode="active"
                   conversationId={selection.conversation.id}

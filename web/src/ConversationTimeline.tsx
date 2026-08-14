@@ -12,12 +12,18 @@ import {
   type ConversationTimelineItem,
   type ReconnectBudget,
 } from "./conversation-timeline";
-import { applyConversationActivityFrame, clearConversationActivity, emptyConversationActivity, parseConversationActivityFrame, reconcileConversationActivity, type ConversationActivityState } from "./conversation-activity";
-import { captureConversationRunSummary, emptyConversationRunSummaries, type ConversationRunSummary } from "./conversation-summary";
-import { ConversationRunSummaries } from "./conversation-summary-disclosure";
+import {
+  applyConversationActivityFrame,
+  clearConversationActivity,
+  compactActivityRuns,
+  emptyConversationActivity,
+  parseConversationActivityFrame,
+  reconcileConversationActivity,
+  type ConversationActivityState,
+  type ConversationCompactActivityRun,
+} from "./conversation-activity";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
 import type { ConversationReaction } from "./conversation-reactions";
-import { StopIcon } from "./icons";
 import {
   conversationAuthorInitial,
   conversationStatusSymbol,
@@ -60,8 +66,7 @@ export function ConversationTimeline({
   onUnauthorized,
   onLifecycleTransition,
   onApproval,
-  onAbortRun,
-  abortState,
+  onActivityChange,
   draft,
   onAppend,
   onHistoryLoaded,
@@ -75,16 +80,12 @@ export function ConversationTimeline({
   /** C3-C3: forward a scoped live approval frame for the selected conversation. */
   onApproval?: (approval: PendingApproval) => void;
   /**
-   * P5: transient-run abort — the existing abort request for the broker-
-   * provided active agent ONLY (never an audience guess). Absent on
-   * read-only inspection.
+   * R2 — compact source-truthful live run state for the stable bottom dock:
+   * exactly the currently valid broker-provided runs (agent + working/typing
+   * phase); never partial text/truncation. Called on every activity change
+   * and on every fail-closed cleanup path; history never reconstructs it.
    */
-  onAbortRun?: (agent: string) => void;
-  /** P5: current abort control state (busy/error for the active agent). */
-  abortState?:
-    | { phase: "idle" }
-    | { phase: "busy"; agent: string }
-    | { phase: "error"; agent: string; error: { message: string } };
+  onActivityChange?: (runs: ConversationCompactActivityRun[]) => void;
   /**
    * P6: the browser-local empty draft renders the SAME surface component
    * path with zero history: no fetch, no stream, no durable state until the
@@ -106,38 +107,30 @@ export function ConversationTimeline({
   const [announcement, setAnnouncement] = useState("");
   const [attemptKey, setAttemptKey] = useState(0);
   const budgetRef = useRef<ReconnectBudget>(initialReconnectBudget());
-  /** U4: transient broker-authoritative activity (working/typing + partial). */
-  const [activity, setActivity] = useState<ConversationActivityState>(emptyConversationActivity);
   /**
-   * P8 acceptance-blocker fix: the durable-terminal capture must read the
-   * CURRENT validated U4 activity at that exact terminal. The stream effect
-   * does not depend on `activity` (re-renders never replace the live frame
-   * callback), so the render closure would stay stale — and post-commit ref
-   * effects would still miss batched frame bursts (several frames from one
-   * SSE chunk commit together). The ref is therefore updated SYNCHRONOUSLY
-   * at every activity mutation point (updateActivity), so frame order is
-   * exact and the terminal capture always sees the pre-reconcile state.
+   * U4/R2 — broker-authoritative live activity state machine. R2: the
+   * transcript renders NO transient panel and NO partial text — the state is
+   * kept as synchronous protocol state (ref) and its COMPACT projection
+   * (agent + working/typing) is reported to the stable bottom dock via
+   * onActivityChange. The ref is updated SYNCHRONOUSLY at every activity
+   * mutation point (updateActivity), so frame order is exact.
    */
   const activityRef = useRef<ConversationActivityState>(emptyConversationActivity());
-  /** Update the synchronous activity ref AND the render state together. */
-  const updateActivity = useCallback((next: ConversationActivityState) => {
-    activityRef.current = next;
-    setActivity(next);
-  }, []);
-  /**
-   * P8 (§4): collapsed bounded in-memory run summaries for the CURRENT
-   * selected conversation only — captured at the durable terminal from
-   * already-received U4 partial text + terminal truth; never durable,
-   * stored, or reconstructed from history; cleared wherever activity clears.
-   */
-  const [runSummaries, setRunSummaries] = useState<ConversationRunSummary[]>(emptyConversationRunSummaries);
-  /**
-   * P8 acceptance-blocker fix (continued): the terminal capture is computed
-   * SYNCHRONOUSLY against activityRef.current (pre-reconcile) and the latest
-   * in-memory summaries — a deferred functional updater would run at commit
-   * time, AFTER updateActivity cleared the ref, dropping the partial again.
-   */
-  const runSummariesRef = useRef<ConversationRunSummary[]>(emptyConversationRunSummaries());
+  /** Report the compact dock projection on every activity change. */
+  const reportActivity = useCallback(
+    (next: ConversationActivityState) => {
+      onActivityChange?.(compactActivityRuns(next));
+    },
+    [onActivityChange],
+  );
+  /** Update the synchronous activity ref AND report the compact dock state. */
+  const updateActivity = useCallback(
+    (next: ConversationActivityState) => {
+      activityRef.current = next;
+      reportActivity(next);
+    },
+    [reportActivity],
+  );
 
   // The reconnect budget is scoped to the selection lifecycle: selecting a
   // conversation (or a token change) starts a fresh lifecycle. Opening a
@@ -145,14 +138,6 @@ export function ConversationTimeline({
   useEffect(() => {
     budgetRef.current = initialReconnectBudget();
   }, [conversationId, token]);
-
-  // P8 (§5): the retained run summary participates in the commit-time
-  // content-version anchor behavior — updates and clears (and the initial
-  // mount no-op) notify the surface so the anchored reader stays at the
-  // newest content immediately above the dock.
-  useEffect(() => {
-    onAppend?.();
-  }, [runSummaries]);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,14 +153,10 @@ export function ConversationTimeline({
         setPhase({ phase: "ready", items: [], stream: "draft", message: null });
         return;
       }
-      // U4: transient activity/partial replies are cleared before EVERY
-      // whole-history reread (fresh attempt, reconnect, or selection change).
-      // P8 (§4): the in-memory run summaries are session-scoped display state
-      // and are discarded on the same lifecycle paths — never reconstructed.
-      setActivity(emptyConversationActivity());
-      setRunSummaries([]);
-      runSummariesRef.current = [];
-      activityRef.current = emptyConversationActivity();
+      // U4/R2: transient live state is cleared before EVERY whole-history
+      // reread (fresh attempt, reconnect, or selection change) — never
+      // reconstructed from history.
+      updateActivity(emptyConversationActivity());
       setPhase((previous) => (previous.phase === "loading" ? previous : { phase: "loading" }));
       try {
         const events = await fetchConversationEvents(conversationId, token, controller.signal);
@@ -217,10 +198,13 @@ export function ConversationTimeline({
                 } catch {
                   parsed = { ok: false, reason: "malformed frame" };
                 }
+                // R2 — fail-closed live state: malformed/foreign/contradictory
+                // frames clear the dock state; valid frames update the compact
+                // projection (agent + working/typing only). No partial/delta
+                // work content is rendered; the transcript is unchanged, so no
+                // content-version bump is needed here (dock-height changes are
+                // anchored by the surface's dock-state effect).
                 updateActivity(parsed.ok ? applyConversationActivityFrame(activityRef.current, parsed.frame) : clearConversationActivity(activityRef.current));
-                // P6: permissible transient activity appends participate in the
-                // bottom-anchor decision like durable items.
-                onAppend?.();
                 return;
               }
               // C3-C3: a scoped live `approval` frame is forwarded to the
@@ -237,26 +221,11 @@ export function ConversationTimeline({
               }
               const item = conversationFrameToItem(frame);
               if (item === null) return;
-              // U4: reconcile transient activity with DURABLE evidence
-              // (agent_message replaces the partial; runAgent terminals clear
-              // it). History rereads already cleared activity.
+              // U4/R2: reconcile transient live state with DURABLE evidence
+              // (agent_message replaces the run's partial; runAgent terminals
+              // clear it). History rereads already cleared activity. The
+              // reconciliation clears the compact dock projection the same way.
               if (item.type === "event") {
-                // P8 (§4): capture the bounded in-memory run summary at the
-                // durable terminal BEFORE the reconcile clears the run — the
-                // exact broker agent, the already-permitted U4 partial text
-                // (if still displayed), and the truthful terminal state.
-                if (
-                  (item.event.kind === "run_finished" || item.event.kind === "run_cancelled") &&
-                  typeof item.event.runAgent === "string" &&
-                  item.event.runAgent !== ""
-                ) {
-                  runSummariesRef.current = captureConversationRunSummary(
-                    runSummariesRef.current,
-                    activityRef.current,
-                    item.event,
-                  );
-                  setRunSummaries(runSummariesRef.current);
-                }
                 updateActivity(reconcileConversationActivity(activityRef.current, item.event));
               }
               // L3: a durable lifecycle_transition for this selected
@@ -283,13 +252,9 @@ export function ConversationTimeline({
         );
         if (cancelled) return;
         // The stream ended without an abort: disconnect and reconnect via a
-        // fresh whole-history reread + re-subscription (no replay). Transient
-        // activity is cleared on stream end; the P8 in-memory summaries are
-        // discarded on the same path (never reconstructed).
-        setActivity(emptyConversationActivity());
-        setRunSummaries([]);
-        runSummariesRef.current = [];
-        activityRef.current = emptyConversationActivity();
+        // fresh whole-history reread + re-subscription (no replay). R2:
+        // transient live state is cleared on stream end (never reconstructed).
+        updateActivity(emptyConversationActivity());
         setPhase((previous) =>
           previous.phase === "ready"
             ? { ...previous, stream: "disconnected", message: "Live stream ended. Showing last known history." }
@@ -303,10 +268,7 @@ export function ConversationTimeline({
           return;
         }
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setActivity(emptyConversationActivity());
-        setRunSummaries([]);
-        runSummariesRef.current = [];
-        activityRef.current = emptyConversationActivity();
+        updateActivity(emptyConversationActivity());
         setPhase((previous) => {
           if (previous.phase === "ready") {
             return { ...previous, stream: "disconnected", message: error instanceof Error ? error.message : String(error) };
@@ -379,91 +341,14 @@ export function ConversationTimeline({
               Draft — your first message creates this conversation.
             </p>
           )}
-          {/* P8 (§3): durable transcript items first (chronological), then the
-              bounded in-memory run summaries, then the transient activity
-              panel at the chronological bottom immediately above the dock. */}
+          {/* P3: durable transcript items first (chronological). R2: no
+              transient activity panel and no retained run summaries render in
+              the transcript — the durable reply/terminal is the only visible
+              record of work; compact live state lives in the bottom dock. */}
           <ConversationTimelineItems items={phase.items} draft={draft === true} />
-          <ConversationRunSummaries summaries={runSummaries} />
-          <ConversationActivityDisplay
-            activity={activity}
-            {...(onAbortRun !== undefined ? { onAbortRun } : {})}
-            {...(abortState !== undefined ? { abortState } : {})}
-          />
         </>
       )}
     </section>
-  );
-}
-
-/**
- * U4: truthful transient activity surface — `<agent> is working…` only after
- * a durable run_started-backed working frame, `<agent> is typing…` only after
- * a real text delta, and a clearly TRANSIENT bounded partial reply that is
- * replaced by the correlated durable agent_message. Never a read/seen/claim.
- */
-/**
- * P5 — transient U4 activity-only temporary run panel (replaces the static
- * audience-derived Active run section: membership is not active-run
- * authority). It appears ONLY for a valid current broker `conversation_activity`
- * working/text_delta frame, identifies the exact broker-provided agent, shows
- * the real streamed partial text, and clears on the existing settled/
- * terminal/reconnect/history/selection/malformed-frame cleanup. Its abort
- * control is an accessible labelled inline SVG icon that sends the existing
- * abort request for the CURRENT transient agent only. Never an audience guess
- * or history reconstruction; no private reasoning.
- */
-function ConversationActivityDisplay({
-  activity,
-  onAbortRun,
-  abortState,
-}: {
-  activity: ConversationActivityState;
-  onAbortRun?: (agent: string) => void;
-  abortState?:
-    | { phase: "idle" }
-    | { phase: "busy"; agent: string }
-    | { phase: "error"; agent: string; error: { message: string } };
-}) {
-  if (activity.runs.length === 0) return null;
-  return (
-    <div className="transient-run-panel" aria-live="polite" aria-label="Active run">
-      {activity.runs.map((run) => {
-        const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
-        const failed = abortState?.phase === "error" && abortState.agent === run.agent;
-        return (
-          <div key={run.runId} className={`transient-run transient-${run.phase}`}>
-            <span className="transient-run-agent">{run.agent}</span>
-            <span className="transient-run-state">
-              {run.phase === "working" ? "is working…" : "is typing…"}
-            </span>
-            {run.phase === "typing" && run.partial !== "" && (
-              <span className="transient-run-partial">
-                {run.partial}
-                {run.truncated && <span className="transient-run-truncated"> …</span>}
-              </span>
-            )}
-            {onAbortRun !== undefined && (
-              <button
-                type="button"
-                className="transient-run-abort"
-                aria-label={`Abort ${run.agent} run`}
-                title={`Abort ${run.agent} run`}
-                disabled={aborting}
-                onClick={() => onAbortRun(run.agent)}
-              >
-                <StopIcon size={14} />
-              </button>
-            )}
-            {failed && (
-              <p className="transient-run-error" role="alert">
-                {abortState?.phase === "error" ? abortState.error.message : ""}
-              </p>
-            )}
-            <p className="transient-run-note">Transient — only durable events are saved.</p>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 

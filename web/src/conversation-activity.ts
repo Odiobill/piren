@@ -114,6 +114,28 @@ export function emptyConversationActivity(): ConversationActivityState {
   return { runs: [], settled: [] };
 }
 
+/**
+ * R2 — the compact, source-truthful live state surfaced to the bottom dock:
+ * exactly the broker-provided agent and its working/typing phase. Partial
+ * assistant text and truncation stay INSIDE the state machine (protocol
+ * state) and are never rendered by the Workbench.
+ */
+export interface ConversationCompactActivityRun {
+  runId: string;
+  agent: string;
+  phase: "working" | "typing";
+}
+
+/** Project the full transient state down to its compact dock representation. */
+export function compactActivityRuns(state: ConversationActivityState): ConversationCompactActivityRun[] {
+  return state.runs.map((run) => ({ runId: run.runId, agent: run.agent, phase: run.phase }));
+}
+
+/** R2 — truthful compact state label for one live run (agent is shown separately). */
+export function conversationActivityRunStateLabel(phase: "working" | "typing"): string {
+  return phase === "working" ? "is working…" : "is typing…";
+}
+
 /** Fail-closed: remove every transient run while retaining the settled tombstones. */
 export function clearConversationActivity(state: ConversationActivityState): ConversationActivityState {
   return { runs: [], settled: state.settled };
