@@ -55,13 +55,19 @@ describe("P5 full-height chat layout and empty draft (static)", () => {
     expect(styles).not.toContain(".shell-footer");
   });
 
-  it("the selected surface has no bordered/blue-outline container and the workspace owns the pane (single transcript scroll)", async () => {
+  it("the selected surface has no bordered/blue-outline container and the BROWSER root owns the Conversation scroll (R1)", async () => {
     const styles = await readFile(join(webSrc, "styles.css"), "utf8");
     expect(styles).toMatch(/\.conversation-surface\s*\{[\s\S]*outline:\s*none/);
     expect(styles).toMatch(/\.conversation-surface\s*\{[\s\S]*border:\s*0/);
-    expect(styles).toMatch(/\.shell-main\s*>\s*\.workspace-panel-conversations\s*\{[\s\S]*height:\s*100%/);
-    expect(styles).toMatch(/\.shell-main\s*>\s*\.workspace-panel-conversations\s*\{[\s\S]*overflow:\s*hidden/);
-    expect(styles).toMatch(/\.conversation-scroll\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(styles).toMatch(/\.shell-main\s*>\s*\.workspace-panel-conversations\s*\{[\s\S]*width:\s*100%/);
+    // R1 — the Conversation shell unclips to the browser document (no inner
+    // transcript/main-pane scroll owner; no dedicated shell-main scroll area
+    // for the Conversations panel) and the composer/details row is the
+    // stable sticky bottom dock.
+    expect(styles).toMatch(/\.shell\.shell-conversation\s*\{[\s\S]*height:\s*auto/);
+    expect(styles).toMatch(/\.shell\.shell-conversation \.shell-main\s*\{[\s\S]*overflow:\s*visible/);
+    expect(styles).not.toContain(".conversation-scroll");
+    expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*position:\s*sticky/);
     expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*flex:\s*none/);
   });
 

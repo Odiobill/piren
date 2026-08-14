@@ -23,7 +23,7 @@ describe("P6 shared surface path and disabled draft details (static)", () => {
     expect(draftBranch).toContain("<ConversationTimeline");
     expect(draftBranch).toContain("draft");
     expect(draftBranch).toContain("conversation-workspace");
-    expect(draftBranch).toContain("conversation-scroll");
+    expect(draftBranch).not.toContain('className="conversation-scroll"');
     expect(draftBranch).toContain("composer-action-row");
   });
 
@@ -62,8 +62,8 @@ describe("P6 shared surface path and disabled draft details (static)", () => {
   });
 });
 
-describe("P6+P8 single bottom-anchored transcript scroll (static)", () => {
-  it("the navigator wires the pure anchor core to the sole conversation scroll region at COMMIT time (P8 §5)", async () => {
+describe("P6+R1 single bottom-anchored scroll host (static)", () => {
+  it("the navigator wires the pure anchor core to the BROWSER ROOT document at COMMIT time (P8 §5 semantics on the R1 root host)", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     // P8: the anchor decision runs in a commit-time layout effect via the
     // wiring module, using the pure core's pre-commit metrics semantics.
@@ -72,7 +72,11 @@ describe("P6+P8 single bottom-anchored transcript scroll (static)", () => {
     expect(navigator).toContain("EMPTY_CONVERSATION_SCROLL_WIRING");
     expect(navigator).toContain("useLayoutEffect");
     expect(navigator).toContain("contentVersion");
-    expect(navigator).toContain("ref={scrollRef}");
+    // R1 — the anchor decision targets the browser root document, not an
+    // inner transcript ref (no inner scroll owner exists).
+    expect(navigator).toContain("rootScrollTarget");
+    expect(navigator).toContain("document");
+    expect(navigator).not.toContain("ref={scrollRef}");
     expect(navigator).toContain("onAppend={bumpContentVersion}");
     expect(navigator).toContain("initialAnchor: true");
     // No forced jump and no reorder/invention: the anchor core is the only

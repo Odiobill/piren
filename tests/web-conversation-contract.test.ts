@@ -292,13 +292,17 @@ describe("U3 Discord-like composer surface (static)", () => {
     }
   });
 
-  it("the active composer is anchored at the bottom of a full-height workspace with a dedicated scroll region", async () => {
+  it("the active composer is docked at the bottom of the uncarded workspace; the BROWSER root owns the Conversation scroll (R1)", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     const styles = await readFile(join(webSrc, "styles.css"), "utf8");
     expect(navigator).toContain("conversation-workspace");
-    expect(navigator).toContain("conversation-scroll");
-    expect(styles).toMatch(/\.conversation-scroll\s*\{[\s\S]*overflow-y:\s*auto/);
+    // R1 — no inner transcript scroll owner; the dock is the stable sticky
+    // bottom dock and the root document is the sole Conversation scroll host.
+    expect(navigator).not.toContain('className="conversation-scroll"');
+    expect(styles).not.toContain(".conversation-scroll");
+    expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*position:\s*sticky/);
     expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*flex:\s*none/);
+    expect(styles).toMatch(/\.shell\.shell-conversation \.shell-main\s*\{[\s\S]*overflow:\s*visible/);
   });
 
   it("read-only inspection keeps no composer and the details action stays composer-right on active", async () => {

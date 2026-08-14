@@ -85,6 +85,12 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* R1 — desktop chrome height constant (48px logo + 28px header padding +
+     1px border). The conversation shell's sticky sidebar/dock offsets and
+     the workspace min-height use it; the desktop sidebar is hidden at
+     <=560px where the header wraps, so the constant only applies at
+     desktop sizes. */
+  --shell-chrome-height: 77px;
 }
 
 .shell-header {
@@ -758,18 +764,60 @@ code {
 
 /* P1 + P5 — the Conversation surface uses the full available main-pane width
    and the workspace owns the pane: the Conversations panel breaks the calm
-   centered cap (agents/about keep it) and never scrolls independently — the
-   single transcript scroll region reaches the docked composer at the bottom. */
+   centered cap (agents/about keep it) and never scrolls independently. R1 —
+   the BROWSER ROOT document is the sole Conversation scroll host, so the
+   panel adds no height/overflow constraint (no inner scroll owner). */
 .shell-main > .workspace-panel-conversations {
   width: 100%;
   max-width: none;
   margin-inline: 0;
-  height: 100%;
-  overflow: hidden;
 }
 
 .workspace-panel .card + .card {
   margin-top: 16px;
+}
+
+/* R1 — Conversation shell: the BROWSER ROOT document is the sole
+   Conversation scroll host. While the Conversations page is shown the shell
+   stops clipping to the viewport (height auto + overflow visible) so the
+   document grows with the Conversation content and the browser scrollbar
+   sits at the window's right edge; the header and sidebar stay fixed via
+   sticky offsets against --shell-chrome-height; shell-main stops owning a
+   dedicated scroll area (Agents/About keep theirs). The sticky composer/
+   details dock and the uncarded workspace complete the document-flow
+   canvas. */
+.shell.shell-conversation {
+  height: auto;
+  min-height: 100dvh;
+  overflow: visible;
+}
+
+.shell.shell-conversation .shell-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.shell.shell-conversation .shell-body {
+  overflow: visible;
+}
+
+.shell.shell-conversation .sidebar-desktop {
+  position: sticky;
+  top: var(--shell-chrome-height);
+  height: calc(100dvh - var(--shell-chrome-height));
+  align-self: flex-start;
+}
+
+.shell.shell-conversation .shell-main {
+  overflow: visible;
+  padding: 0;
+}
+
+/* Short conversations still pin the dock at the viewport bottom: the
+   workspace spans the full desktop canvas below the fixed header. */
+.shell.shell-conversation .conversation-workspace {
+  min-height: calc(100dvh - var(--shell-chrome-height));
 }
 
 
@@ -1167,31 +1215,35 @@ code {
 
 /* U2 + U3 — details modal + composer dock */
 /* U3 — full-height Conversation workspace: scrollable messages above a
-   bottom-anchored composer bar; desktop chrome stays fixed. */
+   bottom-anchored composer bar; desktop chrome stays fixed. R1 — the
+   conversation flows in the BROWSER ROOT document: the workspace is the
+   uncarded full-width canvas (no artificial padding/margins) and the
+   composer/details action row below is the stable sticky bottom dock. */
 .conversation-workspace {
   display: flex;
   flex-direction: column;
   gap: 12px;
   flex: 1;
   min-height: 0;
-  padding: clamp(14px, 2vw, 22px);
 }
 
-.conversation-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
+/* R1 — the composer/details action row is a stable footer-like dock in
+   normal document flow: sticky at the viewport bottom while the steward
+   reads the Conversation, with an opaque background, top border, and
+   clearance padding so content is neither hidden nor visually confused
+   with the dock. At the document end (max scroll) it settles in flow just
+   below the final timeline content. */
 .composer-action-row {
   flex: none;
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
   display: flex;
   gap: var(--composer-dock-gap);
   align-items: flex-end;
+  padding: 10px clamp(14px, 2vw, 22px) 12px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
 }
 
 .composer-action-row .conversation-composer {

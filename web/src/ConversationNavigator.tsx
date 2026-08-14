@@ -42,6 +42,7 @@ import { ConversationComposer } from "./ConversationComposer";
 import {
   applyConversationScrollWiring,
   EMPTY_CONVERSATION_SCROLL_WIRING,
+  rootScrollTarget,
   type ConversationScrollWiringState,
 } from "./conversation-scroll-wiring";
 
@@ -144,8 +145,6 @@ export function ConversationNavigator({
   /** U2 details modal: open state + the invoking button for focus return. */
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsButtonRef = useRef<HTMLButtonElement>(null);
-  /** P6: the single transcript scroll region (bottom-anchored by default). */
-  const scrollRef = useRef<HTMLDivElement>(null);
   /** P8 (§5): commit-time anchor wiring — pre-commit metrics ref + one-shot
       initial-anchor flag, driven by the content-version layout effect. */
   const scrollWiringRef = useRef<ConversationScrollWiringState>(EMPTY_CONVERSATION_SCROLL_WIRING);
@@ -157,14 +156,15 @@ export function ConversationNavigator({
   const [justCreatedFocus, setJustCreatedFocus] = useState(false);
 
   /**
-   * P8 (§5): apply the commit-time bottom-anchor decision in a layout effect
-   * that runs AFTER React commits appended content (durable items, permitted
-   * activity, retained summaries). The pure core decides with the PRE-commit
-   * metrics ref: anchored reader follows to the new bottom (auto behavior);
-   * an upward reader keeps the exact position; batch appends in one commit
-   * produce one decision; reduced-motion stays auto. The initial whole-history
-   * load forces the bottom. Focus restoration uses preventScroll and the
-   * composer lives outside the scroll region, so it never breaks anchoring.
+   * R1 — apply the commit-time bottom-anchor decision to the BROWSER ROOT
+   * document (the sole Conversation scroll host) in a layout effect that runs
+   * AFTER React commits appended content (durable items, permitted activity,
+   * retained summaries). The pure core decides with the PRE-commit metrics
+   * ref: anchored reader follows to the new bottom (auto behavior); an upward
+   * reader keeps the exact position; batch appends in one commit produce one
+   * decision; reduced-motion stays auto. The initial whole-history load
+   * forces the bottom. Focus restoration uses preventScroll and the composer
+   * dock is sticky outside the reading region, so it never breaks anchoring.
    */
   const surfaceKey =
     selection.phase === "active"
@@ -178,7 +178,7 @@ export function ConversationNavigator({
   }, [surfaceKey]);
 
   useLayoutEffect(() => {
-    const el = scrollRef.current;
+    const el = rootScrollTarget(document);
     if (!el) return;
     scrollWiringRef.current = applyConversationScrollWiring(el, scrollWiringRef.current);
   }, [contentVersion, surfaceKey]);
@@ -679,31 +679,33 @@ export function ConversationNavigator({
         </p>
         {active ? (
           <>
+            {/* R1 — one document-level chronological scroll surface: the
+                timeline and approval cards flow in the BROWSER root document
+                (no inner transcript/main-pane scroll owner); the composer/
+                details dock below is the stable sticky bottom dock. */}
             <div className="conversation-workspace">
-              <div className="conversation-scroll" ref={scrollRef}>
-                <ConversationApprovalCards
-                  approvals={pendingApprovals}
-                  submit={approvalSubmit}
-                  onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
-                />
-                <ConversationTimeline
-                  conversationId={selection.conversation.id}
-                  token={token}
-                  live={true}
-                  onUnauthorized={onUnauthorized}
-                  onLifecycleTransition={handleLifecycleEvent}
-                  onApproval={handleApprovalFrame}
-                  onAbortRun={(agent) => void handleAbort(agent)}
-                  abortState={abortState}
-                  onAppend={bumpContentVersion}
-                  onHistoryLoaded={() => {
-                    scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
-                    bumpContentVersion();
-                  }}
-                />
-              </div>
-              {/* U3: the composer is anchored at the bottom of the full
-                  workspace; messages flow/scroll above it. U2's composer-right
+              <ConversationApprovalCards
+                approvals={pendingApprovals}
+                submit={approvalSubmit}
+                onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
+              />
+              <ConversationTimeline
+                conversationId={selection.conversation.id}
+                token={token}
+                live={true}
+                onUnauthorized={onUnauthorized}
+                onLifecycleTransition={handleLifecycleEvent}
+                onApproval={handleApprovalFrame}
+                onAbortRun={(agent) => void handleAbort(agent)}
+                abortState={abortState}
+                onAppend={bumpContentVersion}
+                onHistoryLoaded={() => {
+                  scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
+                  bumpContentVersion();
+                }}
+              />
+              {/* U3: the composer is the stable bottom dock; messages flow/
+                  scroll in the document above it. U2's composer-right
                   details action is preserved. */}
               <div className="composer-action-row">
                 <ConversationComposer
@@ -784,22 +786,21 @@ export function ConversationNavigator({
         {announcement}
       </p>
       {notice !== null && <p className="route-notice" role="status">{notice}</p>}
-      {/* P5+P6: the empty draft uses the SAME full-height chat layout, the SAME
-          timeline component path (zero history: no fetch/stream/durable
-          state), and the SAME docked composer as an active Conversation. The
-          shared dock includes the details action DISABLED with a truthful
-          title — no modal, no durable title/state until the first accepted
-          send creates the record. */}
+      {/* P5+P6: the empty draft uses the SAME Conversation workspace path as
+          an active Conversation — the SAME timeline component (zero history:
+          no fetch/stream/durable state) and the SAME stable bottom dock. R1:
+          like active, the draft flows in the BROWSER root document (no inner
+          scroll owner). The shared dock includes the details action DISABLED
+          with a truthful title — no modal, no durable title/state until the
+          first accepted send creates the record. */}
       <div className="conversation-workspace">
-        <div className="conversation-scroll" ref={scrollRef} aria-label="Conversation history">
-          <ConversationTimeline
-            conversationId=""
-            token={token}
-            live={false}
-            onUnauthorized={onUnauthorized}
-            draft
-          />
-        </div>
+        <ConversationTimeline
+          conversationId=""
+          token={token}
+          live={false}
+          onUnauthorized={onUnauthorized}
+          draft
+        />
         <div className="composer-action-row">
           <ConversationComposer
             mode="draft"

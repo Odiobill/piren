@@ -59,7 +59,9 @@ export function AppShell({
   }
 
   return (
-    <div className="shell">
+    <div
+      className={`shell${nav.page === "conversations" ? " shell-conversation" : ""}`}
+    >
       <header className="shell-header">
         <img src={logoUrl} alt="Piren logo" className="shell-logo" width={48} height={48} />
         <div className="shell-heading">

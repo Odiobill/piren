@@ -132,7 +132,11 @@ describe("P1 full-width uncarded conversation surface (static)", () => {
     expect(styles).not.toContain(".card.conversation-workspace");
     expect(styles).toMatch(/\.conversation-surface\s*\{[\s\S]*flex:\s*1[\s\S]*min-height:\s*0/);
     expect(styles).toMatch(/\.conversation-workspace\s*\{[\s\S]*flex:\s*1[\s\S]*min-height:\s*0/);
-    expect(styles).toMatch(/\.conversation-scroll\s*\{[\s\S]*overflow-y:\s*auto/);
+    // R1 — the browser root is the sole Conversation scroll host: the inner
+    // transcript scroll owner is gone and the composer/details row is the
+    // stable sticky bottom dock.
+    expect(styles).not.toContain(".conversation-scroll");
+    expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*position:\s*sticky/);
     expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*flex:\s*none/);
   });
 

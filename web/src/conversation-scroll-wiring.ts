@@ -30,6 +30,19 @@ export interface ConversationScrollTarget {
   scrollTo: (options: { top: number; behavior?: ScrollBehavior }) => void;
 }
 
+/**
+ * R1 — the BROWSER ROOT document is the sole Conversation scroll host: the
+ * conversation surface lives in normal document flow (no inner transcript or
+ * main-pane scroll owner) so the browser scrollbar sits at the window's
+ * right edge. Returns the live root scrolling element (`document.scrollingElement`)
+ * as the anchor target, or null when the document exposes none. The wiring
+ * calls this at commit time and passes the LIVE element to the pure core, so
+ * the pre-append metric semantics are unchanged from the inner-host wiring.
+ */
+export function rootScrollTarget(doc: Document): ConversationScrollTarget | null {
+  return doc.scrollingElement;
+}
+
 export const EMPTY_CONVERSATION_SCROLL_WIRING: ConversationScrollWiringState = { metrics: null, initialAnchor: false };
 
 export function applyConversationScrollWiring(
