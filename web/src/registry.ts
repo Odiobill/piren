@@ -41,7 +41,7 @@ export function getModuleById(id: string): WorkbenchModule | undefined {
   return WORKBENCH_MODULES.find((module) => module.id === id);
 }
 
-/** Resolve the module rendered by a nav page (agents/about are shell pages). */
+/** Resolve the Conversation module; Dashboard is a shell entry surface, not a module. */
 export function moduleForPage(page: Page): WorkbenchModule | undefined {
   return WORKBENCH_MODULES.find((module) => module.page === page);
 }

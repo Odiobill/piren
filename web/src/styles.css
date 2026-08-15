@@ -660,7 +660,7 @@ code {
 
 /* P1 + P5 — the Conversation surface uses the full available main-pane width
    and the workspace owns the pane: the Conversations panel breaks the calm
-   centered cap (agents/about keep it) and never scrolls independently. R1 —
+   centered cap and never scrolls independently. R1 —
    the BROWSER ROOT document is the sole Conversation scroll host, so the
    panel adds no height/overflow constraint (no inner scroll owner). */
 .shell-main > .workspace-panel-conversations {
@@ -679,7 +679,7 @@ code {
    document grows with the Conversation content and the browser scrollbar
    sits at the window's right edge; the header and sidebar stay fixed via
    sticky offsets against --shell-chrome-height; shell-main stops owning a
-   dedicated scroll area (Agents/About keep theirs). The sticky composer/
+   dedicated scroll area. The sticky composer/
    details dock and the uncarded workspace complete the document-flow
    canvas. */
 .shell.shell-conversation {
