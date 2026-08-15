@@ -50,7 +50,7 @@ type TimelinePhase =
   | {
       phase: "ready";
       items: ConversationTimelineItem[];
-      stream: "connecting" | "live" | "disconnected" | "inspection" | "draft";
+      stream: "connecting" | "live" | "disconnected" | "inspection";
       message: string | null;
     };
 
@@ -67,7 +67,6 @@ export function ConversationTimeline({
   onLifecycleTransition,
   onApproval,
   onActivityChange,
-  draft,
   onAppend,
   onHistoryLoaded,
 }: {
@@ -86,12 +85,6 @@ export function ConversationTimeline({
    * and on every fail-closed cleanup path; history never reconstructs it.
    */
   onActivityChange?: (runs: ConversationCompactActivityRun[]) => void;
-  /**
-   * P6: the browser-local empty draft renders the SAME surface component
-   * path with zero history: no fetch, no stream, no durable state until the
-   * first accepted send creates the record.
-   */
-  draft?: boolean;
   /**
    * P6: called after a durable item or permissible transient activity
    * appended at the bottom (anchor decision is applied by the surface).
@@ -146,13 +139,6 @@ export function ConversationTimeline({
     const announce = (item: ConversationTimelineItem) => setAnnouncement(announcementFor(item));
 
     (async () => {
-      // P6: the browser-local empty draft is the SAME surface component path
-      // with zero history — no fetch, no stream, no durable state until the
-      // first accepted send creates the record.
-      if (draft) {
-        setPhase({ phase: "ready", items: [], stream: "draft", message: null });
-        return;
-      }
       // U4/R2: transient live state is cleared before EVERY whole-history
       // reread (fresh attempt, reconnect, or selection change) — never
       // reconstructed from history.
@@ -336,33 +322,23 @@ export function ConversationTimeline({
             </p>
           )}
           {phase.message !== null && phase.stream === "disconnected" && <p className="muted">{phase.message}</p>}
-          {phase.stream === "draft" && (
-            <p className="timeline-status timeline-status-draft">
-              Draft — your first message creates this conversation.
-            </p>
-          )}
           {/* P3: durable transcript items first (chronological). R2: no
               transient activity panel and no retained run summaries render in
               the transcript — the durable reply/terminal is the only visible
               record of work; compact live state lives in the bottom dock. */}
-          <ConversationTimelineItems items={phase.items} draft={draft === true} />
+          <ConversationTimelineItems items={phase.items} />
         </>
       )}
     </section>
   );
 }
 
-function ConversationTimelineItems({ items, draft }: { items: ConversationTimelineItem[]; draft?: boolean }) {
+function ConversationTimelineItems({ items }: { items: ConversationTimelineItem[] }) {
   // P3: the pure durable grouping decides message rows (with their fixed
   // requester status clusters) versus compact evidence/attention rows.
   const rows = groupConversationTranscript(items);
   const content = rows.filter((row) => row.type !== "error");
   if (content.length === 0) {
-    // P6: the browser-local draft has zero history — it renders the same
-    // component path with no placeholder claiming live appends will arrive.
-    if (draft) {
-      return null;
-    }
     return (
       <>
         <p className="muted">No events yet. New conversation events appear here live after attach.</p>

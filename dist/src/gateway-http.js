@@ -12,7 +12,7 @@ import { buildOkfGraph } from "./okf-graph.js";
 import { ConversationBroker } from "./conversation-broker.js";
 import { buildConversationAgentsResponse } from "./conversation-agents.js";
 import { checkActiveGate, formatActiveGateRejection, resolveStewardMentions } from "./conversation-contract.js";
-import { appendConversationEvent, createConversation, listConversations, readConversation, readConversationEvents, renameConversation, transitionConversationLifecycle, updateConversationAudience, } from "./conversations.js";
+import { appendConversationEvent, createConversation, createConversationForAgentStart, listConversations, readConversation, readConversationEvents, renameConversation, transitionConversationLifecycle, updateConversationAudience, } from "./conversations.js";
 import { classifyRunOutcome, isFallbackEligibleOutcome } from "./model-fallback-outcome.js";
 import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
 import { buildModelFallbackNotice, loadAgentFallbackPolicy, splitFallbackModelId, } from "./model-fallback-gateway.js";
@@ -1345,7 +1345,12 @@ export class GatewayServer {
             }
         }
         const rest = segments.slice(3);
-        if (segments.length === 2 && req.method === "POST") {
+        if (segments.length === 3 && segments[2] === "start" && req.method === "POST") {
+            // ADR-0044: the agent-first start route is an exact path, never a
+            // conversation id (P2 neutral ids can never be "start").
+            await this.handleConversationStart(req, res);
+        }
+        else if (segments.length === 2 && req.method === "POST") {
             await this.handleConversationCreate(req, res);
         }
         else if (segments.length === 2 && req.method === "GET") {
@@ -1381,6 +1386,96 @@ export class GatewayServer {
         else {
             this.writeJson(res, 404, { error: "not found" });
         }
+    }
+    /**
+     * ADR-0044: authenticated POST /api/conversations/start — the
+     * gateway-authoritative agent-first Conversation start. Accepts exactly
+     * `{agent}`; rejects missing, non-string, blank, extra-key, malformed,
+     * unknown, excluded, or non-runnable names BEFORE any vault persistence or
+     * broker dispatch, using only the gateway-resolved local runnable set
+     * (never browser state, provider health, or a config reread). Creates the
+     * durable Conversation with `audience: [agent]` and the deterministic
+     * agent-name title, persists the system-authored
+     * `conversation_start_requested` origin event after the manifest and
+     * BEFORE dispatch, publishes that exact committed record to the scoped SSE
+     * stream, then drives the separately typed broker start path (one brief
+     * bounded greeting; no C5 root/handoff authority). Never synthesizes
+     * steward text and never weakens the text-first create route.
+     */
+    async handleConversationStart(req, res) {
+        const parsed = await this.readJsonBody(req);
+        if (!parsed.ok) {
+            this.writeJson(res, parsed.status, { error: parsed.error });
+            return;
+        }
+        const keys = Object.keys(parsed.value);
+        const agent = parsed.value.agent;
+        if (keys.length !== 1 || keys[0] !== "agent" || typeof agent !== "string" || agent.trim() === "") {
+            this.writeJson(res, 400, { error: "conversation start requires exactly one agent name" });
+            return;
+        }
+        if (!this.runnableAgents.includes(agent)) {
+            this.writeJson(res, 400, { error: `Agent '${agent}' is not in the local runnable set.` });
+            return;
+        }
+        let conversation;
+        try {
+            conversation = await createConversationForAgentStart({ vaultRoot: this.vaultRoot, agent });
+        }
+        catch (error) {
+            this.conversationError(res, error);
+            return;
+        }
+        const originBody = `The steward requested starting this conversation with agent '${agent}'.`;
+        const event = await appendConversationEvent({
+            vaultRoot: this.vaultRoot,
+            conversationId: conversation.id,
+            kind: "conversation_start_requested",
+            authorKind: "system",
+            author: "system",
+            body: originBody,
+            nonce: () => randomUUID().slice(0, 8),
+        });
+        // Durable live-event parity (the P5 pattern): publish the exact
+        // just-persisted origin record to scoped live subscribers BEFORE any
+        // broker dispatch. Publication is a contained observability path: it can
+        // never affect persistence, membership, or dispatch.
+        this.conversationBroker.publishConversationEvent(conversation.id, {
+            id: event.id,
+            conversationId: conversation.id,
+            kind: "conversation_start_requested",
+            authorKind: "system",
+            author: "system",
+            created: event.created,
+            sequence: event.sequence,
+            mentions: [],
+            body: originBody,
+            path: event.path,
+        });
+        let outcome;
+        try {
+            outcome = await this.conversationBroker.startConversationAgentRun({
+                conversationId: conversation.id,
+                agent,
+                originEventId: event.id,
+            });
+        }
+        catch (error) {
+            // Only an explicit active-run conflict is a 409; typed launch/ambiguous
+            // outcomes are normal broker results returned in the dispatch entry.
+            const message = error instanceof Error ? error.message : String(error);
+            if (message.includes("already active")) {
+                this.writeJson(res, 409, { error: message });
+                return;
+            }
+            this.conversationError(res, error);
+            return;
+        }
+        this.writeJson(res, 201, {
+            conversation: this.safeConversation(conversation),
+            event: this.safeConversationEvent(event),
+            dispatch: [{ agent, status: outcome.status }],
+        });
     }
     async handleConversationCreate(req, res) {
         const parsed = await this.readJsonBody(req);

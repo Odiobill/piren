@@ -14,38 +14,40 @@ import {
 /**
  * ADR-0041 R3b-2.5: responsive workbench app shell contract.
  * Pure nav-state transitions plus static a11y/behavior guards for the
- * sidebar, mobile drawer, read-only About page, and the stable-workspace
- * rule (ConversationNavigator stays mounted across view switches; a view
- * change never cancels a conversation run or creates client-side truth).
+ * sidebar, mobile drawer, and the stable-workspace rule
+ * (ConversationNavigator stays mounted across view switches; a view change
+ * never cancels a conversation run or creates client-side truth).
+ * ADR-0044: the Dashboard is the default page; the retired Agents/About
+ * pages and their pins are gone (see tests/web-dashboard.test.ts).
  */
 const webSrc = join(process.cwd(), "web", "src");
 
 describe("nav state model (pure)", () => {
-  it("starts on the Conversations page with the drawer closed", () => {
-    expect(initialNavState()).toEqual({ page: "conversations", drawerOpen: false });
+  it("starts on the Dashboard page with the drawer closed", () => {
+    expect(initialNavState()).toEqual({ page: "dashboard", drawerOpen: false });
   });
 
   it("selectPage switches the page and always closes the drawer", () => {
-    const open: NavState = { page: "conversations", drawerOpen: true };
-    expect(selectPage(open, "about")).toEqual({ page: "about", drawerOpen: false });
-    expect(selectPage(initialNavState(), "agents")).toEqual({ page: "agents", drawerOpen: false });
+    const open: NavState = { page: "dashboard", drawerOpen: true };
+    expect(selectPage(open, "conversations")).toEqual({ page: "conversations", drawerOpen: false });
+    expect(selectPage(initialNavState(), "conversations")).toEqual({ page: "conversations", drawerOpen: false });
   });
 
   it("selectPage on the same page with a closed drawer is a no-op", () => {
     const state = initialNavState();
-    expect(selectPage(state, "conversations")).toBe(state);
+    expect(selectPage(state, "dashboard")).toBe(state);
   });
 
   it("toggleDrawer flips and closeDrawer is idempotent", () => {
-    expect(toggleDrawer(initialNavState())).toEqual({ page: "conversations", drawerOpen: true });
-    expect(closeDrawer({ page: "agents", drawerOpen: true })).toEqual({ page: "agents", drawerOpen: false });
+    expect(toggleDrawer(initialNavState())).toEqual({ page: "dashboard", drawerOpen: true });
+    expect(closeDrawer({ page: "conversations", drawerOpen: true })).toEqual({ page: "conversations", drawerOpen: false });
     const closed = initialNavState();
     expect(closeDrawer(closed)).toBe(closed);
   });
 
-  it("exposes exactly the three shell pages", () => {
-    const pages: readonly Page[] = ["conversations", "agents", "about"];
-    expect(pages).toEqual(["conversations", "agents", "about"]);
+  it("exposes exactly the two shell pages", () => {
+    const pages: readonly Page[] = ["dashboard", "conversations"];
+    expect(pages).toEqual(["dashboard", "conversations"]);
   });
 
   it("a nav selection must restore toggle focus exactly when the drawer was open", () => {
@@ -66,26 +68,24 @@ async function readSourceFiles(): Promise<Map<string, string>> {
 }
 
 describe("app shell source surface (static)", () => {
-  it("the sidebar is the conversation switcher with no redundant Conversations nav link and no inline create form", async () => {
+  it("the sidebar is the conversation switcher with the Dashboard nav item and no creation control", async () => {
     const sources = await readSourceFiles();
     const sidebar = sources.get("Sidebar.tsx") ?? "";
-    // U1: the sidebar remains the conversation switcher and creation entry
-    // point, but the standalone "Conversations" nav item is redundant (the
-    // conversation list lives in the sidebar itself) and must be removed.
-    // (Note: `fetchConversations` legitimately contains that substring, so
-    // the pin is the nav-item label, not the bare word.)
+    // U1: the sidebar remains the conversation switcher; the standalone
+    // "Conversations" nav item stays redundant (the list lives in the
+    // sidebar itself). (Note: `fetchConversations` legitimately contains
+    // that substring, so the pin is the nav-item label, not the bare word.)
     expect(sidebar).not.toContain('label: "Conversations"');
     expect(sidebar).not.toContain('{ page: "conversations", label');
-    // Creation entry remains, but it opens the main-window draft template
-    // (home hash) instead of an inline first-message form in the sidebar.
-    expect(sidebar).toContain("+ New conversation");
-    expect(sidebar).toContain('window.location.hash = ""');
+    // ADR-0044: the retired creation button is gone; creation happens only
+    // through the Dashboard's explicit agent-first start.
+    expect(sidebar).not.toContain("startNewConversation");
+    expect(sidebar).not.toContain('window.location.hash = ""');
     expect(sidebar).not.toContain("sidebar-create");
     expect(sidebar).not.toContain("showCreate");
-    // The list fetch and the two remaining pages stay.
+    // The list fetch and the Dashboard nav item stay.
     expect(sidebar).toContain("fetchConversations");
-    expect(sidebar).toContain("Agents");
-    expect(sidebar).toContain("About");
+    expect(sidebar).toContain("Dashboard");
     expect(sidebar).toContain("aria-current");
   });
 
@@ -128,33 +128,6 @@ describe("app shell source surface (static)", () => {
     // The aria contract on the toggle is preserved.
     expect(shell).toContain("aria-expanded");
     expect(shell).toContain('aria-controls="mobile-drawer"');
-  });
-
-  it("About is read-only: no form controls and no configuration wording", async () => {
-    const sources = await readSourceFiles();
-    const about = sources.get("AboutView.tsx") ?? "";
-    expect(about.length).toBeGreaterThan(0);
-    expect(about).not.toMatch(/<input|<select|<textarea|<form/);
-    expect(about).not.toMatch(/thinking|provider|secret|package/);
-    expect(about).toContain("not shown or edited");
-  });
-
-  it("About never claims token readiness is validated before a successful protected request", async () => {
-    const sources = await readSourceFiles();
-    const about = sources.get("AboutView.tsx") ?? "";
-    // The token-ready status must use explicit future/non-validation wording.
-    expect(about).toContain("not yet validated");
-    // The ambiguous already-validated phrasing is forbidden.
-    expect(about).not.toContain("validated by your first");
-  });
-
-  it("the Agents page renders the roster non-interactively with a chat-unavailable note", async () => {
-    const sources = await readSourceFiles();
-    const agents = sources.get("AgentsView.tsx") ?? "";
-    expect(agents.length).toBeGreaterThan(0);
-    expect(agents).toContain("/api/conversation-agents");
-    expect(agents).toContain("not available");
-    expect(agents).not.toMatch(/onClick|onSubmit|<button/);
   });
 
   it("ConversationNavigator stays mounted across view switches (stable workspace)", async () => {

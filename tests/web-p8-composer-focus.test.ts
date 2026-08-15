@@ -6,17 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationComposer } from "../web/src/ConversationComposer.js";
-import { sendConversationMessage, createConversation } from "../web/src/api.js";
+import { sendConversationMessage } from "../web/src/api.js";
 import type { ConversationAgentEntry } from "../web/src/conversation-agents.js";
-import type { ConversationRecord } from "../web/src/conversations.js";
 
 /**
  * P8 (accepted `conversation-p8-pilot-correction-contract.md` §1) — composer
- * textarea focus restoration ONLY on accepted sends. An accepted ACTIVE send
+ * textarea focus restoration ONLY on accepted sends. An accepted send
  * restores focus to the re-enabled textarea after the busy→false commit with
- * preventScroll; a draft first send is owned by the newly mounted ACTIVE
- * composer via a one-shot `initialFocus` intent; focus is NEVER stolen on
- * validation/API failure, navigation, or a deliberate user focus move.
+ * preventScroll; focus is NEVER stolen on validation/API failure, navigation,
+ * or a deliberate user focus move. ADR-0044 removed the draft first-message
+ * mode and its one-shot `initialFocus` intent.
  */
 
 vi.mock("../web/src/api.js", async (importOriginal) => {
@@ -24,38 +23,19 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
   return {
     ...actual,
     sendConversationMessage: vi.fn(),
-    createConversation: vi.fn(),
   };
 });
 
 const MESSAGE_EVENT = { id: "e1", conversationId: "c1", kind: "steward_message", created: "2026-08-11T00:00:00.000Z" };
-const CONVERSATION: ConversationRecord = {
-  id: "c1",
-  title: "A conversation",
-  path: "collaboration/conversations/c1/index.md",
-  createdBy: "steward",
-  audience: [],
-  status: "open",
-  created: "2026-08-11T00:00:00.000Z",
-  updated: "2026-08-11T00:00:00.000Z",
-};
 const AGENTS: ConversationAgentEntry[] = [{ name: "dipu", online: true }];
 
-function Harness(props: {
-  mode: "draft" | "active";
-  conversationId?: string;
-  initialFocus?: boolean;
-  onCreated?: (conversation: ConversationRecord) => void;
-}): ReactElement {
+function Harness(props: { conversationId: string }): ReactElement {
   return createElement(ConversationComposer, {
-    mode: props.mode,
-    ...(props.conversationId !== undefined ? { conversationId: props.conversationId } : {}),
-    ...(props.initialFocus !== undefined ? { initialFocus: props.initialFocus } : {}),
+    conversationId: props.conversationId,
     token: "test-token",
     agents: AGENTS,
     onUnauthorized: () => {},
     onAnnounce: () => {},
-    ...(props.onCreated !== undefined ? { onCreated: props.onCreated } : {}),
   });
 }
 
@@ -91,9 +71,7 @@ describe("P8 composer focus restoration", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     vi.mocked(sendConversationMessage).mockReset();
-    vi.mocked(createConversation).mockReset();
     vi.mocked(sendConversationMessage).mockResolvedValue({ event: MESSAGE_EVENT });
-    vi.mocked(createConversation).mockResolvedValue({ conversation: CONVERSATION, event: MESSAGE_EVENT });
   });
 
   afterEach(() => {
@@ -105,7 +83,7 @@ describe("P8 composer focus restoration", () => {
   });
 
   it("an accepted ACTIVE send restores focus to the re-enabled textarea after the busy→false commit (RED: no restore today)", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     const input = textarea();
     // Real browsers blur the focused textarea while busy disables it; jsdom
     // cannot blur a disabled element, so model the post-busy focus loss by
@@ -126,7 +104,7 @@ describe("P8 composer focus restoration", () => {
   });
 
   it("a failed ACTIVE send never restores focus", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     const input = textarea();
     await act(async () => typeText(input, "hello"));
 
@@ -142,7 +120,7 @@ describe("P8 composer focus restoration", () => {
   });
 
   it("a deliberate user focus move during the in-flight send wins (never steal focus)", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     const input = textarea();
     const toggle = container.querySelector<HTMLButtonElement>(".composer-submit-toggle");
     expect(toggle).not.toBeNull();
@@ -162,7 +140,7 @@ describe("P8 composer focus restoration", () => {
   });
 
   it("validation rejection never steals focus from another control", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     const input = textarea();
     const toggle = container.querySelector<HTMLButtonElement>(".composer-submit-toggle");
     expect(toggle).not.toBeNull();
@@ -177,40 +155,10 @@ describe("P8 composer focus restoration", () => {
     expect(document.activeElement).toBe(toggle);
   });
 
-  it("the ACTIVE composer with initialFocus focuses its textarea exactly once on mount (RED: no such intent today)", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1", initialFocus: true }));
-    const input = textarea();
-    expect(document.activeElement).toBe(input);
-
-    // Consumed exactly once: after blur, a re-render never re-focuses.
-    await act(() => {
-      input.blur();
-    });
-    expect(document.activeElement).not.toBe(input);
-    await act(async () => {
-      root.render(createElement(Harness, { mode: "active", conversationId: "c1", initialFocus: true }));
-    });
-    expect(document.activeElement).not.toBe(input);
-  });
-
-  it("without initialFocus the active composer never auto-focuses", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+  it("the active composer never auto-focuses on mount (ADR-0044: no initialFocus intent remains)", async () => {
+    render(createElement(Harness, { conversationId: "c1" }));
     expect(document.activeElement).not.toBe(textarea());
   });
 
-  it("the DRAFT composer never steals focus after a successful first send (the active surface owns first-send focus)", async () => {
-    const onCreated = vi.fn();
-    render(createElement(Harness, { mode: "draft", onCreated }));
-    const input = textarea();
-    const toggle = container.querySelector<HTMLButtonElement>(".composer-submit-toggle");
-    expect(toggle).not.toBeNull();
-    await act(async () => typeText(input, "first message"));
-    toggle!.focus();
-    await act(async () => key(input, "Enter"));
-    expect(createConversation).toHaveBeenCalledTimes(1);
-    expect(onCreated).toHaveBeenCalledTimes(1);
-    // The draft never yanks focus back: the navigator's one-shot initialFocus
-    // on the newly mounted ACTIVE composer owns first-send focus.
-    expect(document.activeElement).toBe(toggle);
-  });
+
 });

@@ -97,6 +97,20 @@ export interface ConversationMentionInput {
     /** Prior durable transcript EXCLUDING the current message (durable order). */
     priorEvents: readonly ConversationEventRecord[];
 }
+/**
+ * ADR-0044 — separately typed agent-first start input. Carries NO steward
+ * text and NO transcript: the broker start path never calls
+ * `dispatchConversationMention`, never requires a steward message, and never
+ * becomes a C5 root/workflow run. The origin event id is the durable
+ * `conversation_start_requested` system event persisted by the gateway BEFORE
+ * dispatch; every run event correlates to it.
+ */
+export interface ConversationAgentStartInput {
+    conversationId: string;
+    agent: string;
+    /** Durable conversation_start_requested origin event id (correlation anchor). */
+    originEventId: string;
+}
 export type ConversationDispatchOutcome = {
     status: "completed";
     conversationId: string;
@@ -210,6 +224,17 @@ export declare function buildConversationMentionPrompt(input: {
     /** C5-3: when true (a steward-dispatched ROOT lead), adds only the gate-request capability line. */
     rootHandoffGateRequest?: boolean;
 }): string;
+/**
+ * ADR-0044 — the bounded prompt for the agent-first start run. It asks only
+ * for one brief bounded greeting and to stop; it grants no new authority and
+ * never frames the run as a reply to a steward_message (there is none), never
+ * replays a transcript (a started Conversation has no prior messages), and
+ * never mentions handoffs or workflows (a start run carries no C5 state).
+ */
+export declare function buildConversationAgentStartPrompt(input: {
+    conversationId: string;
+    agent: string;
+}): string;
 /** Render one prior durable event as a compact context line. */
 export declare function conversationEventToContextLine(event: ConversationEventRecord): string;
 /** Select the C2 bounded prior-transcript replay using the accepted C1 core. */
@@ -301,6 +326,20 @@ export declare class ConversationBroker {
      * bounded run evidence only and never rolls the message back.
      */
     dispatchConversationMention(input: ConversationMentionInput): Promise<ConversationDispatchOutcome>;
+    /**
+     * ADR-0044 — dispatch the separately typed agent-first start run. The
+     * durable manifest (audience: [agent]) and the system-authored
+     * `conversation_start_requested` origin event were already persisted by the
+     * gateway (durable-first); the broker records bounded run evidence
+     * correlated to the origin event id and never rolls anything back.
+     *
+     * This entry point deliberately does NOT set `run.c5`: a start run is
+     * neither a C5 root nor a workflow stage, so it never carries the handoff
+     * env flag, can never request the gate or a handoff, and never schedules a
+     * defer-launch edge. It shares only the private isolated-run/evidence
+     * machinery (`reserveRun`/`executeConversationRun`) with mention dispatch.
+     */
+    startConversationAgentRun(input: ConversationAgentStartInput): Promise<ConversationDispatchOutcome>;
     /** C5-1 sequential defer-launch: launch a deferred handoff child only after a `completed` source terminal. */
     private maybeLaunchDeferredChild;
     private reserveRun;

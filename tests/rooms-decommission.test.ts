@@ -121,7 +121,9 @@ describe("Rooms decommission: web + source surface (RED)", () => {
   });
 
   it("the workbench roster consumers use the neutral conversation-agents module and type", async () => {
-    for (const name of ["AgentsView.tsx", "ConversationNavigator.tsx", "ConversationComposer.tsx", "ConversationDetailsModal.tsx", "attach.ts", "conversation-autocomplete.ts", "ParticipantPicker.tsx"]) {
+    // ADR-0044: the retired AgentsView page is gone; the Dashboard is the
+    // roster consumer.
+    for (const name of ["DashboardView.tsx", "ConversationNavigator.tsx", "ConversationComposer.tsx", "ConversationDetailsModal.tsx", "attach.ts", "conversation-autocomplete.ts", "ParticipantPicker.tsx"]) {
       const content = await readFile(join(webSrc, name), "utf8");
       expect(content, name).not.toContain("./rooms");
     }

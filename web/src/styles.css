@@ -391,6 +391,81 @@ code {
   font-size: 0.8125rem;
 }
 
+/* ADR-0044 Dashboard: the roster rows are explicit selection buttons; the
+   start action and conversation list reuse the existing roster/list visual
+   language. */
+.agent-select {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  color: inherit;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.agent-select:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.agent-select:disabled {
+  cursor: not-allowed;
+}
+
+.agent-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.dashboard-start {
+  margin-top: 14px;
+}
+
+.dashboard-conversation-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.dashboard-conversation-entry {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dashboard-conversation-entry:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+}
+
+.dashboard-conversation-entry span {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-conversation-entry small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.dashboard h2 {
+  margin-top: 0;
+}
+
 /* Conversation timeline (C3-A): shared status-line styles used by the active
    Workbench; the Room-only entry-list rules were removed with the Rooms
    product decommission. */
@@ -414,10 +489,7 @@ code {
   color: var(--error);
 }
 
-/* P6 — the browser-local draft's truthful status line (shared surface path). */
-.timeline-status-draft {
-  color: var(--muted);
-}
+/* P6 — the retired browser-local draft status line was removed (ADR-0044). */
 
 .button-small {
   padding: 4px 10px;
@@ -465,11 +537,6 @@ code {
   font-size: 0.75rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.button-new-conversation {
-  justify-content: center;
-  width: 100%;
 }
 
 .sidebar-conversation-list {
@@ -649,29 +716,7 @@ code {
   min-height: calc(100dvh - var(--shell-chrome-height));
 }
 
-
-.about-list {
-  display: grid;
-  gap: 10px;
-  margin: 0 0 14px;
-}
-
-.about-row {
-  display: flex;
-  gap: 12px;
-}
-
-.about-row dt {
-  flex: none;
-  width: 130px;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.about-row dd {
-  margin: 0;
-  word-break: break-word;
-}
+/* The retired About page styles were removed (ADR-0044). */
 
 @media (max-width: 560px) {
   .sidebar-desktop {
@@ -680,15 +725,6 @@ code {
 
   .nav-toggle {
     display: inline-flex;
-  }
-
-  .about-row {
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .about-row dt {
-    width: auto;
   }
 
   .shell-header {

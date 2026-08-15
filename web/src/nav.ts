@@ -1,9 +1,11 @@
 /**
- * Pure nav-state model for the workbench app shell (ADR-0041 R3b-2.5; C3-A).
- * Framework-free so shell transitions are directly unit-testable. The drawer
- * is a mobile/portrait overlay; selecting a page always closes it.
+ * Pure nav-state model for the workbench app shell (ADR-0041 R3b-2.5; C3-A;
+ * ADR-0044). Framework-free so shell transitions are directly unit-testable.
+ * The drawer is a mobile/portrait overlay; selecting a page always closes it.
+ * ADR-0044: the Dashboard is the default Workbench surface; the retired
+ * Agents/About pages are gone.
  */
-export type Page = "conversations" | "agents" | "about";
+export type Page = "dashboard" | "conversations";
 
 export interface NavState {
   page: Page;
@@ -11,7 +13,7 @@ export interface NavState {
 }
 
 export function initialNavState(): NavState {
-  return { page: "conversations", drawerOpen: false };
+  return { page: "dashboard", drawerOpen: false };
 }
 
 /** Select a page; the drawer always closes (mobile behavior). */

@@ -6,16 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationComposer } from "../web/src/ConversationComposer.js";
-import { createConversation, sendConversationMessage } from "../web/src/api.js";
+import { sendConversationMessage } from "../web/src/api.js";
 import type { ConversationAgentEntry } from "../web/src/conversation-agents.js";
-import type { ConversationRecord } from "../web/src/conversations.js";
 
 /**
  * U3 — Discord-like composer component behavior (jsdom): auto-grow, Enter vs
  * Shift+Enter, IME composition guard, disabled labelled `+` upload
  * affordance with no file capability, runnable-only @ autocomplete with
- * keyboard navigation/selection/dismissal, and the draft persistence
- * boundary (nothing is sent until the first existing raw-text send).
+ * keyboard navigation/selection/dismissal. ADR-0044 removed the draft
+ * first-message mode; the composer appends follow-up messages only.
  */
 
 vi.mock("../web/src/api.js", async (importOriginal) => {
@@ -23,42 +22,27 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
   return {
     ...actual,
     sendConversationMessage: vi.fn(),
-    createConversation: vi.fn(),
   };
 });
 
 const MESSAGE_EVENT = { id: "e1", conversationId: "c1", kind: "steward_message", created: "2026-08-11T00:00:00.000Z" };
-const CONVERSATION: ConversationRecord = {
-  id: "c1",
-  title: "A conversation",
-  path: "collaboration/conversations/c1/index.md",
-  createdBy: "steward",
-  audience: [],
-  status: "open",
-  created: "2026-08-11T00:00:00.000Z",
-  updated: "2026-08-11T00:00:00.000Z",
-};
 const AGENTS: ConversationAgentEntry[] = [
   { name: "dipu", online: true },
   { name: "zora", online: false },
 ];
 
 function Harness(props: {
-  mode: "draft" | "active";
-  conversationId?: string;
+  conversationId: string;
   agents?: ConversationAgentEntry[];
   onAnnounce?: (message: string) => void;
-  onCreated?: (conversation: ConversationRecord) => void;
   onSent?: () => void;
 }): ReactElement {
   return createElement(ConversationComposer, {
-    mode: props.mode,
-    ...(props.conversationId !== undefined ? { conversationId: props.conversationId } : {}),
+    conversationId: props.conversationId,
     token: "test-token",
     agents: props.agents ?? AGENTS,
     onUnauthorized: () => {},
     onAnnounce: props.onAnnounce ?? (() => {}),
-    ...(props.onCreated !== undefined ? { onCreated: props.onCreated } : {}),
     ...(props.onSent !== undefined ? { onSent: props.onSent } : {}),
   });
 }
@@ -95,9 +79,7 @@ describe("ConversationComposer (U3)", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     vi.mocked(sendConversationMessage).mockReset();
-    vi.mocked(createConversation).mockReset();
     vi.mocked(sendConversationMessage).mockResolvedValue({ event: MESSAGE_EVENT });
-    vi.mocked(createConversation).mockResolvedValue({ conversation: CONVERSATION, event: MESSAGE_EVENT });
   });
 
   afterEach(() => {
@@ -109,7 +91,7 @@ describe("ConversationComposer (U3)", () => {
 
   describe("keyboard semantics", () => {
     it("plain Enter submits the raw {text} to the active message route", async () => {
-      render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+      render(createElement(Harness, { conversationId: "c1" }));
       await act(async () => typeText(textarea(), "hello everyone"));
       await act(async () => key(textarea(), "Enter"));
       expect(sendConversationMessage).toHaveBeenCalledTimes(1);
@@ -117,14 +99,14 @@ describe("ConversationComposer (U3)", () => {
     });
 
     it("Shift+Enter inserts a newline and never submits", async () => {
-      render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+      render(createElement(Harness, { conversationId: "c1" }));
       await act(async () => typeText(textarea(), "line one"));
       await act(async () => key(textarea(), "Enter", { shiftKey: true }));
       expect(sendConversationMessage).not.toHaveBeenCalled();
     });
 
     it("IME composition prevents premature submit and a plain Enter submits only after composition ends", async () => {
-      render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+      render(createElement(Harness, { conversationId: "c1" }));
       await act(async () => typeText(textarea(), "漢字"));
       // Composition active: native isComposing + compositionstart lock.
       await act(async () => {
@@ -144,7 +126,7 @@ describe("ConversationComposer (U3)", () => {
 
   describe("auto-grow", () => {
     it("grows the textarea height to the bounded content height and switches to scroll at the cap", async () => {
-      render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+      render(createElement(Harness, { conversationId: "c1" }));
       const input = textarea();
       Object.defineProperty(input, "scrollHeight", { value: 96, configurable: true });
       await act(async () => typeText(input, "two\nlines"));
@@ -160,7 +142,7 @@ describe("ConversationComposer (U3)", () => {
 
   describe("disabled + upload affordance", () => {
     it("is a genuinely disabled labelled button with no file capability", async () => {
-      render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+      render(createElement(Harness, { conversationId: "c1" }));
       const plus = container.querySelector<HTMLButtonElement>(".composer-upload-placeholder");
       expect(plus).not.toBeNull();
       expect(plus!.disabled).toBe(true);
@@ -174,7 +156,7 @@ describe("ConversationComposer (U3)", () => {
 
   describe("@ autocomplete (runnable-only, keyboard navigable)", () => {
     it("offers only the locally runnable roster, navigates, and inserts text on Enter", async () => {
-      render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+      render(createElement(Harness, { conversationId: "c1" }));
       const input = textarea();
 
       // "@d" matches only runnable dipu; offline zora never appears.
@@ -194,7 +176,7 @@ describe("ConversationComposer (U3)", () => {
     });
 
     it("Escape dismisses the popup without inserting and without submitting", async () => {
-      render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+      render(createElement(Harness, { conversationId: "c1" }));
       const input = textarea();
       await act(async () => typeText(input, "@d"));
       expect(container.querySelector('[role="listbox"]')).not.toBeNull();
@@ -205,7 +187,7 @@ describe("ConversationComposer (U3)", () => {
     });
 
     it("typing past the token (after a space) closes the popup", async () => {
-      render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+      render(createElement(Harness, { conversationId: "c1" }));
       const input = textarea();
       await act(async () => typeText(input, "@dipu "));
       expect(container.querySelector('[role="listbox"]')).toBeNull();
@@ -220,7 +202,7 @@ describe("ConversationComposer (U3)", () => {
         { name: "dima", online: true },
         { name: "zora", online: false },
       ];
-      render(createElement(Harness, { mode: "active", conversationId: "c1", agents: roster }));
+      render(createElement(Harness, { conversationId: "c1", agents: roster }));
       const input = textarea();
 
       await act(async () => typeText(input, "@d"));
@@ -244,36 +226,10 @@ describe("ConversationComposer (U3)", () => {
     });
   });
 
-  describe("draft persistence boundary", () => {
-    it("the draft composer sends nothing until its first existing raw-text send succeeds", async () => {
-      const onCreated = vi.fn();
-      render(createElement(Harness, { mode: "draft", onCreated }));
-      const input = textarea();
-      await act(async () => typeText(input, "draft first message"));
-      // Typing a draft persists nothing and sends nothing.
-      expect(createConversation).not.toHaveBeenCalled();
-      expect(onCreated).not.toHaveBeenCalled();
-      // Enter (or the Send button) performs the existing first-message
-      // activation with the raw text only.
-      await act(async () => key(input, "Enter"));
-      expect(createConversation).toHaveBeenCalledTimes(1);
-      expect(createConversation).toHaveBeenCalledWith("test-token", "draft first message");
-      expect(onCreated).toHaveBeenCalledWith(CONVERSATION);
-    });
-
-    it("an empty draft does not create anything", async () => {
-      render(createElement(Harness, { mode: "draft" }));
-      const input = textarea();
-      await act(async () => typeText(input, "   "));
-      await act(async () => key(input, "Enter"));
-      expect(createConversation).not.toHaveBeenCalled();
-    });
-  });
-
   describe("P2 gateway-truth refresh hook (onSent)", () => {
     it("fires onSent exactly once after an accepted active send and never on failure", async () => {
       const onSent = vi.fn();
-      render(createElement(Harness, { mode: "active", conversationId: "c1", onSent }));
+      render(createElement(Harness, { conversationId: "c1", onSent }));
       const input = textarea();
 
       await act(async () => typeText(input, "hello"));
@@ -291,7 +247,7 @@ describe("ConversationComposer (U3)", () => {
 
     it("fires no onSent when a mention completion is chosen instead of a submit", async () => {
       const onSent = vi.fn();
-      render(createElement(Harness, { mode: "active", conversationId: "c1", onSent }));
+      render(createElement(Harness, { conversationId: "c1", onSent }));
       const input = textarea();
       await act(async () => typeText(input, "@d"));
       await act(async () => key(input, "Enter"));

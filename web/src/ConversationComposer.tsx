@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { createConversation, sendConversationMessage, UnauthorizedError } from "./api";
+import { sendConversationMessage, UnauthorizedError } from "./api";
 import {
   clampComposerHeight,
   COMPOSER_MAX_HEIGHT_PX,
@@ -18,22 +18,21 @@ import {
   nextCompletionIndex,
 } from "./conversation-autocomplete";
 import { ReturnKeyIcon } from "./icons";
-import type { ConversationRecord } from "./conversations";
 import type { ConversationAgentEntry } from "./conversation-agents";
 
 /**
  * U3 + P1 — Discord-like Conversation composer (accepted 0.2.0 UX plan §U3
  * and the P1 submit-shortcut contract).
  *
- * One comfortable composer powers both the ACTIVE conversation surface and
- * the browser-local draft's first-message surface. It auto-grows, carries a
- * clean one-line dock (disabled labelled `+` upload affordance left,
- * textarea middle, compact submit-shortcut icon right), and submits only on
- * the page-local selected policy: Enter to send (Shift+Enter newline) or
- * Ctrl+Enter to send (Enter newline; Ctrl+Enter sends). Any IME/composition
- * state always prevents a premature submit. The submit policy is component
- * state only — it never sends, persists, changes the URL, the gateway, the
- * agent, the Conversation, or browser storage, and a fresh mount resets it.
+ * One comfortable composer powers the ACTIVE conversation surface. It
+ * auto-grows, carries a clean one-line dock (disabled labelled `+` upload
+ * affordance left, textarea middle, compact submit-shortcut icon right), and
+ * submits only on the page-local selected policy: Enter to send (Shift+Enter
+ * newline) or Ctrl+Enter to send (Enter newline; Ctrl+Enter sends). Any
+ * IME/composition state always prevents a premature submit. The submit
+ * policy is component state only — it never sends, persists, changes the
+ * URL, the gateway, the agent, the Conversation, or browser storage, and a
+ * fresh mount resets it.
  *
  * The `@` convenience list offers ONLY locally runnable agents from the
  * current roster (keyboard navigable, text-only insertion). The browser never
@@ -42,43 +41,33 @@ import type { ConversationAgentEntry } from "./conversation-agents";
  * mentions (C1 server authority), rejecting invalid mentions atomically.
  *
  * Submission is truthful: busy disables the controls, bounded errors stay
- * visible (role=status), and there is no hidden retry/queue/fallback. A draft
- * persists NOTHING until its first raw-text send succeeds.
+ * visible (role=status), and there is no hidden retry/queue/fallback.
+ * ADR-0044: the browser-local draft first-message mode is REMOVED — new
+ * Conversations start only through the Dashboard's explicit agent-first
+ * start; this composer appends follow-up messages to an attached
+ * Conversation.
  */
 export function ConversationComposer({
-  mode,
   conversationId,
   token,
   agents,
   onUnauthorized,
   onAnnounce,
-  onCreated,
   onSent,
-  initialFocus,
 }: {
-  mode: "draft" | "active";
-  /** Active surface only: the selected durable conversation. */
-  conversationId?: string;
+  /** The selected durable conversation (active surface). */
+  conversationId: string;
   token: string;
   /** Current locally runnable roster (autocomplete convenience list only). */
   agents: readonly ConversationAgentEntry[];
   onUnauthorized: () => void;
   onAnnounce: (message: string) => void;
-  /** Draft mode only: called with the created conversation after its first send. */
-  onCreated?: (conversation: ConversationRecord) => void;
   /**
    * P2 active surface only: called after an accepted send so the navigator
    * can refresh the list/selected manifest from existing gateway reads.
    * Never called on a bounded failure or for a mention-completion insertion.
    */
   onSent?: () => void;
-  /**
-   * P8 (§1): one-shot focus intent consumed EXACTLY once on mount — set by
-   * the navigator ONLY for the draft-first-send -> active transition. Never
-   * set for navigation, reselect, modal/lifecycle/approval paths, or a
-   * deliberate user focus change.
-   */
-  initialFocus?: boolean;
 }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
@@ -92,13 +81,11 @@ export function ConversationComposer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const pendingCaretRef = useRef<number | null>(null);
-  /** P8 (§1): consumed-exactly-once guard for the one-shot initialFocus intent. */
-  const initialFocusConsumedRef = useRef(false);
-  /** P8 (§1): restore-focus intent set ONLY after an accepted ACTIVE send. */
+  /** P8 (§1): restore-focus intent set ONLY after an accepted send. */
   const restoreFocusRef = useRef(false);
   /** P8 (§1): the focused element when the send started (deliberate-focus guard). */
   const activeAtSubmitRef = useRef<Element | null>(null);
-  const inputId = mode === "draft" ? "conversation-draft-message" : `conversation-message-${conversationId ?? "active"}`;
+  const inputId = `conversation-message-${conversationId}`;
   const popupId = `${inputId}-mention-popup`;
 
   // Caret-local @ trigger over the current draft text (never a text scan).
@@ -121,22 +108,13 @@ export function ConversationComposer({
     setActiveIndex(0);
   }, [mentionOpen, matches.length]);
 
-  // P8 (§1): the one-shot first-draft-send focus intent, consumed exactly once
-  // after mount (the navigator clears the prop on the next commit).
-  useEffect(() => {
-    if (initialFocus !== true || initialFocusConsumedRef.current) return;
-    initialFocusConsumedRef.current = true;
-    inputRef.current?.focus({ preventScroll: true });
-  }, [initialFocus]);
-
-  // P8 (§1): restore textarea focus after an ACCEPTED ACTIVE send, deferred to
+  // P8 (§1): restore textarea focus after an ACCEPTED send, deferred to
   // the commit that re-enables the textarea (busy -> false). Never fires for a
-  // rejected/failed send (no intent), never in draft mode (the active surface
-  // owns first-send focus), and never over a deliberate user focus move (the
-  // activeElement guard). preventScroll keeps the transcript/dock position.
+  // rejected/failed send (no intent) and never over a deliberate user focus
+  // move (the activeElement guard). preventScroll keeps the transcript/dock
+  // position.
   useEffect(() => {
     if (busy) return;
-    if (mode !== "active") return;
     if (!restoreFocusRef.current) return;
     restoreFocusRef.current = false;
     const input = inputRef.current;
@@ -145,7 +123,7 @@ export function ConversationComposer({
     const submitTarget = activeAtSubmitRef.current;
     if (active !== document.body && active !== input && active !== submitTarget) return;
     input.focus({ preventScroll: true });
-  }, [busy, mode]);
+  }, [busy]);
 
   // Auto-grow: content height bounded by the composer range; scrolls once capped.
   useEffect(() => {
@@ -188,7 +166,7 @@ export function ConversationComposer({
   async function handleSubmit() {
     const validation = validateConversationText(text);
     if (!validation.ok) {
-      setError(mode === "draft" ? "Enter the first message to start the conversation." : "Enter a message first.");
+      setError("Enter a message first.");
       // P8 (§1): a rejected send never moves focus (the textarea already owns
       // it when the user pressed Enter; the error is announced via role=status).
       return;
@@ -202,22 +180,14 @@ export function ConversationComposer({
       // The browser sends ONLY the existing raw {text} body; the gateway
       // alone parses/validates mentions and rejects invalid ones atomically.
       const raw = toConversationMessageRequest(text).text;
-      if (mode === "active" && conversationId !== undefined) {
-        await sendConversationMessage(conversationId, raw, token);
-      } else {
-        const created = await createConversation(token, raw);
-        onCreated?.(created.conversation);
-      }
+      await sendConversationMessage(conversationId, raw, token);
       // Quiet success: durable events arrive via the live stream / re-gate.
       // The composer only clears its input; the P2 navigator refresh is a
       // separate gateway-truth read (onSent), never an optimistic write.
       setText("");
       setCaret(0);
-      // P8 (§1): only an ACCEPTED ACTIVE send requests focus restoration; the
-      // draft first send is owned by the navigator's one-shot initialFocus.
-      if (mode === "active") {
-        restoreFocusRef.current = true;
-      }
+      // P8 (§1): only an ACCEPTED send requests focus restoration.
+      restoreFocusRef.current = true;
       onSent?.();
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
@@ -298,7 +268,7 @@ export function ConversationComposer({
         </button>
         <div className="composer-input-wrap">
           <label className="sr-only" htmlFor={inputId}>
-            {mode === "draft" ? "First message" : "Message"}
+            Message
           </label>
           <textarea
             id={inputId}
@@ -318,7 +288,7 @@ export function ConversationComposer({
             onCompositionEnd={() => {
               composingRef.current = false;
             }}
-            placeholder={mode === "draft" ? "Write the first message…" : "Write a message…"}
+            placeholder="Write a message…"
             rows={1}
             disabled={busy}
             aria-autocomplete="list"

@@ -4,61 +4,39 @@ import { describe, expect, it } from "vitest";
 
 /**
  * P6 — web surface corrections (accepted `conversation-p6-pilot-correction-contract.md`):
- * (1) active + draft share the SAME Conversation workspace/timeline component
- * path, with a disabled docked `Conversation details` action in the draft
- * (truthful accessible name/title, no modal/click, no durable state);
  * (2) composer dock geometry driven by one shared token set; (3) the single
  * transcript scroll is bottom-anchored via the pure anchor core, preserving an
  * upward reader's position; (4) no new storage/polling/endpoints/SSE surface.
+ * ADR-0044 removed the empty-draft shared surface (item 1), so those pins
+ * moved to the removal pins in tests/web-dashboard.test.ts.
  */
 
 const webSrc = join(process.cwd(), "web", "src");
 
-describe("P6 shared surface path and disabled draft details (static)", () => {
-  it("the active and empty draft render the SAME Conversation timeline component path inside the same workspace", async () => {
+describe("P6 no-selection surface (ADR-0044)", () => {
+  it("the no-selection surface has no timeline, no composer, and no details action", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    const draftBranch = navigator.slice(navigator.indexOf('aria-label="New conversation"'), navigator.length);
-    // The draft renders the SAME ConversationTimeline component (draft mode),
-    // not a bespoke bare scroll div.
-    expect(draftBranch).toContain("<ConversationTimeline");
-    expect(draftBranch).toContain("draft");
-    expect(draftBranch).toContain("conversation-workspace");
-    expect(draftBranch).not.toContain('className="conversation-scroll"');
-    expect(draftBranch).toContain("composer-action-row");
+    const placeholder = navigator.slice(navigator.indexOf("No conversation selected"));
+    expect(placeholder.length).toBeGreaterThan(0);
+    expect(navigator).not.toContain('aria-label="New conversation"');
+    expect(navigator).not.toContain('mode="draft"');
+    expect(navigator).not.toContain("conversation-draft");
+    expect(navigator).not.toContain('className="conversation-scroll"');
   });
 
-  it("the timeline's draft mode has zero history: no fetch, no stream, no durable state", async () => {
+  it("the timeline has no draft mode (no zero-history early return)", async () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
-    expect(timeline).toContain("if (draft) {");
-    expect(timeline).toContain('stream: "draft"');
-    expect(timeline).toContain('setPhase({ phase: "ready", items: [], stream: "draft", message: null })');
-    // The draft early-return sits BEFORE the whole-history fetch and the live
-    // stream subscription in the same mount effect (match the calls, not the
-    // import line).
-    const draftIndex = timeline.indexOf("      if (draft) {");
-    const fetchIndex = timeline.indexOf("await fetchConversationEvents(");
-    const streamIndex = timeline.indexOf("await streamConversationEvents(");
-    expect(draftIndex).toBeGreaterThanOrEqual(0);
-    expect(fetchIndex).toBeGreaterThan(draftIndex);
-    expect(streamIndex).toBeGreaterThan(draftIndex);
+    expect(timeline).not.toContain("if (draft) {");
+    expect(timeline).not.toContain('stream: "draft"');
+    expect(timeline).not.toContain("draft");
   });
 
-  it("the draft dock carries the details action disabled with a truthful accessible reason and no click", async () => {
+  it("the details action is always enabled (no disabled draft variant)", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    const draftBranch = navigator.slice(navigator.indexOf('aria-label="New conversation"'), navigator.length);
-    expect(draftBranch).toContain("<DetailsToggleButton");
-    expect(draftBranch).toContain("disabled");
-    expect(draftBranch).toContain("title=\"Conversation details become available after the first message is sent\"");
-    // No modal/click path in the draft dock: the disabled button carries no
-    // onClick handler there.
-    const draftButtonStart = draftBranch.indexOf("<DetailsToggleButton");
-    expect(draftButtonStart).toBeGreaterThanOrEqual(0);
-    expect(draftBranch.slice(draftButtonStart, draftButtonStart + 400)).not.toContain("onClick");
-    // The shared button renders disabled + title and keeps the accessible name.
     const button = navigator.slice(navigator.indexOf("function DetailsToggleButton"), navigator.indexOf("function ConversationApprovalCards"));
-    expect(button).toContain("aria-label=\"Conversation details\"");
-    expect(button).toContain("disabled={disabled}");
-    expect(button).toContain("title={title}");
+    expect(button).toContain('aria-label="Conversation details"');
+    expect(button).not.toContain("disabled={disabled}");
+    expect(button).not.toContain("title={title}");
   });
 });
 

@@ -12,7 +12,7 @@
  * compact conversation id pattern `^[a-z0-9][a-z0-9-]*$`. Any other hash
  * (empty -> home; anything else -> invalid) is handled by the caller: an
  * invalid route fails truthfully to the Conversation list with a bounded
- * message and never performs a request, creates a draft, dispatches, or
+ * message and never performs a request, dispatches, or
  * mutates a Conversation.
  */
 

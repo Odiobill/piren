@@ -44,6 +44,12 @@ export const CONVERSATION_EVENT_KINDS = [
   // previous/new bounded titles. Additive and backwards-compatible like the
   // lifecycle kind.
   "conversation_renamed",
+  // ADR-0044: additive system-authored origin kind for the agent-first
+  // Conversation start. Exactly one per started Conversation, persisted after
+  // the manifest and BEFORE dispatch; it is the durable origin/correlation
+  // anchor for the greeting run's run_started/agent_message/terminal events.
+  // It is never a steward_message and carries no steward-authored text.
+  "conversation_start_requested",
 ] as const;
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 
@@ -365,12 +371,22 @@ function parseConversationManifest(content: string, path: string, expectedId: st
   };
 }
 
-/** Create + activate a Conversation from its first message (atomic no-clobber). */
-export async function createConversation(options: CreateConversationOptions): Promise<CreateConversationResult> {
-  const text = typeof options.text === "string" ? options.text : "";
-  if (text.trim() === "") {
-    throw new Error("Conversation first message text is required.");
-  }
+/**
+ * Shared durable creation boundary (P2 neutral id, atomic no-clobber manifest,
+ * bounded collision retry). The caller derives the deterministic title from
+ * the SAME creation clock and supplies the already-shaped audience; audience
+ * entries are re-validated here fail-closed before any durable write.
+ */
+async function createConversationRecord(options: {
+  vaultRoot: string;
+  /** Deterministic title derivation from the single creation clock (never an LLM). */
+  deriveTitle: (createdDate: Date) => string;
+  audience: readonly string[];
+  now?: () => Date;
+  nonce?: () => string;
+  suffix?: () => string;
+  io?: ConversationWriteIo;
+}): Promise<CreateConversationResult> {
   const audience = [...options.audience];
   for (const name of audience) {
     if (!AGENT_NAME_PATTERN.test(name)) {
@@ -390,6 +406,7 @@ export async function createConversation(options: CreateConversationOptions): Pr
   // the existing safe 409 collision result — no overwrite, event,
   // membership, or dispatch for a failed candidate.
   const suffix = options.suffix ?? randomConversationSuffix;
+  const title = options.deriveTitle(createdDate);
 
   let id = "";
   let bytes = 0;
@@ -401,7 +418,7 @@ export async function createConversation(options: CreateConversationOptions): Pr
     assertInside(root, conversationDir);
 
     await mkdir(join(conversationDir, "events"), { recursive: true });
-    const manifest = renderConversationManifest({ id, title: conversationTitleFromText(text, createdDate), audience, status: "open", timestamp: created });
+    const manifest = renderConversationManifest({ id, title, audience, status: "open", timestamp: created });
     const absolutePath = join(conversationDir, "index.md");
     try {
       bytes = await atomicCreateNoClobber(absolutePath, manifest, options.io ?? NODE_CONVERSATION_WRITE_IO, options.now ?? (() => new Date()), options.nonce);
@@ -419,7 +436,7 @@ export async function createConversation(options: CreateConversationOptions): Pr
 
   return {
     id,
-    title: conversationTitleFromText(text, createdDate),
+    title,
     audience,
     status: "open",
     createdBy: "steward",
@@ -429,6 +446,65 @@ export async function createConversation(options: CreateConversationOptions): Pr
     absolutePath: join(root, "collaboration", "conversations", id, "index.md"),
     bytes,
   };
+}
+
+/** Create + activate a Conversation from its first message (atomic no-clobber). */
+export async function createConversation(options: CreateConversationOptions): Promise<CreateConversationResult> {
+  const text = typeof options.text === "string" ? options.text : "";
+  if (text.trim() === "") {
+    throw new Error("Conversation first message text is required.");
+  }
+  return createConversationRecord({
+    vaultRoot: options.vaultRoot,
+    deriveTitle: (createdDate) => conversationTitleFromText(text, createdDate),
+    audience: options.audience,
+    ...(options.now !== undefined ? { now: options.now } : {}),
+    ...(options.nonce !== undefined ? { nonce: options.nonce } : {}),
+    ...(options.suffix !== undefined ? { suffix: options.suffix } : {}),
+    ...(options.io !== undefined ? { io: options.io } : {}),
+  });
+}
+
+export interface CreateConversationForAgentStartOptions {
+  vaultRoot: string;
+  /**
+   * The steward-selected agent (validated against the local runnable set by
+   * the gateway BEFORE this call). Must be a lowercase-kebab agent name.
+   */
+  agent: string;
+  now?: () => Date;
+  nonce?: () => string;
+  /** P2 deterministic suffix seam for tests ONLY (see CreateConversationOptions). */
+  suffix?: () => string;
+  io?: ConversationWriteIo;
+}
+
+/**
+ * ADR-0044 — narrow durable agent-first start creation path. Creates an open
+ * Conversation with `audience: [agent]` and the deterministic title
+ * `Conversation with <agent>` (the validated agent name, never LLM- or
+ * text-derived). No steward text exists on this path: the durable origin is
+ * the additive system-authored `conversation_start_requested` event appended
+ * by the caller AFTER the manifest and BEFORE dispatch. This helper never
+ * dispatches, never appends events, and does not weaken the text-first
+ * `createConversation` API.
+ */
+export async function createConversationForAgentStart(
+  options: CreateConversationForAgentStartOptions,
+): Promise<CreateConversationResult> {
+  if (!AGENT_NAME_PATTERN.test(options.agent)) {
+    throw new Error(`Invalid conversation agent name: '${options.agent}'.`);
+  }
+  const title = `Conversation with ${options.agent}`;
+  return createConversationRecord({
+    vaultRoot: options.vaultRoot,
+    deriveTitle: () => title,
+    audience: [options.agent],
+    ...(options.now !== undefined ? { now: options.now } : {}),
+    ...(options.nonce !== undefined ? { nonce: options.nonce } : {}),
+    ...(options.suffix !== undefined ? { suffix: options.suffix } : {}),
+    ...(options.io !== undefined ? { io: options.io } : {}),
+  });
 }
 
 /**

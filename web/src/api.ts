@@ -5,11 +5,10 @@ import {
 } from "./conversation-agents";
 import { createSseParser, type SseFrame } from "./timeline";
 import {
-  parseConversationCreateResponse,
   parseConversationMessageResponse,
-  type ConversationCreateResponse,
   type ConversationMessageResponse,
 } from "./conversation-composer";
+import { parseConversationStartResponse, toConversationStartRequest, type ConversationStartResponse } from "./conversation-start";
 import {
   parseConversationEnvelope,
   parseConversationEvents,
@@ -107,12 +106,16 @@ export async function fetchConversation(id: string, token: string, signal?: Abor
   return parseConversationEnvelope(await res.json());
 }
 
-/** POST /api/conversations — create + activate with the first raw-text message. */
-export async function createConversation(token: string, text: string): Promise<ConversationCreateResponse> {
-  const res = await authedFetch("/api/conversations", token, {
+/**
+ * ADR-0044 — POST /api/conversations/start with exactly `{agent}`: the
+ * explicit steward-selected runnable agent and nothing else. The browser
+ * never derives a recipient, synthesizes text, or passes any other field.
+ */
+export async function startConversation(token: string, agent: string): Promise<ConversationStartResponse> {
+  const res = await authedFetch("/api/conversations/start", token, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(toConversationStartRequest(agent)),
   });
   if (!res.ok) {
     let reason = `HTTP ${res.status}`;
@@ -124,7 +127,7 @@ export async function createConversation(token: string, text: string): Promise<C
     }
     throw new Error(reason);
   }
-  return parseConversationCreateResponse(await res.json());
+  return parseConversationStartResponse(await res.json());
 }
 
 /**

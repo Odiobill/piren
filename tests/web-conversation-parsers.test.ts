@@ -14,7 +14,6 @@ import {
   type AttachGate,
 } from "../web/src/attach.js";
 import {
-  parseConversationCreateResponse,
   parseConversationMessageResponse,
   toConversationMessageRequest,
   validateConversationText,
@@ -191,14 +190,11 @@ describe("raw-text conversation composer core (never derives recipients)", () =>
     expect(() => parseConversationMessageResponse({ event: { id: "x" } })).toThrow();
   });
 
-  it("parses the create response envelope (conversation + event + optional dispatch)", () => {
-    const record = conversation({});
-    const event = { id: "e1", conversationId: record.id, kind: "steward_message", created: "2026-08-06T00:00:00.000Z" };
-    const parsed = parseConversationCreateResponse({ conversation: record, event });
-    expect(parsed.conversation.id).toBe(record.id);
-    expect(parsed.event.kind).toBe("steward_message");
-    expect("dispatch" in parsed).toBe(false);
-    expect(() => parseConversationCreateResponse({ event })).toThrow();
+  it("the composer core has no create-response parser (ADR-0044: the start envelope lives in conversation-start.ts)", () => {
+    // The browser no longer creates conversations via a first raw-text
+    // message; the agent-first start envelope parser is covered by
+    // tests/web-dashboard.test.ts.
+    expect(typeof parseConversationMessageResponse).toBe("function");
   });
 });
 

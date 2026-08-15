@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import logoUrl from "./assets/piren-logo.png";
-import { resolveShellAuth, type AuthInfoResponse } from "./auth";
+import { resolveShellAuth } from "./auth";
 import { fetchAuthInfo } from "./api";
 import { StatusBadge, type ShellPhase } from "./StatusBadge";
 import { AppShell } from "./AppShell";
@@ -31,7 +31,6 @@ type ShellState =
 
 export default function App() {
   const [state, setState] = useState<ShellState>({ phase: "loading" });
-  const [authInfo, setAuthInfo] = useState<AuthInfoResponse | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const tokenInputRef = useRef<HTMLInputElement>(null);
   const [tokenHint, setTokenHint] = useState<string | null>(null);
@@ -43,7 +42,6 @@ export default function App() {
       try {
         const info = await fetchAuthInfo(controller.signal);
         if (cancelled) return;
-        setAuthInfo(info);
         setState(resolveShellAuth(info.authRequired, "").status === "ready-local" ? { phase: "ready-local" } : { phase: "token-needed", token: "" });
       } catch (error) {
         if (cancelled) return;
@@ -107,7 +105,6 @@ export default function App() {
       <AppShell
         phase={state.phase}
         token={state.phase === "ready-local" ? "" : state.token}
-        authRequired={authInfo?.authRequired ?? false}
         onValidated={handleValidated}
         onUnauthorized={handleUnauthorized}
       />

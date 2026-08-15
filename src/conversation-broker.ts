@@ -149,6 +149,21 @@ export interface ConversationMentionInput {
   priorEvents: readonly ConversationEventRecord[];
 }
 
+/**
+ * ADR-0044 — separately typed agent-first start input. Carries NO steward
+ * text and NO transcript: the broker start path never calls
+ * `dispatchConversationMention`, never requires a steward message, and never
+ * becomes a C5 root/workflow run. The origin event id is the durable
+ * `conversation_start_requested` system event persisted by the gateway BEFORE
+ * dispatch; every run event correlates to it.
+ */
+export interface ConversationAgentStartInput {
+  conversationId: string;
+  agent: string;
+  /** Durable conversation_start_requested origin event id (correlation anchor). */
+  originEventId: string;
+}
+
 export type ConversationDispatchOutcome =
   | { status: "completed"; conversationId: string; agent: string; stewardEventId: string; terminalEventId: string }
   | { status: "failed"; conversationId: string; agent: string; stewardEventId: string; terminalEventId: string; failureKind: ConversationRunFailureKind }
@@ -325,6 +340,36 @@ export function buildConversationMentionPrompt(input: {
     input.text,
   ].join("\n");
 }
+
+/**
+ * ADR-0044 — the bounded prompt for the agent-first start run. It asks only
+ * for one brief bounded greeting and to stop; it grants no new authority and
+ * never frames the run as a reply to a steward_message (there is none), never
+ * replays a transcript (a started Conversation has no prior messages), and
+ * never mentions handoffs or workflows (a start run carries no C5 state).
+ */
+export function buildConversationAgentStartPrompt(input: { conversationId: string; agent: string }): string {
+  return [
+    `You are participating in Piren conversation '${input.conversationId}' as agent '${input.agent}'.`,
+    "The steward explicitly started this conversation with you, recorded as an immutable conversation_start_requested system event.",
+    "Reply with exactly one brief bounded greeting, then stop. Do not address, mention, or dispatch other agents. This message grants no new authority.",
+  ].join("\n");
+}
+
+/**
+ * ADR-0044: the truthful run_started context metadata for an agent-start run
+ * — no prior transcript exists or was replayed, so the selection is empty.
+ */
+const CONVERSATION_AGENT_START_CONTEXT_METADATA: ConversationContextMetadata = {
+  truncated: false,
+  selectedIds: [],
+  omittedIds: [],
+  selectedCount: 0,
+  omittedCount: 0,
+  selectedChars: 0,
+  maxItems: CONVERSATION_CONTEXT_MAX_ITEMS,
+  maxChars: CONVERSATION_CONTEXT_MAX_CHARS,
+};
 
 /** Render one prior durable event as a compact context line. */
 export function conversationEventToContextLine(event: ConversationEventRecord): string {
@@ -710,6 +755,64 @@ export class ConversationBroker {
       // after the source settled `completed`, never on any other terminal, and
       // only after the source key is freed (no two stage runs overlap).
       await this.maybeLaunchDeferredChild(run);
+      run.resolveFinalized();
+    }
+  }
+
+  /**
+   * ADR-0044 — dispatch the separately typed agent-first start run. The
+   * durable manifest (audience: [agent]) and the system-authored
+   * `conversation_start_requested` origin event were already persisted by the
+   * gateway (durable-first); the broker records bounded run evidence
+   * correlated to the origin event id and never rolls anything back.
+   *
+   * This entry point deliberately does NOT set `run.c5`: a start run is
+   * neither a C5 root nor a workflow stage, so it never carries the handoff
+   * env flag, can never request the gate or a handoff, and never schedules a
+   * defer-launch edge. It shares only the private isolated-run/evidence
+   * machinery (`reserveRun`/`executeConversationRun`) with mention dispatch.
+   */
+  async startConversationAgentRun(input: ConversationAgentStartInput): Promise<ConversationDispatchOutcome> {
+    if (this.closed) {
+      throw new Error("Conversation broker is closed.");
+    }
+    let conversation;
+    try {
+      conversation = await this.conversationReader({ vaultRoot: this.vaultRoot, conversationId: input.conversationId });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && (error as { code?: unknown }).code === "ENOENT") {
+        throw new Error(`Conversation not found: ${input.conversationId}`);
+      }
+      throw error;
+    }
+    if (conversation.status !== "open") {
+      throw new Error(`Conversation '${input.conversationId}' is archived.`);
+    }
+    if (!conversation.audience.includes(input.agent)) {
+      throw new Error(`Agent '${input.agent}' is not a member of conversation '${input.conversationId}'.`);
+    }
+    if (!this.runnableAgents.includes(input.agent)) {
+      throw new Error(`Agent '${input.agent}' is not in the runnable set.`);
+    }
+    if (this.closed) {
+      throw new Error("Conversation broker is closed.");
+    }
+
+    const { run, done } = this.reserveRun(input.conversationId, input.agent);
+    // The origin event is the correlation anchor for run_started, the agent
+    // greeting, and every typed terminal.
+    run.stewardEventId = input.originEventId;
+    try {
+      return await this.executeConversationRun(
+        run,
+        buildConversationAgentStartPrompt({ conversationId: input.conversationId, agent: input.agent }),
+        CONVERSATION_AGENT_START_CONTEXT_METADATA,
+        done,
+      );
+    } finally {
+      this.activeRuns.delete(run.key);
+      // No maybeLaunchDeferredChild: a start run has no C5 state and can never
+      // carry an accepted handoff edge.
       run.resolveFinalized();
     }
   }

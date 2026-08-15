@@ -24,8 +24,8 @@ import { XIcon } from "./icons";
  * Accessibility: opening moves focus to the title input; focus remains
  * trapped inside; Escape and Close dismiss it; dismissal returns focus to
  * the invoking details button; labels and errors are programmatically
- * associated. A browser-local draft has no durable Conversation, so no
- * details surface exists for it.
+ * associated. The no-selection surface has no selected durable Conversation,
+ * so no details control exists for it.
  *
  * The browser never writes or derives titles, events, lock state, or
  * routing — it sends the raw title to the authenticated route, then the

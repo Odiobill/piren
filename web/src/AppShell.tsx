@@ -5,37 +5,36 @@ import { StatusBadge, type ShellPhase } from "./StatusBadge";
 import { Sidebar } from "./Sidebar";
 import { MobileDrawer } from "./MobileDrawer";
 import { ConversationNavigator } from "./ConversationNavigator";
-import { AgentsView } from "./AgentsView";
-import { AboutView } from "./AboutView";
+import { DashboardView } from "./DashboardView";
+import { formatConversationHash } from "./hash-route";
 
 /**
- * Workbench app shell (ADR-0041 R3b-2.5; C3-A): persistent desktop sidebar
- * (Conversations → Agents roster → About), responsive mobile burger drawer,
- * and a main workspace. ConversationNavigator stays MOUNTED across view
- * switches
- * (hidden toggling) so a view change never cancels a conversation run and
- * never creates client-side delivery/approval/retry truth.
+ * Workbench app shell (ADR-0041 R3b-2.5; C3-A; ADR-0044): persistent desktop
+ * sidebar (Dashboard nav + conversation switcher), responsive mobile burger
+ * drawer, and a main workspace. The Dashboard is the default surface.
+ * ConversationNavigator stays MOUNTED across view switches (hidden toggling)
+ * so a view change never cancels a conversation run and never creates
+ * client-side delivery/approval/retry truth. The retired Agents/About pages
+ * are gone (ADR-0044).
  */
 export function AppShell({
   phase,
   token,
-  authRequired,
   onValidated,
   onUnauthorized,
 }: {
   phase: ShellPhase;
   token: string;
-  authRequired: boolean;
   onValidated: () => void;
   onUnauthorized: () => void;
 }) {
   const [nav, setNav] = useState(initialNavState());
   const toggleRef = useRef<HTMLButtonElement>(null);
-  /** U1/U2: bump when a conversation is created or renamed so the sidebar refreshes. */
+  /** U1/U2/ADR-0044: bump when a conversation is created or renamed so the sidebar and Dashboard refresh. */
   const [conversationsReloadKey, setConversationsReloadKey] = useState(0);
   /**
    * P2: the shell subtitle is contextual while a Conversation is selected
-   * (active or read-only); the draft keeps the calm generic subtitle. Set
+   * (active or read-only); no selection keeps the calm generic subtitle. Set
    * from the navigator's re-gated gateway-authoritative manifest only.
    */
   const [contextualTitle, setContextualTitle] = useState<string | null>(null);
@@ -47,6 +46,19 @@ export function AppShell({
     const restoreFocus = shouldRestoreFocusAfterSelect(nav);
     setNav((previous) => selectPage(previous, page));
     if (restoreFocus) toggleRef.current?.focus();
+  }
+
+  /**
+   * ADR-0044: open one conversation through the existing authoritative
+   * route/attach flow — select the conversations page and write the durable
+   * hash route; the navigator's fresh manifest + attach gate decides the
+   * active/read-only presentation. The sidebar/Dashboard lists refresh from
+   * the existing conversation read.
+   */
+  function handleOpenConversation(id: string) {
+    handleSelect("conversations");
+    handleConversationsChanged();
+    window.location.hash = formatConversationHash(id);
   }
 
   function handleToggleDrawer() {
@@ -136,11 +148,14 @@ export function AppShell({
               onSelectionChange={setContextualTitle}
             />
           </div>
-          <div className="workspace-panel" hidden={nav.page !== "agents"}>
-            <AgentsView token={token} onUnauthorized={onUnauthorized} />
-          </div>
-          <div className="workspace-panel" hidden={nav.page !== "about"}>
-            <AboutView phase={phase} authRequired={authRequired} />
+          <div className="workspace-panel" hidden={nav.page !== "dashboard"}>
+            <DashboardView
+              token={token}
+              onValidated={onValidated}
+              onUnauthorized={onUnauthorized}
+              onOpenConversation={handleOpenConversation}
+              reloadKey={conversationsReloadKey}
+            />
           </div>
         </main>
       </div>

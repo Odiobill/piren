@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
  * P5 — web surface corrections (accepted `conversation-pilot-correction-contract.md`):
  * the transient U4 activity-only temporary run panel with an accessible inline
  * SVG abort (no audience-as-run assertion), the full-height chat layout with
- * no footer/bordered selected container/independent shell scrolling, and the
- * empty draft parity (same chat layout + docked composer, no durable state
- * until the first accepted send).
+ * no footer/bordered selected container/independent shell scrolling.
+ * ADR-0044 removed the empty-draft entry surface, so its parity pin moved to
+ * tests/web-dashboard.test.ts removal pins.
  */
 
 const webSrc = join(process.cwd(), "web", "src");
@@ -52,7 +52,7 @@ describe("P5+R2 transient live run state (static)", () => {
   });
 });
 
-describe("P5 full-height chat layout and empty draft (static)", () => {
+describe("P5 full-height chat layout (static)", () => {
   it("the persistent desktop footer is removed", async () => {
     const shell = await readFile(join(webSrc, "AppShell.tsx"), "utf8");
     const styles = await readFile(join(webSrc, "styles.css"), "utf8");
@@ -92,15 +92,13 @@ describe("P5 full-height chat layout and empty draft (static)", () => {
     expect(styles).toMatch(new RegExp(String.raw`\.composer-action-row\s*\{[\s\S]*align-items:\s*flex-end`));
   });
 
-  it("the empty draft reuses the same chat layout and docked composer with no explanatory card", async () => {
+  it("the no-selection surface has no composer and no creation control (ADR-0044)", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    expect(navigator).toContain('aria-label="New conversation"');
+    expect(navigator).not.toContain('aria-label="New conversation"');
     expect(navigator).not.toContain("conversation-draft");
     expect(navigator).not.toContain("only in this window");
-    // The draft composer sits in the same docked action row as active chats.
-    const draftBranch = navigator.slice(navigator.indexOf('aria-label="New conversation"'), navigator.length);
-    expect(draftBranch).toContain("composer-action-row");
-    expect(draftBranch).toContain('mode="draft"');
+    expect(navigator).not.toContain('mode="draft"');
+    expect(navigator).toContain("No conversation selected");
   });
 
   it("no storage, polling, new endpoints, or unsafe surface in the changed P5 web files", async () => {

@@ -4,18 +4,15 @@ import { formatConversationHash, selectedConversationIdFromHash } from "./hash-r
 import { conversationAudienceSummary, type ConversationRecord } from "./conversations";
 import type { Page } from "./nav";
 
-/** U1: no standalone conversation nav item — the sidebar below is the switcher. */
-const NAV_ITEMS: ReadonlyArray<{ page: Page; label: string }> = [
-  { page: "agents", label: "Agents" },
-  { page: "about", label: "About" },
-];
+/** ADR-0044: the Dashboard is the default surface; the sidebar stays the conversation switcher. */
+const NAV_ITEMS: ReadonlyArray<{ page: Page; label: string }> = [{ page: "dashboard", label: "Dashboard" }];
 
 /**
- * The sidebar is the conversation switcher and the creation entry point.
- * "+ New conversation" opens the local draft template in the main workspace
- * (home hash), never an inline first-message form in the sidebar. The list is
- * re-fetched when `conversationsReloadKey` changes (for example after the
- * main-window draft creates a conversation).
+ * The sidebar is the conversation switcher. Conversation creation happens
+ * ONLY through the Dashboard's explicit agent-first start (ADR-0044); the
+ * retired sidebar creation button is gone. The list is re-fetched when
+ * `conversationsReloadKey` changes (for example after a Dashboard start
+ * or a rename).
  */
 export function Sidebar({
   page,
@@ -78,17 +75,6 @@ export function Sidebar({
     window.location.hash = formatConversationHash(id);
   }
 
-  /**
-   * Open the main-window draft template: switching to the conversations page
-   * and clearing the hash fires a hashchange the navigator resolves to the
-   * home route, discarding any currently selected conversation. The draft is
-   * local-only and ephemeral.
-   */
-  function startNewConversation() {
-    onSelect("conversations");
-    window.location.hash = "";
-  }
-
   return (
     <nav className="sidebar-nav" aria-label="Main">
       <ul className="sidebar-pages">
@@ -108,9 +94,6 @@ export function Sidebar({
       <section className="sidebar-conversations" aria-labelledby="sidebar-conversations-heading">
         <div className="sidebar-section-heading">
           <h2 id="sidebar-conversations-heading">Your conversations</h2>
-          <button type="button" className="button button-primary button-new-conversation" onClick={startNewConversation}>
-            + New conversation
-          </button>
         </div>
         {error !== null && <p className="error-message" role="status">{error}</p>}
         {loading ? <p className="muted">Loading…</p> : conversations.length === 0 ? <p className="muted">No conversations yet.</p> : (

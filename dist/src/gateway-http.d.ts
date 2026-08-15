@@ -215,6 +215,22 @@ export declare class GatewayServer {
     private resolveConversationMentions;
     private dispatchConversationRecipients;
     private handleConversations;
+    /**
+     * ADR-0044: authenticated POST /api/conversations/start — the
+     * gateway-authoritative agent-first Conversation start. Accepts exactly
+     * `{agent}`; rejects missing, non-string, blank, extra-key, malformed,
+     * unknown, excluded, or non-runnable names BEFORE any vault persistence or
+     * broker dispatch, using only the gateway-resolved local runnable set
+     * (never browser state, provider health, or a config reread). Creates the
+     * durable Conversation with `audience: [agent]` and the deterministic
+     * agent-name title, persists the system-authored
+     * `conversation_start_requested` origin event after the manifest and
+     * BEFORE dispatch, publishes that exact committed record to the scoped SSE
+     * stream, then drives the separately typed broker start path (one brief
+     * bounded greeting; no C5 root/handoff authority). Never synthesizes
+     * steward text and never weakens the text-first create route.
+     */
+    private handleConversationStart;
     private handleConversationCreate;
     private handleConversationList;
     private handleConversationRead;

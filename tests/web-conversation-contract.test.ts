@@ -68,17 +68,16 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
     expect(getModuleById("rooms")).toBeUndefined();
     expect(getModuleById("chat")).toBeUndefined();
     expect(moduleForPage("conversations")?.id).toBe("conversations");
-    expect(moduleForPage("agents")).toBeUndefined();
-    expect(moduleForPage("about")).toBeUndefined();
+    expect(moduleForPage("dashboard")).toBeUndefined();
   });
 
   it("every registered module page is a real nav page and the nav replaces Rooms", () => {
     for (const module of WORKBENCH_MODULES) {
-      expect(["conversations", "agents", "about"]).toContain(module.page);
+      expect(["conversations", "dashboard"]).toContain(module.page);
     }
-    const pages: readonly Page[] = ["conversations", "agents", "about"];
-    expect(pages).toEqual(["conversations", "agents", "about"]);
-    expect(initialNavState().page).toBe("conversations");
+    const pages: readonly Page[] = ["dashboard", "conversations"];
+    expect(pages).toEqual(["dashboard", "conversations"]);
+    expect(initialNavState().page).toBe("dashboard");
   });
 
   it("the registry module never imports React or performs dynamic discovery", async () => {
@@ -235,22 +234,19 @@ describe("C4-A hash deep links (static)", () => {
   });
 });
 
-describe("U1 local draft surface (static)", () => {
-  it("the default Conversation main surface is the local new-conversation draft template, not the workspace greeting", async () => {
+describe("U1 no-selection surface (ADR-0044)", () => {
+  it("the home Conversation surface is a truthful no-selection placeholder, never a creation entry", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     const composer = await readFile(join(webSrc, "ConversationComposer.tsx"), "utf8");
-    // The old "Your workspace" greeting is gone.
+    // The old "Your workspace" greeting and the retired draft template are gone.
     expect(navigator).not.toContain("Your workspace");
-    // P5: the home surface is the SAME empty full-height chat layout with the
-    // docked draft composer (no separate explanatory card, no durable title/
-    // details/stream/activity/status until the first accepted send).
-    expect(navigator).toContain('aria-label="New conversation"');
+    expect(navigator).not.toContain('aria-label="New conversation"');
     expect(navigator).toContain("conversation-workspace");
-    expect(navigator).toContain("formatConversationHash");
+    expect(navigator).toContain("No conversation selected");
     expect(navigator).not.toContain("conversation-draft");
     expect(navigator).not.toContain("only in this window");
-    expect(composer).toContain("First message");
-    expect(composer).toContain("createConversation");
+    expect(composer).not.toContain("First message");
+    expect(composer).not.toContain("createConversation");
   });
 });
 
@@ -307,8 +303,8 @@ describe("U3 Discord-like composer surface (static)", () => {
 
   it("read-only inspection keeps no composer and the details action stays composer-right on active", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    // The composer appears only in the active branch and the draft surface;
-    // the read-only attach-banner section never renders it.
+    // The composer appears only in the active branch; the read-only
+    // attach-banner section never renders it.
     const banner = navigator.slice(navigator.indexOf("attach-banner"), navigator.indexOf("inspection-actions"));
     expect(banner).not.toContain("ConversationComposer");
     // U2's composer-right details placement is preserved on the active surface.

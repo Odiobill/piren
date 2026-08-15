@@ -15,8 +15,9 @@ import type { ConversationEventRecord } from "../web/src/conversations.js";
  *   - mirror title validation for the truthful Save-disable rule;
  *   - an accessible focus-managed details modal with the metadata +
  *     Archive/Reopen controls relocated inside it, a composer-right details
- *     toggle on the active surface, a minimal inspection action row on
- *     read-only inspection, and NO details surface for a browser-local draft.
+ *     toggle on the active surface, and a minimal inspection action row on
+ *     read-only inspection. ADR-0044: the browser-local draft surface (and
+ *     its disabled details variant) is removed.
  */
 
 const webSrc = join(process.cwd(), "web", "src");
@@ -185,19 +186,19 @@ describe("details modal + toggle surface (static)", () => {
     expect(navigator).toContain("ConversationDetailsModal");
   });
 
-  it("a browser-local draft has no details surface (modal renders only for a selected conversation)", async () => {
+  it("the no-selection surface has no details surface (modal renders only for a selected conversation)", async () => {
     const sources = await readSourceFiles();
     const navigator = sources.get("ConversationNavigator.tsx") ?? "";
     // The modal is guarded by detailsOpen and rendered only inside the
-    // active/read-only selection branch; the draft branch never references it.
+    // active/read-only selection branch.
     expect(navigator).toMatch(/detailsOpen\s*&&\s*\(\s*<ConversationDetailsModal/);
-    // P5: the empty draft is the shared full-height chat surface; its branch
-    // never references the details modal (no durable details for a draft).
-    const draftIndex = navigator.indexOf('aria-label="New conversation"');
-    expect(draftIndex).toBeGreaterThan(-1);
-    const draftSection = navigator.slice(draftIndex, draftIndex + 700);
-    expect(draftSection).not.toContain("ConversationDetailsModal");
-    expect(draftSection).not.toContain("Conversation details");
+    // ADR-0044: the retired draft branch is gone; the no-selection
+    // placeholder never references the details modal or its toggle.
+    const placeholderIndex = navigator.indexOf('aria-label="Conversations"');
+    expect(placeholderIndex).toBeGreaterThan(-1);
+    const placeholder = navigator.slice(placeholderIndex, navigator.indexOf("function DetailsToggleButton"));
+    expect(placeholder).not.toContain("ConversationDetailsModal");
+    expect(placeholder).not.toContain("DetailsToggleButton");
   });
 
   it("no storage, forbidden endpoints, or raw internals in the details/rename surface", async () => {

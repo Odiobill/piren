@@ -9,7 +9,7 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationComposer } from "../web/src/ConversationComposer.js";
 import { ConversationDetailsModal } from "../web/src/ConversationDetailsModal.js";
-import { createConversation, sendConversationMessage } from "../web/src/api.js";
+import { sendConversationMessage } from "../web/src/api.js";
 import {
   shouldSubmitForPolicy,
   submitPolicyAccessibleName,
@@ -58,7 +58,6 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
   return {
     ...actual,
     sendConversationMessage: vi.fn(),
-    createConversation: vi.fn(),
   };
 });
 
@@ -230,19 +229,15 @@ describe("P1 submit-shortcut toggle (jsdom component)", () => {
   let root: Root;
 
   function Harness(props: {
-    mode: "draft" | "active";
-    conversationId?: string;
+    conversationId: string;
     onAnnounce?: (message: string) => void;
-    onCreated?: (conversation: ConversationRecord) => void;
   }): ReactElement {
     return createElement(ConversationComposer, {
-      mode: props.mode,
-      ...(props.conversationId !== undefined ? { conversationId: props.conversationId } : {}),
+      conversationId: props.conversationId,
       token: "test-token",
       agents: AGENTS,
       onUnauthorized: () => {},
       onAnnounce: props.onAnnounce ?? (() => {}),
-      ...(props.onCreated !== undefined ? { onCreated: props.onCreated } : {}),
     });
   }
 
@@ -280,9 +275,7 @@ describe("P1 submit-shortcut toggle (jsdom component)", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     vi.mocked(sendConversationMessage).mockReset();
-    vi.mocked(createConversation).mockReset();
     vi.mocked(sendConversationMessage).mockResolvedValue({ event: MESSAGE_EVENT });
-    vi.mocked(createConversation).mockResolvedValue({ conversation: CONVERSATION, event: MESSAGE_EVENT });
   });
 
   afterEach(() => {
@@ -293,7 +286,7 @@ describe("P1 submit-shortcut toggle (jsdom component)", () => {
   });
 
   it("defaults to Enter-to-send: plain Enter submits, Ctrl+Enter inserts a newline", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     const toggleEl = toggle();
     expect(toggleEl.getAttribute("aria-pressed")).toBe("true");
     expect(toggleEl.getAttribute("aria-label")).toBe("Submit with Enter");
@@ -309,7 +302,7 @@ describe("P1 submit-shortcut toggle (jsdom component)", () => {
   });
 
   it("clicking the toggle switches to Ctrl+Enter-to-send with disclosed semantics; Ctrl+Enter submits and plain Enter never submits", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     const toggleEl = toggle();
     act(() => toggleEl.click());
     expect(toggleEl.getAttribute("aria-pressed")).toBe("false");
@@ -331,7 +324,7 @@ describe("P1 submit-shortcut toggle (jsdom component)", () => {
   });
 
   it("IME composition is a hard no-submit condition in Ctrl+Enter mode", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     act(() => toggle().click());
     await act(async () => typeText(textarea(), "漢字"));
     await act(async () => {
@@ -342,12 +335,11 @@ describe("P1 submit-shortcut toggle (jsdom component)", () => {
   });
 
   it("toggling has zero side effects: no send, no create, no storage, no URL change", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     const beforeHash = window.location.hash;
     act(() => toggle().click());
     act(() => toggle().click());
     expect(sendConversationMessage).not.toHaveBeenCalled();
-    expect(createConversation).not.toHaveBeenCalled();
     expect(window.location.hash).toBe(beforeHash);
     // Storage must be untouched where it exists (some jsdom configs expose
     // none at all); the static repo-wide scan forbids any storage API usage
@@ -357,7 +349,7 @@ describe("P1 submit-shortcut toggle (jsdom component)", () => {
   });
 
   it("the submit policy is page-local only: a fresh mount resets to Enter mode", async () => {
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     act(() => toggle().click());
     expect(toggle().getAttribute("aria-pressed")).toBe("false");
 
@@ -365,19 +357,19 @@ describe("P1 submit-shortcut toggle (jsdom component)", () => {
     act(() => {
       root.unmount();
     });
-    render(createElement(Harness, { mode: "active", conversationId: "c1" }));
+    render(createElement(Harness, { conversationId: "c1" }));
     const fresh = toggle();
     expect(fresh.getAttribute("aria-pressed")).toBe("true");
     expect(fresh.getAttribute("aria-label")).toBe("Submit with Enter");
   });
 
-  it("the draft composer carries the same page-local toggle with no create side effect", async () => {
-    render(createElement(Harness, { mode: "draft" }));
+  it("the composer carries the page-local toggle with no send side effect (ADR-0044: the draft mode is gone)", async () => {
+    render(createElement(Harness, { conversationId: "c1" }));
     const toggleEl = toggle();
     expect(toggleEl.getAttribute("aria-pressed")).toBe("true");
     act(() => toggleEl.click());
     expect(toggleEl.getAttribute("aria-label")).toBe("Submit with Ctrl+Enter");
-    expect(createConversation).not.toHaveBeenCalled();
+    expect(sendConversationMessage).not.toHaveBeenCalled();
   });
 });
 

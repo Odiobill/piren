@@ -20,7 +20,7 @@
 import { type ConversationLifecycleTransition, type ValidatedRecipients } from "./conversation-contract.js";
 export declare const CONVERSATION_STATUSES: readonly ["open", "archived"];
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
-export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition", "conversation_renamed"];
+export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition", "conversation_renamed", "conversation_start_requested"];
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 export declare const CONVERSATION_AUTHOR_KINDS: readonly ["steward", "agent", "system"];
 export type ConversationAuthorKind = (typeof CONVERSATION_AUTHOR_KINDS)[number];
@@ -120,6 +120,30 @@ export interface CreateConversationResult extends ConversationManifest {
 }
 /** Create + activate a Conversation from its first message (atomic no-clobber). */
 export declare function createConversation(options: CreateConversationOptions): Promise<CreateConversationResult>;
+export interface CreateConversationForAgentStartOptions {
+    vaultRoot: string;
+    /**
+     * The steward-selected agent (validated against the local runnable set by
+     * the gateway BEFORE this call). Must be a lowercase-kebab agent name.
+     */
+    agent: string;
+    now?: () => Date;
+    nonce?: () => string;
+    /** P2 deterministic suffix seam for tests ONLY (see CreateConversationOptions). */
+    suffix?: () => string;
+    io?: ConversationWriteIo;
+}
+/**
+ * ADR-0044 — narrow durable agent-first start creation path. Creates an open
+ * Conversation with `audience: [agent]` and the deterministic title
+ * `Conversation with <agent>` (the validated agent name, never LLM- or
+ * text-derived). No steward text exists on this path: the durable origin is
+ * the additive system-authored `conversation_start_requested` event appended
+ * by the caller AFTER the manifest and BEFORE dispatch. This helper never
+ * dispatches, never appends events, and does not weaken the text-first
+ * `createConversation` API.
+ */
+export declare function createConversationForAgentStart(options: CreateConversationForAgentStartOptions): Promise<CreateConversationResult>;
 export interface UpdateConversationAudienceOptions {
     vaultRoot: string;
     conversationId: string;

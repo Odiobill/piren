@@ -32,7 +32,7 @@ import {
   type ConversationLifecycleAction,
   type LifecycleActionError,
 } from "./conversation-lifecycle";
-import { formatConversationHash, parseHashRoute, routeToIntent } from "./hash-route";
+import { parseHashRoute, routeToIntent } from "./hash-route";
 import { renameAnnouncement, type RenameError } from "./conversation-details";
 import { InfoIcon, StopIcon } from "./icons";
 import type { ConversationAgentEntry } from "./conversation-agents";
@@ -53,12 +53,13 @@ import {
 
 /**
  * Conversation navigator (C3-A + C4-A + L3): the Conversation Workbench
- * surface over the accepted C2 API family. Lists conversations, creates one
- * via its FIRST raw-text message, and selects one through the
- * C1/runnable-roster-gated attach route: a successful attach opens the ACTIVE
- * surface (immutable whole-history reread + scoped live SSE + raw-text
- * composer); a rejected attach opens the visibly READ-ONLY inspection surface
- * (history only, no composer, no live stream).
+ * surface over the accepted C2 API family. Selects one conversation through
+ * the C1/runnable-roster-gated attach route: a successful attach opens the
+ * ACTIVE surface (immutable whole-history reread + scoped live SSE +
+ * raw-text composer); a rejected attach opens the visibly READ-ONLY
+ * inspection surface (history only, no composer, no live stream). New
+ * Conversations start only from the Dashboard's explicit agent-first start
+ * (ADR-0044); the composer appends raw-text follow-up messages.
  *
  * L3 adds the minimal first-party lifecycle controls over the accepted L2
  * routes: Archive (on every selected open Conversation — active or read-only
@@ -78,9 +79,14 @@ import {
  * surface. Own navigations write the hash with history.pushState (which
  * fires no hashchange), so Back/Forward re-opens via the fresh gate without
  * duplicate writes, attaches, or stream subscriptions. Malformed/unknown
- * hashes and nonexistent conversations fail truthfully to the new-conversation
- * draft with a bounded message and never create a draft, dispatch, mutate, or
- * fabricate client state.
+ * hashes and nonexistent conversations fail truthfully to the no-selection
+ * surface with a bounded message and never dispatch, mutate, or fabricate
+ * client state.
+ *
+ * ADR-0044: the browser-local empty/new-Conversation draft entry surface is
+ * REMOVED. Conversation creation happens only through the Dashboard's
+ * explicit agent-first start; the home route shows a truthful no-selection
+ * placeholder with no composer and no creation control.
  *
  * The browser never scans, resolves, or derives dispatch recipients from
  * `@text` — the gateway alone parses mentions. No approval or abort
@@ -119,7 +125,7 @@ export function ConversationNavigator({
   onConversationsChanged: () => void;
   /**
    * P2: the shell subtitle follows the selected gateway-authoritative title
-   * (active or read-only), or null when the draft/list is shown.
+   * (active or read-only), or null when no conversation is selected.
    */
   onSelectionChange?: (title: string | null) => void;
 }) {
@@ -157,8 +163,6 @@ export function ConversationNavigator({
       history load; the layout effect applies the anchor decision per commit. */
   const [contentVersion, setContentVersion] = useState(0);
   const bumpContentVersion = useCallback(() => setContentVersion((version) => version + 1), []);
-  /** P8 (§1): one-shot first-draft-send focus intent for the ACTIVE composer. */
-  const [justCreatedFocus, setJustCreatedFocus] = useState(false);
   /**
    * R2 — compact source-truthful live run state for the stable bottom dock:
    * reported by the subscribed timeline (agent + working/typing only, never
@@ -189,7 +193,7 @@ export function ConversationNavigator({
       ? selection.conversation.id
       : selection.phase === "read-only"
         ? selection.conversation.id
-        : "draft";
+        : "none";
 
   useEffect(() => {
     scrollWiringRef.current = EMPTY_CONVERSATION_SCROLL_WIRING;
@@ -197,21 +201,13 @@ export function ConversationNavigator({
 
   useLayoutEffect(() => {
     // The persistent Conversation surface may be hidden while the steward is
-    // using Agents/About. A live append must not root-scroll that other page.
+    // using the Dashboard. A live append must not root-scroll that other page.
     if (!shouldApplyConversationRootScroll(surfaceRef.current)) return;
     const el = rootScrollTarget(document);
     if (!el) return;
     scrollWiringRef.current = applyConversationScrollWiring(el, scrollWiringRef.current);
   }, [contentVersion, surfaceKey]);
 
-  // P8 (§1): the one-shot first-draft-send focus intent is consumed by the
-  // freshly mounted ACTIVE composer (child effect runs before this one) and
-  // then cleared so it can never re-fire on re-render, reselect, or nav.
-  useEffect(() => {
-    if (selection.phase === "active" && justCreatedFocus) {
-      setJustCreatedFocus(false);
-    }
-  }, [selection, justCreatedFocus]);
   /** C3-C3: pending approval cards derived ONLY from scoped live frames. */
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   /** C3-C3: in-flight/errored approval response per request id (manual Retry). */
@@ -337,8 +333,8 @@ export function ConversationNavigator({
    * stateless attach gate. A successful attach presents the active surface;
    * a rejected attach (unavailable audience, archived, ...) presents visibly
    * read-only inspection with the fresh durable record. A nonexistent or
-   * unavailable conversation fails truthfully to the draft surface — never a
-   * draft, dispatch, mutation, or fabricated client state.
+   * unavailable conversation fails truthfully to the no-selection surface —
+   * never a dispatch, mutation, or fabricated client state.
    */
   const openConversationById = useCallback(
     async (conversationId: string) => {
@@ -375,7 +371,7 @@ export function ConversationNavigator({
         lifecycleNoticeRef.current = null;
         renameNoticeRef.current = null;
         setSelection({ phase: "none" });
-        // P2: the draft keeps the calm generic shell subtitle.
+        // P2: no selection keeps the calm generic shell subtitle.
         onSelectionChange?.(null);
         setNotice(error instanceof Error ? error.message : String(error));
         surfaceRef.current?.focus();
@@ -398,16 +394,16 @@ export function ConversationNavigator({
         setSelection({ phase: "none" });
         setNotice(null);
         setAnnouncement("");
-        // P2: the draft keeps the calm generic shell subtitle.
+        // P2: no selection keeps the calm generic shell subtitle.
         onSelectionChange?.(null);
         return;
       }
       if (intent.kind === "invalid-route") {
-        // Malformed/unknown hash: fail truthfully to the draft surface, no request.
+        // Malformed/unknown hash: fail truthfully to the no-selection surface, no request.
         cancelPendingOpen();
         resetLifecycleControls();
         setSelection({ phase: "none" });
-        setNotice("Unknown route — showing the new-conversation draft.");
+        setNotice("Unknown route — no conversation selected.");
         setAnnouncement("");
         onSelectionChange?.(null);
         surfaceRef.current?.focus();
@@ -586,21 +582,6 @@ export function ConversationNavigator({
   );
 
   /**
-   * U1: the main-window draft's first message persisted a conversation. The
-   * sidebar refreshes its list; the durable hash route opens the conversation
-   * through the same fresh attach gate as any sidebar selection.
-   */
-  function handleCreated(conversation: ConversationRecord) {
-    onConversationsChanged();
-    resetLifecycleControls();
-    // P8 (§1): the one-shot focus intent for the freshly mounted ACTIVE
-    // composer — consumed exactly once on mount, never for nav/reselect.
-    setJustCreatedFocus(true);
-    setAnnouncement(`Conversation created: ${conversation.title}`);
-    window.location.hash = formatConversationHash(conversation.id);
-  }
-
-  /**
    * P2 — after an accepted ACTIVE send (including a validated membership
    * addition), refresh the sidebar list and the selected manifest strictly
    * from existing gateway reads: never an optimistic/invented audience and
@@ -764,11 +745,9 @@ export function ConversationNavigator({
                   </div>
                 )}
                 <ConversationComposer
-                  mode="active"
                   conversationId={selection.conversation.id}
                   token={token}
                   agents={load.phase === "ready" ? load.agents : []}
-                  initialFocus={justCreatedFocus}
                   onUnauthorized={onUnauthorized}
                   onAnnounce={setAnnouncement}
                   onSent={handleMessageSent}
@@ -833,7 +812,7 @@ export function ConversationNavigator({
   return (
     <section
       className="conversation-surface"
-      aria-label="New conversation"
+      aria-label="Conversations"
       tabIndex={-1}
       ref={surfaceRef}
     >
@@ -841,36 +820,16 @@ export function ConversationNavigator({
         {announcement}
       </p>
       {notice !== null && <p className="route-notice" role="status">{notice}</p>}
-      {/* P5+P6: the empty draft uses the SAME Conversation workspace path as
-          an active Conversation — the SAME timeline component (zero history:
-          no fetch/stream/durable state) and the SAME stable bottom dock. R1:
-          like active, the draft flows in the BROWSER root document (no inner
-          scroll owner). The shared dock includes the details action DISABLED
-          with a truthful title — no modal, no durable title/state until the
-          first accepted send creates the record. */}
+      {/* ADR-0044: no browser-local draft entry surface remains. The home
+          route shows a truthful no-selection placeholder; new Conversations
+          start only from the Dashboard's explicit agent-first start. */}
       <div className="conversation-workspace">
-        <ConversationTimeline
-          conversationId=""
-          token={token}
-          live={false}
-          onUnauthorized={onUnauthorized}
-          draft
-        />
-        <div className="composer-action-row">
-          <ConversationComposer
-            mode="draft"
-            token={token}
-            agents={load.phase === "ready" ? load.agents : []}
-            onUnauthorized={onUnauthorized}
-            onAnnounce={setAnnouncement}
-            onCreated={(conversation) => void handleCreated(conversation)}
-          />
-          <DetailsToggleButton
-            buttonRef={detailsButtonRef}
-            disabled
-            title="Conversation details become available after the first message is sent"
-          />
-        </div>
+        <section className="card">
+          <h2>No conversation selected</h2>
+          <p className="muted">
+            Select a conversation from the sidebar, or start a new one from the Dashboard.
+          </p>
+        </section>
       </div>
     </section>
   );
@@ -880,22 +839,15 @@ export function ConversationNavigator({
  * U2: the details action — a familiar information icon button with the
  * accessible name "Conversation details". On the active surface it sits
  * composer-right; on read-only inspection it lives in the minimal inspection
- * action row (no composer exists there); on the browser-local draft dock it
- * is present but DISABLED with a truthful title (P6). The navigator keeps
- * its ref so dismissing the modal returns focus to the invoking button.
+ * action row (no composer exists there). The navigator keeps its ref so
+ * dismissing the modal returns focus to the invoking button.
  */
 export function DetailsToggleButton({
   buttonRef,
   onClick,
-  disabled,
-  title,
 }: {
   buttonRef: RefObject<HTMLButtonElement | null>;
   onClick?: () => void;
-  /** P6: the empty draft dock carries the details action disabled (truthful). */
-  disabled?: boolean;
-  /** P6: truthful accessible disabled reason (draft has no durable title yet). */
-  title?: string;
 }) {
   return (
     <button
@@ -903,8 +855,6 @@ export function DetailsToggleButton({
       ref={buttonRef}
       className="conversation-details-toggle"
       aria-label="Conversation details"
-      disabled={disabled}
-      title={title}
       onClick={onClick}
     >
       <InfoIcon size={18} />

@@ -83,7 +83,6 @@ describe("residual Rooms cleanup: dead Workbench CSS removed, shared styles kept
       ".timeline {",
       ".timeline-status",
       ".timeline-status-disconnected",
-      ".timeline-status-draft",
       ".button-small",
       ".transcript-list",
       ".transcript-row",
