@@ -47,6 +47,10 @@ import {
   type ConversationScrollWiringState,
 } from "./conversation-scroll-wiring";
 import {
+  approvalSelectionForIndex,
+  nextApprovalSelection,
+} from "./conversation-approval-pager";
+import {
   conversationActivityRunStateLabel,
   type ConversationCompactActivityRun,
 } from "./conversation-activity";
@@ -885,8 +889,16 @@ export function DetailsToggleButton({
  * pending approvals, derived ONLY from scoped live frames. Confirm / Cancel
  * (and a labeled input for select/input) submit exactly-one response bodies;
  * success is delivery acceptance only. Errors are bounded with a manual
- * Retry; focus moves into the card on arrival; the polite announcement is
- * made by the navigator.
+ * Retry; the polite announcement is made by the navigator.
+ *
+ * ADR-0044 Tracer B correction — bounded accessible pager: with more than
+ * one pending approval the tray renders EXACTLY ONE selected card plus an
+ * ordinal Previous/Next navigator (no hidden off-page cards). A new arrival
+ * becomes selected with the existing focus-on-arrival; manual navigation
+ * keeps focus on the invoked pager button; an answered card is replaced by
+ * the deterministic clamped remaining card. All pending approvals remain in
+ * the in-memory list — nothing is dropped, persisted, auto-responded, or
+ * reordered.
  */
 function ConversationApprovalCards({
   approvals,
@@ -900,18 +912,75 @@ function ConversationApprovalCards({
     | { phase: "error"; requestId: string; attempted: ApprovalResponse; error: ConversationControlError };
   onRespond: (approval: PendingApproval, response: ApprovalResponse) => void;
 }) {
+  // Derived-from-props selection (documented during-render adjustment
+  // pattern): recomputed only when the approvals list reference changes, so
+  // the committed render always carries the final selection and the selected
+  // card mounts exactly once with the correct focus intent.
+  const [tracked, setTracked] = useState<readonly PendingApproval[]>([]);
+  const [selection, setSelection] = useState<{ selectedId: string; focusCard: boolean } | null>(null);
+  if (approvals !== tracked) {
+    setTracked(approvals);
+    const decision = nextApprovalSelection({
+      approvals,
+      previousIds: tracked.map((approval) => approval.requestId),
+      selectedId: selection?.selectedId ?? null,
+    });
+    setSelection(decision);
+  }
+
   if (approvals.length === 0) return null;
+  const selectedIndex = approvals.findIndex((approval) => approval.requestId === selection?.selectedId);
+  const effectiveIndex = selectedIndex === -1 ? 0 : selectedIndex;
+  const selected = approvals[effectiveIndex];
+  if (selected === undefined) return null;
+
+  // Manual pager navigation: select the already-pending indexed card WITHOUT
+  // card auto-focus, so focus stays on the invoked pager button.
+  function goTo(index: number): void {
+    const decision = approvalSelectionForIndex(approvals, index);
+    if (decision === null) return;
+    setSelection(decision);
+  }
+
   return (
     <div className="approval-cards" aria-label="Pending approvals">
-      {approvals.map((approval) => (
-        <ApprovalCard
-          key={approval.requestId}
-          approval={approval}
-          submitting={submit.phase === "busy" && submit.requestId === approval.requestId}
-          failure={submit.phase === "error" && submit.requestId === approval.requestId ? { attempted: submit.attempted, error: submit.error } : null}
-          onRespond={onRespond}
-        />
-      ))}
+      {approvals.length > 1 && (
+        <div className="approval-pager" role="group" aria-label="Pending approval navigator">
+          <button
+            type="button"
+            className="approval-pager-button"
+            aria-label="Previous approval"
+            disabled={effectiveIndex === 0}
+            onClick={() => goTo(effectiveIndex - 1)}
+          >
+            ‹
+          </button>
+          <span className="approval-pager-status">
+            Approval {effectiveIndex + 1} of {approvals.length}
+          </span>
+          <button
+            type="button"
+            className="approval-pager-button"
+            aria-label="Next approval"
+            disabled={effectiveIndex >= approvals.length - 1}
+            onClick={() => goTo(effectiveIndex + 1)}
+          >
+            ›
+          </button>
+        </div>
+      )}
+      <ApprovalCard
+        key={selected.requestId}
+        approval={selected}
+        autoFocus={selection?.focusCard ?? true}
+        submitting={submit.phase === "busy" && submit.requestId === selected.requestId}
+        failure={
+          submit.phase === "error" && submit.requestId === selected.requestId
+            ? { attempted: submit.attempted, error: submit.error }
+            : null
+        }
+        onRespond={onRespond}
+      />
     </div>
   );
 }
@@ -921,12 +990,19 @@ function ApprovalCard({
   submitting,
   failure,
   onRespond,
+  autoFocus,
 }: {
   approval: PendingApproval;
   submitting: boolean;
   /** Bounded failure carrying the exact attempted response for manual Retry. */
   failure: { attempted: ApprovalResponse; error: ConversationControlError } | null;
   onRespond: (approval: PendingApproval, response: ApprovalResponse) => void;
+  /**
+   * Tracer B correction: the pager gates the mount-time focus intent. True
+   * only for a fresh arrival or the deterministic post-answer replacement;
+   * false after manual pager navigation so the pager button keeps focus.
+   */
+  autoFocus: boolean;
 }) {
   const [inputValue, setInputValue] = useState("");
   const confirmButtonRef = useRef<HTMLButtonElement>(null);
@@ -941,7 +1017,10 @@ function ApprovalCard({
   const message = gate !== null ? gate.text : approvalCardMessage(approval);
   // Deliberate focus policy: on arrival, focus the input (select/input) or
   // the Confirm button (confirm), so the steward can act without hunting.
+  // Gated by the pager's autoFocus intent (suppressed after manual
+  // navigation so the invoked pager button keeps focus).
   useEffect(() => {
+    if (!autoFocus) return;
     if (needsInput) {
       inputRef.current?.focus();
     } else {

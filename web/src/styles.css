@@ -1086,6 +1086,40 @@ code {
   margin: 4px 0 12px;
 }
 
+/* Tracer B correction — the bounded approval pager: one horizontal ordinal
+   row above the single selected card (never a second scroll area). */
+.approval-pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.approval-pager-status {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.approval-pager-button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--composer-radius-icon, 8px);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.approval-pager-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .approval-card {
   border: 1px solid var(--border);
   border-left-width: 3px;

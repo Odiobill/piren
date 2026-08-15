@@ -112,6 +112,22 @@ const FIXTURE = (cssUrl: string): string => `<!doctype html>
               </section>
             </div>
             <div class="interaction-tray" id="tray">
+              <div class="approval-cards" aria-label="Pending approvals">
+                <div class="approval-pager" role="group" aria-label="Pending approval navigator" id="pager">
+                  <button type="button" class="approval-pager-button" aria-label="Previous approval" disabled>‹</button>
+                  <span class="approval-pager-status" id="pager-status">Approval 1 of 8</span>
+                  <button type="button" class="approval-pager-button" aria-label="Next approval">›</button>
+                </div>
+                <div class="approval-card" role="group" aria-label="Approval requested by dipu" id="visible-card">
+                  <p class="approval-title" id="visible-card-title">Approval requested (card 1)</p>
+                  <p class="muted">The agent wants to proceed.</p>
+                  <p class="approval-meta"><code>dipu</code> · confirm</p>
+                  <div class="confirmation-actions">
+                    <button type="button" class="button button-primary">Confirm</button>
+                    <button type="button" class="button">Cancel</button>
+                  </div>
+                </div>
+              </div>
               <div class="composer-action-row">
                 <form class="conversation-composer">
                   <div class="composer-controls">
@@ -300,6 +316,56 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       // The history host's visible bottom meets the tray's top.
       const host = await rectOf(page, "#history");
       expect(Math.abs(host.bottom - tray.top)).toBeLessThanOrEqual(2);
+    });
+
+    it("pager tray: eight pending approvals render ONE card in a bounded non-scrolling tray wholly inside the clipped active viewport", async () => {
+      // Exactly one card is present for the eight pending approvals.
+      const cardCount = await page.evaluate(() => document.querySelectorAll(".approval-card").length);
+      expect(cardCount).toBe(1);
+      // The ordinal navigator is a real horizontal row with a truthful count.
+      const pagerDisplay = await page.evaluate(() => getComputedStyle(document.querySelector(".approval-pager") as Element).display);
+      expect(pagerDisplay).toBe("flex");
+      const status = await page.evaluate(() => document.getElementById("pager-status")?.textContent);
+      expect(status).toBe("Approval 1 of 8");
+      // The tray (pager + one card + composer row) is wholly within the
+      // clipped 800px active viewport: the root document does not overflow
+      // and the tray is not a scroll area.
+      const root = await rootMetrics(page);
+      expect(root.scrollHeight).toBeLessThanOrEqual(root.clientHeight + 1);
+      const tray = await rectOf(page, ".interaction-tray");
+      expect(Math.abs(tray.bottom - 800)).toBeLessThanOrEqual(2);
+      expect(tray.height).toBeLessThan(400);
+      const trayOverflow = await page.evaluate(() => getComputedStyle(document.querySelector(".interaction-tray") as Element).overflowY);
+      expect(trayOverflow).toBe("visible");
+      // The required card is fully visible (never clipped below the viewport).
+      const card = await rectOf(page, "#visible-card");
+      expect(card.bottom).toBeLessThanOrEqual(800);
+      expect(card.top).toBeGreaterThanOrEqual(tray.top);
+      // The history region remains the sole inner scroll owner.
+      const owners = await innerScrollOwners(page);
+      expect(owners).toEqual(["#history"]);
+    });
+
+    it("pager tray: navigating to the final card keeps the same bounded geometry and the final card is fully reachable", async () => {
+      // Emulate the pager outcome for the last of eight pending approvals
+      // (the interaction itself is proven by the jsdom component suite).
+      await page.evaluate(() => {
+        document.getElementById("pager-status")!.textContent = "Approval 8 of 8";
+        document.getElementById("visible-card-title")!.textContent = "Approval requested (card 8)";
+        const previous = document.querySelector(".approval-pager-button") as HTMLButtonElement;
+        const next = document.querySelectorAll(".approval-pager-button")[1] as HTMLButtonElement;
+        previous.disabled = false;
+        next.disabled = true;
+      });
+      const tray = await rectOf(page, ".interaction-tray");
+      expect(Math.abs(tray.bottom - 800)).toBeLessThanOrEqual(2);
+      expect(tray.height).toBeLessThan(400);
+      const card = await rectOf(page, "#visible-card");
+      expect(card.bottom).toBeLessThanOrEqual(800);
+      const root = await rootMetrics(page);
+      expect(root.scrollHeight).toBeLessThanOrEqual(root.clientHeight + 1);
+      const status = await page.evaluate(() => document.getElementById("pager-status")?.textContent);
+      expect(status).toBe("Approval 8 of 8");
     });
 
     it("clearance: at max host scroll the final history content sits at the tray edge (never obscured)", async () => {
