@@ -14,6 +14,9 @@ import { nextScrollTopForAppend, type ConversationScrollMetrics } from "./conver
  * position; batch appends in one commit produce ONE correct decision.
  * Reduced-motion stays `auto`/instant. This module is DOM-free and the
  * component wiring calls it from `useLayoutEffect` after each commit.
+ * ADR-0044 Tracer B: the target is the actual history scroll host resolved
+ * by `conversationScrollTarget` (the active Conversation's named history
+ * region), not the document root.
  */
 export interface ConversationScrollWiringState {
   /** Pre-append metrics from the previous commit (null before the first). */
@@ -31,25 +34,32 @@ export interface ConversationScrollTarget {
 }
 
 /**
- * R1 — the BROWSER ROOT document is the sole Conversation scroll host: the
- * conversation surface lives in normal document flow (no inner transcript or
- * main-pane scroll owner) so the browser scrollbar sits at the window's
- * right edge. Returns the live root scrolling element (`document.scrollingElement`)
- * as the anchor target, or null when the document exposes none. The wiring
- * calls this at commit time and passes the LIVE element to the pure core, so
- * the pre-append metric semantics are unchanged from the inner-host wiring.
+ * ADR-0044 Tracer B — resolve the actual Conversation scroll target: the
+ * named `.conversation-history` region inside the selected surface when the
+ * surface provides one (the ACTIVE Conversation, where the history region is
+ * the sole Conversation scroll host), else the document root scrolling
+ * element (the R1 document-flow behavior retained by read-only inspection
+ * and the no-selection surface, which have no history host). Returns null
+ * only when neither exists. Never fabricates a host and never targets the
+ * page root for a surface that has its own history region — an active
+ * Conversation open/append can never scroll the Dashboard, the no-selection
+ * or read-only views, or the page root.
  */
-export function rootScrollTarget(doc: Document): ConversationScrollTarget | null {
+export function conversationScrollTarget(surface: Element | null, doc: Document): ConversationScrollTarget | null {
+  const host = surface?.querySelector(".conversation-history");
+  if (host !== null && host !== undefined) {
+    return host as ConversationScrollTarget;
+  }
   return doc.scrollingElement;
 }
 
 /**
  * The navigator remains mounted while another Workbench page is selected so
- * a live Conversation run is never cancelled. Root-scroll anchoring must not
+ * a live Conversation run is never cancelled. Scroll anchoring must not
  * therefore scroll the browser away from that selected page on an unseen
  * append. The shell's existing `[hidden]` panel state is the source of truth.
  */
-export function shouldApplyConversationRootScroll(surface: Element | null): boolean {
+export function shouldApplyConversationScroll(surface: Element | null): boolean {
   return surface !== null && surface.closest(".workspace-panel[hidden]") === null;
 }
 

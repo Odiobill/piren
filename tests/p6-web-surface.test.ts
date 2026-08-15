@@ -50,9 +50,10 @@ describe("P6+R1 single bottom-anchored scroll host (static)", () => {
     expect(navigator).toContain("EMPTY_CONVERSATION_SCROLL_WIRING");
     expect(navigator).toContain("useLayoutEffect");
     expect(navigator).toContain("contentVersion");
-    // R1 — the anchor decision targets the browser root document, not an
-    // inner transcript ref (no inner scroll owner exists).
-    expect(navigator).toContain("rootScrollTarget");
+    // Tracer B — the anchor decision targets the actual history scroll host
+    // (the active Conversation's named history region), not an inner
+    // transcript ref and never the document root for the active surface.
+    expect(navigator).toContain("conversationScrollTarget");
     expect(navigator).toContain("document");
     expect(navigator).not.toContain("ref={scrollRef}");
     expect(navigator).toContain("onAppend={bumpContentVersion}");

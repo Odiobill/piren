@@ -9,28 +9,30 @@ import {
 } from "../web/src/conversation-scroll-anchor.js";
 
 /**
- * R1 (accepted `workbench-conversation-canvas-refinement-contract.md` §2) —
- * REAL rendered geometry and REAL autoscroll semantics in an actual browser
- * (system `/usr/bin/google-chrome-stable` via the minimal declared
- * `puppeteer-core` dev-dependency — no browser binary is downloaded). No
- * screenshot pixel guessing: deterministic layout assertions.
+ * ADR-0044 Tracer B — REAL rendered geometry and REAL autoscroll semantics in
+ * an actual browser (system Chrome via the minimal declared `puppeteer-core`
+ * dev-dependency — no browser binary is downloaded). Geometry, not
+ * screenshots.
  *
- * The fixture replicates the R1 document-flow Conversation surface
- * (`shell shell-conversation` → fixed chrome + document-root scrolling +
- * sticky composer dock). It must prove that at desktop size with overflowing
- * Conversation content:
- *   - the BROWSER ROOT document is scrollable (scrollbar at the window's
- *     right edge), and no inner conversation-surface element is a scroll
- *     container (no inner transcript scrollbar required);
- *   - the composer/details dock stays pinned at the viewport bottom while
- *     the reader scrolls, and does not obscure the final timeline content;
+ * The fixture replicates the B ACTIVE Conversation layout
+ * (`shell shell-conversation shell-conversation-active` → clipped viewport →
+ * named `.conversation-history` scroll host + bottom `.interaction-tray`
+ * flex child outside it). It must prove that at desktop size with
+ * overflowing Conversation history:
+ *   - the BROWSER ROOT document does NOT become the Conversation history
+ *     scroll host (it does not overflow); the named history region is the
+ *     sole inner scroll owner;
+ *   - the tray (live status/approvals/composer/details) stays OUTSIDE the
+ *     history host at the available workspace bottom, and the final history
+ *     content is never obscured beneath it;
+ *   - transcript content and tray/composer horizontal start/end edges align
+ *     (one shared inset);
  *   - the P8 44px composer geometry and flush control bottoms are preserved;
- *   - append anchoring (P8 §5 semantics) drives the DOCUMENT root via the
+ *   - append anchoring (P8 §5 semantics) drives the HISTORY HOST via the
  *     REAL pure core: initial bottom, anchored reader follows, upward reader
  *     preserved, batch appends produce one decision.
  *
- * The previous P8 inner-scroll-host assumption (`.conversation-scroll`) is
- * superseded by the R1 contract exactly as to scroll-host placement.
+ * R1's browser-root placement is superseded only for this active layout.
  */
 
 const CHROME_CANDIDATES = [
@@ -65,23 +67,24 @@ function builtCssPath(): string | null {
 }
 
 /**
- * R1 fixture: the real shell classes drive the layout so the probe measures
- * the ACTUAL stylesheet (document root scroll host, sticky dock, uncarded
- * workspace). The header includes a 48px logo placeholder so the desktop
- * chrome height matches `--shell-chrome-height` exactly.
+ * Tracer B fixture: the real shell classes drive the layout so the probe
+ * measures the ACTUAL stylesheet (clipped active viewport, named history
+ * scroll host, bottom interaction tray). The header includes a 48px logo
+ * placeholder so the desktop chrome height matches `--shell-chrome-height`
+ * exactly.
  */
 const FIXTURE = (cssUrl: string): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>R1 layout probe</title>
+<title>B layout probe</title>
 <link rel="stylesheet" href="${cssUrl}" />
 <style>
   html, body { margin: 0; }
 </style>
 </head>
 <body>
-<div class="shell shell-conversation">
+<div class="shell shell-conversation shell-conversation-active">
   <header class="shell-header">
     <div class="shell-logo" style="width:48px;height:48px;background:#ccc"></div>
     <div class="shell-heading"><h1>Workbench</h1></div>
@@ -94,28 +97,34 @@ const FIXTURE = (cssUrl: string): string => `<!doctype html>
       <div class="workspace-panel workspace-panel-conversations">
         <section class="conversation-surface" aria-label="Conversation: probe">
           <div class="conversation-workspace">
-            <div id="history" aria-label="Conversation history">
-              <div style="height:400px;background:#eee">history-1</div>
-              <div style="height:400px;background:#eef">history-2</div>
-              <div style="height:400px;background:#eee">history-3</div>
-              <div style="height:400px;background:#eef">history-4</div>
-              <div style="height:400px;background:#eee">history-5</div>
-              <div style="height:400px;background:#eef">history-6</div>
-              <div style="height:400px;background:#eee">history-7</div>
-              <div style="height:400px;background:#eef">history-8</div>
+            <div class="conversation-history" role="region" aria-label="Conversation history" tabindex="0" id="history">
+              <section class="timeline" aria-label="Conversation history">
+                <ol class="transcript-list" id="rows">
+                  <li class="transcript-row transcript-message transcript-agent"><div style="height:320px;background:#eee">row-1</div></li>
+                  <li class="transcript-row transcript-message transcript-steward"><div style="height:320px;background:#eef">row-2</div></li>
+                  <li class="transcript-row transcript-message transcript-agent"><div style="height:320px;background:#eee">row-3</div></li>
+                  <li class="transcript-row transcript-message transcript-steward"><div style="height:320px;background:#eef">row-4</div></li>
+                  <li class="transcript-row transcript-message transcript-agent"><div style="height:320px;background:#eee">row-5</div></li>
+                  <li class="transcript-row transcript-message transcript-steward"><div style="height:320px;background:#eef">row-6</div></li>
+                  <li class="transcript-row transcript-message transcript-agent"><div style="height:320px;background:#eee">row-7</div></li>
+                  <li class="transcript-row transcript-message transcript-steward"><div style="height:320px;background:#eef">row-8</div></li>
+                </ol>
+              </section>
             </div>
-            <div class="composer-action-row">
-              <form class="conversation-composer">
-                <div class="composer-controls">
-                  <button type="button" class="composer-upload-placeholder" disabled aria-label="Upload is not available">+</button>
-                  <div class="composer-input-wrap">
-                    <label class="sr-only" for="conversation-message-c1">Message</label>
-                    <textarea id="conversation-message-c1" rows="1">Hi</textarea>
+            <div class="interaction-tray" id="tray">
+              <div class="composer-action-row">
+                <form class="conversation-composer">
+                  <div class="composer-controls">
+                    <button type="button" class="composer-upload-placeholder" disabled aria-label="Upload is not available">+</button>
+                    <div class="composer-input-wrap">
+                      <label class="sr-only" for="conversation-message-c1">Message</label>
+                      <textarea id="conversation-message-c1" rows="1">Hi</textarea>
+                    </div>
+                    <button type="button" class="composer-submit-toggle" aria-label="Submit">&#8617;</button>
                   </div>
-                  <button type="button" class="composer-submit-toggle" aria-label="Submit">&#8617;</button>
-                </div>
-              </form>
-              <button type="button" class="conversation-details-toggle" aria-label="Conversation details">i</button>
+                </form>
+                <button type="button" class="conversation-details-toggle" aria-label="Conversation details">i</button>
+              </div>
             </div>
           </div>
         </section>
@@ -126,43 +135,55 @@ const FIXTURE = (cssUrl: string): string => `<!doctype html>
 </body>
 </html>`;
 
-function composerRects(page: Page): Promise<Record<string, { top: number; bottom: number; height: number }>> {
-  return page.evaluate(() => {
-    const rect = (selector: string): { top: number; bottom: number; height: number } => {
-      const el = document.querySelector<HTMLElement>(selector);
-      if (el === null) throw new Error(`missing ${selector}`);
-      const box = el.getBoundingClientRect();
-      return { top: box.top, bottom: box.bottom, height: box.height };
-    };
-    return {
-      textarea: rect(".conversation-composer textarea"),
-      upload: rect(".composer-upload-placeholder"),
-      submit: rect(".composer-submit-toggle"),
-      details: rect(".conversation-details-toggle"),
-      dock: rect(".composer-action-row"),
-    };
-  });
+interface Rect {
+  top: number;
+  bottom: number;
+  height: number;
+  left: number;
+  right: number;
+}
+
+async function rectOf(page: Page, selector: string): Promise<Rect> {
+  return page.evaluate((sel) => {
+    const el = document.querySelector<HTMLElement>(sel);
+    if (el === null) throw new Error(`missing ${sel}`);
+    const box = el.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom, height: box.height, left: box.left, right: box.right };
+  }, selector);
 }
 
 interface ComposerRects {
-  textarea: { top: number; bottom: number; height: number };
-  upload: { top: number; bottom: number; height: number };
-  submit: { top: number; bottom: number; height: number };
-  details: { top: number; bottom: number; height: number };
-  dock: { top: number; bottom: number; height: number };
+  textarea: Rect;
+  upload: Rect;
+  submit: Rect;
+  details: Rect;
+  tray: Rect;
 }
 
-async function composerRectsTyped(page: Page): Promise<ComposerRects> {
-  return (await composerRects(page)) as unknown as ComposerRects;
+async function composerRects(page: Page): Promise<ComposerRects> {
+  return {
+    textarea: await rectOf(page, ".conversation-composer textarea"),
+    upload: await rectOf(page, ".composer-upload-placeholder"),
+    submit: await rectOf(page, ".composer-submit-toggle"),
+    details: await rectOf(page, ".conversation-details-toggle"),
+    tray: await rectOf(page, ".interaction-tray"),
+  };
 }
 
-interface RootMetrics {
+interface ScrollMetrics {
   scrollTop: number;
   clientHeight: number;
   scrollHeight: number;
 }
 
-async function rootMetrics(page: Page): Promise<RootMetrics> {
+async function hostMetrics(page: Page): Promise<ScrollMetrics> {
+  return page.evaluate(() => {
+    const el = document.getElementById("history") as HTMLElement;
+    return { scrollTop: el.scrollTop, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight };
+  });
+}
+
+async function rootMetrics(page: Page): Promise<ScrollMetrics> {
   return page.evaluate(() => {
     const el = document.scrollingElement as Element;
     return { scrollTop: el.scrollTop, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight };
@@ -172,22 +193,16 @@ async function rootMetrics(page: Page): Promise<RootMetrics> {
 /** Walk every element inside the conversation surface and report inner scroll
     containers: an element is one only when it can actually show a scrollbar
     (computed overflow-y auto/scroll) AND has overflowing content. */
-async function innerScrollOwners(page: Page): Promise<Array<{ selector: string }>> {
+async function innerScrollOwners(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const surface = document.querySelector<HTMLElement>(".conversation-surface");
     if (surface === null) throw new Error("missing .conversation-surface");
-    const owners: Array<{ selector: string }> = [];
+    const owners: string[] = [];
     const walk = (el: Element) => {
       if (el !== surface && el.scrollHeight > el.clientHeight + 1) {
         const overflowY = getComputedStyle(el).overflowY;
         if (overflowY === "auto" || overflowY === "scroll") {
-          const chain: string[] = [];
-          let current: Element | null = el;
-          while (current !== null && current !== surface) {
-            chain.unshift(current.id !== "" ? `#${current.id}` : current.className !== "" ? `.${String(current.className).split(/\s+/)[0]}` : current.tagName.toLowerCase());
-            current = current.parentElement;
-          }
-          owners.push({ selector: chain.join(" > ") });
+          owners.push(el.id !== "" ? `#${el.id}` : `.${String(el.className).split(/\s+/)[0]}`);
         }
       }
       for (const child of el.children) walk(child);
@@ -197,34 +212,37 @@ async function innerScrollOwners(page: Page): Promise<Array<{ selector: string }
   });
 }
 
-async function setRootScrollTop(page: Page, top: number): Promise<void> {
+async function setHostScrollTop(page: Page, top: number): Promise<void> {
   await page.evaluate((value) => {
-    const el = document.scrollingElement as Element;
+    const el = document.getElementById("history") as HTMLElement;
     el.scrollTop = value as number;
   }, top);
 }
 
-async function lastHistoryBottom(page: Page): Promise<number> {
+async function lastRowBottom(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const history = document.getElementById("history") as HTMLElement;
-    const last = history.lastElementChild as HTMLElement;
+    const rows = document.getElementById("rows") as HTMLElement;
+    const last = rows.lastElementChild as HTMLElement;
     return last.getBoundingClientRect().bottom;
   });
 }
 
-async function appendHistoryBlock(page: Page, height: number, text: string): Promise<void> {
+async function appendRow(page: Page, height: number, text: string): Promise<void> {
   await page.evaluate((opts) => {
-    const history = document.getElementById("history") as HTMLElement;
+    const rows = document.getElementById("rows") as HTMLElement;
+    const item = document.createElement("li");
+    item.className = "transcript-row transcript-message transcript-agent";
     const block = document.createElement("div");
     block.style.height = `${opts.height}px`;
     block.style.background = "#dde";
     block.textContent = opts.text;
-    history.appendChild(block);
+    item.appendChild(block);
+    rows.appendChild(item);
   }, { height, text });
 }
 
 const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
-  "R1 real-browser root-scroll + stable dock + autoscroll probe (system Chrome, no screenshot guessing)",
+  "Tracer B real-browser history-host + interaction-tray geometry probe (system Chrome, no screenshot guessing)",
   () => {
     let browser: Browser;
     let page: Page;
@@ -241,85 +259,92 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       await page.setViewport({ width: 1280, height: 800 });
       const cssPath = builtCssPath() as string;
       const cssUrl = `file://${cssPath}`;
-      fixturePath = join(mkdtempSync(join(tmpdir(), "r1-layout-")), "index.html");
+      fixturePath = join(mkdtempSync(join(tmpdir(), "b-layout-")), "index.html");
       writeFileSync(fixturePath, FIXTURE(cssUrl));
       await page.goto(`file://${fixturePath}`);
       await new Promise((resolve) => setTimeout(resolve, 150));
     }, 60_000);
 
-    it("root-scroll: with overflowing content the BROWSER ROOT document is scrollable (no inner transcript/main-pane scroll owner)", async () => {
-      const before = await rootMetrics(page);
-      // The conversation content overflows the viewport: the document must be
-      // the scrollable surface (scrollbar at the browser's right edge).
-      expect(before.scrollHeight).toBeGreaterThan(before.clientHeight);
-      // No element inside the conversation surface is an inner scroll owner:
-      // no nested transcript scrollbar is required.
+    it("scroll host: the ROOT document does NOT own Conversation scrolling; the named history region is the sole inner scroll owner", async () => {
+      const root = await rootMetrics(page);
+      // The clipped active shell does not overflow the viewport: the document
+      // is not the Conversation scroll host.
+      expect(root.scrollHeight).toBeLessThanOrEqual(root.clientHeight + 1);
+      // The history region overflows and is the ONLY inner scroll owner.
+      const host = await hostMetrics(page);
+      expect(host.scrollHeight).toBeGreaterThan(host.clientHeight);
       const owners = await innerScrollOwners(page);
-      expect(owners).toEqual([]);
-      // And the obsolete inner wrapper class does not exist in the surface.
-      const hasConversationScroll = await page.evaluate(() => document.querySelector(".conversation-scroll") !== null);
-      expect(hasConversationScroll).toBe(false);
-      // The document really scrolls.
-      await setRootScrollTop(page, before.scrollHeight);
-      const scrolled = await rootMetrics(page);
+      expect(owners).toEqual(["#history"]);
+      // The history host really scrolls.
+      await setHostScrollTop(page, host.scrollHeight);
+      const scrolled = await hostMetrics(page);
       expect(scrolled.scrollTop).toBeGreaterThan(0);
+      // The root document did not move.
+      expect((await rootMetrics(page)).scrollTop).toBe(0);
     });
 
-    it("dock: the composer/details dock stays pinned at the viewport bottom while the reader scrolls (sticky)", async () => {
-      const position = await page.evaluate(() => getComputedStyle(document.querySelector(".composer-action-row") as Element).position);
-      expect(position).toBe("sticky");
-      // Scroll the document to the middle of the history.
-      const mid = await page.evaluate(() => {
-        const el = document.scrollingElement as Element;
-        const max = el.scrollHeight - el.clientHeight;
-        el.scrollTop = Math.floor(max * 0.4);
-        return el.scrollTop;
+    it("tray: the interaction tray sits at the available workspace bottom, outside the history host, fully visible", async () => {
+      const tray = await rectOf(page, ".interaction-tray");
+      // Tray bottom sits at the viewport bottom (within 2px tolerance).
+      expect(Math.abs(tray.bottom - 800)).toBeLessThanOrEqual(2);
+      expect(tray.top).toBeGreaterThan(0);
+      expect(tray.top).toBeLessThan(800);
+      // Bounded tray height (no full-screen takeover).
+      expect(tray.height).toBeLessThan(400);
+      // The tray is NOT inside the history host.
+      const inside = await page.evaluate(() => {
+        const host = document.getElementById("history") as HTMLElement;
+        return host.contains(document.getElementById("tray"));
       });
-      expect(mid).toBeGreaterThan(0);
-      const rects = await composerRectsTyped(page);
-      // The dock bottom sits at the viewport bottom (within a 2px tolerance)
-      // and the dock is fully visible.
-      expect(Math.abs(rects.dock.bottom - 800)).toBeLessThanOrEqual(2);
-      expect(rects.dock.top).toBeGreaterThan(0);
-      expect(rects.dock.top).toBeLessThan(800);
-      // The dock's own height is bounded (no full-screen takeover).
-      expect(rects.dock.height).toBeLessThan(400);
+      expect(inside).toBe(false);
+      // The history host's visible bottom meets the tray's top.
+      const host = await rectOf(page, "#history");
+      expect(Math.abs(host.bottom - tray.top)).toBeLessThanOrEqual(2);
     });
 
-    it("clearance: at max scroll the final timeline content sits above the dock (never obscured)", async () => {
-      await setRootScrollTop(page, (await rootMetrics(page)).scrollHeight);
-      const rects = await composerRectsTyped(page);
-      const lastBottom = await lastHistoryBottom(page);
-      expect(lastBottom).toBeLessThanOrEqual(rects.dock.top + 1);
-      // The dock itself settles at the document end (viewport bottom).
-      expect(Math.abs(rects.dock.bottom - 800)).toBeLessThanOrEqual(2);
+    it("clearance: at max host scroll the final history content sits at the tray edge (never obscured)", async () => {
+      await setHostScrollTop(page, (await hostMetrics(page)).scrollHeight);
+      const tray = await rectOf(page, ".interaction-tray");
+      const last = await lastRowBottom(page);
+      expect(last).toBeLessThanOrEqual(tray.top + 1);
+      // The tray never moved while the history scrolled.
+      expect(Math.abs(tray.bottom - 800)).toBeLessThanOrEqual(2);
+    });
+
+    it("alignment: transcript content and tray/composer share the same horizontal start/end (one inset)", async () => {
+      const row = await rectOf(page, ".transcript-row");
+      const rects = await composerRects(page);
+      // The transcript content's start/end aligns with the tray content's
+      // start (upload control) and end (details control).
+      expect(Math.abs(row.left - rects.upload.left)).toBeLessThanOrEqual(1);
+      expect(Math.abs(row.right - rects.details.right)).toBeLessThanOrEqual(1);
+      // And both edges are genuinely inset from the workspace edges.
+      const workspace = await rectOf(page, ".conversation-workspace");
+      expect(row.left).toBeGreaterThan(workspace.left);
+      expect(row.right).toBeLessThan(workspace.right);
     });
 
     it("one-line: the rendered textarea border-box is exactly 44px and its bottom equals the 44px control bottoms (P8 preserved)", async () => {
-      const rects = await composerRectsTyped(page);
+      const rects = await composerRects(page);
       expect(Math.abs(rects.textarea.height - 44)).toBeLessThan(0.1);
-      // The textarea bottom edge is flush with the upload/submit/details bottoms.
       expect(Math.abs(rects.textarea.bottom - rects.upload.bottom)).toBeLessThan(0.1);
       expect(Math.abs(rects.textarea.bottom - rects.submit.bottom)).toBeLessThan(0.1);
       expect(Math.abs(rects.textarea.bottom - rects.details.bottom)).toBeLessThan(0.1);
-      // The 44px controls really are 44px tall.
       expect(Math.abs(rects.upload.height - 44)).toBeLessThan(0.1);
       expect(Math.abs(rects.details.height - 44)).toBeLessThan(0.1);
     });
 
     it("autosized multi-line: the textarea bottom stays flush with the control bottoms (P8 preserved)", async () => {
-      // Simulate the real autosize path: two content lines -> 66px box.
       await page.evaluate(() => {
         const input = document.getElementById("conversation-message-c1") as HTMLTextAreaElement;
         input.value = "line one\nline two";
         input.style.height = "66px";
       });
-      const rects = await composerRectsTyped(page);
+      const rects = await composerRects(page);
       expect(rects.textarea.height).toBeGreaterThan(60);
       expect(Math.abs(rects.textarea.bottom - rects.upload.bottom)).toBeLessThan(0.1);
       expect(Math.abs(rects.textarea.bottom - rects.submit.bottom)).toBeLessThan(0.1);
       expect(Math.abs(rects.textarea.bottom - rects.details.bottom)).toBeLessThan(0.1);
-      // Reset to one line for the autoscroll probes.
       await page.evaluate(() => {
         const input = document.getElementById("conversation-message-c1") as HTMLTextAreaElement;
         input.value = "Hi";
@@ -327,45 +352,44 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       });
     });
 
-    it("autoscroll: an anchored reader follows a single append to the new DOCUMENT bottom (real root metrics + REAL pure core)", async () => {
-      await setRootScrollTop(page, (await rootMetrics(page)).scrollHeight);
-      const before = await rootMetrics(page);
+    it("autoscroll: an anchored reader follows a single append to the new HISTORY HOST bottom (real host metrics + REAL pure core)", async () => {
+      await setHostScrollTop(page, (await hostMetrics(page)).scrollHeight);
+      const before = await hostMetrics(page);
       expect(isScrollAnchored(before)).toBe(true);
 
-      await appendHistoryBlock(page, 600, "appended");
-      const after = await rootMetrics(page);
+      await appendRow(page, 320, "appended");
+      const after = await hostMetrics(page);
       const target = nextScrollTopForAppend(before, after.scrollHeight);
       expect(target).not.toBeNull();
-      await setRootScrollTop(page, target as number);
+      await setHostScrollTop(page, target as number);
 
-      const final = await rootMetrics(page);
+      const final = await hostMetrics(page);
       expect(final.scrollTop + final.clientHeight).toBeGreaterThanOrEqual(final.scrollHeight - 2);
     });
 
     it("autoscroll: an upward reader's exact position is preserved across an append", async () => {
-      await setRootScrollTop(page, 1000);
-      const before = await rootMetrics(page);
+      await setHostScrollTop(page, 500);
+      const before = await hostMetrics(page);
       expect(isScrollAnchored(before)).toBe(false);
 
-      await appendHistoryBlock(page, 600, "appended-2");
-      const after = await rootMetrics(page);
+      await appendRow(page, 320, "appended-2");
+      const after = await hostMetrics(page);
       const target = nextScrollTopForAppend(before, after.scrollHeight);
       expect(target).toBeNull();
-      const final = await rootMetrics(page);
-      expect(final.scrollTop).toBe(1000);
+      const final = await hostMetrics(page);
+      expect(final.scrollTop).toBe(500);
     });
 
-    it("autoscroll: batch appends produce one correct decision to the new DOCUMENT bottom", async () => {
-      await setRootScrollTop(page, (await rootMetrics(page)).scrollHeight);
-      const before = await rootMetrics(page);
-      // Batch: two chunks appended before any scroll decision.
-      await appendHistoryBlock(page, 400, "batch-a");
-      await appendHistoryBlock(page, 400, "batch-b");
-      const after = await rootMetrics(page);
+    it("autoscroll: batch appends produce one correct decision to the new HISTORY HOST bottom", async () => {
+      await setHostScrollTop(page, (await hostMetrics(page)).scrollHeight);
+      const before = await hostMetrics(page);
+      await appendRow(page, 300, "batch-a");
+      await appendRow(page, 300, "batch-b");
+      const after = await hostMetrics(page);
       const target = nextScrollTopForAppend(before, after.scrollHeight);
       expect(target).not.toBeNull();
-      await setRootScrollTop(page, target as number);
-      const final = await rootMetrics(page);
+      await setHostScrollTop(page, target as number);
+      const final = await hostMetrics(page);
       expect(final.scrollTop + final.clientHeight).toBeGreaterThanOrEqual(final.scrollHeight - 2);
     });
 

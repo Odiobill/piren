@@ -288,17 +288,20 @@ describe("U3 Discord-like composer surface (static)", () => {
     }
   });
 
-  it("the active composer is docked at the bottom of the uncarded workspace; the BROWSER root owns the Conversation scroll (R1)", async () => {
+  it("the active composer sits in the bottom interaction tray outside the named history scroll host (B)", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     const styles = await readFile(join(webSrc, "styles.css"), "utf8");
     expect(navigator).toContain("conversation-workspace");
-    // R1 — no inner transcript scroll owner; the dock is the stable sticky
-    // bottom dock and the root document is the sole Conversation scroll host.
+    // Tracer B — the named .conversation-history region is the sole
+    // Conversation scroll host; the composer lives in the .interaction-tray
+    // outside it; the R1 sticky dock and inner transcript owner are gone.
+    expect(navigator).toContain('className="conversation-history"');
+    expect(navigator).toContain('className="interaction-tray"');
     expect(navigator).not.toContain('className="conversation-scroll"');
     expect(styles).not.toContain(".conversation-scroll");
-    expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*position:\s*sticky/);
+    expect(styles).not.toMatch(/\.composer-action-row\s*\{[\s\S]*position:\s*sticky/);
     expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*flex:\s*none/);
-    expect(styles).toMatch(/\.shell\.shell-conversation \.shell-main\s*\{[\s\S]*overflow:\s*visible/);
+    expect(styles).toMatch(/\.interaction-tray\s*\{[\s\S]*flex:\s*none/);
   });
 
   it("read-only inspection keeps no composer and the details action stays composer-right on active", async () => {

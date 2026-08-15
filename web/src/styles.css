@@ -716,6 +716,47 @@ code {
   min-height: calc(100dvh - var(--shell-chrome-height));
 }
 
+/* ADR-0044 Tracer B — the ACTIVE Conversation viewport: the shell clips to
+   the viewport (equal specificity, later order overrides the R1 unclip) so
+   the named history region is the sole Conversation scroll host and the
+   interaction tray sits outside it at the bottom of the available
+   workspace. Read-only inspection and the no-selection surface keep the R1
+   document flow above. */
+.shell.shell-conversation-active {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.shell.shell-conversation-active .shell-header {
+  position: static;
+}
+
+.shell.shell-conversation-active .shell-body {
+  overflow: hidden;
+}
+
+.shell.shell-conversation-active .sidebar-desktop {
+  position: static;
+  height: auto;
+  align-self: stretch;
+}
+
+.shell.shell-conversation-active .shell-main {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell.shell-conversation-active .workspace-panel-conversations {
+  flex: 1;
+  min-height: 0;
+}
+
+.shell.shell-conversation-active .conversation-workspace {
+  min-height: 0;
+  gap: 0;
+}
+
 /* The retired About page styles were removed (ADR-0044). */
 
 @media (max-width: 560px) {
@@ -1081,34 +1122,55 @@ code {
 /* U2 + U3 — details modal + composer dock */
 /* U3 — full-height Conversation workspace: scrollable messages above a
    bottom-anchored composer bar; desktop chrome stays fixed. R1 — the
-   conversation flows in the BROWSER ROOT document: the workspace is the
-   uncarded full-width canvas (no artificial padding/margins) and the
-   composer/details action row below is the stable sticky bottom dock. */
+   read-only/no-selection conversation flows in the BROWSER ROOT document:
+   the workspace is the uncarded full-width canvas (no artificial
+   padding/margins). ADR-0044 Tracer B — for the ACTIVE Conversation the
+   workspace is a bounded flex column: the named .conversation-history
+   region is the sole Conversation scroll host and the .interaction-tray is
+   a natural flex child outside it. --conversation-inline-inset is the ONE
+   shared horizontal inset for transcript content and the tray/composer. */
 .conversation-workspace {
   display: flex;
   flex-direction: column;
   gap: 12px;
   flex: 1;
   min-height: 0;
+  --conversation-inline-inset: clamp(14px, 2vw, 22px);
 }
 
-/* R1 — the composer/details action row is a stable footer-like dock in
-   normal document flow: sticky at the viewport bottom while the steward
-   reads the Conversation, with an opaque background, top border, and
-   clearance padding so content is neither hidden nor visually confused
-   with the dock. At the document end (max scroll) it settles in flow just
-   below the final timeline content. */
+/* Tracer B — the named active Conversation history region: the sole
+   Conversation scroll host, keyboard-accessible (a focusable region), with
+   the shared horizontal inset for its transcript content. */
+.conversation-history {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: 16px 8px;
+  padding-inline: var(--conversation-inline-inset);
+}
+
+/* Tracer B — the bottom interaction tray: a natural flex child OUTSIDE the
+   history scroll host. It carries the exact approval cards, the compact
+   broker-authoritative live-run/abort state, and the composer/details
+   controls; it never independently scrolls or clips required actions, and
+   its content reduces the history region. */
+.interaction-tray {
+  flex: none;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding-inline: var(--conversation-inline-inset);
+}
+
+/* Tracer B — the tray's composer/details row is a plain flex row: no sticky
+   positioning, background, or border (the tray owns those); the R1
+   root-document dock workaround is superseded for the active layout. */
 .composer-action-row {
   flex: none;
-  position: sticky;
-  bottom: 0;
-  z-index: 20;
   display: flex;
   gap: var(--composer-dock-gap);
   align-items: flex-end;
-  padding: 10px clamp(14px, 2vw, 22px) 12px;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
+  padding: 10px 0 12px;
 }
 
 .composer-action-row .conversation-composer {

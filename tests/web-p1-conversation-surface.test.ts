@@ -122,7 +122,7 @@ describe("P1 full-width uncarded conversation surface (static)", () => {
     expect(styles).toMatch(/\.shell-main\s*>\s*\.workspace-panel-conversations\s*\{[\s\S]*margin-inline:\s*0/);
   });
 
-  it("the selected conversation is an uncarded full-height flex column with dedicated scroll and docked composer", async () => {
+  it("the selected conversation is an uncarded full-height flex column with a named history scroll host and tray composer", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     const styles = await readFile(join(webSrc, "styles.css"), "utf8");
     // The selected-chat section is a plain surface, never a `.card`.
@@ -131,11 +131,12 @@ describe("P1 full-width uncarded conversation surface (static)", () => {
     expect(styles).not.toContain(".card.conversation-workspace");
     expect(styles).toMatch(/\.conversation-surface\s*\{[\s\S]*flex:\s*1[\s\S]*min-height:\s*0/);
     expect(styles).toMatch(/\.conversation-workspace\s*\{[\s\S]*flex:\s*1[\s\S]*min-height:\s*0/);
-    // R1 — the browser root is the sole Conversation scroll host: the inner
-    // transcript scroll owner is gone and the composer/details row is the
-    // stable sticky bottom dock.
+    // Tracer B — the active Conversation's named history region is the sole
+    // Conversation scroll host; the composer/details row lives in the
+    // bottom interaction tray outside it (no sticky dock workaround).
     expect(styles).not.toContain(".conversation-scroll");
-    expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*position:\s*sticky/);
+    expect(styles).toMatch(/\.conversation-history\s*\{[\s\S]*overflow-y:\s*auto/);
+    expect(styles).not.toMatch(/\.composer-action-row\s*\{[\s\S]*position:\s*sticky/);
     expect(styles).toMatch(/\.composer-action-row\s*\{[\s\S]*flex:\s*none/);
   });
 

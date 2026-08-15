@@ -41,9 +41,9 @@ import { ConversationTimeline } from "./ConversationTimeline";
 import { ConversationComposer } from "./ConversationComposer";
 import {
   applyConversationScrollWiring,
+  conversationScrollTarget,
   EMPTY_CONVERSATION_SCROLL_WIRING,
-  rootScrollTarget,
-  shouldApplyConversationRootScroll,
+  shouldApplyConversationScroll,
   type ConversationScrollWiringState,
 } from "./conversation-scroll-wiring";
 import {
@@ -127,7 +127,7 @@ export function ConversationNavigator({
    * P2: the shell subtitle follows the selected gateway-authoritative title
    * (active or read-only), or null when no conversation is selected.
    */
-  onSelectionChange?: (title: string | null) => void;
+  onSelectionChange?: (title: string | null, active: boolean) => void;
 }) {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [selection, setSelection] = useState<SelectionState>({ phase: "none" });
@@ -202,8 +202,11 @@ export function ConversationNavigator({
   useLayoutEffect(() => {
     // The persistent Conversation surface may be hidden while the steward is
     // using the Dashboard. A live append must not root-scroll that other page.
-    if (!shouldApplyConversationRootScroll(surfaceRef.current)) return;
-    const el = rootScrollTarget(document);
+    if (!shouldApplyConversationScroll(surfaceRef.current)) return;
+    // ADR-0044 Tracer B: the anchor target is the ACTUAL history scroll host
+    // (the active Conversation's named history region); surfaces without one
+    // (read-only/no-selection) keep the R1 document-root behavior.
+    const el = conversationScrollTarget(surfaceRef.current, document);
     if (!el) return;
     scrollWiringRef.current = applyConversationScrollWiring(el, scrollWiringRef.current);
   }, [contentVersion, surfaceKey]);
@@ -284,8 +287,11 @@ export function ConversationNavigator({
 
   useEffect(() => {
     if (selection.phase === "active" || selection.phase === "read-only") {
-      // P2: the subtitle follows the re-gated gateway-authoritative title.
-      onSelectionChange?.(selection.conversation.title);
+      // P2: the subtitle follows the re-gated gateway-authoritative title;
+      // Tracer B: the shell also learns whether the selection is ACTIVE so it
+      // can clip the viewport for the history-host layout (read-only keeps
+      // the R1 document flow).
+      onSelectionChange?.(selection.conversation.title, selection.phase === "active");
       const silent = silentRefreshRef.current;
       silentRefreshRef.current = false;
       if (!silent) {
@@ -372,7 +378,7 @@ export function ConversationNavigator({
         renameNoticeRef.current = null;
         setSelection({ phase: "none" });
         // P2: no selection keeps the calm generic shell subtitle.
-        onSelectionChange?.(null);
+        onSelectionChange?.(null, false);
         setNotice(error instanceof Error ? error.message : String(error));
         surfaceRef.current?.focus();
       }
@@ -395,7 +401,7 @@ export function ConversationNavigator({
         setNotice(null);
         setAnnouncement("");
         // P2: no selection keeps the calm generic shell subtitle.
-        onSelectionChange?.(null);
+        onSelectionChange?.(null, false);
         return;
       }
       if (intent.kind === "invalid-route") {
@@ -405,7 +411,7 @@ export function ConversationNavigator({
         setSelection({ phase: "none" });
         setNotice("Unknown route — no conversation selected.");
         setAnnouncement("");
-        onSelectionChange?.(null);
+        onSelectionChange?.(null, false);
         surfaceRef.current?.focus();
         return;
       }
@@ -684,75 +690,87 @@ export function ConversationNavigator({
         </p>
         {active ? (
           <>
-            {/* R1 — one document-level chronological scroll surface: the
-                timeline and approval cards flow in the BROWSER root document
-                (no inner transcript/main-pane scroll owner); the composer/
-                details dock below is the stable sticky bottom dock. */}
+            {/* ADR-0044 Tracer B — the active Conversation viewport: the
+                named .conversation-history region is the SOLE Conversation
+                scroll host (the durable timeline lives inside it); the
+                bottom .interaction-tray is a natural flex child OUTSIDE it,
+                carrying the exact approval cards, the compact broker-
+                authoritative live-run/abort state, and the composer/details
+                controls. The tray never scrolls and never clips required
+                actions; its content reduces the history region. */}
             <div className="conversation-workspace">
-              <ConversationApprovalCards
-                approvals={pendingApprovals}
-                submit={approvalSubmit}
-                onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
-              />
-              <ConversationTimeline
-                conversationId={selection.conversation.id}
-                token={token}
-                live={true}
-                onUnauthorized={onUnauthorized}
-                onLifecycleTransition={handleLifecycleEvent}
-                onApproval={handleApprovalFrame}
-                onActivityChange={handleActivityChange}
-                onAppend={bumpContentVersion}
-                onHistoryLoaded={() => {
-                  scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
-                  bumpContentVersion();
-                }}
-              />
-              {/* U3/R2: the composer is the stable bottom dock; messages flow/
-                  scroll in the document above it. U2's composer-right details
-                  action is preserved. R2 — compact source-truthful live run
-                  state (agent + working/typing + scoped abort) renders in the
-                  dock, never as a transcript panel; partial work content is
-                  gone. */}
-              <div className="composer-action-row">
-                {dockRuns.length > 0 && (
-                  <div className="dock-run-status" aria-label="Live agent runs" aria-live="polite">
-                    {dockRuns.map((run) => {
-                      const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
-                      const failed = abortState?.phase === "error" && abortState.agent === run.agent;
-                      return (
-                        <div key={run.runId} className={`dock-run dock-run-${run.phase}`}>
-                          <span className="dock-run-agent">{run.agent}</span>
-                          <span className="dock-run-state">{conversationActivityRunStateLabel(run.phase)}</span>
-                          <button
-                            type="button"
-                            className="transient-run-abort"
-                            aria-label={`Abort ${run.agent} run`}
-                            title={`Abort ${run.agent} run`}
-                            disabled={aborting}
-                            onClick={() => void handleAbort(run.agent)}
-                          >
-                            <StopIcon size={14} />
-                          </button>
-                          {failed && (
-                            <p className="transient-run-error" role="alert">
-                              {abortState?.phase === "error" ? abortState.error.message : ""}
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <ConversationComposer
+              <div
+                className="conversation-history"
+                role="region"
+                aria-label="Conversation history"
+                tabIndex={0}
+              >
+                <ConversationTimeline
                   conversationId={selection.conversation.id}
                   token={token}
-                  agents={load.phase === "ready" ? load.agents : []}
+                  live={true}
                   onUnauthorized={onUnauthorized}
-                  onAnnounce={setAnnouncement}
-                  onSent={handleMessageSent}
+                  onLifecycleTransition={handleLifecycleEvent}
+                  onApproval={handleApprovalFrame}
+                  onActivityChange={handleActivityChange}
+                  onAppend={bumpContentVersion}
+                  onHistoryLoaded={() => {
+                    scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
+                    bumpContentVersion();
+                  }}
                 />
-                <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
+              </div>
+              <div className="interaction-tray">
+                <ConversationApprovalCards
+                  approvals={pendingApprovals}
+                  submit={approvalSubmit}
+                  onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
+                />
+                {/* U3/R2: the composer is the bottom of the tray. U2's
+                    composer-right details action is preserved. R2 — compact
+                    source-truthful live run state (agent + working/typing +
+                    scoped abort) renders in the dock, never as a transcript
+                    panel; partial work content is gone. */}
+                <div className="composer-action-row">
+                  {dockRuns.length > 0 && (
+                    <div className="dock-run-status" aria-label="Live agent runs" aria-live="polite">
+                      {dockRuns.map((run) => {
+                        const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
+                        const failed = abortState?.phase === "error" && abortState.agent === run.agent;
+                        return (
+                          <div key={run.runId} className={`dock-run dock-run-${run.phase}`}>
+                            <span className="dock-run-agent">{run.agent}</span>
+                            <span className="dock-run-state">{conversationActivityRunStateLabel(run.phase)}</span>
+                            <button
+                              type="button"
+                              className="transient-run-abort"
+                              aria-label={`Abort ${run.agent} run`}
+                              title={`Abort ${run.agent} run`}
+                              disabled={aborting}
+                              onClick={() => void handleAbort(run.agent)}
+                            >
+                              <StopIcon size={14} />
+                            </button>
+                            {failed && (
+                              <p className="transient-run-error" role="alert">
+                                {abortState?.phase === "error" ? abortState.error.message : ""}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <ConversationComposer
+                    conversationId={selection.conversation.id}
+                    token={token}
+                    agents={load.phase === "ready" ? load.agents : []}
+                    onUnauthorized={onUnauthorized}
+                    onAnnounce={setAnnouncement}
+                    onSent={handleMessageSent}
+                  />
+                  <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
+                </div>
               </div>
             </div>
           </>

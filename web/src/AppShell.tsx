@@ -38,7 +38,19 @@ export function AppShell({
    * from the navigator's re-gated gateway-authoritative manifest only.
    */
   const [contextualTitle, setContextualTitle] = useState<string | null>(null);
+  /**
+   * ADR-0044 Tracer B: true only while the selected Conversation is ACTIVE.
+   * The active surface clips the shell to the viewport so the named history
+   * region is the sole Conversation scroll host; read-only/no-selection keep
+   * the R1 document-flow layout.
+   */
+  const [conversationActive, setConversationActive] = useState(false);
   const handleConversationsChanged = useCallback(() => setConversationsReloadKey((key) => key + 1), []);
+  // Stable identity: the navigator's selection effect depends on this callback.
+  const handleSelectionChange = useCallback((title: string | null, active: boolean) => {
+    setContextualTitle(title);
+    setConversationActive(active);
+  }, []);
 
   function handleSelect(page: Page) {
     // A selection made from the open mobile drawer closes it and must return
@@ -72,7 +84,9 @@ export function AppShell({
 
   return (
     <div
-      className={`shell${nav.page === "conversations" ? " shell-conversation" : ""}`}
+      className={`shell${nav.page === "conversations" ? " shell-conversation" : ""}${
+        conversationActive && nav.page === "conversations" ? " shell-conversation-active" : ""
+      }`}
     >
       <header className="shell-header">
         <img src={logoUrl} alt="Piren logo" className="shell-logo" width={48} height={48} />
@@ -145,7 +159,7 @@ export function AppShell({
               onValidated={onValidated}
               onUnauthorized={onUnauthorized}
               onConversationsChanged={handleConversationsChanged}
-              onSelectionChange={setContextualTitle}
+              onSelectionChange={handleSelectionChange}
             />
           </div>
           <div className="workspace-panel" hidden={nav.page !== "dashboard"}>
