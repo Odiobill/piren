@@ -161,6 +161,31 @@ describe("DashboardView service observation (D2.3)", () => {
     expect(vi.mocked(fetchServiceStatus)).toHaveBeenCalledWith("test-token", expect.anything());
   });
 
+  it("waits for a successful fresh roster read before observing again after a Dashboard reload", async () => {
+    let resolveRoster: ((value: typeof ROSTER) => void) | undefined;
+    renderDashboard();
+    await flush();
+    expect(vi.mocked(fetchServiceStatus)).toHaveBeenCalledTimes(1);
+
+    vi.mocked(fetchConversationAgents).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRoster = resolve;
+        }),
+    );
+    rerenderDashboard(1);
+    await flush();
+    // A reload must not reuse the prior successful roster as authority for a
+    // fresh service observation while the new roster read is still pending.
+    expect(vi.mocked(fetchServiceStatus)).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveRoster?.(ROSTER);
+    });
+    await flush();
+    expect(vi.mocked(fetchServiceStatus)).toHaveBeenCalledTimes(2);
+  });
+
   it("never fabricates Gateway Connected or invokes observation when the roster read fails", async () => {
     vi.mocked(fetchConversationAgents).mockRejectedValueOnce(new Error("gateway unavailable"));
     renderDashboard();

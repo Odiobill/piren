@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import logoUrl from "./assets/piren-logo.png";
 import { fetchConversationAgents, fetchServiceStatus, startConversation, UnauthorizedError } from "./api";
 import type { ConversationAgentEntry } from "./conversation-agents";
@@ -63,10 +63,24 @@ export function DashboardView({
   const [start, setStart] = useState<StartState>({ phase: "idle" });
   const [observation, setObservation] = useState<ObservationState>({ phase: "loading" });
   const [observationRetryKey, setObservationRetryKey] = useState(0);
+  // This changes only after a successful roster read. It gates the separate
+  // observation effect so every Dashboard reload proves Gateway Connected
+  // before requesting a fresh manager sample.
+  const [rosterReadyKey, setRosterReadyKey] = useState(0);
+  // Callback identity is not Dashboard-load authority. Keep the latest shell
+  // handlers without turning an ordinary parent render into a fresh read.
+  const onUnauthorizedRef = useRef(onUnauthorized);
+  const onValidatedRef = useRef(onValidated);
+  onUnauthorizedRef.current = onUnauthorized;
+  onValidatedRef.current = onValidated;
 
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    // Invalidate any prior roster authority and abort its observation effect
+    // before this fresh roster read settles.
+    setRosterReadyKey(0);
+    setObservation({ phase: "loading" });
     (async () => {
       try {
         // The roster read is also this surface's authenticated gateway check:
@@ -74,11 +88,12 @@ export function DashboardView({
         const roster = await fetchConversationAgents(token, controller.signal);
         if (cancelled) return;
         setLoad({ phase: "ready", agents: roster.agents });
-        onValidated();
+        setRosterReadyKey((key) => key + 1);
+        onValidatedRef.current();
       } catch (error) {
         if (cancelled) return;
         if (error instanceof UnauthorizedError) {
-          onUnauthorized();
+          onUnauthorizedRef.current();
           return;
         }
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -89,7 +104,7 @@ export function DashboardView({
       cancelled = true;
       controller.abort();
     };
-  }, [token, onUnauthorized, onValidated, reloadKey, retryKey]);
+  }, [token, reloadKey, retryKey]);
 
   function handleRetry() {
     // An explicit fresh steward action only — never an automatic retry.
@@ -101,7 +116,7 @@ export function DashboardView({
   // (that success remains the sole "Gateway connection — Connected" fact).
   // One Dashboard load takes one snapshot; every retry is explicit and manual.
   useEffect(() => {
-    if (load.phase !== "ready") return;
+    if (load.phase !== "ready" || rosterReadyKey === 0) return;
     let cancelled = false;
     const controller = new AbortController();
     // Clear any previous snapshot up front: a failed refresh must never
@@ -115,7 +130,7 @@ export function DashboardView({
       } catch (error) {
         if (cancelled) return;
         if (error instanceof UnauthorizedError) {
-          onUnauthorized();
+          onUnauthorizedRef.current();
           return;
         }
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -126,7 +141,7 @@ export function DashboardView({
       cancelled = true;
       controller.abort();
     };
-  }, [token, onUnauthorized, load.phase, reloadKey, retryKey, observationRetryKey]);
+  }, [token, load.phase, rosterReadyKey, observationRetryKey]);
 
   function handleObservationRetry() {
     // Explicit manual retry: a fresh observation read ONLY — the roster (the
