@@ -125,6 +125,16 @@ export async function observeServiceStatus(deps) {
     const targets = await Promise.all(SERVICE_OBSERVATION_TARGETS.map(async (target) => ({ target, state: await observeTarget(deps, manager, target) })));
     return { observedAt, manager, targets };
 }
+/**
+ * Production gateway wiring: compose the D2.1 evaluator over the fixed local
+ * observation seams. The deps parameter exists only so wiring tests inject a
+ * fake seam and never probe a live service manager; the CLI calls this with
+ * no arguments, which selects createLocalServiceObservationDeps().
+ */
+export function createLocalServiceStatusReader(deps) {
+    const resolved = deps ?? createLocalServiceObservationDeps();
+    return () => observeServiceStatus(resolved);
+}
 // ---------------------------------------------------------------------------
 // Production seam factory (fixed Piren-owned paths; argument-array execution)
 // ---------------------------------------------------------------------------

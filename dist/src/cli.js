@@ -21,6 +21,7 @@ import { readVersion } from "./version.js";
 import { formatRunPirenUpdate, runPirenUpdate } from "./update.js";
 import { validateAgentName, agentDirPath, executeAddAgent, executeRemoveAgent, executeCloneAgent, } from "./agent-manage.js";
 import { resolveGatewayToken, assertAuthGate, isLocalhostBind, defaultTokenFilePath } from "./gateway-auth.js";
+import { createLocalServiceStatusReader } from "./service-observability.js";
 import { resolvePublicDir } from "./public-dir.js";
 import { formatHelp, formatCommandHelp, isHelpRequest } from "./help.js";
 import { parseArgs, bootstrapOptions, KNOWN_COMMANDS, } from "./parse-args.js";
@@ -153,6 +154,7 @@ try {
             targetBuilder,
             authToken: resolvedToken.token !== "" ? resolvedToken.token : undefined,
             publicDir: resolvePublicDir(thisDir),
+            serviceStatusReader: createLocalServiceStatusReader(),
         });
         const handle = await server.start(port ?? 7317, bindHost);
         console.log(`Piren gateway listening on http://${handle.hostname}:${handle.port}`);

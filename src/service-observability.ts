@@ -182,6 +182,23 @@ export async function observeServiceStatus(deps: ServiceObservationDeps): Promis
   return { observedAt, manager, targets };
 }
 
+/**
+ * Gateway reader seam: one fresh bounded snapshot per call. Injected into the
+ * HTTP layer so the route stays free of host-manager probing.
+ */
+export type ServiceStatusReader = () => Promise<ServiceStatusSnapshot>;
+
+/**
+ * Production gateway wiring: compose the D2.1 evaluator over the fixed local
+ * observation seams. The deps parameter exists only so wiring tests inject a
+ * fake seam and never probe a live service manager; the CLI calls this with
+ * no arguments, which selects createLocalServiceObservationDeps().
+ */
+export function createLocalServiceStatusReader(deps?: ServiceObservationDeps): ServiceStatusReader {
+  const resolved = deps ?? createLocalServiceObservationDeps();
+  return () => observeServiceStatus(resolved);
+}
+
 // ---------------------------------------------------------------------------
 // Production seam factory (fixed Piren-owned paths; argument-array execution)
 // ---------------------------------------------------------------------------

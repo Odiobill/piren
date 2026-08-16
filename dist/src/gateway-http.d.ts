@@ -1,5 +1,6 @@
 import { type RpcSpawnTarget } from "./gateway-rpc.js";
 import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
+import type { ServiceStatusReader } from "./service-observability.js";
 export type RpcTargetBuilder = (agent: string) => Promise<RpcSpawnTarget>;
 /**
  * Resolves the agent-local model-fallback policy for a gateway run
@@ -48,6 +49,13 @@ export interface GatewayServerOptions {
      * inject a fixed policy so the gateway stays filesystem/Pi-auth free.
      */
     fallbackPolicyLoader?: FallbackPolicyLoader | undefined;
+    /**
+     * Read-only service-observation seam for GET /api/services/status. The
+     * production CLI wires the D2.1 local reader; tests inject a fake so the
+     * gateway never probes a live service manager. When absent, the route
+     * returns a bounded non-diagnostic failure (never a fabricated snapshot).
+     */
+    serviceStatusReader?: ServiceStatusReader | undefined;
 }
 export interface GatewayHandle {
     port: number;
@@ -80,6 +88,7 @@ export declare class GatewayServer {
     private readonly conversationStreamCleanups;
     private shuttingDown;
     private readonly fallbackPolicyLoader;
+    private readonly serviceStatusReader;
     /** TB4: explicit steward model selection disables automatic fallback for this session. */
     private explicitModelSelected;
     /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
@@ -209,6 +218,17 @@ export declare class GatewayServer {
      * runnableAgents set) — never Pi/transport/provider presence.
      */
     private handleConversationAgents;
+    /**
+     * GET /api/services/status — the D2.2 authenticated, read-only managed
+     * service observation. Returns exactly the injected reader's bounded
+     * snapshot (server-generated observedAt, manager, fixed-order
+     * telegram/discord/scheduler targets) with no envelope or diagnostics. The
+     * route takes no query/body selection of target, manager, command, path, or
+     * timeout, never probes the gateway target, and never invokes a
+     * service-control seam. An absent or failing reader is a bounded
+     * non-diagnostic 503, never a fabricated observation.
+     */
+    private handleServiceStatus;
     private safeConversation;
     private safeConversationEvent;
     private conversationError;

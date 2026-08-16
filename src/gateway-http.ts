@@ -45,6 +45,7 @@ import {
   type GatewayFallbackPolicy,
   type ModelFallbackNotice,
 } from "./model-fallback-gateway.js";
+import type { ServiceStatusReader } from "./service-observability.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -137,6 +138,13 @@ export interface GatewayServerOptions {
    * inject a fixed policy so the gateway stays filesystem/Pi-auth free.
    */
   fallbackPolicyLoader?: FallbackPolicyLoader | undefined;
+  /**
+   * Read-only service-observation seam for GET /api/services/status. The
+   * production CLI wires the D2.1 local reader; tests inject a fake so the
+   * gateway never probes a live service manager. When absent, the route
+   * returns a bounded non-diagnostic failure (never a fabricated snapshot).
+   */
+  serviceStatusReader?: ServiceStatusReader | undefined;
 }
 
 export interface GatewayHandle {
@@ -212,6 +220,7 @@ export class GatewayServer {
   private readonly conversationStreamCleanups = new Set<() => void>();
   private shuttingDown = false;
   private readonly fallbackPolicyLoader: FallbackPolicyLoader | undefined;
+  private readonly serviceStatusReader: ServiceStatusReader | undefined;
   /** TB4: explicit steward model selection disables automatic fallback for this session. */
   private explicitModelSelected = false;
   /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
@@ -229,6 +238,7 @@ export class GatewayServer {
     this.authToken = options.authToken ?? "";
     this.publicDir = options.publicDir;
     this.fallbackPolicyLoader = options.fallbackPolicyLoader;
+    this.serviceStatusReader = options.serviceStatusReader;
     // C2: the conversation broker is wired with the same runtime options;
     // conversation runs use isolated conversation × agent clients, never the
     // global gateway chat client. (The retired room broker is gone — no
@@ -361,6 +371,8 @@ export class GatewayServer {
       await this.handleVaultGraph(res);
     } else if (req.method === "POST" && url.pathname === "/api/vault/inbox") {
       await this.handleVaultInbox(req, res);
+    } else if (req.method === "GET" && url.pathname === "/api/services/status") {
+      await this.handleServiceStatus(res);
     } else if (url.pathname === "/api/conversations" || url.pathname.startsWith("/api/conversations/")) {
       await this.handleConversations(req, res, url);
     } else if (req.method === "GET" && this.publicDir) {
@@ -1391,6 +1403,30 @@ export class GatewayServer {
    */
   private async handleConversationAgents(res: ServerResponse): Promise<void> {
     this.writeJson(res, 200, buildConversationAgentsResponse(this.vaultAgents, this.runnableAgents));
+  }
+
+  /**
+   * GET /api/services/status — the D2.2 authenticated, read-only managed
+   * service observation. Returns exactly the injected reader's bounded
+   * snapshot (server-generated observedAt, manager, fixed-order
+   * telegram/discord/scheduler targets) with no envelope or diagnostics. The
+   * route takes no query/body selection of target, manager, command, path, or
+   * timeout, never probes the gateway target, and never invokes a
+   * service-control seam. An absent or failing reader is a bounded
+   * non-diagnostic 503, never a fabricated observation.
+   */
+  private async handleServiceStatus(res: ServerResponse): Promise<void> {
+    if (!this.serviceStatusReader) {
+      this.writeJson(res, 503, { error: "service observation unavailable" });
+      return;
+    }
+    try {
+      const snapshot = await this.serviceStatusReader();
+      this.writeJson(res, 200, snapshot);
+    } catch {
+      // Raw reader diagnostics stay server-side; the failure body is fixed.
+      this.writeJson(res, 503, { error: "service observation unavailable" });
+    }
   }
 
   // -------------------------------------------------------------------------

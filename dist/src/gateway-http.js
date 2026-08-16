@@ -94,6 +94,7 @@ export class GatewayServer {
     conversationStreamCleanups = new Set();
     shuttingDown = false;
     fallbackPolicyLoader;
+    serviceStatusReader;
     /** TB4: explicit steward model selection disables automatic fallback for this session. */
     explicitModelSelected = false;
     /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
@@ -110,6 +111,7 @@ export class GatewayServer {
         this.authToken = options.authToken ?? "";
         this.publicDir = options.publicDir;
         this.fallbackPolicyLoader = options.fallbackPolicyLoader;
+        this.serviceStatusReader = options.serviceStatusReader;
         // C2: the conversation broker is wired with the same runtime options;
         // conversation runs use isolated conversation × agent clients, never the
         // global gateway chat client. (The retired room broker is gone — no
@@ -256,6 +258,9 @@ export class GatewayServer {
         }
         else if (req.method === "POST" && url.pathname === "/api/vault/inbox") {
             await this.handleVaultInbox(req, res);
+        }
+        else if (req.method === "GET" && url.pathname === "/api/services/status") {
+            await this.handleServiceStatus(res);
         }
         else if (url.pathname === "/api/conversations" || url.pathname.startsWith("/api/conversations/")) {
             await this.handleConversations(req, res, url);
@@ -1240,6 +1245,30 @@ export class GatewayServer {
      */
     async handleConversationAgents(res) {
         this.writeJson(res, 200, buildConversationAgentsResponse(this.vaultAgents, this.runnableAgents));
+    }
+    /**
+     * GET /api/services/status — the D2.2 authenticated, read-only managed
+     * service observation. Returns exactly the injected reader's bounded
+     * snapshot (server-generated observedAt, manager, fixed-order
+     * telegram/discord/scheduler targets) with no envelope or diagnostics. The
+     * route takes no query/body selection of target, manager, command, path, or
+     * timeout, never probes the gateway target, and never invokes a
+     * service-control seam. An absent or failing reader is a bounded
+     * non-diagnostic 503, never a fabricated observation.
+     */
+    async handleServiceStatus(res) {
+        if (!this.serviceStatusReader) {
+            this.writeJson(res, 503, { error: "service observation unavailable" });
+            return;
+        }
+        try {
+            const snapshot = await this.serviceStatusReader();
+            this.writeJson(res, 200, snapshot);
+        }
+        catch {
+            // Raw reader diagnostics stay server-side; the failure body is fixed.
+            this.writeJson(res, 503, { error: "service observation unavailable" });
+        }
     }
     // -------------------------------------------------------------------------
     // C2 — Conversation API family (ADR-0042, accepted C2 contract §3)

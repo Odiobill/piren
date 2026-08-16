@@ -108,6 +108,10 @@ Vault browser and graph:
 - `GET /api/vault/read?path=...`
 - `GET /api/vault/graph`
 
+Managed service observation:
+
+- `GET /api/services/status` — one fresh, read-only snapshot of the fixed Piren service targets `telegram`, `discord`, and `scheduler` (always in that order), sampled locally by the gateway at request time. Success is `200` with exactly `{observedAt, manager, targets}`: `observedAt` is the server-generated ISO sample time, `manager` is `systemd-user`, `tmux-cron`, or `unavailable`, and each target's `state` is one of `active`, `inactive`, `not-installed`, `unavailable`, or `unknown`. A target the gateway cannot classify safely is reported as `unknown` for that target only — never as inactive, and never as a whole-snapshot failure. The route accepts no target, manager, command, path, or timeout selection; it never probes the gateway service itself (a successful authenticated read already establishes the gateway-connection fact) and returns no command text, paths, logs, process identifiers, or other diagnostics. When no observation can be produced, the response is a bounded `503 {"error": "service observation unavailable"}`, never a fabricated snapshot. The read changes nothing: no service control, install, removal, config write, polling, caching, or history.
+
 OpenAI-compatible:
 
 - `POST /api/v1/chat/completions`

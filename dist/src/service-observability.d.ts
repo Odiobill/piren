@@ -81,6 +81,18 @@ export declare function classifyTmuxHasSession(result: CommandRunResult): Servic
  */
 export declare function observeServiceStatus(deps: ServiceObservationDeps): Promise<ServiceStatusSnapshot>;
 /**
+ * Gateway reader seam: one fresh bounded snapshot per call. Injected into the
+ * HTTP layer so the route stays free of host-manager probing.
+ */
+export type ServiceStatusReader = () => Promise<ServiceStatusSnapshot>;
+/**
+ * Production gateway wiring: compose the D2.1 evaluator over the fixed local
+ * observation seams. The deps parameter exists only so wiring tests inject a
+ * fake seam and never probe a live service manager; the CLI calls this with
+ * no arguments, which selects createLocalServiceObservationDeps().
+ */
+export declare function createLocalServiceStatusReader(deps?: ServiceObservationDeps): ServiceStatusReader;
+/**
  * Production seams over the fixed Piren-owned artifacts:
  * - systemd unit: ~/.config/systemd/user/piren-<target>.service
  * - tmux launch script: ~/.config/piren/services/piren-<target>.tmux.sh
