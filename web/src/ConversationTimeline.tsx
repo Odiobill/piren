@@ -26,6 +26,7 @@ import { parseConversationApprovalFrame, type PendingApproval } from "./conversa
 import type { ConversationReaction } from "./conversation-reactions";
 import {
   conversationAuthorInitial,
+  conversationStartOriginPresentation,
   conversationStatusSymbol,
   groupConversationTranscript,
   type ConversationStatusAttachment,
@@ -379,14 +380,19 @@ function ConversationTranscriptRow({ row }: { row: ConversationTranscriptRow }) 
     );
   }
   if (row.type === "evidence") {
+    // D5: the EXACT system-authored durable start origin gets the concise
+    // `Conversation started with agent <agent>` label and its redundant
+    // explanatory body is suppressed; every lookalike/malformed/other event
+    // keeps its current fail-safe rendering (label + visible body).
+    const startOrigin = conversationStartOriginPresentation(row.event);
     return (
       <li className={`transcript-row transcript-evidence transcript-${row.event.kind}`}>
-        <span className="transcript-kind">{conversationEventLabel(row.event)}</span>
+        <span className="transcript-kind">{startOrigin !== null ? startOrigin.label : conversationEventLabel(row.event)}</span>
         {row.reaction !== null && <StatusClusterItem reaction={row.reaction} />}
         <time className="transcript-time" dateTime={row.event.created}>
           {row.event.created}
         </time>
-        {row.event.body !== "" && <p className="transcript-body">{row.event.body}</p>}
+        {row.event.body !== "" && startOrigin === null && <p className="transcript-body">{row.event.body}</p>}
       </li>
     );
   }

@@ -31,8 +31,8 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
 
 const ROSTER = {
   agents: [
-    { name: "dipu", online: true },
-    { name: "kimi", online: true },
+    { name: "dipu", online: true, model: "anthropic/claude-opus-4.6" },
+    { name: "kimi", online: true, model: "moonshotai/kimi-k2:high" },
     { name: "zora", online: false },
   ],
 };
@@ -167,9 +167,26 @@ describe("DashboardView (ADR-0044)", () => {
     const avatar = dipu.querySelector(".agent-card-avatar");
     expect(avatar?.getAttribute("aria-hidden")).toBe("true");
     expect(avatar?.textContent).toBe("D");
-    expect(dipu.querySelector(".agent-card-description")?.textContent).toContain("Runnable on this installation");
+    // D5: the card description is the gateway-projected configured model,
+    // never the redundant runnable/not-runnable copy.
+    expect(dipu.querySelector(".agent-card-description")?.textContent).toBe("Model: anthropic/claude-opus-4.6");
+    const kimi = agentButton("kimi");
+    expect(kimi.querySelector(".agent-card-description")?.textContent).toBe("Model: moonshotai/kimi-k2:high");
+    expect(container.textContent).not.toContain("Runnable on this installation — local policy");
+    expect(container.textContent).not.toContain("Not runnable on this installation — local policy");
+  });
+
+  it("visibly distinguishes an unavailable configured model instead of inventing one (D5)", async () => {
+    renderDashboard();
+    await flush();
+    // zora has no usable configured model: the card says so truthfully.
     const zora = agentButton("zora");
-    expect(zora.querySelector(".agent-card-description")?.textContent).toContain("Not runnable on this installation");
+    expect(zora.querySelector(".agent-card-description")?.textContent).toBe("Configured model unavailable");
+    // The section-level explanation that runnable status is local policy
+    // (never live presence or a provider probe) is retained.
+    expect(container.textContent).toContain(
+      "Online means runnable on this installation — local policy, never a live presence or provider probe.",
+    );
   });
 
   it("has no duplicate Conversation navigation — the sidebar is the sole navigator (D1)", async () => {
@@ -189,7 +206,8 @@ describe("DashboardView (ADR-0044)", () => {
     await flush();
     const offline = agentButton("zora");
     expect(offline.disabled).toBe(true);
-    expect(container.textContent).toContain("Not runnable on this installation");
+    expect(offline.getAttribute("title")).toBe("zora is not runnable on this installation");
+    expect(offline.querySelector(".agent-status")?.textContent).toBe("Offline");
     // The offline agent cannot be selected, so no start can target it.
     await act(async () => {
       offline.click();
@@ -248,6 +266,9 @@ describe("DashboardView (ADR-0044)", () => {
     expect(busy).not.toBeNull();
     expect(busy?.getAttribute("role")).toBe("status");
     expect(busy?.textContent).toContain("Preparing your conversation with kimi");
+    // D5: the busy line asks the steward to wait while staying scoped to the
+    // submitted browser/gateway operation.
+    expect(busy?.textContent).toContain("Please wait");
     // Truthfulness: the pending line describes the submitted browser/gateway
     // operation only — never invented agent liveness.
     expect(busy?.textContent?.toLowerCase() ?? "").not.toMatch(/running|thinking|responding|working|online/);

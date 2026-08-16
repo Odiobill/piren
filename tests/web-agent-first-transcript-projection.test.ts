@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  conversationStartOriginPresentation,
   groupConversationTranscript,
   type ConversationTranscriptRow,
 } from "../web/src/conversation-transcript.js";
@@ -288,5 +289,103 @@ describe("D3 agent-first start envelope projection", () => {
     expect(source).toContain("groupConversationTranscript(items)");
     expect(source).toContain("<ConversationTimelineItems items={phase.items} />");
     expect(source).toContain('stream: "inspection"');
+  });
+});
+
+/**
+ * D5 — concise presentation for the EXACT system-authored durable
+ * `conversation_start_requested` origin only: `Conversation started with
+ * agent <agent>`, with the redundant explanatory body covered by the label.
+ * The durable event, its body, ordering, correlation, and the D3
+ * suppression predicate are unchanged; non-system lookalikes,
+ * malformed-body origins, and every other event keep their current
+ * rendering (fail safe, visible).
+ */
+describe("D5 conversation-start origin presentation", () => {
+  it("labels only the exact system-authored origin with concise agent-start language", () => {
+    const presentation = conversationStartOriginPresentation(origin());
+    expect(presentation).toEqual({ label: "Conversation started with agent dipu" });
+  });
+
+  it("extracts the exact durable agent name from the system origin body", () => {
+    const presentation = conversationStartOriginPresentation(
+      event({
+        kind: "conversation_start_requested",
+        authorKind: "system",
+        author: "system",
+        body: "The steward requested starting this conversation with agent 'kimi'.",
+      }),
+    );
+    expect(presentation).toEqual({ label: "Conversation started with agent kimi" });
+  });
+
+  it("returns null for a non-system lookalike origin with an identical body (fail safe)", () => {
+    for (const [authorKind, author] of [
+      ["agent", "dipu"],
+      ["steward", "steward"],
+      ["system", "not-system"],
+      ["agent", "system"],
+    ] as const) {
+      const lookalike = event({
+        kind: "conversation_start_requested",
+        authorKind,
+        author,
+        body: "The steward requested starting this conversation with agent 'dipu'.",
+      });
+      expect(conversationStartOriginPresentation(lookalike), `${authorKind}/${author}`).toBeNull();
+    }
+  });
+
+  it("returns null for a system-authored origin whose body is not the exact durable shape (malformed)", () => {
+    for (const body of [
+      "The steward requested starting this conversation with agent dipu.",
+      "The steward requested starting this conversation with agent 'dipu'",
+      "The steward requested starting this conversation with agent 'dipu'. extra",
+      "something else entirely",
+    ]) {
+      const malformed = event({
+        kind: "conversation_start_requested",
+        authorKind: "system",
+        author: "system",
+        body,
+      });
+      expect(conversationStartOriginPresentation(malformed), JSON.stringify(body)).toBeNull();
+    }
+  });
+
+  it("returns null for every other event kind, even system-authored ones", () => {
+    expect(
+      conversationStartOriginPresentation(
+        run("run_started", { correlationId: "o1", runAgent: "dipu" }),
+      ),
+    ).toBeNull();
+    expect(
+      conversationStartOriginPresentation(
+        event({ kind: "agent_message", authorKind: "agent", author: "dipu", body: "hi" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("leaves the durable origin row, D3 suppression, and fail-safe evidence cases untouched", () => {
+    const rows = groupConversationTranscript(agentFirstItems());
+    // The origin remains a visible evidence row carrying the unchanged
+    // durable event (kind, body, id, ordering all intact).
+    expect(rowIds(rows)).toEqual(["o1", "am1"]);
+    const originRow = rowFor(rows, "o1");
+    expect(originRow.type).toBe("evidence");
+    if (originRow.type === "evidence") {
+      expect(originRow.event.kind).toBe("conversation_start_requested");
+      expect(originRow.event.body).toBe("The steward requested starting this conversation with agent 'dipu'.");
+    }
+  });
+
+  it("renders through one shared presentation call site in the evidence row (static pin)", async () => {
+    const source = await readFile(join(process.cwd(), "web", "src", "ConversationTimeline.tsx"), "utf8");
+    // Exactly one presentation call site, inside the single evidence-row
+    // renderer, so inspection and live surfaces can never diverge; the body
+    // is suppressed only when the exact origin presentation applies.
+    expect(source.match(/conversationStartOriginPresentation\(/g)?.length).toBe(1);
+    expect(source).toContain("startOrigin !== null ? startOrigin.label : conversationEventLabel(row.event)");
+    expect(source).toContain('row.event.body !== "" && startOrigin === null');
   });
 });

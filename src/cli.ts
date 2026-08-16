@@ -39,6 +39,7 @@ import {
 } from "./parse-args.js";
 import { loadPirenContext, type BootstrapOptions } from "./bootstrap.js";
 import { formatAgentsReport, listPirenAgents, listFallbackCandidates, formatFallbackReport } from "./agents.js";
+import { projectConfiguredAgentModels } from "./conversation-agents.js";
 import { schedulerDryRun, readYamlConfig, resolveEnabledAgents, DEFAULT_CONFIG_PATH } from "./scheduler-cli.js";
 import { schedulerReport } from "./scheduler-report.js";
 import { schedulerOnce, createSchedulerExecutors } from "./scheduler-once.js";
@@ -265,6 +266,10 @@ try {
       vaultRoot: context.vaultRoot,
       runnableAgents: agentsReport.runnableAgents,
       vaultAgents: agentsReport.vaultAgents,
+      // D5: one best-effort startup projection of each vault agent's declared
+      // model preference (canonical Pi launch formatting); the roster route
+      // serves this injected map and never rereads config per request.
+      agentConfiguredModels: await projectConfiguredAgentModels(context.vaultRoot, agentsReport.vaultAgents),
       initialAgent: context.agentName,
       targetBuilder,
       authToken: resolvedToken.token !== "" ? resolvedToken.token : undefined,

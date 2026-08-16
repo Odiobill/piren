@@ -254,9 +254,11 @@ export function DashboardView({
                         )}
                       </span>
                       <span className="agent-card-description">
-                        {agent.online
-                          ? "Runnable on this installation — local policy, not a live probe."
-                          : "Not runnable on this installation — local policy, not a live probe."}
+                        {/* D5: the gateway-projected configured model replaces the
+                            redundant runnable/not-runnable copy. Absent (malformed
+                            or missing configuration) is truthfully unavailable —
+                            never an invented or inferred value. */}
+                        {agent.model !== undefined ? `Model: ${agent.model}` : "Configured model unavailable"}
                       </span>
                     </span>
                   </button>
@@ -276,7 +278,7 @@ export function DashboardView({
             )}
             {start.phase === "busy" && selectedAgent !== null && (
               <p className="dashboard-start-busy" role="status">
-                Preparing your conversation with {selectedAgent}
+                Preparing your conversation with {selectedAgent}. Please wait
                 <span className="dashboard-busy-dots" aria-hidden="true">
                   <span>.</span>
                   <span>.</span>

@@ -23,6 +23,15 @@ export interface GatewayServerOptions {
      * is local installation policy only — membership in `runnableAgents`.
      */
     vaultAgents?: string[] | undefined;
+    /**
+     * D5: bounded startup-projected configured-model map (agent name =>
+     * canonical model label or null), produced ONCE by the CLI via
+     * `projectConfiguredAgentModels` from each agent's declared
+     * `team/<agent>/config.yml` model preference. The server never rereads
+     * config per request; entries with null/missing values simply omit the
+     * additive `model` field. When absent, no entry carries a model.
+     */
+    agentConfiguredModels?: Record<string, string | null> | undefined;
     /** Initial active agent. Defaults to the first runnable agent or null. */
     initialAgent?: string | undefined;
     /**
@@ -79,6 +88,7 @@ export declare class GatewayServer {
     private readonly vaultRoot;
     private readonly runnableAgents;
     private readonly vaultAgents;
+    private readonly agentConfiguredModels;
     private currentAgent;
     private readonly targetBuilder;
     private readonly authToken;

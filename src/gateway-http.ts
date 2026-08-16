@@ -150,6 +150,15 @@ export interface GatewayServerOptions {
    * is local installation policy only — membership in `runnableAgents`.
    */
   vaultAgents?: string[] | undefined;
+  /**
+   * D5: bounded startup-projected configured-model map (agent name =>
+   * canonical model label or null), produced ONCE by the CLI via
+   * `projectConfiguredAgentModels` from each agent's declared
+   * `team/<agent>/config.yml` model preference. The server never rereads
+   * config per request; entries with null/missing values simply omit the
+   * additive `model` field. When absent, no entry carries a model.
+   */
+  agentConfiguredModels?: Record<string, string | null> | undefined;
   /** Initial active agent. Defaults to the first runnable agent or null. */
   initialAgent?: string | undefined;
   /**
@@ -249,6 +258,7 @@ export class GatewayServer {
   private readonly vaultRoot: string | undefined;
   private readonly runnableAgents: string[];
   private readonly vaultAgents: string[];
+  private readonly agentConfiguredModels: Record<string, string | null>;
   private currentAgent: string | null;
   private readonly targetBuilder: RpcTargetBuilder | undefined;
   private readonly authToken: string;
@@ -272,6 +282,7 @@ export class GatewayServer {
     this.vaultRoot = options.vaultRoot;
     this.runnableAgents = options.runnableAgents ?? [];
     this.vaultAgents = options.vaultAgents ?? [];
+    this.agentConfiguredModels = options.agentConfiguredModels ?? {};
     this.targetBuilder = options.targetBuilder;
     this.authToken = options.authToken ?? "";
     this.publicDir = options.publicDir;
@@ -1440,7 +1451,7 @@ export class GatewayServer {
    * runnableAgents set) — never Pi/transport/provider presence.
    */
   private async handleConversationAgents(res: ServerResponse): Promise<void> {
-    this.writeJson(res, 200, buildConversationAgentsResponse(this.vaultAgents, this.runnableAgents));
+    this.writeJson(res, 200, buildConversationAgentsResponse(this.vaultAgents, this.runnableAgents, this.agentConfiguredModels));
   }
 
   /**

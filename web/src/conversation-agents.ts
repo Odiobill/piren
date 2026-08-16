@@ -9,6 +9,13 @@
 export interface ConversationAgentEntry {
   name: string;
   online: boolean;
+  /**
+   * D5: the gateway-projected configured model label (declared
+   * `team/<agent>/config.yml` model preference in canonical Pi launch
+   * formatting). Absent means unavailable; the browser never reads agent
+   * configuration or infers a live session/provider value itself.
+   */
+  model?: string;
 }
 
 export interface ConversationAgentsResponse {
@@ -28,6 +35,17 @@ export function parseConversationAgents(json: unknown): ConversationAgentsRespon
     if (typeof record.name !== "string" || record.name === "" || typeof record.online !== "boolean") {
       throw new Error("unexpected roster entry");
     }
+    // D5: the optional configured-model field is validated strictly when
+    // present; absent stays absent (rendered as unavailable).
+    if (record.model !== undefined && (typeof record.model !== "string" || record.model === "")) {
+      throw new Error("unexpected roster entry");
+    }
   }
-  return { agents: agents as ConversationAgentEntry[] };
+  return {
+    agents: (agents as Array<Record<string, unknown>>).map((record) => {
+      const entry: ConversationAgentEntry = { name: record.name as string, online: record.online as boolean };
+      if (record.model !== undefined) entry.model = record.model as string;
+      return entry;
+    }),
+  };
 }
