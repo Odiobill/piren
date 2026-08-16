@@ -229,8 +229,12 @@ export function createLocalServiceObservationDeps(homeDir?: string): ServiceObse
       try {
         await access(path);
         return true;
-      } catch {
-        return false;
+      } catch (error) {
+        // Only a definite absent artifact is `not-installed`. Permission,
+        // filesystem, and path-shape errors must reach the evaluator so it
+        // classifies the target as the contract's fail-safe `unknown`.
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
       }
     },
     now: () => new Date(),

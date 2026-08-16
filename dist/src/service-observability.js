@@ -170,8 +170,13 @@ export function createLocalServiceObservationDeps(homeDir) {
                 await access(path);
                 return true;
             }
-            catch {
-                return false;
+            catch (error) {
+                // Only a definite absent artifact is `not-installed`. Permission,
+                // filesystem, and path-shape errors must reach the evaluator so it
+                // classifies the target as the contract's fail-safe `unknown`.
+                if (error.code === "ENOENT")
+                    return false;
+                throw error;
             }
         },
         now: () => new Date(),

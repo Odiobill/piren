@@ -289,6 +289,24 @@ describe("D2.1 tmux-cron state meanings and fail-safe behavior", () => {
 });
 
 describe("D2.1 production seam factory", () => {
+  it("treats an artifact inspection error as unknown rather than not-installed", async () => {
+    const home = await mkdtemp(join(tmpdir(), "piren-d21-"));
+    try {
+      // A file where the factory requires a directory produces ENOTDIR, not
+      // the definite absence (ENOENT) that alone may mean not-installed.
+      await writeFile(join(home, ".config"), "not a directory\n");
+      const factoryDeps = createLocalServiceObservationDeps(home);
+      const snapshot = await observeServiceStatus({
+        ...factoryDeps,
+        hasSystemdUser: async () => true,
+        run: async () => runResult({ exitCode: 0, stdout: "active\n" }),
+      });
+      expect(snapshot.targets.map((target) => target.state)).toEqual(["unknown", "unknown", "unknown"]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("maps fixed artifact kinds to Piren-owned paths only, under the given home", async () => {
     const home = await mkdtemp(join(tmpdir(), "piren-d21-"));
     try {

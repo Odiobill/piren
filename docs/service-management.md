@@ -226,7 +226,7 @@ See [Scheduler](scheduler.md).
   platform connectivity. In particular, under tmux-cron a tmux session for a
   disconnected transport still reports as present.
 
-## Local service observation core (D2.1)
+## Local service observation core
 
 `src/service-observability.ts` is a small read-only observation core with
 injected command/file/clock seams (`observeServiceStatus(deps)`). It samples
@@ -262,7 +262,7 @@ Workbench read is already the exact gateway-connection fact. The core runs
 fixed argument arrays only (never a shell), performs no service control, no
 writes, no network, no polling, and no persistence, and never returns raw
 diagnostics, paths, or secrets. There is no HTTP route or Dashboard wiring
-yet — those are the separately gated D2.2/D2.3 slices.
+yet; those are separately gated future slices.
 
 ## Scheduler
 
