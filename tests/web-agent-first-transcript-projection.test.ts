@@ -319,6 +319,35 @@ describe("D5 conversation-start origin presentation", () => {
     expect(presentation).toEqual({ label: "Conversation started with agent kimi" });
   });
 
+  it("accepts boundary-valid Piren agent names (single letter, digits, dashes)", () => {
+    for (const agent of ["a", "k2", "agent-9-x"]) {
+      const presentation = conversationStartOriginPresentation(
+        event({
+          kind: "conversation_start_requested",
+          authorKind: "system",
+          author: "system",
+          body: `The steward requested starting this conversation with agent '${agent}'.`,
+        }),
+      );
+      expect(presentation, agent).toEqual({ label: `Conversation started with agent ${agent}` });
+    }
+  });
+
+  it("fails safe to null when the captured value is not a valid Piren agent name (lookalike body)", () => {
+    // The concise label/body suppression applies ONLY to the gateway's exact
+    // durable body with a valid `[a-z][a-z0-9-]*` agent name; arbitrary
+    // system-authored lookalike values keep the technical label + body.
+    for (const captured of ["di pu", "a/b", "Dipu", "1dipu", "di_pu", "-dipu", "dipu!", " "]) {
+      const lookalike = event({
+        kind: "conversation_start_requested",
+        authorKind: "system",
+        author: "system",
+        body: `The steward requested starting this conversation with agent '${captured}'.`,
+      });
+      expect(conversationStartOriginPresentation(lookalike), JSON.stringify(captured)).toBeNull();
+    }
+  });
+
   it("returns null for a non-system lookalike origin with an identical body (fail safe)", () => {
     for (const [authorKind, author] of [
       ["agent", "dipu"],

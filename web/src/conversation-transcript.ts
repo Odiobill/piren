@@ -68,23 +68,28 @@ function isSystemAuthored(event: ConversationEventRecord): boolean {
 /** The exact durable system origin body shape persisted by the gateway. */
 const START_ORIGIN_BODY_PATTERN = /^The steward requested starting this conversation with agent '([^']+)'\.$/;
 
+/** The concise presentation applies only to a valid Piren agent name. */
+const START_ORIGIN_AGENT_PATTERN = /^[a-z][a-z0-9-]*$/;
+
 /**
  * D5 — concise presentation for the EXACT system-authored durable
  * `conversation_start_requested` origin only: the concise label
  * `Conversation started with agent <agent>` covers the redundant
  * explanatory body, so the row renderer suppresses the body when (and only
- * when) this returns non-null. The durable event itself — kind, body,
- * ordering, correlation — is never changed, and the D3 suppression
- * predicate is untouched. Non-system lookalikes, malformed bodies, and
- * every other event return null and keep their current fail-safe visible
- * rendering.
+ * when) this returns non-null. The captured name must be a valid Piren
+ * agent name (`[a-z][a-z0-9-]*`); a system-authored lookalike body with an
+ * arbitrary captured value fails safe to the technical label and visible
+ * body. The durable event itself — kind, body, ordering, correlation — is
+ * never changed, and the D3 suppression predicate is untouched. Non-system
+ * lookalikes, malformed bodies, and every other event return null and keep
+ * their current fail-safe visible rendering.
  */
 export function conversationStartOriginPresentation(event: ConversationEventRecord): { label: string } | null {
   if (event.kind !== AGENT_FIRST_ORIGIN_KIND) return null;
   if (!isSystemAuthored(event)) return null;
   const match = START_ORIGIN_BODY_PATTERN.exec(event.body);
   const agent = match?.[1];
-  if (agent === undefined) return null;
+  if (agent === undefined || !START_ORIGIN_AGENT_PATTERN.test(agent)) return null;
   return { label: `Conversation started with agent ${agent}` };
 }
 

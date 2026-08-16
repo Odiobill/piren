@@ -255,10 +255,12 @@ export function DashboardView({
                       </span>
                       <span className="agent-card-description">
                         {/* D5: the gateway-projected configured model replaces the
-                            redundant runnable/not-runnable copy. Absent (malformed
-                            or missing configuration) is truthfully unavailable —
-                            never an invented or inferred value. */}
-                        {agent.model !== undefined ? `Model: ${agent.model}` : "Configured model unavailable"}
+                            redundant runnable/not-runnable copy; the label names it
+                            as the declared startup configuration, never live
+                            Pi/provider/session state. Absent (malformed or missing
+                            configuration) is truthfully unavailable — never an
+                            invented or inferred value. */}
+                        {agent.model !== undefined ? `Configured model: ${agent.model}` : "Configured model unavailable"}
                       </span>
                     </span>
                   </button>

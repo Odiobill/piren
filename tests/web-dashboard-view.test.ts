@@ -168,10 +168,11 @@ describe("DashboardView (ADR-0044)", () => {
     expect(avatar?.getAttribute("aria-hidden")).toBe("true");
     expect(avatar?.textContent).toBe("D");
     // D5: the card description is the gateway-projected configured model,
-    // never the redundant runnable/not-runnable copy.
-    expect(dipu.querySelector(".agent-card-description")?.textContent).toBe("Model: anthropic/claude-opus-4.6");
+    // never the redundant runnable/not-runnable copy; the label makes clear
+    // it is the declared startup configuration, not live state.
+    expect(dipu.querySelector(".agent-card-description")?.textContent).toBe("Configured model: anthropic/claude-opus-4.6");
     const kimi = agentButton("kimi");
-    expect(kimi.querySelector(".agent-card-description")?.textContent).toBe("Model: moonshotai/kimi-k2:high");
+    expect(kimi.querySelector(".agent-card-description")?.textContent).toBe("Configured model: moonshotai/kimi-k2:high");
     expect(container.textContent).not.toContain("Runnable on this installation — local policy");
     expect(container.textContent).not.toContain("Not runnable on this installation — local policy");
   });
