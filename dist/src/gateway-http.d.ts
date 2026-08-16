@@ -1,6 +1,6 @@
 import { type RpcSpawnTarget } from "./gateway-rpc.js";
 import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
-import type { ServiceStatusReader } from "./service-observability.js";
+import { type ServiceStatusReader } from "./service-observability.js";
 export type RpcTargetBuilder = (agent: string) => Promise<RpcSpawnTarget>;
 /**
  * Resolves the agent-local model-fallback policy for a gateway run

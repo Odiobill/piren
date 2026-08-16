@@ -45,10 +45,48 @@ import {
   type GatewayFallbackPolicy,
   type ModelFallbackNotice,
 } from "./model-fallback-gateway.js";
-import type { ServiceStatusReader } from "./service-observability.js";
+import {
+  SERVICE_OBSERVATION_TARGETS,
+  type ServiceObservedState,
+  type ServiceStatusReader,
+  type ServiceStatusSnapshot,
+} from "./service-observability.js";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
+const SERVICE_OBSERVED_STATES = new Set<ServiceObservedState>(["active", "inactive", "not-installed", "unavailable", "unknown"]);
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === expected.length && expected.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+/**
+ * The reader seam is internal but still a runtime boundary before HTTP output:
+ * TypeScript cannot protect this public response from an invalid JS/plugin
+ * implementation. Reject rather than project/invent a partial snapshot.
+ */
+function isServiceStatusSnapshot(value: unknown): value is ServiceStatusSnapshot {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const snapshot = value as Record<string, unknown>;
+  if (!hasExactKeys(snapshot, ["observedAt", "manager", "targets"])) return false;
+  if (typeof snapshot.observedAt !== "string" || typeof snapshot.manager !== "string" || !Array.isArray(snapshot.targets)) return false;
+  const observedAt = new Date(snapshot.observedAt);
+  if (Number.isNaN(observedAt.getTime()) || observedAt.toISOString() !== snapshot.observedAt) return false;
+  if (snapshot.manager !== "systemd-user" && snapshot.manager !== "tmux-cron" && snapshot.manager !== "unavailable") return false;
+  if (snapshot.targets.length !== SERVICE_OBSERVATION_TARGETS.length) return false;
+
+  return snapshot.targets.every((entry, index) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const target = entry as Record<string, unknown>;
+    return (
+      hasExactKeys(target, ["target", "state"]) &&
+      target.target === SERVICE_OBSERVATION_TARGETS[index] &&
+      typeof target.state === "string" &&
+      SERVICE_OBSERVED_STATES.has(target.state as ServiceObservedState)
+    );
+  });
+}
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -1422,6 +1460,10 @@ export class GatewayServer {
     }
     try {
       const snapshot = await this.serviceStatusReader();
+      if (!isServiceStatusSnapshot(snapshot)) {
+        this.writeJson(res, 503, { error: "service observation unavailable" });
+        return;
+      }
       this.writeJson(res, 200, snapshot);
     } catch {
       // Raw reader diagnostics stay server-side; the failure body is fixed.

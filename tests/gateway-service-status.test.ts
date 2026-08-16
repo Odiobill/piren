@@ -211,6 +211,27 @@ describe("GET /api/services/status (D2.2)", () => {
     }
   });
 
+  it("rejects a malformed reader result rather than leaking fields outside the snapshot contract", async () => {
+    const server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: "secret-token",
+      serviceStatusReader: async () => ({
+        ...SNAPSHOT,
+        diagnostic: "/home/steward/.config/piren/config.yml",
+      }) as unknown as ServiceStatusSnapshot,
+    });
+    try {
+      const handle = await server.start();
+      const res = await fetch(`http://${handle.hostname}:${handle.port}/api/services/status`, {
+        headers: { authorization: "Bearer secret-token" },
+      });
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: "service observation unavailable" });
+    } finally {
+      await server.close();
+    }
+  });
+
   it("returns the same bounded failure when no reader is configured (never invents manager/target state)", async () => {
     const server = new GatewayServer({ target: fakePiTarget(), authToken: "secret-token" });
     try {

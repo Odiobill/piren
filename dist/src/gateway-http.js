@@ -16,8 +16,44 @@ import { appendConversationEvent, createConversation, createConversationForAgent
 import { classifyRunOutcome, isFallbackEligibleOutcome } from "./model-fallback-outcome.js";
 import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
 import { buildModelFallbackNotice, loadAgentFallbackPolicy, splitFallbackModelId, } from "./model-fallback-gateway.js";
+import { SERVICE_OBSERVATION_TARGETS, } from "./service-observability.js";
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
+const SERVICE_OBSERVED_STATES = new Set(["active", "inactive", "not-installed", "unavailable", "unknown"]);
+function hasExactKeys(value, expected) {
+    const actual = Object.keys(value);
+    return actual.length === expected.length && expected.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+/**
+ * The reader seam is internal but still a runtime boundary before HTTP output:
+ * TypeScript cannot protect this public response from an invalid JS/plugin
+ * implementation. Reject rather than project/invent a partial snapshot.
+ */
+function isServiceStatusSnapshot(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value))
+        return false;
+    const snapshot = value;
+    if (!hasExactKeys(snapshot, ["observedAt", "manager", "targets"]))
+        return false;
+    if (typeof snapshot.observedAt !== "string" || typeof snapshot.manager !== "string" || !Array.isArray(snapshot.targets))
+        return false;
+    const observedAt = new Date(snapshot.observedAt);
+    if (Number.isNaN(observedAt.getTime()) || observedAt.toISOString() !== snapshot.observedAt)
+        return false;
+    if (snapshot.manager !== "systemd-user" && snapshot.manager !== "tmux-cron" && snapshot.manager !== "unavailable")
+        return false;
+    if (snapshot.targets.length !== SERVICE_OBSERVATION_TARGETS.length)
+        return false;
+    return snapshot.targets.every((entry, index) => {
+        if (entry === null || typeof entry !== "object" || Array.isArray(entry))
+            return false;
+        const target = entry;
+        return (hasExactKeys(target, ["target", "state"]) &&
+            target.target === SERVICE_OBSERVATION_TARGETS[index] &&
+            typeof target.state === "string" &&
+            SERVICE_OBSERVED_STATES.has(target.state));
+    });
+}
 const MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -1263,6 +1299,10 @@ export class GatewayServer {
         }
         try {
             const snapshot = await this.serviceStatusReader();
+            if (!isServiceStatusSnapshot(snapshot)) {
+                this.writeJson(res, 503, { error: "service observation unavailable" });
+                return;
+            }
             this.writeJson(res, 200, snapshot);
         }
         catch {
