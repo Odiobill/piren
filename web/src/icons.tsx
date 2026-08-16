@@ -99,3 +99,22 @@ export function MessageIcon({ size = 16 }: IconProps): ReactElement {
     </svg>
   );
 }
+
+/** D4: check glyph for the recognized handoff card's text-labelled Confirm action. */
+export function CheckIcon({ size = 16 }: IconProps): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}

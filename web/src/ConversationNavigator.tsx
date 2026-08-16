@@ -34,7 +34,7 @@ import {
 } from "./conversation-lifecycle";
 import { parseHashRoute, routeToIntent } from "./hash-route";
 import { renameAnnouncement, type RenameError } from "./conversation-details";
-import { InfoIcon, StopIcon } from "./icons";
+import { CheckIcon, InfoIcon, StopIcon, XIcon } from "./icons";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
@@ -730,41 +730,46 @@ export function ConversationNavigator({
                   submit={approvalSubmit}
                   onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
                 />
+                {/* D4 — the compact broker-authoritative live-run/abort state
+                    is its own named tray row: AFTER any approval surface and
+                    ABOVE the composer controls, never inside the horizontal
+                    composer action row, so the text input never shrinks. It
+                    renders only while broker-valid runs exist (active surface
+                    only) and keeps the exact R2 source fields (agent +
+                    working/typing + scoped abort). No partial work text, no
+                    settled summaries, no animation. */}
+                {dockRuns.length > 0 && (
+                  <div className="conversation-activity-row dock-run-status" aria-label="Live agent runs" aria-live="polite">
+                    {dockRuns.map((run) => {
+                      const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
+                      const failed = abortState?.phase === "error" && abortState.agent === run.agent;
+                      return (
+                        <div key={run.runId} className={`dock-run dock-run-${run.phase}`}>
+                          <span className="dock-run-agent">{run.agent}</span>
+                          <span className="dock-run-state">{conversationActivityRunStateLabel(run.phase)}</span>
+                          <button
+                            type="button"
+                            className="transient-run-abort"
+                            aria-label={`Abort ${run.agent} run`}
+                            title={`Abort ${run.agent} run`}
+                            disabled={aborting}
+                            onClick={() => void handleAbort(run.agent)}
+                          >
+                            <StopIcon size={14} />
+                          </button>
+                          {failed && (
+                            <p className="transient-run-error" role="alert">
+                              {abortState?.phase === "error" ? abortState.error.message : ""}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {/* U3/R2: the composer is the bottom of the tray. U2's
-                    composer-right details action is preserved. R2 — compact
-                    source-truthful live run state (agent + working/typing +
-                    scoped abort) renders in the dock, never as a transcript
-                    panel; partial work content is gone. */}
+                    composer-right details action is preserved. */}
                 <div className="composer-action-row">
-                  {dockRuns.length > 0 && (
-                    <div className="dock-run-status" aria-label="Live agent runs" aria-live="polite">
-                      {dockRuns.map((run) => {
-                        const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
-                        const failed = abortState?.phase === "error" && abortState.agent === run.agent;
-                        return (
-                          <div key={run.runId} className={`dock-run dock-run-${run.phase}`}>
-                            <span className="dock-run-agent">{run.agent}</span>
-                            <span className="dock-run-state">{conversationActivityRunStateLabel(run.phase)}</span>
-                            <button
-                              type="button"
-                              className="transient-run-abort"
-                              aria-label={`Abort ${run.agent} run`}
-                              title={`Abort ${run.agent} run`}
-                              disabled={aborting}
-                              onClick={() => void handleAbort(run.agent)}
-                            >
-                              <StopIcon size={14} />
-                            </button>
-                            {failed && (
-                              <p className="transient-run-error" role="alert">
-                                {abortState?.phase === "error" ? abortState.error.message : ""}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
                   <ConversationComposer
                     conversationId={selection.conversation.id}
                     token={token}
@@ -1032,7 +1037,7 @@ function ApprovalCard({
     onRespond(approval, needsInput ? { value: inputValue } : { confirmed: true });
   return (
     <div
-      className="approval-card"
+      className={gate !== null ? "approval-card approval-card-handoff" : "approval-card"}
       role="group"
       aria-label={
         gate !== null
@@ -1066,6 +1071,9 @@ function ApprovalCard({
       )}
       <div className="confirmation-actions">
         <button type="button" ref={confirmButtonRef} className="button button-primary" disabled={submitting} onClick={primary}>
+          {/* D4: decorative leading icons only on the recognized handoff
+              card's text-labelled actions; generic approvals are unchanged. */}
+          {gate !== null && <CheckIcon size={16} />}
           {needsInput ? "Submit" : "Confirm"}
         </button>
         <button
@@ -1074,6 +1082,7 @@ function ApprovalCard({
           disabled={submitting}
           onClick={() => onRespond(approval, { cancelled: true })}
         >
+          {gate !== null && <XIcon size={16} />}
           Cancel
         </button>
       </div>

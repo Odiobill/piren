@@ -1183,6 +1183,14 @@ code {
   gap: 8px;
 }
 
+/* D4: text-labelled approval actions align their optional decorative leading
+   icon (recognized handoff cards only) without changing the label. */
+.confirmation-actions .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .lifecycle-error {
   display: flex;
   flex-wrap: wrap;
@@ -1262,6 +1270,15 @@ code {
 .approval-card label {
   display: block;
   margin: 4px 0;
+}
+
+/* D4 — a recognized handoff request (existing parseConversationHandoffGate
+   recognition only): modest extra top separation and a distinct non-error
+   accent tint; generic approval cards keep the exact styling above. */
+.approval-card-handoff {
+  margin-top: 10px;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
 }
 
 .approval-card input {
@@ -1474,12 +1491,19 @@ code {
    with the scoped abort control. Partial/truncation presentation and the
    old panel are removed; durable replies/terminals are the only visible
    record of work. */
+/* D4 — the live activity row is its own named interaction-tray sibling row
+   (after any approval surface, above the composer controls), never inside
+   the horizontal composer action row. It renders the same compact R2 source
+   fields; no animation. */
+.conversation-activity-row {
+  padding-top: 10px;
+}
+
 .dock-run-status {
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  align-self: center;
 }
 
 .dock-run {
