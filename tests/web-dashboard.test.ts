@@ -158,6 +158,18 @@ describe("ADR-0044 removal pins (static)", () => {
     expect(styles).not.toContain("button-new-conversation");
   });
 
+  it("the removed Dashboard conversation-list styles are gone (D1)", async () => {
+    const styles = await readFile(join(webSrc, "styles.css"), "utf8");
+    expect(styles).not.toContain("dashboard-conversation-list");
+    expect(styles).not.toContain("dashboard-conversation-entry");
+  });
+
+  it("the start busy-line dots animation is reduced-motion safe (D1)", async () => {
+    const styles = await readFile(join(webSrc, "styles.css"), "utf8");
+    expect(styles).toContain("dashboard-busy-dots");
+    expect(styles).toContain("@media (prefers-reduced-motion: reduce) {\n  .dashboard-busy-dots span");
+  });
+
   it("no browser storage, polling, WebSocket, or fabricated start fields anywhere in the web source", async () => {
     const sources = await readSourceFiles();
     const all = [...sources.values()].join("\n");

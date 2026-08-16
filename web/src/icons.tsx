@@ -80,3 +80,22 @@ export function StopIcon({ size = 14 }: IconProps): ReactElement {
     </svg>
   );
 }
+
+/** D1: message glyph for the Dashboard start-conversation primary action. */
+export function MessageIcon({ size = 16 }: IconProps): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}

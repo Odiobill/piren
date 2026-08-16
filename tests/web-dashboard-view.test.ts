@@ -118,16 +118,54 @@ afterEach(() => {
 });
 
 describe("DashboardView (ADR-0044)", () => {
-  it("shows a truthful loading state and then the roster and conversations from the two existing reads", async () => {
+  it("shows a truthful loading state and then the roster from the existing roster read", async () => {
     renderDashboard();
-    expect(container.textContent).toContain("Loading");
+    expect(container.textContent).toContain("Loading your agents");
+    expect(container.textContent).not.toContain("conversations");
     await flush();
     expect(vi.mocked(fetchConversationAgents)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(fetchConversations)).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("dipu");
     expect(container.textContent).toContain("kimi");
     expect(container.textContent).toContain("zora");
-    expect(container.textContent).toContain("Conversation with dipu");
+  });
+
+  it("renders a welcoming header with the transparent Piren mark and a truthful sidebar pointer (D1)", async () => {
+    renderDashboard();
+    await flush();
+    const welcome = container.querySelector(".dashboard-welcome");
+    expect(welcome).not.toBeNull();
+    const mark = welcome?.querySelector<HTMLImageElement>("img.dashboard-mark");
+    expect(mark?.getAttribute("src") ?? "").toContain("piren-logo");
+    // The pointer to the sidebar is truthful: it is the sole Conversation navigator.
+    expect(container.textContent).toContain("sidebar");
+  });
+
+  it("renders the roster as reusable agent cards with bounded avatar/description slots (D1)", async () => {
+    renderDashboard();
+    await flush();
+    expect(container.querySelector(".agent-card-grid")).not.toBeNull();
+    expect(container.querySelectorAll(".agent-card").length).toBe(3);
+    // Each card carries the bounded presentation slots while the selection
+    // control keeps its accessible text name.
+    const dipu = agentButton("dipu");
+    const avatar = dipu.querySelector(".agent-card-avatar");
+    expect(avatar?.getAttribute("aria-hidden")).toBe("true");
+    expect(avatar?.textContent).toBe("D");
+    expect(dipu.querySelector(".agent-card-description")?.textContent).toContain("Runnable on this installation");
+    const zora = agentButton("zora");
+    expect(zora.querySelector(".agent-card-description")?.textContent).toContain("Not runnable on this installation");
+  });
+
+  it("has no duplicate Conversation navigation — the sidebar is the sole navigator (D1)", async () => {
+    renderDashboard();
+    await flush();
+    // The Dashboard never issues its own conversation-list read anymore.
+    expect(vi.mocked(fetchConversations)).not.toHaveBeenCalled();
+    // No Dashboard conversation entries, list, or heading survive.
+    expect(container.querySelector("[data-conversation]")).toBeNull();
+    expect(container.querySelector(".dashboard-conversation-list")).toBeNull();
+    expect(container.querySelector("#dashboard-conversations-heading")).toBeNull();
+    expect(container.querySelector(".dashboard-conversation-entry")).toBeNull();
   });
 
   it("marks offline agents as not runnable (local policy, never presence) and blocks their selection", async () => {
@@ -162,6 +200,51 @@ describe("DashboardView (ADR-0044)", () => {
     expect(vi.mocked(startConversation)).toHaveBeenCalledWith("test-token", "dipu");
     // Successful start navigates through the existing conversation route.
     expect(opens).toEqual(["c1"]);
+  });
+
+  it("labels the primary start action with a leading decorative icon and a stable text name (D1)", async () => {
+    renderDashboard();
+    await flush();
+    const button = startButton();
+    const icon = button.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    expect(button.textContent).toBe("Start conversation");
+  });
+
+  it("shows a truthful pending busy line and never claims the agent is live (D1)", async () => {
+    let release: (() => void) | undefined;
+    vi.mocked(startConversation).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(STARTED as never);
+        }),
+    );
+    renderDashboard();
+    await flush();
+    await act(async () => {
+      agentButton("kimi").click();
+    });
+    act(() => {
+      startButton().click();
+    });
+    const busy = container.querySelector(".dashboard-start-busy");
+    expect(busy).not.toBeNull();
+    expect(busy?.getAttribute("role")).toBe("status");
+    expect(busy?.textContent).toContain("Preparing your conversation with kimi");
+    // Truthfulness: the pending line describes the submitted browser/gateway
+    // operation only — never invented agent liveness.
+    expect(busy?.textContent?.toLowerCase() ?? "").not.toMatch(/running|thinking|responding|working|online/);
+    const dots = busy?.querySelector(".dashboard-busy-dots");
+    expect(dots?.getAttribute("aria-hidden")).toBe("true");
+    // The primary action keeps its stable accessible name and stays disabled.
+    expect(startButton().textContent).toBe("Start conversation");
+    expect(startButton().disabled).toBe(true);
+    await act(async () => {
+      release?.();
+    });
+    await flush();
+    expect(container.querySelector(".dashboard-start-busy")).toBeNull();
   });
 
   it("disables the start control while that exact request is busy", async () => {
@@ -215,14 +298,29 @@ describe("DashboardView (ADR-0044)", () => {
     expect(vi.mocked(startConversation)).toHaveBeenCalledTimes(2);
   });
 
+  it("reports only truthful service facts from the successful authenticated read (D1)", async () => {
+    renderDashboard();
+    // Loading phase: no service claims yet.
+    expect(container.querySelector(".dashboard-services")).toBeNull();
+    await flush();
+    const service = container.querySelector(".dashboard-services");
+    expect(service).not.toBeNull();
+    expect(service?.textContent).toContain("Gateway");
+    expect(service?.textContent).toContain("Connected");
+    // "Connected" means this Dashboard's authenticated read just succeeded —
+    // configured/recorded service state is never presented as a live
+    // process-health assertion.
+    expect(service?.textContent?.toLowerCase() ?? "").not.toMatch(/running|healthy/);
+  });
+
   it("shows a truthful load error with an explicit Retry and steals no focus", async () => {
-    vi.mocked(fetchConversations).mockRejectedValueOnce(new Error("gateway unavailable"));
+    vi.mocked(fetchConversationAgents).mockRejectedValueOnce(new Error("gateway unavailable"));
     renderDashboard();
     await flush();
     expect(container.textContent).toContain("gateway unavailable");
     expect(document.activeElement).toBe(document.body);
 
-    vi.mocked(fetchConversations).mockResolvedValue(CONVERSATIONS);
+    vi.mocked(fetchConversationAgents).mockResolvedValue(ROSTER);
     const retry = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Retry");
     expect(retry).toBeDefined();
     await act(async () => {
@@ -232,25 +330,11 @@ describe("DashboardView (ADR-0044)", () => {
     expect(container.textContent).toContain("dipu");
   });
 
-  it("shows truthful empty states for no roster and no conversations", async () => {
+  it("shows a truthful empty state for an empty roster", async () => {
     vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [] });
-    vi.mocked(fetchConversations).mockResolvedValue({ conversations: [] });
     renderDashboard();
     await flush();
     expect(container.textContent).toContain("No agents");
-    expect(container.textContent).toContain("No conversations yet");
     expect(container.querySelector(".dashboard-start")).toBeNull();
-  });
-
-  it("opens an existing conversation through the existing route flow", async () => {
-    const { opens } = renderDashboard();
-    await flush();
-    const entry = container.querySelector<HTMLButtonElement>("[data-conversation='c1']");
-    expect(entry).not.toBeNull();
-    await act(async () => {
-      entry?.click();
-    });
-    expect(opens).toEqual(["c1"]);
-    expect(vi.mocked(startConversation)).not.toHaveBeenCalled();
   });
 });

@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
-import { fetchConversationAgents, fetchConversations, startConversation, UnauthorizedError } from "./api";
+import logoUrl from "./assets/piren-logo.png";
+import { fetchConversationAgents, startConversation, UnauthorizedError } from "./api";
 import type { ConversationAgentEntry } from "./conversation-agents";
-import { conversationAudienceSummary, type ConversationRecord } from "./conversations";
+import { MessageIcon } from "./icons";
 
 /**
- * ADR-0044 — the Dashboard: the default Workbench surface. Presentation over
- * existing authoritative reads ONLY: the local-policy roster from
- * GET /api/conversation-agents and the durable conversation list from
- * GET /api/conversations. The steward explicitly selects one runnable agent
- * and submits exactly one `{agent}` start request; a successful start opens
- * the new Conversation through the existing authoritative route/attach flow
- * (handled by the caller via the durable hash route).
+ * ADR-0044 + D1 — the Dashboard: the default Workbench surface. Presentation
+ * over existing authoritative reads ONLY: the local-policy roster from
+ * GET /api/conversation-agents. The steward explicitly selects one runnable
+ * agent and submits exactly one `{agent}` start request; a successful start
+ * opens the new Conversation through the existing authoritative route/attach
+ * flow (handled by the caller via the durable hash route). D1 removed the
+ * duplicate Dashboard Conversation list: the sidebar is the sole Conversation
+ * navigator, so the Dashboard no longer issues a conversation-list read.
  *
  * Truthfulness rules: "online" means locally runnable on this gateway
  * (local installation policy, never presence/provider health); start
@@ -23,7 +25,7 @@ import { conversationAudienceSummary, type ConversationRecord } from "./conversa
 type LoadState =
   | { phase: "loading" }
   | { phase: "error"; message: string }
-  | { phase: "ready"; agents: ConversationAgentEntry[]; conversations: ConversationRecord[] };
+  | { phase: "ready"; agents: ConversationAgentEntry[] };
 
 type StartState = { phase: "idle" } | { phase: "busy" } | { phase: "error"; message: string };
 
@@ -52,12 +54,11 @@ export function DashboardView({
     const controller = new AbortController();
     (async () => {
       try {
-        const [roster, list] = await Promise.all([
-          fetchConversationAgents(token, controller.signal),
-          fetchConversations(token, controller.signal),
-        ]);
+        // The roster read is also this surface's authenticated gateway check:
+        // a successful response is the only "gateway connected" evidence.
+        const roster = await fetchConversationAgents(token, controller.signal);
         if (cancelled) return;
-        setLoad({ phase: "ready", agents: roster.agents, conversations: list.conversations });
+        setLoad({ phase: "ready", agents: roster.agents });
         onValidated();
       } catch (error) {
         if (cancelled) return;
@@ -113,7 +114,7 @@ export function DashboardView({
       <section className="card" aria-live="polite" aria-label="Dashboard">
         <h2>Dashboard</h2>
         <p className="muted" role="status">
-          Loading your agents and conversations…
+          Loading your agents…
         </p>
       </section>
     );
@@ -137,7 +138,18 @@ export function DashboardView({
 
   return (
     <section className="dashboard" aria-label="Dashboard">
-      <h2>Dashboard</h2>
+      <header className="dashboard-welcome">
+        {/* D1: the transparent Piren mark only — no white-background wordmark
+            on a dark surface; the mark ships as a self-contained transparent PNG. */}
+        <img src={logoUrl} alt="" className="dashboard-mark" width={72} height={72} />
+        <div className="dashboard-welcome-text">
+          <h2>Dashboard</h2>
+          <p className="muted">
+            Welcome to your Piren Workbench. Choose one local agent below to start a conversation — your
+            conversations always live in the sidebar.
+          </p>
+        </div>
+      </header>
       <section className="card" aria-labelledby="dashboard-agents-heading">
         <h3 id="dashboard-agents-heading">Start a conversation</h3>
         {load.agents.length === 0 ? (
@@ -145,12 +157,11 @@ export function DashboardView({
         ) : (
           <>
             <p className="muted">
-              Choose one agent to start a new conversation. Online means runnable on this installation — local
-              policy, never a live presence or provider probe.
+              Online means runnable on this installation — local policy, never a live presence or provider probe.
             </p>
-            <ul className="agent-roster">
+            <ul className="agent-card-grid">
               {load.agents.map((agent) => (
-                <li key={agent.name} className={agent.online ? "agent-entry" : "agent-entry agent-offline"}>
+                <li key={agent.name} className={agent.online ? "agent-card" : "agent-card agent-offline"}>
                   <button
                     type="button"
                     data-agent={agent.name}
@@ -160,18 +171,28 @@ export function DashboardView({
                     title={agent.online ? `Select ${agent.name}` : `${agent.name} is not runnable on this installation`}
                     onClick={() => handleSelect(agent)}
                   >
-                    <span className="agent-label">
-                      <span className="agent-name">{agent.name}</span>
-                      {agent.online ? (
-                        <span className="agent-status status-ok">Online</span>
-                      ) : (
-                        <span className="agent-status status-muted">Offline</span>
-                      )}
+                    {/* D1 bounded presentation slots: avatar/accent now, a
+                        future accepted vault-backed presentation design may
+                        fill them; this slice adds no schema or persistence. */}
+                    <span className="agent-card-avatar" aria-hidden="true">
+                      {agent.name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="agent-card-body">
+                      <span className="agent-card-title-row">
+                        <span className="agent-name">{agent.name}</span>
+                        {agent.online ? (
+                          <span className="agent-status status-ok">Online</span>
+                        ) : (
+                          <span className="agent-status status-muted">Offline</span>
+                        )}
+                      </span>
+                      <span className="agent-card-description">
+                        {agent.online
+                          ? "Runnable on this installation — local policy, not a live probe."
+                          : "Not runnable on this installation — local policy, not a live probe."}
+                      </span>
                     </span>
                   </button>
-                  {!agent.online && (
-                    <p className="agent-offline-note">Not runnable on this installation — local policy, not a live probe.</p>
-                  )}
                 </li>
               ))}
             </ul>
@@ -182,8 +203,19 @@ export function DashboardView({
                 disabled={selectedAgent === null || start.phase === "busy"}
                 onClick={() => void handleStart()}
               >
-                {start.phase === "busy" ? "Starting…" : "Start conversation"}
+                <MessageIcon size={16} />
+                <span>Start conversation</span>
               </button>
+            )}
+            {start.phase === "busy" && selectedAgent !== null && (
+              <p className="dashboard-start-busy" role="status">
+                Preparing your conversation with {selectedAgent}
+                <span className="dashboard-busy-dots" aria-hidden="true">
+                  <span>.</span>
+                  <span>.</span>
+                  <span>.</span>
+                </span>
+              </p>
             )}
             {start.phase === "error" && (
               <p className="error-message" role="alert">
@@ -193,27 +225,18 @@ export function DashboardView({
           </>
         )}
       </section>
-      <section className="card" aria-labelledby="dashboard-conversations-heading">
-        <h3 id="dashboard-conversations-heading">Your conversations</h3>
-        {load.conversations.length === 0 ? (
-          <p className="muted">No conversations yet.</p>
-        ) : (
-          <ul className="dashboard-conversation-list">
-            {load.conversations.map((conversation) => (
-              <li key={conversation.id}>
-                <button
-                  type="button"
-                  data-conversation={conversation.id}
-                  className="dashboard-conversation-entry"
-                  onClick={() => onOpenConversation(conversation.id)}
-                >
-                  <span>{conversation.title}</span>
-                  <small>{conversationAudienceSummary(conversation.audience)}</small>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+      <section className="card dashboard-services" aria-labelledby="dashboard-services-heading">
+        <h3 id="dashboard-services-heading">Service information</h3>
+        <ul className="dashboard-service-list">
+          <li>
+            <span className="dashboard-service-name">Gateway</span>
+            <span className="agent-status status-ok">Connected</span>
+          </li>
+        </ul>
+        <p className="muted">
+          Connected means this Dashboard's authenticated read just succeeded. Configured or recorded service
+          state is not shown here as live process status — no live probe is performed.
+        </p>
       </section>
     </section>
   );

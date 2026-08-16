@@ -391,9 +391,7 @@ code {
   font-size: 0.8125rem;
 }
 
-/* ADR-0044 Dashboard: the roster rows are explicit selection buttons; the
-   start action and conversation list reuse the existing roster/list visual
-   language. */
+/* ADR-0044 Dashboard: the roster cards are explicit selection buttons. */
 .agent-select {
   width: 100%;
   text-align: left;
@@ -421,9 +419,136 @@ code {
 
 .dashboard-start {
   margin-top: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.dashboard-conversation-list {
+/* D1: the pending-start line describes the submitted browser/gateway
+   operation only — it never claims the agent is running, thinking, or
+   responding. The dots animation is reduced-motion safe below. */
+.dashboard-start-busy {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.dashboard-busy-dots span {
+  animation: dashboard-busy-dot 1.2s ease-in-out infinite;
+  opacity: 0.25;
+}
+
+.dashboard-busy-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.dashboard-busy-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes dashboard-busy-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-busy-dots span {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ADR-0044 + D1 Dashboard: welcoming header (transparent mark only — never a
+   white-background wordmark on a dark surface) and reusable agent cards with
+   bounded avatar/accent/description presentation slots. */
+.dashboard-welcome {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 4px 0 18px;
+}
+
+.dashboard-mark {
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+}
+
+.dashboard-welcome-text h2 {
+  margin: 0 0 6px;
+}
+
+.dashboard-welcome-text p {
+  margin: 0;
+  max-width: 64ch;
+}
+
+.agent-card-grid {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.agent-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.agent-card .agent-select {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+}
+
+.agent-card-avatar {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent-strong);
+  font-weight: 700;
+  font-size: 1.05rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+}
+
+.agent-card-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-card-description {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+/* D1: service-information rows report only facts from accepted authenticated
+   reads (a successful read may say the gateway is connected); they never
+   assert live process status. */
+.dashboard-service-list {
   list-style: none;
   margin: 10px 0 0;
   padding: 0;
@@ -431,35 +556,15 @@ code {
   gap: 6px;
 }
 
-.dashboard-conversation-entry {
-  width: 100%;
-  display: grid;
-  gap: 2px;
-  padding: 10px 12px;
-  text-align: left;
-  color: var(--text);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font: inherit;
-  cursor: pointer;
+.dashboard-service-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.dashboard-conversation-entry:hover {
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
-}
-
-.dashboard-conversation-entry span {
-  overflow: hidden;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dashboard-conversation-entry small {
-  color: var(--muted);
-  font-size: 0.75rem;
+.dashboard-service-name {
+  font-weight: 600;
 }
 
 .dashboard h2 {
