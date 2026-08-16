@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { DashboardView } from "../web/src/DashboardView.js";
-import { fetchConversationAgents, fetchConversations, startConversation } from "../web/src/api.js";
+import { fetchConversationAgents, fetchConversations, fetchServiceStatus, startConversation } from "../web/src/api.js";
 
 /**
  * ADR-0044 — Dashboard component behavior (jsdom): the default Workbench
@@ -24,6 +24,7 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
     ...actual,
     fetchConversationAgents: vi.fn(),
     fetchConversations: vi.fn(),
+    fetchServiceStatus: vi.fn(),
     startConversation: vi.fn(),
   };
 });
@@ -55,6 +56,19 @@ const STARTED = {
   conversation: CONVERSATIONS.conversations[0],
   event: { id: "e1", conversationId: "c1", kind: "conversation_start_requested", created: "2026-08-15T13:00:00.000Z" },
   dispatch: [{ agent: "dipu", status: "completed" }],
+};
+
+// D2.3: the Dashboard's managed service observation read is mocked so these
+// D1 tests stay hermetic; D2.3 behavior is pinned in
+// tests/web-dashboard-service-observation.test.ts.
+const SERVICE_SNAPSHOT: import("../web/src/service-observation.js").ServiceStatusSnapshot = {
+  observedAt: "2026-08-16T12:00:00.000Z",
+  manager: "systemd-user",
+  targets: [
+    { target: "telegram", state: "active" },
+    { target: "discord", state: "inactive" },
+    { target: "scheduler", state: "not-installed" },
+  ],
 };
 
 let container: HTMLDivElement;
@@ -104,9 +118,11 @@ beforeEach(() => {
   document.body.appendChild(container);
   vi.mocked(fetchConversationAgents).mockReset();
   vi.mocked(fetchConversations).mockReset();
+  vi.mocked(fetchServiceStatus).mockReset();
   vi.mocked(startConversation).mockReset();
   vi.mocked(fetchConversationAgents).mockResolvedValue(ROSTER);
   vi.mocked(fetchConversations).mockResolvedValue(CONVERSATIONS);
+  vi.mocked(fetchServiceStatus).mockResolvedValue(SERVICE_SNAPSHOT);
   vi.mocked(startConversation).mockResolvedValue(STARTED as never);
 });
 

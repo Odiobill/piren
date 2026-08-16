@@ -545,15 +545,27 @@ code {
   line-height: 1.35;
 }
 
-/* D1: service-information rows report only facts from accepted authenticated
-   reads (a successful read may say the gateway is connected); they never
-   assert live process status. */
+/* D1: the Gateway row reports only the accepted authenticated-read fact (a
+   successful read may say the gateway is connected). D2.3: the managed
+   service observation group is visually and semantically separate; its rows
+   report only the gateway-sampled snapshot states. */
 .dashboard-service-list {
   list-style: none;
   margin: 10px 0 0;
   padding: 0;
   display: grid;
   gap: 6px;
+}
+
+.dashboard-service-observation {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.dashboard-service-observation h4 {
+  margin: 0 0 6px;
+  font-size: 0.9375rem;
 }
 
 .dashboard-service-list li {

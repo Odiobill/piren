@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import logoUrl from "./assets/piren-logo.png";
-import { fetchConversationAgents, startConversation, UnauthorizedError } from "./api";
+import { fetchConversationAgents, fetchServiceStatus, startConversation, UnauthorizedError } from "./api";
 import type { ConversationAgentEntry } from "./conversation-agents";
+import {
+  SERVICE_MANAGER_LABELS,
+  SERVICE_STATE_LABELS,
+  SERVICE_TARGET_LABELS,
+  serviceStateStatusClass,
+  type ServiceStatusSnapshot,
+} from "./service-observation";
 import { MessageIcon } from "./icons";
 
 /**
@@ -29,6 +36,12 @@ type LoadState =
 
 type StartState = { phase: "idle" } | { phase: "busy" } | { phase: "error"; message: string };
 
+/**
+ * D2.3 observation state. "loading" also clears any previous snapshot so a
+ * failed refresh never shows stale target values.
+ */
+type ObservationState = { phase: "loading" } | { phase: "ready"; snapshot: ServiceStatusSnapshot } | { phase: "error" };
+
 export function DashboardView({
   token,
   onUnauthorized,
@@ -48,6 +61,8 @@ export function DashboardView({
   const [retryKey, setRetryKey] = useState(0);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [start, setStart] = useState<StartState>({ phase: "idle" });
+  const [observation, setObservation] = useState<ObservationState>({ phase: "loading" });
+  const [observationRetryKey, setObservationRetryKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +95,43 @@ export function DashboardView({
     // An explicit fresh steward action only — never an automatic retry.
     setLoad({ phase: "loading" });
     setRetryKey((key) => key + 1);
+  }
+
+  // D2.3: one fresh observation read, only after the roster read succeeded
+  // (that success remains the sole "Gateway connection — Connected" fact).
+  // One Dashboard load takes one snapshot; every retry is explicit and manual.
+  useEffect(() => {
+    if (load.phase !== "ready") return;
+    let cancelled = false;
+    const controller = new AbortController();
+    // Clear any previous snapshot up front: a failed refresh must never
+    // leave stale target values on screen.
+    setObservation({ phase: "loading" });
+    (async () => {
+      try {
+        const snapshot = await fetchServiceStatus(token, controller.signal);
+        if (cancelled) return;
+        setObservation({ phase: "ready", snapshot });
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof UnauthorizedError) {
+          onUnauthorized();
+          return;
+        }
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setObservation({ phase: "error" });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [token, onUnauthorized, load.phase, reloadKey, retryKey, observationRetryKey]);
+
+  function handleObservationRetry() {
+    // Explicit manual retry: a fresh observation read ONLY — the roster (the
+    // Gateway connection fact) is never re-fetched by this action.
+    setObservationRetryKey((key) => key + 1);
   }
 
   function handleSelect(agent: ConversationAgentEntry) {
@@ -234,9 +286,45 @@ export function DashboardView({
           </li>
         </ul>
         <p className="muted">
-          Connected means this Dashboard's authenticated read just succeeded. Configured or recorded service
-          state is not shown here as live process status — no live probe is performed.
+          Connected means this Dashboard's authenticated read just succeeded. It is a separate fact from the
+          gateway-sampled service observation below.
         </p>
+        <div className="dashboard-service-observation" aria-labelledby="dashboard-service-observation-heading">
+          <h4 id="dashboard-service-observation-heading">Managed service observation</h4>
+          {observation.phase === "loading" && (
+            <p className="muted" role="status">
+              Sampling local service status…
+            </p>
+          )}
+          {observation.phase === "error" && (
+            <>
+              <p className="error-message" role="alert">
+                Service observation unavailable.
+              </p>
+              <button type="button" className="button" onClick={handleObservationRetry}>
+                Retry service observation
+              </button>
+            </>
+          )}
+          {observation.phase === "ready" && (
+            <>
+              <p className="muted">
+                Sampled by this gateway through {SERVICE_MANAGER_LABELS[observation.snapshot.manager]} at{" "}
+                <time dateTime={observation.snapshot.observedAt}>{observation.snapshot.observedAt}</time>.
+              </p>
+              <ul className="dashboard-service-list dashboard-service-observation-list">
+                {observation.snapshot.targets.map((entry) => (
+                  <li key={entry.target}>
+                    <span className="dashboard-service-name">{SERVICE_TARGET_LABELS[entry.target]}</span>
+                    <span className={`agent-status ${serviceStateStatusClass(entry.state)}`}>
+                      {SERVICE_STATE_LABELS[entry.state]}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
       </section>
     </section>
   );

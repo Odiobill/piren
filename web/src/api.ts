@@ -18,6 +18,7 @@ import {
   type ConversationRecord,
 } from "./conversations";
 import { parseAttachResponse, type AttachResponse } from "./attach";
+import { parseServiceStatusSnapshot, type ServiceStatusSnapshot } from "./service-observation";
 import {
   parseLifecycleActionResponse,
   parseLifecycleHttpError,
@@ -86,6 +87,19 @@ export async function fetchConversationAgents(token: string, signal?: AbortSigna
   const res = await authedFetch("/api/conversation-agents", token, signal === undefined ? undefined : { signal });
   if (!res.ok) throw new Error(`conversation agents HTTP ${res.status}`);
   return parseConversationAgents(await res.json());
+}
+
+/**
+ * GET /api/services/status — one fresh, read-only managed service
+ * observation sampled by the gateway at request time. A 401 surfaces through
+ * UnauthorizedError; any other non-200 (including the bounded 503) or a
+ * payload failing the strict snapshot parser is a failure — never an
+ * invented state.
+ */
+export async function fetchServiceStatus(token: string, signal?: AbortSignal): Promise<ServiceStatusSnapshot> {
+  const res = await authedFetch("/api/services/status", token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`service status HTTP ${res.status}`);
+  return parseServiceStatusSnapshot(await res.json());
 }
 
 // ---------------------------------------------------------------------------
