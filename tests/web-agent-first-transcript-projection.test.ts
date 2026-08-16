@@ -162,6 +162,43 @@ describe("D3 agent-first start envelope projection", () => {
     }
   });
 
+  it("keeps non-system origins and non-system run envelopes visible (fail safe)", () => {
+    const nonSystemOrigin = event({
+      id: "o-agent",
+      kind: "conversation_start_requested",
+      authorKind: "agent",
+      author: "dipu",
+      body: "not the system-origin shape",
+      sequence: 1,
+    });
+    const rows = groupConversationTranscript([
+      item(nonSystemOrigin),
+      item(run("run_started", { id: "r1", correlationId: "o-agent", runAgent: "dipu", sequence: 2 })),
+      item(run("run_finished", { id: "r2", correlationId: "o-agent", runAgent: "dipu", runStatus: "completed", sequence: 3 })),
+      item(origin("o-system", 4)),
+      item(event({
+        id: "r3",
+        kind: "run_started",
+        authorKind: "agent",
+        author: "dipu",
+        correlationId: "o-system",
+        runAgent: "dipu",
+        sequence: 5,
+      })),
+      item(event({
+        id: "r4",
+        kind: "run_finished",
+        authorKind: "agent",
+        author: "dipu",
+        correlationId: "o-system",
+        runAgent: "dipu",
+        runStatus: "completed",
+        sequence: 6,
+      })),
+    ]);
+    expect(rowIds(rows)).toEqual(["o-agent", "r1", "r2", "o-system", "r3", "r4"]);
+  });
+
   it("keeps malformed/unattributed run evidence correlated to the origin visible (fail safe)", () => {
     // A completed terminal WITHOUT durable runAgent attribution is malformed
     // evidence, not a suppressible success envelope.

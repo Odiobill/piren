@@ -16,8 +16,8 @@
  *   run evidence, `model_fallback`, lifecycle/rename evidence, errors) fails
  *   safe to a compact visible row with the U5 chip when a mapping exists.
  * - D3: for the special agent-first path only, the redundant SUCCESSFUL
- *   system run envelopes correlated to a durable `conversation_start_requested`
- *   origin id (its `run_started`, and its `run_finished` only when the durable
+ *   system run envelopes correlated to an exact system-authored durable
+ *   `conversation_start_requested` origin id (its `run_started`, and its `run_finished` only when the durable
  *   terminal status is exactly `completed`) are omitted from display. The
  *   durable origin and the agent greeting stay visible; every failure and
  *   all malformed/unattributed/uncorrelated evidence keeps its current path.
@@ -60,12 +60,18 @@ function isRunKind(event: ConversationEventRecord): boolean {
 /** The durable agent-first origin kind (ADR-0044 system-authored start marker). */
 const AGENT_FIRST_ORIGIN_KIND = "conversation_start_requested";
 
+/** D3 only projects the exact durable system-authored shape, never a lookalike. */
+function isSystemAuthored(event: ConversationEventRecord): boolean {
+  return event.authorKind === "system" && event.author === "system";
+}
+
 /**
  * D3 — the redundant successful system run envelope of the special
  * agent-first path, and nothing else. Suppression requires EVERY exact
- * durable field: a run_started/run_finished kind, a non-empty correlationId
- * matching an actually displayed durable `conversation_start_requested`
- * origin id, a valid non-empty durable runAgent attribution, and — for
+ * durable field: an exact system-authored run_started/run_finished shape, a
+ * non-empty correlationId matching an actually displayed exact
+ * system-authored durable `conversation_start_requested` origin id, a valid
+ * non-empty durable runAgent attribution, and — for
  * run_finished only — a durable terminal status of exactly "completed".
  * Failures, cancellations, unknown/missing statuses, and malformed or
  * unattributed evidence are NEVER suppressed: they fail safe to their
@@ -75,6 +81,7 @@ const AGENT_FIRST_ORIGIN_KIND = "conversation_start_requested";
  */
 function isAgentFirstRedundantSuccessEnvelope(event: ConversationEventRecord, startOriginIds: ReadonlySet<string>): boolean {
   if (event.kind !== "run_started" && event.kind !== "run_finished") return false;
+  if (!isSystemAuthored(event)) return false;
   const correlationId = event.correlationId;
   if (typeof correlationId !== "string" || correlationId === "") return false;
   if (!startOriginIds.has(correlationId)) return false;
@@ -108,7 +115,9 @@ export function groupConversationTranscript(items: readonly ConversationTimeline
   const startOriginIds = new Set<string>();
   for (const item of items) {
     if (item.type === "event" && isMessageKind(item.event)) requesterIds.add(item.event.id);
-    if (item.type === "event" && item.event.kind === AGENT_FIRST_ORIGIN_KIND) startOriginIds.add(item.event.id);
+    if (item.type === "event" && item.event.kind === AGENT_FIRST_ORIGIN_KIND && isSystemAuthored(item.event)) {
+      startOriginIds.add(item.event.id);
+    }
   }
 
   const rows: ConversationTranscriptRow[] = [];
