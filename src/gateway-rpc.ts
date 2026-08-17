@@ -118,6 +118,56 @@ export interface RpcNewSession {
 }
 
 /**
+ * Token totals for one Pi session, from `get_session_stats`. Includes
+ * assistant messages, tool-reported usage, and compaction/branch-summary
+ * generation across the full session (docs/rpc.md).
+ */
+export interface RpcSessionTokenTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
+/**
+ * Current context-window usage from `get_session_stats`. Two DISTINCT
+ * unavailable states exist (docs/rpc.md) and are never collapsed: the whole
+ * `contextUsage` object is omitted when no model or context window is
+ * available, while immediately after compaction a PRESENT object carries
+ * `tokens: null` and `percent: null` until a fresh post-compaction assistant
+ * response provides valid usage data. `contextWindow` is always numeric when
+ * the object is present.
+ */
+export interface RpcContextUsage {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
+}
+
+/**
+ * Response to `get_session_stats`: token usage, cost, and current context
+ * window usage for one exact Pi session. The public result carries only the
+ * documented fields: unknown extra fields are tolerated on the wire but never
+ * leak into this typed shape. Missing/invalid optional scalars degrade to
+ * documented null/zero fallbacks; a non-object payload or a structurally
+ * invalid `contextUsage` is a protocol violation and rejects instead of
+ * fabricating an unavailable state.
+ */
+export interface RpcSessionStats {
+  sessionFile: string | null;
+  sessionId: string | null;
+  userMessages: number;
+  assistantMessages: number;
+  toolCalls: number;
+  toolResults: number;
+  totalMessages: number;
+  tokens: RpcSessionTokenTotals;
+  cost: number;
+  contextUsage?: RpcContextUsage;
+}
+
+/**
  * Minimal result of a manual `compact`. Deliberately excludes Pi's raw
  * summary, kept-entry ids, and usage details: transport callers only need a
  * concise acknowledgement, never transcript content. Token figures are null
@@ -137,6 +187,67 @@ interface PendingRequest {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function numberOrZero(value: unknown): number {
+  return asFiniteNumber(value) ?? 0;
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || asFiniteNumber(value) !== null;
+}
+
+/**
+ * Narrow untrusted `get_session_stats` response data into the public typed
+ * shape. Tolerant per-field fallbacks cover missing/invalid optional scalars;
+ * a non-record payload or a structurally invalid `contextUsage` (present but
+ * not an object, non-numeric `contextWindow`, or `tokens`/`percent` that are
+ * neither number nor null) throws rather than collapsing distinct states.
+ */
+function parseSessionStats(data: unknown): RpcSessionStats {
+  if (!isRecord(data)) {
+    throw new Error("get_session_stats returned malformed data");
+  }
+  const rawTokens = isRecord(data.tokens) ? data.tokens : {};
+  const stats: RpcSessionStats = {
+    sessionFile: typeof data.sessionFile === "string" ? data.sessionFile : null,
+    sessionId: typeof data.sessionId === "string" ? data.sessionId : null,
+    userMessages: numberOrZero(data.userMessages),
+    assistantMessages: numberOrZero(data.assistantMessages),
+    toolCalls: numberOrZero(data.toolCalls),
+    toolResults: numberOrZero(data.toolResults),
+    totalMessages: numberOrZero(data.totalMessages),
+    tokens: {
+      input: numberOrZero(rawTokens.input),
+      output: numberOrZero(rawTokens.output),
+      cacheRead: numberOrZero(rawTokens.cacheRead),
+      cacheWrite: numberOrZero(rawTokens.cacheWrite),
+      total: numberOrZero(rawTokens.total),
+    },
+    cost: numberOrZero(data.cost),
+  };
+  // An absent or null contextUsage means "no model/context window available"
+  // (docs/rpc.md); the property then stays absent on the typed result. A
+  // present object is validated strictly so a protocol violation can never be
+  // misread as one of the two documented unavailable states.
+  if (data.contextUsage !== undefined && data.contextUsage !== null) {
+    const usage = data.contextUsage;
+    if (!isRecord(usage)) {
+      throw new Error("get_session_stats returned malformed contextUsage");
+    }
+    const contextWindow = asFiniteNumber(usage.contextWindow);
+    const tokens = usage.tokens;
+    const percent = usage.percent;
+    if (contextWindow === null || !isNullableFiniteNumber(tokens) || !isNullableFiniteNumber(percent)) {
+      throw new Error("get_session_stats returned malformed contextUsage");
+    }
+    stats.contextUsage = { tokens, contextWindow, percent };
+  }
+  return stats;
 }
 
 /**
@@ -325,6 +436,22 @@ export class PiRpcClient {
       throw new Error(response.error || "get_state failed");
     }
     return (response.data ?? {}) as RpcSessionState;
+  }
+
+  /**
+   * Fetch token usage, cost, and current context-window usage for this exact
+   * Pi session (`get_session_stats`, docs/rpc.md). The typed result preserves
+   * Pi's two distinct context-usage states: `contextUsage` is ABSENT when no
+   * model/context window is available, and PRESENT with `tokens: null` /
+   * `percent: null` immediately after compaction. Rejects on command
+   * rejection and on malformed payload shapes; never fabricates a state.
+   */
+  async getSessionStats(): Promise<RpcSessionStats> {
+    const response = await this.send({ type: "get_session_stats" });
+    if (!response.success) {
+      throw new Error(response.error || "get_session_stats failed");
+    }
+    return parseSessionStats(response.data);
   }
 
   /**

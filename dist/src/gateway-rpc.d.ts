@@ -108,6 +108,53 @@ export interface RpcNewSession {
     cancelled: boolean;
 }
 /**
+ * Token totals for one Pi session, from `get_session_stats`. Includes
+ * assistant messages, tool-reported usage, and compaction/branch-summary
+ * generation across the full session (docs/rpc.md).
+ */
+export interface RpcSessionTokenTotals {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+}
+/**
+ * Current context-window usage from `get_session_stats`. Two DISTINCT
+ * unavailable states exist (docs/rpc.md) and are never collapsed: the whole
+ * `contextUsage` object is omitted when no model or context window is
+ * available, while immediately after compaction a PRESENT object carries
+ * `tokens: null` and `percent: null` until a fresh post-compaction assistant
+ * response provides valid usage data. `contextWindow` is always numeric when
+ * the object is present.
+ */
+export interface RpcContextUsage {
+    tokens: number | null;
+    contextWindow: number;
+    percent: number | null;
+}
+/**
+ * Response to `get_session_stats`: token usage, cost, and current context
+ * window usage for one exact Pi session. The public result carries only the
+ * documented fields: unknown extra fields are tolerated on the wire but never
+ * leak into this typed shape. Missing/invalid optional scalars degrade to
+ * documented null/zero fallbacks; a non-object payload or a structurally
+ * invalid `contextUsage` is a protocol violation and rejects instead of
+ * fabricating an unavailable state.
+ */
+export interface RpcSessionStats {
+    sessionFile: string | null;
+    sessionId: string | null;
+    userMessages: number;
+    assistantMessages: number;
+    toolCalls: number;
+    toolResults: number;
+    totalMessages: number;
+    tokens: RpcSessionTokenTotals;
+    cost: number;
+    contextUsage?: RpcContextUsage;
+}
+/**
  * Minimal result of a manual `compact`. Deliberately excludes Pi's raw
  * summary, kept-entry ids, and usage details: transport callers only need a
  * concise acknowledgement, never transcript content. Token figures are null
@@ -178,6 +225,15 @@ export declare class PiRpcClient {
      * indicator in the web UI.
      */
     getState(): Promise<RpcSessionState>;
+    /**
+     * Fetch token usage, cost, and current context-window usage for this exact
+     * Pi session (`get_session_stats`, docs/rpc.md). The typed result preserves
+     * Pi's two distinct context-usage states: `contextUsage` is ABSENT when no
+     * model/context window is available, and PRESENT with `tokens: null` /
+     * `percent: null` immediately after compaction. Rejects on command
+     * rejection and on malformed payload shapes; never fabricates a state.
+     */
+    getSessionStats(): Promise<RpcSessionStats>;
     /**
      * List the models available to the current agent. Returns provider, id,
      * context window, and reasoning flag for each model.

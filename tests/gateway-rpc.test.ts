@@ -13,6 +13,15 @@ function fakePiTarget(): RpcSpawnTarget {
   };
 }
 
+function fakePiTargetWithEnv(extra: Record<string, string>): RpcSpawnTarget {
+  return {
+    command: process.execPath,
+    args: [fakePiScript],
+    cwd: process.cwd(),
+    env: { ...process.env, ...extra },
+  };
+}
+
 describe("PiRpcClient prompt flow against a fake Pi process", () => {
   it("drains streaming events until agent_settled after sending a prompt (agent_end alone is not terminal)", async () => {
     const client = new PiRpcClient(fakePiTarget());
@@ -168,5 +177,156 @@ describe("PiRpcClient prompt flow against a fake Pi process", () => {
     // must NOT run a second time (no duplicate SSE errors downstream).
     await client.stop();
     expect(count).toBe(1);
+  });
+});
+
+describe("PiRpcClient.getSessionStats (T1 typed get_session_stats wrapper)", () => {
+  // Inline fake that asserts the exact command shape: the client must send
+  // only {type:"get_session_stats", id}. It also carries an unknown extra
+  // field to prove the typed result never leaks raw unknown data.
+  const shapeAssertingScript = [
+    "let buffer = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => {",
+    "  buffer += chunk;",
+    "  let index;",
+    "  while ((index = buffer.indexOf('\\n')) !== -1) {",
+    "    const line = buffer.slice(0, index).trim();",
+    "    buffer = buffer.slice(index + 1);",
+    "    if (!line) continue;",
+    "    const cmd = JSON.parse(line);",
+    "    const keys = Object.keys(cmd).sort();",
+    "    const shapeOk = cmd.type === 'get_session_stats' && keys.length === 2 && keys[0] === 'id' && keys[1] === 'type' && typeof cmd.id === 'string';",
+    "    const data = { sessionFile: '/tmp/s.jsonl', sessionId: 's1', userMessages: 1, assistantMessages: 2, toolCalls: 3, toolResults: 3, totalMessages: 6, tokens: { input: 10, output: 20, cacheRead: 30, cacheWrite: 5, total: 65 }, cost: 0.01, contextUsage: { tokens: 40, contextWindow: 200000, percent: 0.02 }, unexpectedExtra: { nested: true } };",
+    "    const response = shapeOk",
+    "      ? { type: 'response', command: cmd.type, success: true, id: cmd.id, data }",
+    "      : { type: 'response', command: String(cmd.type), success: false, id: cmd.id, error: 'unexpected command shape: ' + keys.join(',') };",
+    "    process.stdout.write(JSON.stringify(response) + '\\n');",
+    "  }",
+    "});",
+  ].join("\n");
+
+  it("sends exactly {type:'get_session_stats', id} and returns typed stats without leaking unknown fields", async () => {
+    const target: RpcSpawnTarget = {
+      command: process.execPath,
+      args: ["-e", shapeAssertingScript],
+      cwd: process.cwd(),
+      env: process.env,
+    };
+    const client = new PiRpcClient(target);
+    try {
+      await client.start();
+      const stats = await client.getSessionStats();
+      expect(stats.sessionFile).toBe("/tmp/s.jsonl");
+      expect(stats.sessionId).toBe("s1");
+      expect(stats.userMessages).toBe(1);
+      expect(stats.assistantMessages).toBe(2);
+      expect(stats.toolCalls).toBe(3);
+      expect(stats.toolResults).toBe(3);
+      expect(stats.totalMessages).toBe(6);
+      expect(stats.tokens).toEqual({ input: 10, output: 20, cacheRead: 30, cacheWrite: 5, total: 65 });
+      expect(stats.cost).toBe(0.01);
+      expect(stats.contextUsage).toEqual({ tokens: 40, contextWindow: 200000, percent: 0.02 });
+      // Unknown extra fields never leak into the public typed result.
+      expect("unexpectedExtra" in stats).toBe(false);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("returns fully typed numeric stats from the default fake response", async () => {
+    const client = new PiRpcClient(fakePiTarget());
+    try {
+      await client.start();
+      const stats = await client.getSessionStats();
+      expect(stats.sessionFile).toBe("/tmp/fake-session.jsonl");
+      expect(stats.sessionId).toBe("fake-session-1");
+      expect(stats.tokens).toEqual({ input: 50000, output: 10000, cacheRead: 40000, cacheWrite: 5000, total: 105000 });
+      expect(stats.cost).toBe(0.45);
+      expect(stats.contextUsage).toEqual({ tokens: 60000, contextWindow: 200000, percent: 30 });
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("omits the contextUsage property entirely when Pi reports no model/context window (no-window state)", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_NO_WINDOW: "1" }));
+    try {
+      await client.start();
+      const stats = await client.getSessionStats();
+      expect(stats.sessionId).toBe("fake-session-1");
+      // The two documented unavailable states are never collapsed: an omitted
+      // contextUsage means the property itself is absent, never null.
+      expect("contextUsage" in stats).toBe(false);
+      expect(stats.contextUsage).toBeUndefined();
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("preserves post-compaction null tokens/percent distinct from an omitted contextUsage", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_POST_COMPACTION: "1" }));
+    try {
+      await client.start();
+      const stats = await client.getSessionStats();
+      // Present object, null usage numbers: NOT the same as an omitted
+      // contextUsage (docs/rpc.md: null until a fresh post-compaction
+      // assistant response provides valid usage data).
+      expect("contextUsage" in stats).toBe(true);
+      expect(stats.contextUsage).toEqual({ tokens: null, contextWindow: 200000, percent: null });
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("rejects malformed (non-object) response data instead of fabricating stats", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_MALFORMED: "1" }));
+    try {
+      await client.start();
+      await expect(client.getSessionStats()).rejects.toThrow("get_session_stats returned malformed data");
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("rejects a structurally invalid contextUsage instead of collapsing it into an unavailable state", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_BAD_CONTEXT: "1" }));
+    try {
+      await client.start();
+      await expect(client.getSessionStats()).rejects.toThrow("get_session_stats returned malformed contextUsage");
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("degrades missing/invalid optional scalars to documented null/zero fallbacks without throwing", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_DEGRADED: "1" }));
+    try {
+      await client.start();
+      const stats = await client.getSessionStats();
+      expect(stats.sessionFile).toBeNull();
+      expect(stats.sessionId).toBeNull();
+      expect(stats.userMessages).toBe(0);
+      expect(stats.assistantMessages).toBe(0);
+      expect(stats.toolCalls).toBe(7);
+      expect(stats.toolResults).toBe(7);
+      expect(stats.totalMessages).toBe(0);
+      expect(stats.tokens).toEqual({ input: 0, output: 12, cacheRead: 0, cacheWrite: 0, total: 0 });
+      expect(stats.cost).toBe(0);
+      // contextUsage: null is tolerated like an omitted contextUsage.
+      expect("contextUsage" in stats).toBe(false);
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("rejects when Pi rejects the get_session_stats command", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_FAIL: "1" }));
+    try {
+      await client.start();
+      await expect(client.getSessionStats()).rejects.toThrow("get_session_stats rejected by fake");
+    } finally {
+      await client.stop();
+    }
   });
 });

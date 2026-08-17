@@ -399,6 +399,84 @@ function handle(cmd) {
     emit({ type: "response", command: "get_state", success: true, id: cmd.id, data: { sessionId: "fake-session", isStreaming: false, thinkingLevel: "off", messageCount: promptCount, pendingMessageCount: 0 } });
     return;
   }
+  if (cmd.type === "get_session_stats") {
+    // T1 deterministic session-stats scenarios (docs/rpc.md shapes). Default:
+    // fully numeric usage including a populated contextUsage, plus one unknown
+    // extra field to prove typed results never leak raw unknown data.
+    if (process.env.FAKE_PI_SESSION_STATS_FAIL === "1") {
+      emit({ type: "response", command: "get_session_stats", success: false, id: cmd.id, error: "get_session_stats rejected by fake" });
+      return;
+    }
+    if (process.env.FAKE_PI_SESSION_STATS_MALFORMED === "1") {
+      emit({ type: "response", command: "get_session_stats", success: true, id: cmd.id, data: "unexpected-non-object" });
+      return;
+    }
+    if (process.env.FAKE_PI_SESSION_STATS_BAD_CONTEXT === "1") {
+      emit({
+        type: "response",
+        command: "get_session_stats",
+        success: true,
+        id: cmd.id,
+        data: {
+          sessionFile: "/tmp/fake-session.jsonl",
+          sessionId: "fake-session-1",
+          userMessages: 5,
+          assistantMessages: 5,
+          toolCalls: 12,
+          toolResults: 12,
+          totalMessages: 22,
+          tokens: { input: 50000, output: 10000, cacheRead: 40000, cacheWrite: 5000, total: 105000 },
+          cost: 0.45,
+          // Structurally invalid: wrong types for every contextUsage field.
+          contextUsage: { tokens: "many", contextWindow: "wide", percent: true },
+        },
+      });
+      return;
+    }
+    if (process.env.FAKE_PI_SESSION_STATS_DEGRADED === "1") {
+      emit({
+        type: "response",
+        command: "get_session_stats",
+        success: true,
+        id: cmd.id,
+        data: {
+          sessionFile: 12345,
+          userMessages: "five",
+          assistantMessages: null,
+          toolCalls: 7,
+          toolResults: 7,
+          totalMessages: "many",
+          tokens: { input: "lots", output: 12 },
+          cost: "free",
+          contextUsage: null,
+        },
+      });
+      return;
+    }
+    const data = {
+      sessionFile: "/tmp/fake-session.jsonl",
+      sessionId: "fake-session-1",
+      userMessages: 5,
+      assistantMessages: 5,
+      toolCalls: 12,
+      toolResults: 12,
+      totalMessages: 22,
+      tokens: { input: 50000, output: 10000, cacheRead: 40000, cacheWrite: 5000, total: 105000 },
+      cost: 0.45,
+      contextUsage: { tokens: 60000, contextWindow: 200000, percent: 30 },
+      unexpectedExtra: { nested: true },
+    };
+    if (process.env.FAKE_PI_SESSION_STATS_NO_WINDOW === "1") {
+      // No model/context window available: contextUsage is omitted entirely.
+      delete data.contextUsage;
+    }
+    if (process.env.FAKE_PI_SESSION_STATS_POST_COMPACTION === "1") {
+      // Immediately after compaction: present object, null usage numbers.
+      data.contextUsage = { tokens: null, contextWindow: 200000, percent: null };
+    }
+    emit({ type: "response", command: "get_session_stats", success: true, id: cmd.id, data });
+    return;
+  }
   if (cmd.type === "get_available_models") {
     emit({
       type: "response",
