@@ -299,22 +299,21 @@ describe("PiRpcClient.getSessionStats (T1 typed get_session_stats wrapper)", () 
     }
   });
 
-  it("degrades missing/invalid optional scalars to documented null/zero fallbacks without throwing", async () => {
-    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_DEGRADED: "1" }));
+  it("rejects missing/invalid required scalar fields as malformed instead of fabricating zeros", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_INVALID_SCALARS: "1" }));
     try {
       await client.start();
-      const stats = await client.getSessionStats();
-      expect(stats.sessionFile).toBeNull();
-      expect(stats.sessionId).toBeNull();
-      expect(stats.userMessages).toBe(0);
-      expect(stats.assistantMessages).toBe(0);
-      expect(stats.toolCalls).toBe(7);
-      expect(stats.toolResults).toBe(7);
-      expect(stats.totalMessages).toBe(0);
-      expect(stats.tokens).toEqual({ input: 0, output: 12, cacheRead: 0, cacheWrite: 0, total: 0 });
-      expect(stats.cost).toBe(0);
-      // contextUsage: null is tolerated like an omitted contextUsage.
-      expect("contextUsage" in stats).toBe(false);
+      await expect(client.getSessionStats()).rejects.toThrow("get_session_stats returned malformed data");
+    } finally {
+      await client.stop();
+    }
+  });
+
+  it("rejects a present contextUsage: null as malformed, distinct from an omitted property", async () => {
+    const client = new PiRpcClient(fakePiTargetWithEnv({ FAKE_PI_SESSION_STATS_NULL_CONTEXT: "1" }));
+    try {
+      await client.start();
+      await expect(client.getSessionStats()).rejects.toThrow("get_session_stats returned malformed contextUsage");
     } finally {
       await client.stop();
     }

@@ -147,16 +147,16 @@ export interface RpcContextUsage {
 
 /**
  * Response to `get_session_stats`: token usage, cost, and current context
- * window usage for one exact Pi session. The public result carries only the
- * documented fields: unknown extra fields are tolerated on the wire but never
- * leak into this typed shape. Missing/invalid optional scalars degrade to
- * documented null/zero fallbacks; a non-object payload or a structurally
- * invalid `contextUsage` is a protocol violation and rejects instead of
- * fabricating an unavailable state.
+ * window usage for one exact Pi session. All documented scalar fields are
+ * required: malformed, missing, or non-finite wire values reject as malformed
+ * rather than degrading into real-looking zeros or nulls. The only optional
+ * property is `contextUsage`, which is absent exactly when Pi omits it (no
+ * model/context window). Unknown extra fields are tolerated on the wire but
+ * never leak into this typed shape.
  */
 export interface RpcSessionStats {
-  sessionFile: string | null;
-  sessionId: string | null;
+  sessionFile: string;
+  sessionId: string;
   userMessages: number;
   assistantMessages: number;
   toolCalls: number;
@@ -193,8 +193,19 @@ function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function numberOrZero(value: unknown): number {
-  return asFiniteNumber(value) ?? 0;
+function requireFiniteNumber(value: unknown): number {
+  const num = asFiniteNumber(value);
+  if (num === null) {
+    throw new Error("get_session_stats returned malformed data");
+  }
+  return num;
+}
+
+function requireString(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("get_session_stats returned malformed data");
+  }
+  return value;
 }
 
 function isNullableFiniteNumber(value: unknown): value is number | null {
@@ -203,38 +214,39 @@ function isNullableFiniteNumber(value: unknown): value is number | null {
 
 /**
  * Narrow untrusted `get_session_stats` response data into the public typed
- * shape. Tolerant per-field fallbacks cover missing/invalid optional scalars;
- * a non-record payload or a structurally invalid `contextUsage` (present but
- * not an object, non-numeric `contextWindow`, or `tokens`/`percent` that are
- * neither number nor null) throws rather than collapsing distinct states.
+ * shape. Strict on every documented field: missing, malformed, or non-finite
+ * documented scalars reject instead of fabricating real-looking zeros/nulls.
+ * `contextUsage` keeps Pi's two documented states exact: an absent property
+ * stays absent on the typed result, while a present object must carry a
+ * numeric `contextWindow` and `tokens`/`percent` that are each number or
+ * null. A present `contextUsage: null` or any other structurally invalid
+ * value rejects as malformed — it is not the omitted-property state.
  */
 function parseSessionStats(data: unknown): RpcSessionStats {
   if (!isRecord(data)) {
     throw new Error("get_session_stats returned malformed data");
   }
-  const rawTokens = isRecord(data.tokens) ? data.tokens : {};
+  if (!isRecord(data.tokens)) {
+    throw new Error("get_session_stats returned malformed data");
+  }
   const stats: RpcSessionStats = {
-    sessionFile: typeof data.sessionFile === "string" ? data.sessionFile : null,
-    sessionId: typeof data.sessionId === "string" ? data.sessionId : null,
-    userMessages: numberOrZero(data.userMessages),
-    assistantMessages: numberOrZero(data.assistantMessages),
-    toolCalls: numberOrZero(data.toolCalls),
-    toolResults: numberOrZero(data.toolResults),
-    totalMessages: numberOrZero(data.totalMessages),
+    sessionFile: requireString(data.sessionFile),
+    sessionId: requireString(data.sessionId),
+    userMessages: requireFiniteNumber(data.userMessages),
+    assistantMessages: requireFiniteNumber(data.assistantMessages),
+    toolCalls: requireFiniteNumber(data.toolCalls),
+    toolResults: requireFiniteNumber(data.toolResults),
+    totalMessages: requireFiniteNumber(data.totalMessages),
     tokens: {
-      input: numberOrZero(rawTokens.input),
-      output: numberOrZero(rawTokens.output),
-      cacheRead: numberOrZero(rawTokens.cacheRead),
-      cacheWrite: numberOrZero(rawTokens.cacheWrite),
-      total: numberOrZero(rawTokens.total),
+      input: requireFiniteNumber(data.tokens.input),
+      output: requireFiniteNumber(data.tokens.output),
+      cacheRead: requireFiniteNumber(data.tokens.cacheRead),
+      cacheWrite: requireFiniteNumber(data.tokens.cacheWrite),
+      total: requireFiniteNumber(data.tokens.total),
     },
-    cost: numberOrZero(data.cost),
+    cost: requireFiniteNumber(data.cost),
   };
-  // An absent or null contextUsage means "no model/context window available"
-  // (docs/rpc.md); the property then stays absent on the typed result. A
-  // present object is validated strictly so a protocol violation can never be
-  // misread as one of the two documented unavailable states.
-  if (data.contextUsage !== undefined && data.contextUsage !== null) {
+  if (data.contextUsage !== undefined) {
     const usage = data.contextUsage;
     if (!isRecord(usage)) {
       throw new Error("get_session_stats returned malformed contextUsage");

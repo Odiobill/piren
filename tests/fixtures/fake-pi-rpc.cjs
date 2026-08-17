@@ -433,7 +433,9 @@ function handle(cmd) {
       });
       return;
     }
-    if (process.env.FAKE_PI_SESSION_STATS_DEGRADED === "1") {
+    if (process.env.FAKE_PI_SESSION_STATS_INVALID_SCALARS === "1") {
+      // Undocumented/malformed documented scalars: the wrapper must reject,
+      // never fabricate a real-looking zero or null metric.
       emit({
         type: "response",
         command: "get_session_stats",
@@ -441,13 +443,36 @@ function handle(cmd) {
         id: cmd.id,
         data: {
           sessionFile: 12345,
+          sessionId: "fake-session-1",
           userMessages: "five",
-          assistantMessages: null,
-          toolCalls: 7,
-          toolResults: 7,
-          totalMessages: "many",
-          tokens: { input: "lots", output: 12 },
-          cost: "free",
+          assistantMessages: 5,
+          toolCalls: 12,
+          toolResults: 12,
+          totalMessages: 22,
+          tokens: { input: 50000, output: 10000, cacheRead: 40000, cacheWrite: 5000, total: 105000 },
+          cost: 0.45,
+        },
+      });
+      return;
+    }
+    if (process.env.FAKE_PI_SESSION_STATS_NULL_CONTEXT === "1") {
+      // A PRESENT contextUsage: null is not one of the two documented states
+      // (omitted property / object with nullable tokens+percent): malformed.
+      emit({
+        type: "response",
+        command: "get_session_stats",
+        success: true,
+        id: cmd.id,
+        data: {
+          sessionFile: "/tmp/fake-session.jsonl",
+          sessionId: "fake-session-1",
+          userMessages: 5,
+          assistantMessages: 5,
+          toolCalls: 12,
+          toolResults: 12,
+          totalMessages: 22,
+          tokens: { input: 50000, output: 10000, cacheRead: 40000, cacheWrite: 5000, total: 105000 },
+          cost: 0.45,
           contextUsage: null,
         },
       });

@@ -135,16 +135,16 @@ export interface RpcContextUsage {
 }
 /**
  * Response to `get_session_stats`: token usage, cost, and current context
- * window usage for one exact Pi session. The public result carries only the
- * documented fields: unknown extra fields are tolerated on the wire but never
- * leak into this typed shape. Missing/invalid optional scalars degrade to
- * documented null/zero fallbacks; a non-object payload or a structurally
- * invalid `contextUsage` is a protocol violation and rejects instead of
- * fabricating an unavailable state.
+ * window usage for one exact Pi session. All documented scalar fields are
+ * required: malformed, missing, or non-finite wire values reject as malformed
+ * rather than degrading into real-looking zeros or nulls. The only optional
+ * property is `contextUsage`, which is absent exactly when Pi omits it (no
+ * model/context window). Unknown extra fields are tolerated on the wire but
+ * never leak into this typed shape.
  */
 export interface RpcSessionStats {
-    sessionFile: string | null;
-    sessionId: string | null;
+    sessionFile: string;
+    sessionId: string;
     userMessages: number;
     assistantMessages: number;
     toolCalls: number;
