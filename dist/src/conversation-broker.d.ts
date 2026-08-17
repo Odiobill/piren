@@ -188,6 +188,18 @@ export type ConversationTelemetryNotification = ConversationTelemetryFacts & {
     /** Immediate run correlation: the exact settled run's broker runId. */
     runId: string;
 };
+/**
+ * T4: result of the scoped on-demand telemetry read for one exact
+ * `conversation × agent` pair. `live` carries the bounded T3 facts;
+ * `no_live_session` covers every unavailable case (no live pair, missing
+ * optional RPC capabilities, sampling rejection/throw, closed broker) —
+ * availability is truthful, never a fabricated or reconstructed state.
+ */
+export type ConversationTelemetryReadResult = (ConversationTelemetryFacts & {
+    sessionState: "live";
+}) | {
+    sessionState: "no_live_session";
+};
 /** U4: the bounded per-frame assistant delta (larger deltas emit no frame). */
 export declare const CONVERSATION_ACTIVITY_DELTA_MAX = 4096;
 /** C3-C1: response input for one pending conversation approval. */
@@ -341,6 +353,20 @@ export declare class ConversationBroker {
      * evidence, settlement, locks, or subsequent dispatch.
      */
     private publishTelemetry;
+    /**
+     * T4: read the truthful session-only telemetry availability for exactly one
+     * `conversation × agent` pair, using only the broker-owned ALREADY-LIVE
+     * client. Never creates/spawns/resumes a client, never infers state from a
+     * durable manifest/event/audience or a global chat session, never writes
+     * durable evidence, and never publishes a live frame. The exact pair's
+     * session may live under the plain key or a C5 role-suffixed key (mention
+     * dispatches are `#root`, stage runs `#workflow`, start runs plain); when
+     * several coexist, the most recently used live session is the truthful
+     * current one. Any unavailable case — no live session, missing optional RPC
+     * capabilities, sampling rejection/throw, closed broker — is the bounded
+     * `no_live_session` result, never a fabricated or reconstructed state.
+     */
+    readConversationTelemetry(conversationId: string, agent: string): Promise<ConversationTelemetryReadResult>;
     /**
      * T3: sample the exact already-live client after its run settled and
      * publish one bounded live-only telemetry frame. Absence of a client,

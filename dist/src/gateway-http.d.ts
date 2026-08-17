@@ -339,6 +339,18 @@ export declare class GatewayServer {
      * verbatim and never creates/attaches/dispatches/switches a client.
      */
     private handleConversationAbort;
+    /**
+     * T4: authenticated, read-only
+     * `GET /api/conversations/<id>/agents/<agent>/telemetry`. Reports the
+     * truthful session-only telemetry availability for ONLY the exact live
+     * `conversation × agent` pair via the broker read seam: HTTP 200 with
+     * `sessionState: "live"` + bounded T3 facts, or 200 with
+     * `{sessionState: "no_live_session"}` for every unavailable case. Never
+     * spawns/resumes a client, never reconstructs from vault history, never
+     * writes durable evidence, never publishes SSE. Conversation existence and
+     * agent-name shape follow the existing Conversation route conventions.
+     */
+    private handleConversationTelemetry;
     private handleConversationEventStream;
     private writeJson;
     private writeSse;

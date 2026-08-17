@@ -99,6 +99,12 @@ export declare class TransportSessionManager<TClient extends TransportRpcClient 
      * fresh client. Returns true only when the exact session was forgotten.
      */
     forgetSession(transport: string, conversationId: string, expectedClient?: TClient): boolean;
+    /**
+     * T4: return the exact live session for a key WITHOUT creating one and
+     * without touching `lastUsedAt`. Read-only telemetry peek: never spawns a
+     * client, never switches an agent, never throws for a missing key.
+     */
+    peekSession(transport: string, conversationId: string): TransportSession<TClient> | null;
     closeIdleSessions(maxIdleMs: number): Promise<number>;
     closeAll(): Promise<void>;
     private assertRunnable;

@@ -463,3 +463,105 @@ describe("Gateway Conversation T3 settle telemetry SSE frame", () => {
     ]);
   });
 });
+
+describe("Gateway Conversation T4 telemetry read route", () => {
+  let root: string;
+  let server: GatewayServer;
+  let handle: GatewayHandle;
+  const token = "test-conversation-token";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-gateway-conv-telemetry-read-"));
+    await initVault({ vaultRoot: root, agentName: "piren" });
+  });
+
+  afterEach(async () => {
+    await server.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  async function startServer(): Promise<void> {
+    server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: token,
+      vaultRoot: root,
+      runnableAgents: ["fake"],
+      targetBuilder: async () => fakePiTarget(),
+    });
+    handle = await server.start();
+  }
+
+  function url(path: string): string {
+    return `http://${handle.hostname}:${handle.port}${path}`;
+  }
+
+  async function readTelemetry(id: string, agent: string, bearer?: string): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (bearer !== undefined) headers["authorization"] = `Bearer ${bearer}`;
+    return fetch(url(`/api/conversations/${id}/agents/${agent}/telemetry`), { headers });
+  }
+
+  it("requires authentication (401 without a Bearer token)", async () => {
+    await startServer();
+    const created = await post(url("/api/conversations"), { text: "Seed @fake" }, token);
+    const { conversation } = (await created.json()) as { conversation: { id: string } };
+    const response = await readTelemetry(conversation.id, "fake");
+    expect(response.status).toBe(401);
+  });
+
+  it("returns 200 with truthful live facts for the exact live pair, without raw identifiers or totals", async () => {
+    await startServer();
+    const created = await post(url("/api/conversations"), { text: "Seed @fake" }, token);
+    const { conversation } = (await created.json()) as { conversation: { id: string } };
+
+    const response = await readTelemetry(conversation.id, "fake", token);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.sessionState).toBe("live");
+    expect(body.contextState).toBe("ok");
+    expect(body.context).toEqual({ tokens: 60000, contextWindow: 200000, percent: 30 });
+    expect(body.thinkingLevel).toBe("off");
+    expect(body).not.toHaveProperty("model");
+    expect(body).not.toHaveProperty("sessionId");
+    expect(body).not.toHaveProperty("sessionFile");
+    expect(body).not.toHaveProperty("cost");
+    expect(body).not.toHaveProperty("tokens");
+    expect(JSON.stringify(body)).not.toContain("fake-session");
+
+    // Reads never write durable evidence.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events.map((event) => event.kind)).toEqual(["steward_message", "run_started", "agent_message", "run_finished"]);
+  });
+
+  it("returns 200 no_live_session for a conversation that never ran (and spawns nothing)", async () => {
+    await startServer();
+    const created = await post(url("/api/conversations"), { text: "Context only, no mention" }, token);
+    const { conversation } = (await created.json()) as { conversation: { id: string } };
+    const response = await readTelemetry(conversation.id, "fake", token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ sessionState: "no_live_session" });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events.map((event) => event.kind)).toEqual(["steward_message"]);
+  });
+
+  it("returns 200 no_live_session for a different agent in the same conversation (pair isolation)", async () => {
+    await startServer();
+    const created = await post(url("/api/conversations"), { text: "Seed @fake" }, token);
+    const { conversation } = (await created.json()) as { conversation: { id: string } };
+    const response = await readTelemetry(conversation.id, "ghost", token);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ sessionState: "no_live_session" });
+  });
+
+  it("404 for an unknown conversation and 400 for an invalid agent name", async () => {
+    await startServer();
+    const created = await post(url("/api/conversations"), { text: "Seed @fake" }, token);
+    const { conversation } = (await created.json()) as { conversation: { id: string } };
+
+    const missing = await readTelemetry("20260101T000000000Z-nope", "fake", token);
+    expect(missing.status).toBe(404);
+
+    const invalid = await readTelemetry(conversation.id, "Bad_Name", token);
+    expect(invalid.status).toBe(400);
+  });
+});

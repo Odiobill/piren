@@ -368,6 +368,44 @@ export class ConversationBroker {
         }
     }
     /**
+     * T4: read the truthful session-only telemetry availability for exactly one
+     * `conversation × agent` pair, using only the broker-owned ALREADY-LIVE
+     * client. Never creates/spawns/resumes a client, never infers state from a
+     * durable manifest/event/audience or a global chat session, never writes
+     * durable evidence, and never publishes a live frame. The exact pair's
+     * session may live under the plain key or a C5 role-suffixed key (mention
+     * dispatches are `#root`, stage runs `#workflow`, start runs plain); when
+     * several coexist, the most recently used live session is the truthful
+     * current one. Any unavailable case — no live session, missing optional RPC
+     * capabilities, sampling rejection/throw, closed broker — is the bounded
+     * `no_live_session` result, never a fabricated or reconstructed state.
+     */
+    async readConversationTelemetry(conversationId, agent) {
+        const unavailable = { sessionState: "no_live_session" };
+        if (this.closed)
+            return unavailable;
+        const pairKey = `${conversationId}:${agent}`;
+        let live = null;
+        for (const candidate of [pairKey, `${pairKey}#root`, `${pairKey}#workflow`]) {
+            const session = this.sessions.peekSession("conversation", candidate);
+            if (session !== null && session.agent === agent && (live === null || session.lastUsedAt > live.lastUsedAt)) {
+                live = session;
+            }
+        }
+        if (live === null)
+            return unavailable;
+        const client = live.client;
+        if (client.getSessionStats === undefined || client.getState === undefined)
+            return unavailable;
+        try {
+            const [stats, state] = await Promise.all([client.getSessionStats(), client.getState()]);
+            return { sessionState: "live", ...mapSessionTelemetryFacts(stats, state) };
+        }
+        catch {
+            return unavailable;
+        }
+    }
+    /**
      * T3: sample the exact already-live client after its run settled and
      * publish one bounded live-only telemetry frame. Absence of a client,
      * absent optional RPC capabilities, a closed broker, or ANY sampling

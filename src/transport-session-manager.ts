@@ -240,6 +240,15 @@ export class TransportSessionManager<TClient extends TransportRpcClient = PiRpcC
     return true;
   }
 
+  /**
+   * T4: return the exact live session for a key WITHOUT creating one and
+   * without touching `lastUsedAt`. Read-only telemetry peek: never spawns a
+   * client, never switches an agent, never throws for a missing key.
+   */
+  peekSession(transport: string, conversationId: string): TransportSession<TClient> | null {
+    return this.sessions.get(sessionKey(transport, conversationId)) ?? null;
+  }
+
   async closeIdleSessions(maxIdleMs: number): Promise<number> {
     const cutoff = this.now() - maxIdleMs;
     let closed = 0;

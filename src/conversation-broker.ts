@@ -53,7 +53,7 @@ import {
   type ValidatedTranscriptBudget,
   validateTranscriptBudget,
 } from "./conversation-contract.js";
-import { TransportSessionManager, type TransportRpcClient } from "./transport-session-manager.js";
+import { TransportSessionManager, type TransportRpcClient, type TransportSession } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
 import { extractAssistantText, type ExtensionUiResponse, type RpcEvent, type RpcSessionState, type RpcSessionStats, type RpcSpawnTarget } from "./gateway-rpc.js";
 import {
@@ -228,6 +228,17 @@ export type ConversationTelemetryNotification = ConversationTelemetryFacts & {
   /** Immediate run correlation: the exact settled run's broker runId. */
   runId: string;
 };
+
+/**
+ * T4: result of the scoped on-demand telemetry read for one exact
+ * `conversation × agent` pair. `live` carries the bounded T3 facts;
+ * `no_live_session` covers every unavailable case (no live pair, missing
+ * optional RPC capabilities, sampling rejection/throw, closed broker) —
+ * availability is truthful, never a fabricated or reconstructed state.
+ */
+export type ConversationTelemetryReadResult =
+  | (ConversationTelemetryFacts & { sessionState: "live" })
+  | { sessionState: "no_live_session" };
 
 /** U4: the bounded per-frame assistant delta (larger deltas emit no frame). */
 export const CONVERSATION_ACTIVITY_DELTA_MAX = 4096;
@@ -668,6 +679,41 @@ export class ConversationBroker {
       } catch {
         // contained
       }
+    }
+  }
+
+  /**
+   * T4: read the truthful session-only telemetry availability for exactly one
+   * `conversation × agent` pair, using only the broker-owned ALREADY-LIVE
+   * client. Never creates/spawns/resumes a client, never infers state from a
+   * durable manifest/event/audience or a global chat session, never writes
+   * durable evidence, and never publishes a live frame. The exact pair's
+   * session may live under the plain key or a C5 role-suffixed key (mention
+   * dispatches are `#root`, stage runs `#workflow`, start runs plain); when
+   * several coexist, the most recently used live session is the truthful
+   * current one. Any unavailable case — no live session, missing optional RPC
+   * capabilities, sampling rejection/throw, closed broker — is the bounded
+   * `no_live_session` result, never a fabricated or reconstructed state.
+   */
+  async readConversationTelemetry(conversationId: string, agent: string): Promise<ConversationTelemetryReadResult> {
+    const unavailable: ConversationTelemetryReadResult = { sessionState: "no_live_session" };
+    if (this.closed) return unavailable;
+    const pairKey = `${conversationId}:${agent}`;
+    let live: TransportSession<ConversationRpcClient> | null = null;
+    for (const candidate of [pairKey, `${pairKey}#root`, `${pairKey}#workflow`]) {
+      const session = this.sessions.peekSession("conversation", candidate);
+      if (session !== null && session.agent === agent && (live === null || session.lastUsedAt > live.lastUsedAt)) {
+        live = session;
+      }
+    }
+    if (live === null) return unavailable;
+    const client = live.client;
+    if (client.getSessionStats === undefined || client.getState === undefined) return unavailable;
+    try {
+      const [stats, state] = await Promise.all([client.getSessionStats(), client.getState()]);
+      return { sessionState: "live", ...mapSessionTelemetryFacts(stats, state) };
+    } catch {
+      return unavailable;
     }
   }
 

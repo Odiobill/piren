@@ -159,6 +159,14 @@ export class TransportSessionManager {
         this.sessions.delete(key);
         return true;
     }
+    /**
+     * T4: return the exact live session for a key WITHOUT creating one and
+     * without touching `lastUsedAt`. Read-only telemetry peek: never spawns a
+     * client, never switches an agent, never throws for a missing key.
+     */
+    peekSession(transport, conversationId) {
+        return this.sessions.get(sessionKey(transport, conversationId)) ?? null;
+    }
     async closeIdleSessions(maxIdleMs) {
         const cutoff = this.now() - maxIdleMs;
         let closed = 0;

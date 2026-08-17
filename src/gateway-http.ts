@@ -11,7 +11,7 @@ import { createInboxTask } from "./inbox.js";
 import { buildOkfGraph } from "./okf-graph.js";
 import { ConversationBroker } from "./conversation-broker.js";
 import { buildConversationAgentsResponse } from "./conversation-agents.js";
-import { checkActiveGate, formatActiveGateRejection, resolveStewardMentions, type ValidatedRecipients } from "./conversation-contract.js";
+import { CONVERSATION_AGENT_NAME_PATTERN, checkActiveGate, formatActiveGateRejection, resolveStewardMentions, type ValidatedRecipients } from "./conversation-contract.js";
 import {
   type ConversationActivityNotification,
   type ConversationTelemetryNotification,
@@ -1620,6 +1620,15 @@ export class GatewayServer {
       await this.handleConversationApprove(req, res, conversationId);
     } else if (rest[0] === "abort" && rest.length === 1 && req.method === "POST") {
       await this.handleConversationAbort(req, res, conversationId);
+    } else if (rest[0] === "agents" && rest.length === 3 && rest[2] === "telemetry" && req.method === "GET") {
+      let telemetryAgent = "";
+      try {
+        telemetryAgent = decodeURIComponent(rest[1] ?? "");
+      } catch {
+        this.writeJson(res, 400, { error: "malformed agent name" });
+        return;
+      }
+      await this.handleConversationTelemetry(res, conversationId, telemetryAgent);
     } else if ((rest[0] === "archive" || rest[0] === "reopen") && rest.length === 1 && req.method === "POST") {
       await this.handleConversationLifecycle(res, conversationId, rest[0]);
     } else if (rest[0] === "rename" && rest.length === 1 && req.method === "POST") {
@@ -2228,6 +2237,32 @@ export class GatewayServer {
     } catch (error) {
       this.conversationControlError(res, error);
     }
+  }
+
+  /**
+   * T4: authenticated, read-only
+   * `GET /api/conversations/<id>/agents/<agent>/telemetry`. Reports the
+   * truthful session-only telemetry availability for ONLY the exact live
+   * `conversation × agent` pair via the broker read seam: HTTP 200 with
+   * `sessionState: "live"` + bounded T3 facts, or 200 with
+   * `{sessionState: "no_live_session"}` for every unavailable case. Never
+   * spawns/resumes a client, never reconstructs from vault history, never
+   * writes durable evidence, never publishes SSE. Conversation existence and
+   * agent-name shape follow the existing Conversation route conventions.
+   */
+  private async handleConversationTelemetry(res: ServerResponse, conversationId: string, agent: string): Promise<void> {
+    try {
+      await readConversation({ vaultRoot: this.vaultRoot as string, conversationId });
+    } catch (error) {
+      this.conversationError(res, error);
+      return;
+    }
+    if (!CONVERSATION_AGENT_NAME_PATTERN.test(agent)) {
+      this.writeJson(res, 400, { error: "invalid agent name" });
+      return;
+    }
+    const result = await (this.conversationBroker as ConversationBroker).readConversationTelemetry(conversationId, agent);
+    this.writeJson(res, 200, result);
   }
 
   private async handleConversationEventStream(req: IncomingMessage, res: ServerResponse, conversationId: string): Promise<void> {

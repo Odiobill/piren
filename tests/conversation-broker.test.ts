@@ -2427,3 +2427,145 @@ describe("ConversationBroker T3 settle telemetry (live-only)", () => {
     await broker.close();
   });
 });
+
+describe("ConversationBroker T4 readConversationTelemetry (scoped read seam)", () => {
+  async function dispatchComplete(broker: ConversationBroker, conversationId: string, agent = "zai") {
+    const stewardEventId = await makeStewardEvent(conversationId, `Hello @${agent}`);
+    return broker.dispatchConversationMention({ conversationId, agent, text: "Hello", stewardEventId, priorEvents: [] });
+  }
+
+  it("returns live bounded facts for the exact live pair (ok state), without raw identifiers or totals", async () => {
+    const { broker } = makeBroker();
+    const conversationId = await makeConversation();
+    await dispatchComplete(broker, conversationId);
+
+    const result = await broker.readConversationTelemetry(conversationId, "zai");
+    expect(result.sessionState).toBe("live");
+    if (result.sessionState !== "live") throw new Error("expected live");
+    expect(result.contextState).toBe("ok");
+    expect(result.context).toEqual({ tokens: 60000, contextWindow: 200000, percent: 30 });
+    expect(result.model).toEqual({ provider: "anthropic", id: "claude-sonnet-4" });
+    expect(result.thinkingLevel).toBe("high");
+    expect(result.autoCompactionEnabled).toBe(true);
+    expect(result).not.toHaveProperty("sessionId");
+    expect(result).not.toHaveProperty("sessionFile");
+    expect(result).not.toHaveProperty("cost");
+    expect(result).not.toHaveProperty("tokens");
+    expect(JSON.stringify(result)).not.toContain("secret-fake-session-id");
+    await broker.close();
+  });
+
+  it("preserves the post_compaction_pending and no_window states exactly", async () => {
+    const { broker } = makeBroker({
+      clientSetup: (client) => {
+        client.sessionStats = { ...client.sessionStats, contextUsage: { tokens: null, contextWindow: 200000, percent: null } };
+      },
+    });
+    const conversationId = await makeConversation();
+    await dispatchComplete(broker, conversationId);
+    const pending = await broker.readConversationTelemetry(conversationId, "zai");
+    expect(pending).toMatchObject({ sessionState: "live", contextState: "post_compaction_pending", context: { tokens: null, contextWindow: 200000, percent: null } });
+    await broker.close();
+
+    const { broker: broker2 } = makeBroker({
+      clientSetup: (client) => {
+        const { contextUsage: _omitted, ...rest } = client.sessionStats;
+        client.sessionStats = rest;
+      },
+    });
+    const conversation2 = await makeConversation();
+    await dispatchComplete(broker2, conversation2);
+    const noWindow = await broker2.readConversationTelemetry(conversation2, "zai");
+    expect(noWindow.sessionState).toBe("live");
+    if (noWindow.sessionState === "live") {
+      expect(noWindow.contextState).toBe("no_window");
+      expect(noWindow).not.toHaveProperty("context");
+    }
+    await broker2.close();
+  });
+
+  it("returns no_live_session for an absent pair and never spawns a client", async () => {
+    const { broker, clients } = makeBroker();
+    const conversationId = await makeConversation();
+    const result = await broker.readConversationTelemetry(conversationId, "zai");
+    expect(result).toEqual({ sessionState: "no_live_session" });
+    expect(clients).toHaveLength(0);
+    await broker.close();
+  });
+
+  it("returns no_live_session for the wrong agent in the same conversation and the wrong conversation for the same agent", async () => {
+    const { broker } = makeBroker();
+    const conversationA = await makeConversation();
+    const conversationB = await makeConversation();
+    await dispatchComplete(broker, conversationA, "zai");
+
+    expect(await broker.readConversationTelemetry(conversationA, "dipu")).toEqual({ sessionState: "no_live_session" });
+    expect(await broker.readConversationTelemetry(conversationB, "zai")).toEqual({ sessionState: "no_live_session" });
+    // The exact pair is still live and readable.
+    expect((await broker.readConversationTelemetry(conversationA, "zai")).sessionState).toBe("live");
+    await broker.close();
+  });
+
+  it("returns no_live_session after broker close (ended session)", async () => {
+    const { broker } = makeBroker();
+    const conversationId = await makeConversation();
+    await dispatchComplete(broker, conversationId);
+    await broker.close();
+    expect(await broker.readConversationTelemetry(conversationId, "zai")).toEqual({ sessionState: "no_live_session" });
+  });
+
+  it("returns no_live_session when getSessionStats or getState rejects", async () => {
+    const { broker } = makeBroker({
+      clientSetup: (client) => {
+        client.sessionStatsError = new Error("stats boom (fake)");
+      },
+    });
+    const conversationId = await makeConversation();
+    await dispatchComplete(broker, conversationId);
+    expect(await broker.readConversationTelemetry(conversationId, "zai")).toEqual({ sessionState: "no_live_session" });
+    await broker.close();
+
+    const { broker: broker2 } = makeBroker({
+      clientSetup: (client) => {
+        client.stateError = new Error("state boom (fake)");
+      },
+    });
+    const conversation2 = await makeConversation();
+    await dispatchComplete(broker2, conversation2);
+    expect(await broker2.readConversationTelemetry(conversation2, "zai")).toEqual({ sessionState: "no_live_session" });
+    await broker2.close();
+  });
+
+  it("returns no_live_session when the live client lacks the optional telemetry methods", async () => {
+    const { broker } = makeBroker({
+      clientSetup: (client) => {
+        // Class methods live on the prototype: shadow them with own undefined
+        // properties so the seam observes absent optional capabilities.
+        (client as unknown as { getSessionStats?: unknown }).getSessionStats = undefined;
+        (client as unknown as { getState?: unknown }).getState = undefined;
+      },
+    });
+    const conversationId = await makeConversation();
+    await dispatchComplete(broker, conversationId);
+    expect(await broker.readConversationTelemetry(conversationId, "zai")).toEqual({ sessionState: "no_live_session" });
+    await broker.close();
+  });
+
+  it("never writes durable evidence and never publishes live frames from a read", async () => {
+    const { broker } = makeBroker();
+    const conversationId = await makeConversation();
+    await dispatchComplete(broker, conversationId);
+    const before = await priorEvents(conversationId);
+    const telemetryFrames: ConversationTelemetryNotification[] = [];
+    const unsubscribe = broker.onConversationTelemetry(conversationId, (frame) => telemetryFrames.push(frame));
+
+    await broker.readConversationTelemetry(conversationId, "zai");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const after = await priorEvents(conversationId);
+    expect(after.map((event) => event.id)).toEqual(before.map((event) => event.id));
+    expect(telemetryFrames).toHaveLength(0);
+    unsubscribe();
+    await broker.close();
+  });
+});
