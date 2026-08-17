@@ -2084,6 +2084,11 @@ export class GatewayServer {
         const unsubscribeActivity = broker.onConversationActivity(conversationId, (activity) => {
             enqueue(stream, { type: "conversation_activity", data: activity });
         });
+        // T3: scoped broker-authoritative `conversation_telemetry` frames (live-only,
+        // never durable, never replayed; at most one per settled run).
+        const unsubscribeTelemetry = broker.onConversationTelemetry(conversationId, (telemetry) => {
+            enqueue(stream, { type: "conversation_telemetry", data: telemetry });
+        });
         const heartbeat = setInterval(() => {
             res.write(": heartbeat\n\n");
         }, HEARTBEAT_INTERVAL_MS);
@@ -2096,6 +2101,7 @@ export class GatewayServer {
             unsubscribe();
             unsubscribeApprovals();
             unsubscribeActivity();
+            unsubscribeTelemetry();
             this.conversationStreamCleanups.delete(cleanup);
             closeStream(stream);
         };

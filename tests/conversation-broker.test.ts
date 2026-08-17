@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createConversation, appendConversationEvent, readConversation, readConversationEvents, transitionConversationLifecycle, acquireAudienceLock } from "../src/conversations.js";
-import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse } from "../src/gateway-rpc.js";
+import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse, RpcSessionState, RpcSessionStats } from "../src/gateway-rpc.js";
 import {
   ConversationBroker,
   buildConversationMentionPrompt,
@@ -11,6 +11,7 @@ import {
   type ConversationApprovalNotification,
   type ConversationRpcClient,
   type ConversationDispatchOutcome,
+  type ConversationTelemetryNotification,
 } from "../src/conversation-broker.js";
 import {
   CONVERSATION_HANDOFF_ENABLED_ENV_VAR,
@@ -54,6 +55,28 @@ class FakeConversationClient implements ConversationRpcClient {
   conversationHandoffText = "help";
   /** Optional barrier awaited inside start() (cancellation-during-init tests). */
   startBarrier: Promise<void> | undefined;
+  /** T3: configurable session stats/state for settle telemetry sampling. */
+  sessionStats: RpcSessionStats = {
+    sessionFile: "/private/fake-session.jsonl",
+    sessionId: "secret-fake-session-id",
+    userMessages: 1,
+    assistantMessages: 1,
+    toolCalls: 0,
+    toolResults: 0,
+    totalMessages: 2,
+    tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
+    cost: 0.01,
+    contextUsage: { tokens: 60000, contextWindow: 200000, percent: 30 },
+  };
+  stateResult: RpcSessionState = {
+    thinkingLevel: "high",
+    autoCompactionEnabled: true,
+    model: { provider: "anthropic", id: "claude-sonnet-4" },
+  };
+  sessionStatsError: Error | undefined;
+  stateError: Error | undefined;
+  statsCalls = 0;
+  stateCalls = 0;
   private listeners: Array<(event: RpcEvent) => void> = [];
   private exitListeners: Array<() => void> = [];
 
@@ -198,6 +221,20 @@ class FakeConversationClient implements ConversationRpcClient {
 
   async newSession(): Promise<{ cancelled: boolean }> {
     return { cancelled: false };
+  }
+
+  /** T3: typed session stats sample (settle telemetry). */
+  async getSessionStats(): Promise<RpcSessionStats> {
+    this.statsCalls += 1;
+    if (this.sessionStatsError !== undefined) throw this.sessionStatsError;
+    return this.sessionStats;
+  }
+
+  /** T3: session state sample (settle telemetry). */
+  async getState(): Promise<RpcSessionState> {
+    this.stateCalls += 1;
+    if (this.stateError !== undefined) throw this.stateError;
+    return this.stateResult;
   }
 
   async compact(): Promise<{ tokensBefore: number | null; estimatedTokensAfter: number | null }> {
@@ -2200,3 +2237,193 @@ async function waitForRunActive(broker: { hasActiveRun: (c: string, a: string) =
   }
   throw new Error("run never became active");
 }
+
+describe("ConversationBroker T3 settle telemetry (live-only)", () => {
+  function collectTelemetry(broker: ConversationBroker, conversationId: string) {
+    const frames: ConversationTelemetryNotification[] = [];
+    const unsubscribe = broker.onConversationTelemetry(conversationId, (frame) => frames.push(frame));
+    return { frames, unsubscribe };
+  }
+
+  /** The T3 sampler is fire-and-forget; give the contained async sample time to finish. */
+  async function flushTelemetry(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  async function dispatchComplete(broker: ConversationBroker, conversationId: string, agent = "zai") {
+    const stewardEventId = await makeStewardEvent(conversationId, `Hello @${agent}`);
+    return broker.dispatchConversationMention({ conversationId, agent, text: "Hello", stewardEventId, priorEvents: [] });
+  }
+
+  it("publishes exactly one bounded live telemetry frame after a completed run, correlated to the exact conversation/agent/run", async () => {
+    const { broker } = makeBroker();
+    const conversationId = await makeConversation();
+    const { frames, unsubscribe } = collectTelemetry(broker, conversationId);
+    const settledRunIds: string[] = [];
+    const unsubscribeActivity = broker.onConversationActivity(conversationId, (activity) => {
+      if (activity.kind === "settled") settledRunIds.push(activity.runId);
+    });
+
+    const outcome = await dispatchComplete(broker, conversationId);
+    expect(outcome.status).toBe("completed");
+    await flushTelemetry();
+
+    expect(frames).toHaveLength(1);
+    const frame = frames[0]!;
+    expect(frame.conversationId).toBe(conversationId);
+    expect(frame.agent).toBe("zai");
+    // Immediate run correlation: the exact settled run's broker runId.
+    expect(settledRunIds).toHaveLength(1);
+    expect(frame.runId).toBe(settledRunIds[0]);
+    expect(frame.contextState).toBe("ok");
+    expect(frame.context).toEqual({ tokens: 60000, contextWindow: 200000, percent: 30 });
+    expect(frame.model).toEqual({ provider: "anthropic", id: "claude-sonnet-4" });
+    expect(frame.thinkingLevel).toBe("high");
+    expect(frame.autoCompactionEnabled).toBe(true);
+    // Bounded browser-safe facts only: no session identifiers, token/cost
+    // totals, or raw RPC objects.
+    expect(frame).not.toHaveProperty("sessionId");
+    expect(frame).not.toHaveProperty("sessionFile");
+    expect(frame).not.toHaveProperty("cost");
+    expect(frame).not.toHaveProperty("tokens");
+    expect(JSON.stringify(frame)).not.toContain("secret-fake-session-id");
+    expect(JSON.stringify(frame)).not.toContain("/private/fake-session.jsonl");
+
+    unsubscribe();
+    unsubscribeActivity();
+    await broker.close();
+  });
+
+  it("never writes telemetry to durable evidence (event kinds byte-unchanged)", async () => {
+    const { broker } = makeBroker();
+    const conversationId = await makeConversation();
+    const { frames, unsubscribe } = collectTelemetry(broker, conversationId);
+    const outcome = await dispatchComplete(broker, conversationId);
+    expect(outcome.status).toBe("completed");
+    await flushTelemetry();
+    expect(frames).toHaveLength(1);
+
+    const events = await priorEvents(conversationId);
+    expect(events.map((event) => [event.kind, event.runStatus])).toEqual([
+      ["steward_message", undefined],
+      ["run_started", "running"],
+      ["run_finished", "completed"],
+    ]);
+    expect(JSON.stringify(events.map((event) => event.kind))).not.toContain("telemetry");
+    unsubscribe();
+    await broker.close();
+  });
+
+  it("maps post-compaction-pending truthfully (present nulls, numeric window)", async () => {
+    const { broker } = makeBroker({
+      clientSetup: (client) => {
+        client.sessionStats = { ...client.sessionStats, contextUsage: { tokens: null, contextWindow: 200000, percent: null } };
+      },
+    });
+    const conversationId = await makeConversation();
+    const { frames, unsubscribe } = collectTelemetry(broker, conversationId);
+    await dispatchComplete(broker, conversationId);
+    await flushTelemetry();
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.contextState).toBe("post_compaction_pending");
+    expect(frames[0]?.context).toEqual({ tokens: null, contextWindow: 200000, percent: null });
+    unsubscribe();
+    await broker.close();
+  });
+
+  it("maps no-window truthfully (omitted contextUsage => no context property)", async () => {
+    const { broker } = makeBroker({
+      clientSetup: (client) => {
+        const { contextUsage: _omitted, ...rest } = client.sessionStats;
+        client.sessionStats = rest;
+      },
+    });
+    const conversationId = await makeConversation();
+    const { frames, unsubscribe } = collectTelemetry(broker, conversationId);
+    await dispatchComplete(broker, conversationId);
+    await flushTelemetry();
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.contextState).toBe("no_window");
+    expect(frames[0]).not.toHaveProperty("context");
+    unsubscribe();
+    await broker.close();
+  });
+
+  it("a getSessionStats rejection is inert: no frame, unchanged completed outcome and durable evidence", async () => {
+    const { broker } = makeBroker({
+      clientSetup: (client) => {
+        client.sessionStatsError = new Error("stats boom (fake)");
+      },
+    });
+    const conversationId = await makeConversation();
+    const { frames, unsubscribe } = collectTelemetry(broker, conversationId);
+    const outcome = await dispatchComplete(broker, conversationId);
+    expect(outcome.status).toBe("completed");
+    await flushTelemetry();
+    expect(frames).toHaveLength(0);
+    const events = await priorEvents(conversationId);
+    expect(events.map((event) => event.kind)).toEqual(["steward_message", "run_started", "run_finished"]);
+    unsubscribe();
+    await broker.close();
+  });
+
+  it("a getState rejection is inert: no frame, unchanged completed outcome", async () => {
+    const { broker } = makeBroker({
+      clientSetup: (client) => {
+        client.stateError = new Error("state boom (fake)");
+      },
+    });
+    const conversationId = await makeConversation();
+    const { frames, unsubscribe } = collectTelemetry(broker, conversationId);
+    const outcome = await dispatchComplete(broker, conversationId);
+    expect(outcome.status).toBe("completed");
+    await flushTelemetry();
+    expect(frames).toHaveLength(0);
+    unsubscribe();
+    await broker.close();
+  });
+
+  it("publishes no frame when the run never had a live client (launch failure)", async () => {
+    const { broker } = makeBroker({ behaviors: ["start-fail"] });
+    const conversationId = await makeConversation();
+    const { frames, unsubscribe } = collectTelemetry(broker, conversationId);
+    const outcome = await dispatchComplete(broker, conversationId);
+    expect(outcome.status).toBe("failed");
+    await flushTelemetry();
+    expect(frames).toHaveLength(0);
+    unsubscribe();
+    await broker.close();
+  });
+
+  it("delivers frames only to the exact conversation's subscribers (no cross-conversation leakage)", async () => {
+    const { broker } = makeBroker();
+    const conversationA = await makeConversation();
+    const conversationB = await makeConversation();
+    const subA = collectTelemetry(broker, conversationA);
+    const subB = collectTelemetry(broker, conversationB);
+    await dispatchComplete(broker, conversationA);
+    await flushTelemetry();
+    expect(subA.frames).toHaveLength(1);
+    expect(subA.frames[0]?.conversationId).toBe(conversationA);
+    expect(subB.frames).toHaveLength(0);
+    subA.unsubscribe();
+    subB.unsubscribe();
+    await broker.close();
+  });
+
+  it("a throwing telemetry observer is contained and never affects settlement", async () => {
+    const { broker } = makeBroker();
+    const conversationId = await makeConversation();
+    const unsubscribeThrower = broker.onConversationTelemetry(conversationId, () => {
+      throw new Error("observer boom");
+    });
+    const { frames, unsubscribe } = collectTelemetry(broker, conversationId);
+    const outcome = await dispatchComplete(broker, conversationId);
+    expect(outcome.status).toBe("completed");
+    await flushTelemetry();
+    expect(frames).toHaveLength(1);
+    unsubscribeThrower();
+    unsubscribe();
+    await broker.close();
+  });
+});

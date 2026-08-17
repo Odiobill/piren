@@ -24,6 +24,7 @@ import { CONVERSATION_HANDOFF_ENABLED_ENV_VAR, isConversationHandoffInputRequest
 import { selectDurableTranscript, validateTranscriptBudget, } from "./conversation-contract.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
 import { extractAssistantText } from "./gateway-rpc.js";
+import { mapSessionTelemetryFacts, } from "./conversation-telemetry.js";
 import { classifyRunOutcome, isFallbackEligibleOutcome, } from "./model-fallback-outcome.js";
 import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
 import { loadAgentFallbackPolicy, splitFallbackModelId, } from "./model-fallback-gateway.js";
@@ -194,6 +195,8 @@ export class ConversationBroker {
     eventListeners = new Map();
     /** U4: scoped transient-activity listeners (never durable, never replayed). */
     activityListeners = new Map();
+    /** T3: scoped live-only telemetry listeners per conversation. */
+    telemetryListeners = new Map();
     /** U4: opaque per-run id sequence (unique while this broker is alive). */
     runIdSeq = 0;
     /** C3-C1: in-memory pending approvals keyed exactly conversationId:agent:requestId. */
@@ -326,6 +329,74 @@ export class ConversationBroker {
                 this.activityListeners.delete(conversationId);
             }
         };
+    }
+    /**
+     * T3: subscribe to live-only settle telemetry for exactly one conversation.
+     * Frames are transient: never durable, never replayed, scoped to the exact
+     * conversation.
+     */
+    onConversationTelemetry(conversationId, listener) {
+        let listeners = this.telemetryListeners.get(conversationId);
+        if (!listeners) {
+            listeners = new Set();
+            this.telemetryListeners.set(conversationId, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+            listeners.delete(listener);
+            if (listeners.size === 0) {
+                this.telemetryListeners.delete(conversationId);
+            }
+        };
+    }
+    /**
+     * T3: publish one live-only telemetry frame. Observer failures are
+     * contained observability issues: they can never affect Pi, durable
+     * evidence, settlement, locks, or subsequent dispatch.
+     */
+    publishTelemetry(notification) {
+        const listeners = this.telemetryListeners.get(notification.conversationId);
+        if (!listeners)
+            return;
+        for (const listener of [...listeners]) {
+            try {
+                listener(notification);
+            }
+            catch {
+                // contained
+            }
+        }
+    }
+    /**
+     * T3: sample the exact already-live client after its run settled and
+     * publish one bounded live-only telemetry frame. Absence of a client,
+     * absent optional RPC capabilities, a closed broker, or ANY sampling
+     * rejection/throw is inert (no frame) and can never affect the terminal
+     * outcome. There is deliberately no `no-live-session` publication in T3.
+     */
+    async publishSettledTelemetry(run) {
+        const client = run.client;
+        if (client === undefined || this.closed)
+            return;
+        if (client.getSessionStats === undefined || client.getState === undefined)
+            return;
+        let facts;
+        try {
+            const [stats, state] = await Promise.all([client.getSessionStats(), client.getState()]);
+            facts = mapSessionTelemetryFacts(stats, state);
+        }
+        catch {
+            // inert: a sampling failure publishes nothing and never fails the run
+            return;
+        }
+        if (this.closed)
+            return;
+        this.publishTelemetry({
+            conversationId: run.conversationId,
+            agent: run.agent,
+            runId: run.runId,
+            ...facts,
+        });
     }
     /**
      * U4: publish one transient activity frame. Observer failures are contained
@@ -678,7 +749,13 @@ export class ConversationBroker {
             }
         }
         await done;
-        return await this.finalizeRun(run);
+        const outcome = await this.finalizeRun(run);
+        // T3: best-effort live-only settle telemetry. Fire-and-forget and fully
+        // contained: it can never delay, fail, change, or duplicate the terminal
+        // outcome, it never touches durable evidence, and it publishes at most
+        // one frame per settled run (finalizeRun runs exactly once per run).
+        void this.publishSettledTelemetry(run);
+        return outcome;
     }
     handleClientEvent(run, event) {
         if (run.settled)

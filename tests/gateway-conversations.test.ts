@@ -366,3 +366,100 @@ describe("Gateway Conversation API family (C2)", () => {
     });
   });
 });
+
+describe("Gateway Conversation T3 settle telemetry SSE frame", () => {
+  let root: string;
+  let server: GatewayServer;
+  let handle: GatewayHandle;
+  const token = "test-conversation-token";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-gateway-conv-telemetry-"));
+    await initVault({ vaultRoot: root, agentName: "piren" });
+  });
+
+  afterEach(async () => {
+    await server.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  async function startServer(): Promise<void> {
+    server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: token,
+      vaultRoot: root,
+      runnableAgents: ["fake"],
+      targetBuilder: async () => fakePiTarget(),
+    });
+    handle = await server.start();
+  }
+
+  function url(path: string): string {
+    return `http://${handle.hostname}:${handle.port}${path}`;
+  }
+
+  it("delivers one live-only conversation_telemetry frame per settled run on the scoped stream, with no replay and no durable write", async () => {
+    await startServer();
+    const created = await post(url("/api/conversations"), { text: "Seed @fake" }, token);
+    const { conversation } = (await created.json()) as { conversation: { id: string } };
+    const id = conversation.id;
+
+    const streamResponse = await fetch(url(`/api/conversations/${id}/events/stream`), {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const reader = streamResponse.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const readStream = (async () => {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // Read until one COMPLETE parseable telemetry frame has arrived (the
+        // event/data lines may arrive in separate stream chunks).
+        if (parseSseFrames(buffer).some((frame) => frame.type === "conversation_telemetry")) break;
+      }
+    })();
+    try {
+      // Wait for the SSE subscription to be live, then run a second dispatch.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await post(url(`/api/conversations/${id}/messages`), { text: "Live @fake" }, token);
+      await Promise.race([readStream, new Promise((_, reject) => setTimeout(() => reject(new Error("stream timeout")), 5000))]);
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+
+    const telemetryFrames = parseSseFrames(buffer).filter((frame) => frame.type === "conversation_telemetry");
+    // Exactly one frame for the second dispatch; the first (pre-subscription)
+    // dispatch's telemetry is never replayed on attach.
+    expect(telemetryFrames).toHaveLength(1);
+    const frame = telemetryFrames[0]!.data;
+    expect(frame.conversationId).toBe(id);
+    expect(frame.agent).toBe("fake");
+    expect(typeof frame.runId).toBe("string");
+    // Fake Pi defaults: numeric context usage, thinkingLevel "off", no model.
+    expect(frame.contextState).toBe("ok");
+    expect(frame.context).toEqual({ tokens: 60000, contextWindow: 200000, percent: 30 });
+    expect(frame.thinkingLevel).toBe("off");
+    expect(frame).not.toHaveProperty("model");
+    // Bounded facts only: no session identifiers, token/cost totals.
+    expect(frame).not.toHaveProperty("sessionId");
+    expect(frame).not.toHaveProperty("sessionFile");
+    expect(frame).not.toHaveProperty("cost");
+    expect(frame).not.toHaveProperty("tokens");
+    expect(JSON.stringify(frame)).not.toContain("fake-session");
+
+    // Telemetry is never durable history.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: id });
+    expect(events.map((event) => event.kind)).toEqual([
+      "steward_message",
+      "run_started",
+      "agent_message",
+      "run_finished",
+      "steward_message",
+      "run_started",
+      "agent_message",
+      "run_finished",
+    ]);
+  });
+});

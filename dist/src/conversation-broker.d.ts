@@ -22,7 +22,8 @@ import { type ConversationContextMetadata, type ConversationEventRecord, type Co
 import { type ConversationHandoffRequest } from "./conversation-handoff.js";
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
-import { type ExtensionUiResponse, type RpcEvent, type RpcSpawnTarget } from "./gateway-rpc.js";
+import { type ExtensionUiResponse, type RpcEvent, type RpcSessionState, type RpcSessionStats, type RpcSpawnTarget } from "./gateway-rpc.js";
+import { type ConversationTelemetryFacts } from "./conversation-telemetry.js";
 import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 /** C2 committed context budget (contract §5). */
 export declare const CONVERSATION_CONTEXT_MAX_ITEMS = 8;
@@ -41,6 +42,13 @@ export interface ConversationRpcClient extends TransportRpcClient {
      * delivery; rejects on rejection/RPC failure (the caller contains it).
      */
     steer(message: string): Promise<void>;
+    /**
+     * T3: typed session stats for live-only settle telemetry (optional; absence
+     * means no frame is ever published for the settling run).
+     */
+    getSessionStats?(): Promise<RpcSessionStats>;
+    /** T3: session state for live-only settle telemetry (optional, same rule). */
+    getState?(): Promise<RpcSessionState>;
 }
 /**
  * P5 — outcome of steering an exact active conversation run: `steered` on a
@@ -167,6 +175,19 @@ export interface ConversationActivityNotification {
     /** settled only: the terminal outcome after the durable terminal append. */
     outcome?: ConversationActivityOutcome;
 }
+/**
+ * T3: live-only telemetry notification for one exact settled
+ * `conversation × agent` run. Carries only bounded browser-safe facts (the
+ * pure mapper allowlist) plus the exact conversation/agent/run correlation.
+ * NEVER durable, NEVER replayed: it exists only as a live scoped SSE frame.
+ */
+export type ConversationTelemetryNotification = ConversationTelemetryFacts & {
+    conversationId: string;
+    /** The broker-selected exact run agent (never browser text or roster inference). */
+    agent: string;
+    /** Immediate run correlation: the exact settled run's broker runId. */
+    runId: string;
+};
 /** U4: the bounded per-frame assistant delta (larger deltas emit no frame). */
 export declare const CONVERSATION_ACTIVITY_DELTA_MAX = 4096;
 /** C3-C1: response input for one pending conversation approval. */
@@ -266,6 +287,8 @@ export declare class ConversationBroker {
     private readonly eventListeners;
     /** U4: scoped transient-activity listeners (never durable, never replayed). */
     private readonly activityListeners;
+    /** T3: scoped live-only telemetry listeners per conversation. */
+    private readonly telemetryListeners;
     /** U4: opaque per-run id sequence (unique while this broker is alive). */
     private runIdSeq;
     /** C3-C1: in-memory pending approvals keyed exactly conversationId:agent:requestId. */
@@ -306,6 +329,26 @@ export declare class ConversationBroker {
     onConversationEvent(conversationId: string, listener: (event: ConversationEventNotification) => void): () => void;
     /** U4: subscribe to broker-authoritative transient activity for one conversation. */
     onConversationActivity(conversationId: string, listener: (activity: ConversationActivityNotification) => void): () => void;
+    /**
+     * T3: subscribe to live-only settle telemetry for exactly one conversation.
+     * Frames are transient: never durable, never replayed, scoped to the exact
+     * conversation.
+     */
+    onConversationTelemetry(conversationId: string, listener: (telemetry: ConversationTelemetryNotification) => void): () => void;
+    /**
+     * T3: publish one live-only telemetry frame. Observer failures are
+     * contained observability issues: they can never affect Pi, durable
+     * evidence, settlement, locks, or subsequent dispatch.
+     */
+    private publishTelemetry;
+    /**
+     * T3: sample the exact already-live client after its run settled and
+     * publish one bounded live-only telemetry frame. Absence of a client,
+     * absent optional RPC capabilities, a closed broker, or ANY sampling
+     * rejection/throw is inert (no frame) and can never affect the terminal
+     * outcome. There is deliberately no `no-live-session` publication in T3.
+     */
+    private publishSettledTelemetry;
     /**
      * U4: publish one transient activity frame. Observer failures are contained
      * observability issues: they can never affect Pi, durable evidence,

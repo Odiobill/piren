@@ -278,6 +278,16 @@ describe("conversation timeline core (immutable, live-only after attach)", () =>
     if (unknown !== null) expect(unknown.type).toBe("error");
   });
 
+  it("T3: a live-only conversation_telemetry frame is ignored, never an error item or timeline entry", () => {
+    // The telemetry indicator is T6; until then the additive frame must not
+    // surface as an 'unknown SSE event' error row in the timeline.
+    const frame = conversationFrameToItem({
+      event: "conversation_telemetry",
+      data: JSON.stringify({ conversationId: "c1", agent: "fake", runId: "run-0001", contextState: "ok" }),
+    });
+    expect(frame).toBeNull();
+  });
+
   it("live items dedupe by id; historic replacement renders the durable sequence", () => {
     const e1 = event({ id: "e1" });
     const e2 = event({ id: "e2", sequence: 2, kind: "run_finished", runStatus: "completed" });

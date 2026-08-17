@@ -14,6 +14,7 @@ import { buildConversationAgentsResponse } from "./conversation-agents.js";
 import { checkActiveGate, formatActiveGateRejection, resolveStewardMentions, type ValidatedRecipients } from "./conversation-contract.js";
 import {
   type ConversationActivityNotification,
+  type ConversationTelemetryNotification,
   type ConversationApprovalNotification,
   type ConversationDispatchOutcome,
   type ConversationEventNotification,
@@ -2262,6 +2263,11 @@ export class GatewayServer {
     const unsubscribeActivity = broker.onConversationActivity(conversationId, (activity: ConversationActivityNotification) => {
       enqueue(stream, { type: "conversation_activity", data: activity as unknown as Record<string, unknown> });
     });
+    // T3: scoped broker-authoritative `conversation_telemetry` frames (live-only,
+    // never durable, never replayed; at most one per settled run).
+    const unsubscribeTelemetry = broker.onConversationTelemetry(conversationId, (telemetry: ConversationTelemetryNotification) => {
+      enqueue(stream, { type: "conversation_telemetry", data: telemetry as unknown as Record<string, unknown> });
+    });
 
     const heartbeat = setInterval(() => {
       res.write(": heartbeat\n\n");
@@ -2275,6 +2281,7 @@ export class GatewayServer {
       unsubscribe();
       unsubscribeApprovals();
       unsubscribeActivity();
+      unsubscribeTelemetry();
       this.conversationStreamCleanups.delete(cleanup);
       closeStream(stream);
     };

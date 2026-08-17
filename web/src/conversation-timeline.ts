@@ -78,6 +78,9 @@ export { createSseParser };
  */
 export function conversationFrameToItem(frame: SseFrame): ConversationTimelineItem | null {
   if (frame.event === "" && frame.data === "") return null;
+  // T3: live-only settle telemetry frames are known and expected but carry no
+  // timeline content; the T6 indicator renders them. Never an error item.
+  if (frame.event === "conversation_telemetry") return null;
   if (frame.event === "conversation_event") {
     try {
       const parsed = parseConversationEventRecord(JSON.parse(frame.data));
