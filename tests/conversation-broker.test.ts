@@ -6,6 +6,7 @@ import { createConversation, appendConversationEvent, readConversation, readConv
 import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse, RpcSessionState, RpcSessionStats } from "../src/gateway-rpc.js";
 import {
   ConversationBroker,
+  buildConversationAgentStartPrompt,
   buildConversationMentionPrompt,
   parseConversationApprovalResponse,
   type ConversationApprovalNotification,
@@ -2566,6 +2567,73 @@ describe("ConversationBroker T4 readConversationTelemetry (scoped read seam)", (
     expect(after.map((event) => event.id)).toEqual(before.map((event) => event.id));
     expect(telemetryFrames).toHaveLength(0);
     unsubscribe();
+    await broker.close();
+  });
+});
+
+describe("T2 C6 prompt additions (root note + broker-wired stage paragraph, ADR-0045)", () => {
+  it("the root gate prompt carries the concise C6 task-first note; non-root prompts stay byte-for-byte", () => {
+    const baseInput = {
+      conversationId: "c1",
+      agent: "zai",
+      text: "Go",
+      priorLines: ["[t] steward: ctx"],
+      truncated: false,
+      omittedCount: 0,
+    };
+    const base = buildConversationMentionPrompt(baseInput);
+    expect(base).not.toContain("task-directed");
+    expect(base).not.toContain("task_claim");
+
+    const root = buildConversationMentionPrompt({ ...baseInput, rootHandoffGateRequest: true });
+    expect(root).toContain("task-directed handoff");
+    expect(root).toContain("first create the ordinary inbox task for the target agent");
+    expect(root).toContain("exact vault-relative path (team/<agent>/inbox/<task>.md)");
+    expect(root).toContain("so the steward can review it at the gate");
+    // The C6 note never claims broker task machinery and adds no new
+    // dispatch wording (the dispatch-count pin from C5-3 stays at exactly 2).
+    expect(root).not.toContain("broker validates");
+    expect(root.match(/dispatch/g)?.length ?? 0).toBe(2);
+  });
+
+  it("the agent-first start prompt is untouched by C6 wording", () => {
+    const prompt = buildConversationAgentStartPrompt({ conversationId: "c1", agent: "zai" });
+    expect(prompt).not.toContain("task-directed");
+    expect(prompt).not.toContain("task_claim");
+  });
+
+  it("a broker-launched workflow stage run receives the C6 task-directed paragraph", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId,
+      agent: "zai",
+      text: "Lead this workflow",
+      stewardEventId,
+      priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", {
+      to: "dipu",
+      text: "Claim team/dipu/inbox/20260817T144726581Z-implement-the-slice.md and execute it.",
+    });
+    if (gate.status !== "pending") throw new Error("expected pending");
+    await broker.respondToConversationApproval({
+      conversationId,
+      agent: "zai",
+      requestId: gate.requestId,
+      response: { confirmed: true },
+    });
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    expect(clients).toHaveLength(2);
+    const childPrompt = clients[1]?.prompts[0] ?? "";
+    expect(childPrompt).toContain("approved Piren conversation workflow");
+    expect(childPrompt).toContain("task-directed");
+    expect(childPrompt).toContain("task_claim");
+    expect(childPrompt).toContain("team/<agent>/inbox/<task>.md");
     await broker.close();
   });
 });

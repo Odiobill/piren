@@ -118,6 +118,13 @@ export function planConversationHandoffEdge(input) {
     }
     return { ok: true, depth: sourceDepth + 1 };
 }
+/**
+ * T2/ADR-0045 — the conditional, role-aware C6 task-directed paragraph for
+ * workflow stage runs. This is INSTRUCTION DISCIPLINE, not runtime
+ * enforcement (contract §2.3): the broker does not parse, create, claim,
+ * list, complete, or validate tasks, and the C5 wire stays `{to, text}`.
+ */
+export const CONVERSATION_TASK_DIRECTED_STAGE_PARAGRAPH = "C6 task-directed protocol (instruction discipline, not runtime enforcement): if the handoff request names one exact vault-relative inbox task path (team/<agent>/inbox/<task>.md), read and explicitly `task_claim` exactly that path; never use `inbox_list` to discover work and never claim any other task. Derive your lifecycle role from the claimed task's own `to`, `from`, and body, never from new wire metadata. Implementation shape (you are the Developer named in `to`; the Lead is named in `from`): execute the task, record `task_update_status(<path>, completed, result)` with the required evidence, create the Lead's review-request task referencing this exact task path, then hand back to that Lead naming the exact review-request path. Review shape (you are the Lead named in `to`; the Developer is named in `from`): inspect, claim, and review; only you record the accepted/blocked/correction/exceptional-Consultant verdict; never accept your own work and never create a review request for your own review. If the path is missing, ambiguous, unclaimable, or the task's roles match neither shape: visibly report the exact condition; do not improvise, substitute, retry, scan, or reroute; any return handoff is bounded to reporting that condition. If the handoff request names no task path, complete it as an ordinary handoff.";
 /** Render the bounded prompt for one handoff stage run (C5-1). */
 export function buildConversationStagePrompt(input) {
     const context = input.priorLines.length === 0
@@ -126,16 +133,18 @@ export function buildConversationStagePrompt(input) {
     const truncationNotice = input.truncated && input.omittedCount > 0
         ? `\ncontext_truncated: true (${input.omittedCount} earlier message(s) omitted)\n`
         : "";
-    return [
+    const lines = [
         `You are agent '${input.agent}' participating in an approved Piren conversation workflow (conversation '${input.conversationId}', workflow root '${input.rootEventId}', handoff '${input.handoffEventId}', stage depth ${input.depth}).`,
         `Agent '${input.sourceAgent}' has handed off a bounded request to you within the steward-approved workflow.`,
         "Complete the request, then report your outcome visibly. You may use `conversation_handoff(to, text)` to hand off to another locally runnable agent only when that is needed, within the finite workflow budget.",
-        "",
-        "Prior conversation context (durable order):",
-        context,
-        truncationNotice,
-        "Handoff request:",
-        input.text,
-    ].join("\n");
+    ];
+    // T2: instruction text lives BEFORE the handoff request section so the
+    // request itself stays clean; appended only when requested (the C5-only
+    // rendering stays byte-for-byte).
+    if (input.taskDirected === true) {
+        lines.push("", CONVERSATION_TASK_DIRECTED_STAGE_PARAGRAPH);
+    }
+    lines.push("", "Prior conversation context (durable order):", context, truncationNotice, "Handoff request:", input.text);
+    return lines.join("\n");
 }
 //# sourceMappingURL=conversation-handoff.js.map

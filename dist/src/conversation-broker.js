@@ -59,7 +59,7 @@ export function buildConversationMentionPrompt(input) {
         ? `\ncontext_truncated: true (${input.omittedCount} earlier message(s) omitted)\n`
         : "";
     const gateLine = input.rootHandoffGateRequest === true
-        ? " If this request requires team coordination, you may REQUEST a steward-approved handoff via `conversation_handoff(to, text)`; the steward approves or rejects it before anything is dispatched."
+        ? " If this request requires team coordination, you may REQUEST a steward-approved handoff via `conversation_handoff(to, text)`; the steward approves or rejects it before anything is dispatched. For a task-directed handoff, first create the ordinary inbox task for the target agent, then put its exact vault-relative path (team/<agent>/inbox/<task>.md) in the `conversation_handoff(to, text)` text so the steward can review it at the gate."
         : "";
     return [
         `You are participating in Piren conversation '${input.conversationId}' as agent '${input.agent}'.`,
@@ -1579,6 +1579,10 @@ export class ConversationBroker {
                 priorLines: context.lines,
                 truncated: context.truncated,
                 omittedCount: context.metadata.omittedCount,
+                // T2/ADR-0045: every workflow stage run carries the conditional,
+                // role-aware C6 task-directed paragraph (instruction discipline;
+                // the broker does not parse or validate task paths).
+                taskDirected: true,
             }), context.metadata, childDone);
         }
         finally {

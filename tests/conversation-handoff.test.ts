@@ -234,3 +234,63 @@ describe("C5-2 initial steward gate (pure, bounded)", () => {
     ).toEqual({ to: "dipu", text: "Please review the diff" });
   });
 });
+
+describe("buildConversationStagePrompt C6 task-directed paragraph (T2, ADR-0045)", () => {
+  const base = {
+    conversationId: "c1",
+    agent: "dipu",
+    sourceAgent: "sam",
+    text: "Claim team/dipu/inbox/20260817T144726581Z-implement-the-slice.md and execute it.",
+    rootEventId: "root-1",
+    handoffEventId: "h1",
+    depth: 1,
+    priorLines: ["[t] sam: context"],
+    truncated: false,
+    omittedCount: 0,
+  };
+
+  it("is byte-for-byte unchanged when the C6 paragraph is not requested", () => {
+    const without = buildConversationStagePrompt(base);
+    expect(without).toBe(buildConversationStagePrompt({ ...base, taskDirected: false }));
+    expect(without).not.toContain("task-directed");
+    expect(without).not.toContain("task_claim");
+  });
+
+  it("renders the full conditional, role-aware C6 paragraph when requested", () => {
+    const prompt = buildConversationStagePrompt({ ...base, taskDirected: true });
+    // Honest discipline marker.
+    expect(prompt).toContain("task-directed");
+    expect(prompt).toMatch(/instruction discipline, not runtime enforcement/);
+    // Exact-path claim discipline, never inbox discovery.
+    expect(prompt).toContain("task_claim");
+    expect(prompt).toContain("team/<agent>/inbox/<task>.md");
+    expect(prompt).toContain("never use `inbox_list` to discover work");
+    expect(prompt).toContain("never claim any other task");
+    // Role derivation from the task file's own fields, never wire metadata.
+    expect(prompt).toContain("`to`, `from`, and body");
+    expect(prompt).toContain("never from new wire metadata");
+    // Implementation shape: execute, complete with evidence, review-request
+    // referencing the developer path, return handoff with the exact review path.
+    expect(prompt).toContain("Implementation shape");
+    expect(prompt).toContain("task_update_status(<path>, completed, result)");
+    expect(prompt).toContain("review-request");
+    expect(prompt).toContain("exact review-request path");
+    // Review shape: Lead-only verdicts, never self-accept, never review own review.
+    expect(prompt).toContain("Review shape");
+    expect(prompt).toContain("accepted/blocked/correction/exceptional-Consultant");
+    expect(prompt).toContain("never accept your own work");
+    expect(prompt).toContain("never create a review request for your own review");
+    // Failure discipline: report the exact condition; no improvisation.
+    expect(prompt).toContain("visibly report the exact condition");
+    expect(prompt).toContain("do not improvise, substitute, retry, scan, or reroute");
+    // Ordinary non-task handoffs remain ordinary.
+    expect(prompt).toContain("complete it as an ordinary handoff");
+    // The base C5 stage content is retained.
+    expect(prompt).toContain("approved Piren conversation workflow");
+    expect(prompt).toContain("conversation_handoff(to, text)");
+    // Placement: instruction text precedes the handoff request section, so
+    // the request itself is never polluted by protocol guidance.
+    expect(prompt.indexOf("task-directed")).toBeGreaterThan(-1);
+    expect(prompt.indexOf("task-directed")).toBeLessThan(prompt.indexOf("Handoff request:"));
+  });
+});

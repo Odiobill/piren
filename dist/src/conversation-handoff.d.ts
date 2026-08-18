@@ -111,6 +111,13 @@ export type PlanConversationHandoffEdgeResult = {
  * handoff event and consumes one workflow edge.
  */
 export declare function planConversationHandoffEdge(input: PlanConversationHandoffEdgeInput): PlanConversationHandoffEdgeResult;
+/**
+ * T2/ADR-0045 — the conditional, role-aware C6 task-directed paragraph for
+ * workflow stage runs. This is INSTRUCTION DISCIPLINE, not runtime
+ * enforcement (contract §2.3): the broker does not parse, create, claim,
+ * list, complete, or validate tasks, and the C5 wire stays `{to, text}`.
+ */
+export declare const CONVERSATION_TASK_DIRECTED_STAGE_PARAGRAPH = "C6 task-directed protocol (instruction discipline, not runtime enforcement): if the handoff request names one exact vault-relative inbox task path (team/<agent>/inbox/<task>.md), read and explicitly `task_claim` exactly that path; never use `inbox_list` to discover work and never claim any other task. Derive your lifecycle role from the claimed task's own `to`, `from`, and body, never from new wire metadata. Implementation shape (you are the Developer named in `to`; the Lead is named in `from`): execute the task, record `task_update_status(<path>, completed, result)` with the required evidence, create the Lead's review-request task referencing this exact task path, then hand back to that Lead naming the exact review-request path. Review shape (you are the Lead named in `to`; the Developer is named in `from`): inspect, claim, and review; only you record the accepted/blocked/correction/exceptional-Consultant verdict; never accept your own work and never create a review request for your own review. If the path is missing, ambiguous, unclaimable, or the task's roles match neither shape: visibly report the exact condition; do not improvise, substitute, retry, scan, or reroute; any return handoff is bounded to reporting that condition. If the handoff request names no task path, complete it as an ordinary handoff.";
 /** Render the bounded prompt for one handoff stage run (C5-1). */
 export declare function buildConversationStagePrompt(input: {
     conversationId: string;
@@ -123,4 +130,9 @@ export declare function buildConversationStagePrompt(input: {
     priorLines: readonly string[];
     truncated: boolean;
     omittedCount: number;
+    /**
+     * T2/ADR-0045: when true, append the C6 task-directed paragraph. Absent or
+     * false renders the C5-only prompt byte-for-byte.
+     */
+    taskDirected?: boolean;
 }): string;
