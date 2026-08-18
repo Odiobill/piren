@@ -209,6 +209,74 @@ function handle(cmd) {
       }
     }
 
+    // T5: generic scripted-handoff seam (test-only). A prompt containing the
+    // "c6script" token makes the fake poll a JSON script file (env
+    // FAKE_PI_SCRIPT_FILE) for a rule {match, to, text} whose `match`
+    // substring appears in the prompt, then emit the reserved conversation
+    // handoff envelope with the scripted {to, text}. This lets a test publish
+    // a runtime-determined handoff (for example one carrying a just-created
+    // task path) while the stage run is held. A missing/invalid file or no
+    // matching rule within the bounded wait completes the turn WITHOUT a
+    // handoff (a visible test failure, never a fabricated one). Checked AFTER
+    // the marker flow so a root prompt carrying both a marker and the token
+    // keeps the deterministic marker path.
+    if (typeof cmd.message === "string" && cmd.message.includes("c6script")) {
+      const scriptFile = process.env.FAKE_PI_SCRIPT_FILE;
+      const scriptTimeoutMs = Number(process.env.FAKE_PI_SCRIPT_TIMEOUT_MS ?? 5000);
+      const scriptStart = Date.now();
+      const tryScript = () => {
+        let rules = null;
+        if (scriptFile) {
+          try {
+            const parsed = JSON.parse(require("node:fs").readFileSync(scriptFile, "utf8"));
+            if (Array.isArray(parsed)) rules = parsed;
+          } catch {
+            // not ready yet (missing/invalid): keep polling until the bound
+          }
+        }
+        const rule =
+          rules === null
+            ? null
+            : rules.find(
+                (r) =>
+                  r &&
+                  typeof r.match === "string" &&
+                  typeof r.to === "string" &&
+                  typeof r.text === "string" &&
+                  cmd.message.includes(r.match),
+              );
+        if (rule) {
+          waitingConversationHandoffId = "convhandoff-req-" + Date.now() + "-" + process.pid + "-" + ++conversationHandoffSeq;
+          emit({
+            type: "message_update",
+            role: "assistant",
+            assistantMessageEvent: {
+              type: "text_delta",
+              delta: "Requesting scripted handoff [role:" + (process.env.PIREN_CONVERSATION_HANDOFF_ENABLED || "none") + "].",
+            },
+          });
+          emit({
+            type: "extension_ui_request",
+            id: waitingConversationHandoffId,
+            method: "input",
+            title: "piren:conversation-handoff",
+            placeholder: JSON.stringify({ v: 1, to: rule.to, text: rule.text }),
+          });
+          return;
+        }
+        if (Date.now() - scriptStart >= scriptTimeoutMs) {
+          emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "No c6script rule matched." } });
+          emit({ type: "queue_update", steering: [], followUp: [] });
+          emit({ type: "agent_end", messages: [] });
+          emit({ type: "agent_settled" });
+          return;
+        }
+        setTimeout(tryScript, 25);
+      };
+      tryScript();
+      return;
+    }
+
     // Blocking "hang": keep the run active (ack + agent_start, no agent_end)
     // until abort. Used to hold a handoff worker mid-run for lifecycle proofs.
     if (typeof cmd.message === "string" && cmd.message.includes("hang")) {
