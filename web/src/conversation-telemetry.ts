@@ -61,10 +61,14 @@ export type ConversationTelemetryEntry =
 export type ConversationTelemetryState = ReadonlyMap<string, ConversationTelemetryEntry>;
 
 /**
- * Keys that must NEVER appear in a bounded frame/response: raw session
- * identifiers, token/cost totals, transcript, and raw RPC/error objects.
+ * Exact allowlists (recursive): any key outside these sets — including
+ * raw/session/cost/error/transcript-shaped fields — rejects the whole
+ * frame/response. Nothing unknown is parsed, stored, or rendered.
  */
-const FORBIDDEN_KEYS = new Set(["sessionId", "sessionFile", "cost", "tokens", "transcript", "error", "messages", "stats", "state"]);
+const FRAME_KEYS: readonly string[] = ["conversationId", "agent", "runId", "contextState", "context", "model", "thinkingLevel", "autoCompactionEnabled"];
+const LIVE_READ_KEYS: readonly string[] = ["sessionState", "contextState", "context", "model", "thinkingLevel", "autoCompactionEnabled"];
+const CONTEXT_KEYS: readonly string[] = ["tokens", "contextWindow", "percent"];
+const MODEL_KEYS: readonly string[] = ["provider", "id"];
 const CONTEXT_STATES: readonly ConversationContextState[] = ["ok", "post_compaction_pending", "no_window"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -83,22 +87,25 @@ function isNullableNumber(value: unknown): value is number | null {
   return value === null || isFiniteNumber(value);
 }
 
-function hasForbiddenKey(record: Record<string, unknown>): string | null {
+/** The first key outside the allowlist, or null when the record is exact. */
+function unknownKey(record: Record<string, unknown>, allowed: readonly string[]): string | null {
   for (const key of Object.keys(record)) {
-    if (FORBIDDEN_KEYS.has(key)) return key;
+    if (!allowed.includes(key)) return key;
   }
   return null;
 }
 
 function parseContext(value: unknown): ConversationTelemetryContext | null {
   if (!isRecord(value)) return null;
+  if (unknownKey(value, CONTEXT_KEYS) !== null) return null;
   if (!isFiniteNumber(value.contextWindow)) return null;
   if (!isNullableNumber(value.tokens) || !isNullableNumber(value.percent)) return null;
   return { tokens: value.tokens, contextWindow: value.contextWindow, percent: value.percent };
 }
 
 /** Validate bounded live facts; returns an error reason or null when valid. */
-function validateFacts(record: Record<string, unknown>): ConversationTelemetryLiveFacts | null {
+function validateFacts(record: Record<string, unknown>, allowedKeys: readonly string[]): ConversationTelemetryLiveFacts | null {
+  if (unknownKey(record, allowedKeys) !== null) return null;
   const contextState = record.contextState;
   if (typeof contextState !== "string" || !CONTEXT_STATES.includes(contextState as ConversationContextState)) return null;
   const facts: ConversationTelemetryLiveFacts = { contextState: contextState as ConversationContextState };
@@ -115,6 +122,7 @@ function validateFacts(record: Record<string, unknown>): ConversationTelemetryLi
   if (context !== null) facts.context = context;
   if (record.model !== undefined) {
     if (!isRecord(record.model)) return null;
+    if (unknownKey(record.model, MODEL_KEYS) !== null) return null;
     const model: ConversationTelemetryModel = {};
     if (record.model.provider !== undefined) {
       if (!isBoundedString(record.model.provider)) return null;
@@ -145,12 +153,12 @@ function validateFacts(record: Record<string, unknown>): ConversationTelemetryLi
  */
 export function parseConversationTelemetryFrame(json: unknown, conversationId: string): ConversationTelemetryParseResult {
   if (!isRecord(json)) return { ok: false, reason: "not an object" };
-  const forbidden = hasForbiddenKey(json);
-  if (forbidden !== null) return { ok: false, reason: `forbidden key: ${forbidden}` };
+  const unknown = unknownKey(json, FRAME_KEYS);
+  if (unknown !== null) return { ok: false, reason: `unknown key: ${unknown}` };
   if (json.conversationId !== conversationId) return { ok: false, reason: "foreign conversation" };
   if (!isBoundedString(json.agent)) return { ok: false, reason: "invalid agent" };
   if (!isBoundedString(json.runId)) return { ok: false, reason: "invalid runId" };
-  const facts = validateFacts(json);
+  const facts = validateFacts(json, FRAME_KEYS);
   if (facts === null) return { ok: false, reason: "invalid facts" };
   return { ok: true, frame: { conversationId, agent: json.agent, runId: json.runId, ...facts } };
 }
@@ -161,15 +169,15 @@ export function parseConversationTelemetryFrame(json: unknown, conversationId: s
  */
 export function parseConversationTelemetryReadResponse(json: unknown): ConversationTelemetryReadResult {
   if (!isRecord(json)) throw new Error("unexpected telemetry response");
-  const forbidden = hasForbiddenKey(json);
-  if (forbidden !== null) throw new Error(`unexpected telemetry response (forbidden key: ${forbidden})`);
   if (json.sessionState === "no_live_session") {
     const extra = Object.keys(json).filter((key) => key !== "sessionState");
     if (extra.length > 0) throw new Error("unexpected telemetry response (no-live payload carries fields)");
     return { sessionState: "no_live_session" };
   }
   if (json.sessionState !== "live") throw new Error("unexpected telemetry response (sessionState)");
-  const facts = validateFacts(json);
+  const unknown = unknownKey(json, LIVE_READ_KEYS);
+  if (unknown !== null) throw new Error(`unexpected telemetry response (unknown key: ${unknown})`);
+  const facts = validateFacts(json, LIVE_READ_KEYS);
   if (facts === null) throw new Error("unexpected telemetry response (facts)");
   return { sessionState: "live", ...facts };
 }

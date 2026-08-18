@@ -179,3 +179,40 @@ describe("formatConversationTelemetryEntry (text-first, truthful)", () => {
     expect(noLive.text).toBe("zai · no live session");
   });
 });
+
+describe("strict recursive allowlist (T6 correction)", () => {
+  it("rejects unknown non-forbidden keys at the frame root, inside context, and inside model", () => {
+    expect(parseConversationTelemetryFrame(liveFrame({ note: "extra" }), CID)).toMatchObject({ ok: false });
+    expect(
+      parseConversationTelemetryFrame(liveFrame({ context: { tokens: 1, contextWindow: 2, percent: 3, extra: 1 } }), CID),
+    ).toMatchObject({ ok: false });
+    expect(
+      parseConversationTelemetryFrame(liveFrame({ model: { provider: "x", apiKey: "secret" } }), CID),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("rejects unknown keys at every level of the read response", () => {
+    const base = { sessionState: "live", contextState: "ok", context: { tokens: 1, contextWindow: 2, percent: 3 } };
+    expect(() => parseConversationTelemetryReadResponse({ ...base, note: "extra" })).toThrow();
+    expect(() => parseConversationTelemetryReadResponse({ ...base, context: { tokens: 1, contextWindow: 2, percent: 3, extra: 1 } })).toThrow();
+    expect(() => parseConversationTelemetryReadResponse({ ...base, model: { provider: "x", apiKey: "secret" } })).toThrow();
+  });
+
+  it("still accepts exactly the allowed key sets at every level", () => {
+    const full = parseConversationTelemetryFrame(
+      liveFrame({ model: { provider: "anthropic", id: "claude-sonnet-4" }, thinkingLevel: "high", autoCompactionEnabled: false }),
+      CID,
+    );
+    expect(full.ok).toBe(true);
+    expect(
+      parseConversationTelemetryReadResponse({
+        sessionState: "live",
+        contextState: "ok",
+        context: { tokens: 1, contextWindow: 2, percent: 3 },
+        model: { id: "claude-sonnet-4" },
+        thinkingLevel: "off",
+        autoCompactionEnabled: true,
+      }),
+    ).toMatchObject({ sessionState: "live", model: { id: "claude-sonnet-4" } });
+  });
+});

@@ -206,19 +206,32 @@ export function ConversationNavigator({
     | { agent: string; phase: "error"; message: string }
     | null
   >(null);
+  /**
+   * T6 correction: selection generation guard. Incremented on EVERY
+   * selection change; a refresh captures it at click time and applies its
+   * result/error ONLY while the same generation is current, so a stale
+   * completion can never leak another selection's telemetry or busy/error
+   * state into the visible one.
+   */
+  const telemetryGenerationRef = useRef(0);
   const refreshTelemetry = useCallback(
     async (conversationId: string, agent: string) => {
+      const generation = telemetryGenerationRef.current;
       setTelemetryRefresh((previous) => (previous?.agent === agent && previous.phase === "busy" ? previous : { agent, phase: "busy" }));
       try {
         const result = await fetchConversationTelemetry(conversationId, agent, token);
+        if (telemetryGenerationRef.current !== generation) return; // stale: fully inert
         setTelemetryByAgent((previous) => applyConversationTelemetryRead(previous, agent, result));
         setTelemetryRefresh(null);
       } catch (error) {
         if (error instanceof UnauthorizedError) {
-          setTelemetryRefresh(null);
+          // Truthful 401: the gateway rejected the token (selection-global);
+          // surface it without rendering any stale state.
+          if (telemetryGenerationRef.current === generation) setTelemetryRefresh(null);
           onUnauthorized();
           return;
         }
+        if (telemetryGenerationRef.current !== generation) return; // stale: fully inert
         // Truthful failure: the prior entry stays as-is (never relabeled as
         // fresh) and the error is visible next to the exact agent.
         setTelemetryRefresh({ agent, phase: "error", message: error instanceof Error ? error.message : String(error) });
@@ -261,8 +274,10 @@ export function ConversationNavigator({
   }, [surfaceKey]);
 
   // T6: session-only telemetry never survives a selection change — a later
-  // history reload must never reconstruct it.
+  // history reload must never reconstruct it. The generation bump also
+  // invalidates any in-flight refresh completion (stale completions are inert).
   useEffect(() => {
+    telemetryGenerationRef.current += 1;
     setTelemetryByAgent(emptyConversationTelemetryState());
     setTelemetryRefresh(null);
   }, [surfaceKey]);

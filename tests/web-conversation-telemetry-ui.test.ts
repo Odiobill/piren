@@ -274,3 +274,69 @@ describe("T6 fetchConversationTelemetry (narrow T4 adapter)", () => {
     await expect(realFetch("c1", "dipu", "t")).rejects.toThrow();
   });
 });
+
+describe("T6 cross-selection refresh race guard (correction)", () => {
+  const CONVERSATION_B = {
+    id: "c2",
+    title: "Conversation B",
+    audience: ["dipu"],
+    status: "open",
+    path: "collaboration/conversations/c2/index.md",
+    createdBy: "steward",
+    created: "2026-08-15T14:00:00.000Z",
+    updated: "2026-08-15T14:00:00.000Z",
+  };
+
+  it("a refresh resolving after the selection changed is fully inert; a same-selection refresh applies exactly once", async () => {
+    let resolveA: ((value: unknown) => void) | undefined;
+    vi.mocked(fetchConversationTelemetry).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveA = resolve;
+        }),
+    );
+    await mountNavigator();
+
+    // Start an unresolved refresh for Conversation A's dipu.
+    await act(async () => {
+      telemetryRow()?.querySelector<HTMLButtonElement>('[aria-label="Refresh context telemetry for dipu"]')?.click();
+    });
+    await flush();
+    expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledWith("c1", "dipu", "t");
+    expect(telemetryRow()?.textContent).toContain("Refreshing…");
+
+    // Switch to Conversation B (fresh manifest + attach for c2).
+    vi.mocked(fetchConversation).mockImplementation(async (id: string) => (id === "c2" ? CONVERSATION_B : CONVERSATION));
+    vi.mocked(attachConversation).mockResolvedValue({ conversation: CONVERSATION_B, attached: true, gate: { ok: true, missing: [], malformed: [] } });
+    await act(async () => {
+      window.location.hash = "#conversation/c2";
+    });
+    await flush();
+    await flush();
+    expect(telemetryRow()?.textContent).toContain("dipu");
+    expect(telemetryRow()?.textContent).not.toContain("Refreshing…");
+
+    // A's refresh resolves late: fully inert for B — no telemetry, no error,
+    // no busy state, no second request.
+    await act(async () => {
+      resolveA?.({ sessionState: "live", contextState: "ok", context: { tokens: 60000, contextWindow: 200000, percent: 30 } });
+    });
+    await flush();
+    const rowB = telemetryRow();
+    expect(rowB?.textContent).not.toContain("60.0k / 200.0k context");
+    expect(rowB?.textContent).not.toContain("Refreshing…");
+    expect(rowB?.querySelector('[role="alert"]')).toBeNull();
+    expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledTimes(1);
+
+    // A same-selection refresh on B still applies exactly once.
+    vi.mocked(fetchConversationTelemetry).mockResolvedValue({ sessionState: "live", contextState: "no_window" });
+    await act(async () => {
+      telemetryRow()?.querySelector<HTMLButtonElement>('[aria-label="Refresh context telemetry for dipu"]')?.click();
+    });
+    await flush();
+    expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenLastCalledWith("c2", "dipu", "t");
+    expect(telemetryRow()?.textContent).toContain("dipu · no context window information");
+  });
+});
