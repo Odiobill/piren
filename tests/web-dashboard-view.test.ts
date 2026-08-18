@@ -198,6 +198,34 @@ describe("DashboardView (ADR-0044)", () => {
     expect(description?.querySelector(".agent-model")).toBeNull();
   });
 
+  it("renders a colon-bearing configured model id with no invented thinking line", async () => {
+    vi.mocked(fetchConversationAgents).mockResolvedValue({
+      agents: [{ name: "local", online: true, model: "ollama/llama3.1:8b" }],
+    });
+    renderDashboard();
+    await flush();
+    const local = agentButton("local");
+    const description = local.querySelector(".agent-card-description");
+    expect(description?.querySelector(".agent-model-provider")?.textContent).toBe("ollama");
+    // The full colon-bearing id is the model id; no thinking line is invented.
+    expect(description?.querySelector(".agent-model-id")?.textContent).toBe("llama3.1:8b");
+    expect(description?.querySelector(".agent-model-thinking")).toBeNull();
+    expect(description?.textContent).toBe("ollamallama3.1:8b");
+  });
+
+  it("splits a known thinking level after a colon-bearing model id", async () => {
+    vi.mocked(fetchConversationAgents).mockResolvedValue({
+      agents: [{ name: "local", online: true, model: "ollama/llama3.1:8b:high" }],
+    });
+    renderDashboard();
+    await flush();
+    const local = agentButton("local");
+    const description = local.querySelector(".agent-card-description");
+    expect(description?.querySelector(".agent-model-provider")?.textContent).toBe("ollama");
+    expect(description?.querySelector(".agent-model-id")?.textContent).toBe("llama3.1:8b");
+    expect(description?.querySelector(".agent-model-thinking")?.textContent).toBe("high");
+  });
+
   it("visibly distinguishes an unavailable configured model instead of inventing one (D5)", async () => {
     renderDashboard();
     await flush();

@@ -33,26 +33,44 @@ export interface ConfiguredModelParts {
 }
 
 /**
+ * Pi-native thinking levels (documented in docs/configuration.md). A
+ * configured-model string splits its thinking level only when the suffix
+ * after the LAST colon is one of these exact values.
+ */
+const PIREN_THINKING_LEVELS: ReadonlySet<string> = new Set([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+/**
  * Parse the gateway-projected configured-model string into its presentation
- * parts. Returns null when the value is not `provider/model[:thinking]` — the
- * caller then shows the raw string truthfully (no browser-derived
- * interpretation of malformed data).
+ * parts. Colon-bearing model ids are legitimate (for example `ollama/
+ * llama3.1:8b`), so the thinking split happens ONLY on the LAST colon when
+ * its suffix is a known Pi thinking level; any other colon suffix stays
+ * model-id text and is never invented as a thinking level. Returns null when
+ * the value is not `provider/model[:thinking]` — the caller then shows the
+ * raw string truthfully (no browser-derived interpretation of malformed
+ * data).
  */
 export function parseConfiguredModelLabel(model: string): ConfiguredModelParts | null {
   const providerIndex = model.indexOf("/");
   if (providerIndex <= 0) return null;
   const provider = model.slice(0, providerIndex);
-  // A colon may appear only as the single thinking separator after the model
-  // id; a colon in the provider part is malformed (raw fallback).
+  // A colon may appear only as the thinking separator after the model id;
+  // a colon in the provider part is malformed (raw fallback).
   if (provider.includes(":")) return null;
   const rest = model.slice(providerIndex + 1);
   if (rest === "") return null;
-  const colonIndex = rest.indexOf(":");
-  if (colonIndex < 0) return { provider, modelId: rest, thinking: null };
-  const modelId = rest.slice(0, colonIndex);
-  const thinking = rest.slice(colonIndex + 1);
-  if (modelId === "" || thinking === "" || thinking.includes(":")) return null;
-  return { provider, modelId, thinking };
+  const lastColonIndex = rest.lastIndexOf(":");
+  if (lastColonIndex > 0 && PIREN_THINKING_LEVELS.has(rest.slice(lastColonIndex + 1))) {
+    return { provider, modelId: rest.slice(0, lastColonIndex), thinking: rest.slice(lastColonIndex + 1) };
+  }
+  return { provider, modelId: rest, thinking: null };
 }
 
 /** Fail-closed validation of GET /api/conversation-agents. */

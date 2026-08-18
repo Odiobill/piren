@@ -60,9 +60,35 @@ describe("parseConfiguredModelLabel (model-card presentation parts)", () => {
     });
   });
 
+  it("preserves colon-bearing model ids (ollama tags) instead of inventing a thinking level", () => {
+    // `ollama/llama3.1:8b` — the `:8b` is part of the model id, not a
+    // thinking level; the full id must be preserved and no thinking line
+    // invented.
+    expect(parseConfiguredModelLabel("ollama/llama3.1:8b")).toEqual({
+      provider: "ollama",
+      modelId: "llama3.1:8b",
+      thinking: null,
+    });
+    // A known thinking level after the LAST colon is still split out.
+    expect(parseConfiguredModelLabel("ollama/llama3.1:8b:high")).toEqual({
+      provider: "ollama",
+      modelId: "llama3.1:8b",
+      thinking: "high",
+    });
+    // Multiple colons with an unrecognized suffix stay model-id text.
+    expect(parseConfiguredModelLabel("a/b:c:d")).toEqual({
+      provider: "a",
+      modelId: "b:c:d",
+      thinking: null,
+    });
+  });
+
   it("returns null for malformed values so the raw string is shown truthfully", () => {
-    for (const bad of ["", "nope", "a/", "/b", "a/b:", "a/b:c:d", "a:/b"]) {
+    for (const bad of ["", "nope", "a/", "/b", "a:/b"]) {
       expect(parseConfiguredModelLabel(bad), JSON.stringify(bad)).toBeNull();
     }
+    // A trailing colon with no suffix is not a thinking split: it remains
+    // model-id text (never an invented empty thinking level).
+    expect(parseConfiguredModelLabel("a/b:")).toEqual({ provider: "a", modelId: "b:", thinking: null });
   });
 });
