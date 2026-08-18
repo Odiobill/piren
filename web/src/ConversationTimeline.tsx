@@ -23,6 +23,7 @@ import {
   type ConversationCompactActivityRun,
 } from "./conversation-activity";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
+import { parseConversationTelemetryFrame, type ConversationTelemetryFrame } from "./conversation-telemetry";
 import type { ConversationReaction } from "./conversation-reactions";
 import {
   conversationAuthorInitial,
@@ -68,6 +69,7 @@ export function ConversationTimeline({
   onLifecycleTransition,
   onApproval,
   onActivityChange,
+  onTelemetry,
   onAppend,
   onHistoryLoaded,
 }: {
@@ -86,6 +88,12 @@ export function ConversationTimeline({
    * and on every fail-closed cleanup path; history never reconstructs it.
    */
   onActivityChange?: (runs: ConversationCompactActivityRun[]) => void;
+  /**
+   * T6 — forward a validated scoped live telemetry frame for the selected
+   * conversation. Session-only presentation state: never a timeline entry,
+   * never durable, never replayed; malformed/foreign frames are ignored.
+   */
+  onTelemetry?: (frame: ConversationTelemetryFrame) => void;
   /**
    * P6: called after a durable item or permissible transient activity
    * appended at the bottom (anchor decision is applied by the surface).
@@ -201,6 +209,20 @@ export function ConversationTimeline({
               if (frame.event === "approval") {
                 try {
                   onApproval?.(parseConversationApprovalFrame(JSON.parse(frame.data)));
+                } catch {
+                  // non-authoritative; ignored
+                }
+                return;
+              }
+              // T6: a scoped live telemetry frame updates the per-agent
+              // session-only indicator and NEVER becomes a timeline entry.
+              // Malformed JSON, parser rejection (including foreign
+              // conversations), or forbidden fields are ignored — they never
+              // mutate state and never become an error row.
+              if (frame.event === "conversation_telemetry") {
+                try {
+                  const parsed = parseConversationTelemetryFrame(JSON.parse(frame.data), conversationId);
+                  if (parsed.ok) onTelemetry?.(parsed.frame);
                 } catch {
                   // non-authoritative; ignored
                 }

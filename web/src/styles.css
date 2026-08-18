@@ -1816,3 +1816,63 @@ code {
   font-size: 0.8rem;
   font-style: italic;
 }
+
+/* T6 — per-agent session-only telemetry row: its own named interaction-tray
+   sibling (after the live-run row, above composer controls). Compact,
+   text-first, agent-labeled; each item stays one line with graceful
+   ellipsis and wraps on narrow screens. No animation, no scroll region, no
+   color-only or red action-badge semantics. */
+.conversation-telemetry-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding-top: 8px;
+  min-width: 0;
+}
+
+.telemetry-item {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.telemetry-text,
+.telemetry-agent {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.telemetry-agent {
+  font-weight: 700;
+}
+
+.telemetry-refresh {
+  flex: none;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}
+
+.telemetry-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--error, #b00020);
+}
+
+@media (max-width: 640px) {
+  .conversation-telemetry-row {
+    gap: 4px 10px;
+  }
+
+  .telemetry-text {
+    max-width: 60vw;
+  }
+}

@@ -37,6 +37,7 @@ import {
   type ApprovalResponse,
   type ConversationAbortOutcome,
 } from "./conversation-controls";
+import { parseConversationTelemetryReadResponse, type ConversationTelemetryReadResult } from "./conversation-telemetry";
 
 /** Typed bounded lifecycle action error (L2 404/409/500 / network). */
 export class LifecycleHttpError extends Error {
@@ -315,6 +316,19 @@ export async function fetchConversationEvents(id: string, token: string, signal?
   const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/events`, token, signal === undefined ? undefined : { signal });
   if (!res.ok) throw new Error(`conversation events HTTP ${res.status}`);
   return parseConversationEvents(await res.json());
+}
+
+/**
+ * T6 — GET /api/conversations/<id>/agents/<agent>/telemetry: one explicit,
+ * authenticated, read-only scoped telemetry read for the exact pair. Called
+ * ONLY by the explicit steward refresh control — never on mount, selection,
+ * SSE receipt, timer, reconnect, or failure retry. A 401 surfaces through
+ * UnauthorizedError; any other non-200 or an invalid/leaking payload throws.
+ */
+export async function fetchConversationTelemetry(id: string, agent: string, token: string): Promise<ConversationTelemetryReadResult> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/agents/${encodeURIComponent(agent)}/telemetry`, token);
+  if (!res.ok) throw new Error(`conversation telemetry HTTP ${res.status}`);
+  return parseConversationTelemetryReadResponse(await res.json());
 }
 
 export interface ConversationEventStreamHandlers {

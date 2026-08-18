@@ -7,6 +7,7 @@ import {
   ConversationControlHttpError,
   fetchConversation,
   fetchConversationAgents,
+  fetchConversationTelemetry,
   LifecycleHttpError,
   RenameHttpError,
   renameConversation,
@@ -54,6 +55,14 @@ import {
   conversationActivityRunStateLabel,
   type ConversationCompactActivityRun,
 } from "./conversation-activity";
+import {
+  applyConversationTelemetryFrame,
+  applyConversationTelemetryRead,
+  emptyConversationTelemetryState,
+  formatConversationTelemetryEntry,
+  type ConversationTelemetryFrame,
+  type ConversationTelemetryState,
+} from "./conversation-telemetry";
 
 /**
  * Conversation navigator (C3-A + C4-A + L3): the Conversation Workbench
@@ -182,6 +191,43 @@ export function ConversationNavigator({
   }, [dockRuns]);
 
   /**
+   * T6 — per-agent session-only telemetry for the SELECTED active
+   * Conversation: in-memory only, fed by validated scoped SSE frames and by
+   * explicit steward refresh reads. Cleared on every selection change so
+   * history/reload never reconstructs it; never a Conversation-wide total.
+   */
+  const [telemetryByAgent, setTelemetryByAgent] = useState<ConversationTelemetryState>(emptyConversationTelemetryState());
+  const handleTelemetry = useCallback((frame: ConversationTelemetryFrame) => {
+    setTelemetryByAgent((previous) => applyConversationTelemetryFrame(previous, frame));
+  }, []);
+  /** T6: explicit refresh control state (one click → one exact GET; never a retry). */
+  const [telemetryRefresh, setTelemetryRefresh] = useState<
+    | { agent: string; phase: "busy" }
+    | { agent: string; phase: "error"; message: string }
+    | null
+  >(null);
+  const refreshTelemetry = useCallback(
+    async (conversationId: string, agent: string) => {
+      setTelemetryRefresh((previous) => (previous?.agent === agent && previous.phase === "busy" ? previous : { agent, phase: "busy" }));
+      try {
+        const result = await fetchConversationTelemetry(conversationId, agent, token);
+        setTelemetryByAgent((previous) => applyConversationTelemetryRead(previous, agent, result));
+        setTelemetryRefresh(null);
+      } catch (error) {
+        if (error instanceof UnauthorizedError) {
+          setTelemetryRefresh(null);
+          onUnauthorized();
+          return;
+        }
+        // Truthful failure: the prior entry stays as-is (never relabeled as
+        // fresh) and the error is visible next to the exact agent.
+        setTelemetryRefresh({ agent, phase: "error", message: error instanceof Error ? error.message : String(error) });
+      }
+    },
+    [token, onUnauthorized],
+  );
+
+  /**
    * R1 — apply the commit-time bottom-anchor decision to the BROWSER ROOT
    * document (the sole Conversation scroll host) in a layout effect that runs
    * AFTER React commits appended content (durable items, permitted activity,
@@ -199,8 +245,26 @@ export function ConversationNavigator({
         ? selection.conversation.id
         : "none";
 
+  /**
+   * T6: agents eligible for the telemetry row/refresh — the gateway-provided
+   * durable audience first (durable order), then any agent with live
+   * telemetry state not in the audience (deterministic insertion order).
+   * Read-only inspection shows no telemetry row in T6.
+   */
+  const activeTelemetryAgents =
+    selection.phase === "active"
+      ? [...selection.conversation.audience, ...[...telemetryByAgent.keys()].filter((agent) => !selection.conversation.audience.includes(agent))]
+      : [];
+
   useEffect(() => {
     scrollWiringRef.current = EMPTY_CONVERSATION_SCROLL_WIRING;
+  }, [surfaceKey]);
+
+  // T6: session-only telemetry never survives a selection change — a later
+  // history reload must never reconstruct it.
+  useEffect(() => {
+    setTelemetryByAgent(emptyConversationTelemetryState());
+    setTelemetryRefresh(null);
   }, [surfaceKey]);
 
   useLayoutEffect(() => {
@@ -717,6 +781,7 @@ export function ConversationNavigator({
                   onLifecycleTransition={handleLifecycleEvent}
                   onApproval={handleApprovalFrame}
                   onActivityChange={handleActivityChange}
+                  onTelemetry={handleTelemetry}
                   onAppend={bumpContentVersion}
                   onHistoryLoaded={() => {
                     scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
@@ -760,6 +825,48 @@ export function ConversationNavigator({
                           {failed && (
                             <p className="transient-run-error" role="alert">
                               {abortState?.phase === "error" ? abortState.error.message : ""}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {/* T6 — per-agent session-only context telemetry: one named
+                    tray sibling row after the live-run row and above the
+                    composer controls (never inside .composer-action-row).
+                    Text-first, agent-labeled, read-only presentation of
+                    gateway-provided facts; the refresh control is explicit
+                    only (one click → one exact authenticated GET). No red
+                    action-badge semantics, no scroll region, no animation. */}
+                {activeTelemetryAgents.length > 0 && (
+                  <div className="conversation-telemetry-row" aria-label="Session context telemetry">
+                    {activeTelemetryAgents.map((agent) => {
+                      const entry = telemetryByAgent.get(agent);
+                      const busy = telemetryRefresh?.agent === agent && telemetryRefresh.phase === "busy";
+                      const failed = telemetryRefresh?.agent === agent && telemetryRefresh.phase === "error";
+                      const line = entry !== undefined ? formatConversationTelemetryEntry(entry) : null;
+                      return (
+                        <div key={agent} className="telemetry-item">
+                          {line !== null && (
+                            <span className="telemetry-text" aria-label={line.ariaLabel}>
+                              {line.text}
+                            </span>
+                          )}
+                          {line === null && <span className="telemetry-agent">{agent}</span>}
+                          <button
+                            type="button"
+                            className="telemetry-refresh"
+                            aria-label={`Refresh context telemetry for ${agent}`}
+                            title={`Refresh context telemetry for ${agent}`}
+                            disabled={busy}
+                            onClick={() => void refreshTelemetry(selection.conversation.id, agent)}
+                          >
+                            {busy ? "Refreshing…" : "Refresh"}
+                          </button>
+                          {failed && (
+                            <p className="telemetry-error" role="alert">
+                              {telemetryRefresh?.phase === "error" ? telemetryRefresh.message : ""}
                             </p>
                           )}
                         </div>

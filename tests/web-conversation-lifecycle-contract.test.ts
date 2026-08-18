@@ -255,6 +255,11 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
       // C3-C3 (2026-08-07) authorizes /approve and /abort on the
       // Conversation surface; they are no longer repo-wide forbidden.
       for (const forbidden of ["localStorage", "sessionStorage", "new EventSource", "/api/chat", "/api/vault", "thinking", "window.confirm"]) {
+        // T6 (0.2.0 release-gate contract §3.4) authorizes read-only
+        // thinking-level DISPLAY inside the bounded per-agent telemetry
+        // line; thinking CONTROLS remain forbidden. The exception is scoped
+        // to the telemetry core module only.
+        if (forbidden === "thinking" && name === "conversation-telemetry.ts") continue;
         expect(content, `${name} must not contain ${forbidden}`).not.toContain(forbidden);
       }
     }
