@@ -141,15 +141,25 @@ afterEach(() => {
 
 describe("workbench action icons (decorative only)", () => {
   describe("telemetry Refresh", () => {
-    it("keeps the visible Refresh text and accessible name and adds a decorative icon", async () => {
+    it("keeps the visible Refresh text and accessible name and adds a decorative icon (control lives in the per-agent details popup)", async () => {
       window.location.hash = "#conversation/c1";
       vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "dipu", online: true }] });
       vi.mocked(fetchConversation).mockResolvedValue(CONVERSATION);
       vi.mocked(attachConversation).mockResolvedValue({ conversation: CONVERSATION, attached: true, gate: { ok: true, missing: [], malformed: [] } });
       await mountNavigator();
-      const row = container.querySelector<HTMLElement>(".conversation-telemetry-row");
+      // The compact card row holds one card per agent; the decorated Refresh
+      // control lives inside the card's details popup.
+      const row = container.querySelector<HTMLElement>(".conversation-context-cards");
       expect(row).not.toBeNull();
-      const refresh = row?.querySelector<HTMLButtonElement>('[aria-label="Refresh context telemetry for dipu"]') ?? null;
+      const card = row?.querySelector<HTMLButtonElement>('button[aria-label^="dipu:"]') ?? null;
+      expect(card).not.toBeNull();
+      await act(async () => {
+        card?.click();
+      });
+      await flush();
+      const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      const refresh = dialog?.querySelector<HTMLButtonElement>('[aria-label="Refresh context telemetry for dipu"]') ?? null;
       expectDecoratedButton(refresh, "Refresh", "Refresh context telemetry for dipu");
     });
   });

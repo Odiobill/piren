@@ -35,7 +35,7 @@ import {
 } from "./conversation-lifecycle";
 import { parseHashRoute, routeToIntent } from "./hash-route";
 import { renameAnnouncement, type RenameError } from "./conversation-details";
-import { CheckIcon, InfoIcon, RefreshIcon, RetryIcon, StopIcon, XIcon } from "./icons";
+import { CheckIcon, InfoIcon, RetryIcon, StopIcon, XIcon } from "./icons";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
@@ -59,10 +59,11 @@ import {
   applyConversationTelemetryFrame,
   applyConversationTelemetryRead,
   emptyConversationTelemetryState,
-  formatConversationTelemetryEntry,
   type ConversationTelemetryFrame,
   type ConversationTelemetryState,
 } from "./conversation-telemetry";
+import { contextCardsForSelection, telemetryPopupViewModel } from "./conversation-context-cards";
+import { ConversationTelemetryPopup } from "./ConversationTelemetryPopup";
 
 /**
  * Conversation navigator (C3-A + C4-A + L3): the Conversation Workbench
@@ -207,6 +208,13 @@ export function ConversationNavigator({
     | null
   >(null);
   /**
+   * Context cards (accepted design workbench-context-cards-telemetry-details-popup-design):
+   * the exact agent whose details popup is open (active surface only, at most
+   * one), plus one ref per card button for focus return on dismissal.
+   */
+  const [telemetryPopupAgent, setTelemetryPopupAgent] = useState<string | null>(null);
+  const telemetryCardRefs = useRef(new Map<string, HTMLButtonElement>());
+  /**
    * T6 correction: selection generation guard. Incremented on EVERY
    * selection change; a refresh captures it at click time and applies its
    * result/error ONLY while the same generation is current, so a stale
@@ -259,14 +267,15 @@ export function ConversationNavigator({
         : "none";
 
   /**
-   * T6: agents eligible for the telemetry row/refresh — the gateway-provided
-   * durable audience first (durable order), then any agent with live
-   * telemetry state not in the audience (deterministic insertion order).
-   * Read-only inspection shows no telemetry row in T6.
+   * Context cards: eligible agents and stable ordering come from the pure
+   * view-model core — the gateway-provided durable audience first (durable
+   * order), then any agent with live telemetry state not in the audience
+   * (deterministic insertion order). Read-only/no-selection surfaces have no
+   * cards and no popup.
    */
-  const activeTelemetryAgents =
+  const contextCards =
     selection.phase === "active"
-      ? [...selection.conversation.audience, ...[...telemetryByAgent.keys()].filter((agent) => !selection.conversation.audience.includes(agent))]
+      ? contextCardsForSelection({ phase: "active", audience: selection.conversation.audience }, telemetryByAgent)
       : [];
 
   useEffect(() => {
@@ -283,6 +292,9 @@ export function ConversationNavigator({
     telemetryGenerationRef.current += 1;
     setTelemetryByAgent(emptyConversationTelemetryState());
     setTelemetryRefresh(null);
+    // Context cards: the popup is bound to the exact selected pair, so every
+    // selection change closes it together with the session-only reset.
+    setTelemetryPopupAgent(null);
   }, [surfaceKey]);
 
   useLayoutEffect(() => {
@@ -731,6 +743,18 @@ export function ConversationNavigator({
     }
   }
 
+  function openTelemetryPopup(agent: string) {
+    // Explicit card activation is the ONLY way the popup opens; opening it
+    // never fetches (Refresh inside the popup is the sole explicit read).
+    setTelemetryPopupAgent(agent);
+  }
+
+  function closeTelemetryPopup() {
+    const agent = telemetryPopupAgent;
+    setTelemetryPopupAgent(null);
+    if (agent !== null) telemetryCardRefs.current.get(agent)?.focus();
+  }
+
   function openDetails() {
     setDetailsOpen(true);
   }
@@ -851,49 +875,6 @@ export function ConversationNavigator({
                     })}
                   </div>
                 )}
-                {/* T6 — per-agent session-only context telemetry: one named
-                    tray sibling row after the live-run row and above the
-                    composer controls (never inside .composer-action-row).
-                    Text-first, agent-labeled, read-only presentation of
-                    gateway-provided facts; the refresh control is explicit
-                    only (one click → one exact authenticated GET). No red
-                    action-badge semantics, no scroll region, no animation. */}
-                {activeTelemetryAgents.length > 0 && (
-                  <div className="conversation-telemetry-row" aria-label="Session context telemetry">
-                    {activeTelemetryAgents.map((agent) => {
-                      const entry = telemetryByAgent.get(agent);
-                      const busy = telemetryRefresh?.agent === agent && telemetryRefresh.phase === "busy";
-                      const failed = telemetryRefresh?.agent === agent && telemetryRefresh.phase === "error";
-                      const line = entry !== undefined ? formatConversationTelemetryEntry(entry) : null;
-                      return (
-                        <div key={agent} className="telemetry-item">
-                          {line !== null && (
-                            <span className="telemetry-text" aria-label={line.ariaLabel}>
-                              {line.text}
-                            </span>
-                          )}
-                          {line === null && <span className="telemetry-agent">{agent}</span>}
-                          <button
-                            type="button"
-                            className="telemetry-refresh"
-                            aria-label={`Refresh context telemetry for ${agent}`}
-                            title={`Refresh context telemetry for ${agent}`}
-                            disabled={busy}
-                            onClick={() => void refreshTelemetry(selection.conversation.id, agent)}
-                          >
-                            <RefreshIcon size={14} />
-                            {busy ? "Refreshing…" : "Refresh"}
-                          </button>
-                          {failed && (
-                            <p className="telemetry-error" role="alert">
-                              {telemetryRefresh?.phase === "error" ? telemetryRefresh.message : ""}
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
                 {/* U3/R2: the composer is the bottom of the tray. U2's
                     composer-right details action is preserved. */}
                 <div className="composer-action-row">
@@ -907,8 +888,70 @@ export function ConversationNavigator({
                   />
                   <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
                 </div>
+                {/* Context cards (accepted design workbench-context-cards-
+                    telemetry-details-popup-design §2): the compact per-agent
+                    Context card row is the LAST interaction-tray row, BELOW
+                    the composer action row (never inside it). Each card is
+                    one native button with a decorative initial and a clearly
+                    labelled truthful Context bar; activation opens the
+                    focus-managed details popup for that exact pair. Explicit
+                    refresh lives only inside the popup; rendering and card
+                    activation never fetch. No red action-badge semantics, no
+                    scroll region, no animation. */}
+                {contextCards.length > 0 && (
+                  <div className="conversation-context-cards" aria-label="Conversation context">
+                    {contextCards.map((card) => (
+                      <button
+                        key={card.agent}
+                        type="button"
+                        className="context-card"
+                        aria-label={card.accessibleName}
+                        ref={(element) => {
+                          if (element === null) telemetryCardRefs.current.delete(card.agent);
+                          else telemetryCardRefs.current.set(card.agent, element);
+                        }}
+                        onClick={() => openTelemetryPopup(card.agent)}
+                      >
+                        <span className="context-card-meter">
+                          <span className="context-card-label">Context</span>
+                          <span
+                            className={card.bar.kind === "percent" ? "context-card-bar" : `context-card-bar context-card-bar-${card.stateKey}`}
+                            role="progressbar"
+                            aria-label="Context"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            {...(card.bar.kind === "percent" ? { "aria-valuenow": card.bar.percent } : {})}
+                            aria-valuetext={card.stateText}
+                          >
+                            <span
+                              className="context-card-bar-fill"
+                              style={card.bar.kind === "percent" ? { width: `${card.bar.percent}%` } : undefined}
+                            />
+                          </span>
+                          <span className="context-card-state">{card.shortText}</span>
+                        </span>
+                        <span className="context-card-identity">
+                          <span className="context-card-initial" aria-hidden="true">
+                            {card.initial}
+                          </span>
+                          <span className="context-card-name">{card.agent}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
+            {telemetryPopupAgent !== null && (
+              <ConversationTelemetryPopup
+                key={telemetryPopupAgent}
+                viewModel={telemetryPopupViewModel(telemetryPopupAgent, telemetryByAgent.get(telemetryPopupAgent))}
+                busy={telemetryRefresh?.agent === telemetryPopupAgent && telemetryRefresh.phase === "busy"}
+                error={telemetryRefresh?.agent === telemetryPopupAgent && telemetryRefresh.phase === "error" ? telemetryRefresh.message : null}
+                onRefresh={() => void refreshTelemetry(selection.conversation.id, telemetryPopupAgent)}
+                onClose={closeTelemetryPopup}
+              />
+            )}
           </>
         ) : (
           <div className="attach-banner" role="status">

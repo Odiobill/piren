@@ -1852,41 +1852,183 @@ code {
   font-style: italic;
 }
 
-/* T6 — per-agent session-only telemetry row: its own named interaction-tray
-   sibling (after the live-run row, above composer controls). Compact,
-   text-first, agent-labeled; each item stays one line with graceful
-   ellipsis and wraps on narrow screens. No animation, no scroll region, no
-   color-only or red action-badge semantics. */
-.conversation-telemetry-row {
+/* Context cards (accepted design workbench-context-cards-telemetry-details-
+   popup-design): the compact per-agent Context card row is the LAST
+   interaction-tray row, below the composer action row. Cards wrap instead of
+   introducing a scroll region; they are visually subordinate to the composer.
+   Text-first, never color-only, no red action-badge semantics, no animation. */
+.conversation-context-cards {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 16px;
+  align-items: stretch;
+  gap: 6px;
   padding-top: 8px;
   min-width: 0;
 }
 
-.telemetry-item {
+.context-card {
   display: inline-flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
-  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #d0d0d0);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.telemetry-text,
-.telemetry-agent {
-  font-size: 0.8125rem;
+.context-card-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.context-card-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--muted);
+}
+
+.context-card-bar {
+  position: relative;
+  flex: none;
+  width: 72px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border, #d0d0d0);
+  overflow: hidden;
+}
+
+.context-card-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: var(--accent, #3a6ea5);
+}
+
+/* Neutral states share one restrained neutral style; the post-compaction
+   state adds a STATIC hatch (no animation, reduced-motion safe). None of
+   them uses the action-required red. */
+.context-card-bar-post_compaction_pending {
+  background: repeating-linear-gradient(45deg, var(--border, #d0d0d0) 0 3px, transparent 3px 6px);
+}
+
+.context-card-state {
+  font-size: 0.6875rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.context-card-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.context-card-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent, #3a6ea5);
+  color: var(--on-accent, #ffffff);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.context-card-name {
+  font-size: 0.8125rem;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
 
-.telemetry-agent {
-  font-weight: 700;
+/* Telemetry details popup: same dialog family as the details modal. No
+   entry/exit animation; reduced-motion safe. */
+.telemetry-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.telemetry-popup {
+  width: min(26rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--bg, #ffffff);
+  color: var(--fg, #1a1a1a);
+  border: 1px solid var(--border, #d0d0d0);
+  padding: 14px 16px;
+}
+
+.telemetry-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.telemetry-popup-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.telemetry-popup-state {
+  margin: 8px 0 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.telemetry-popup-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.telemetry-popup-fields {
+  margin: 10px 0 0;
+  display: grid;
+  gap: 4px;
+}
+
+.telemetry-popup-field {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8125rem;
+}
+
+.telemetry-popup-field dt {
+  color: var(--muted);
+}
+
+.telemetry-popup-field dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.telemetry-popup-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .telemetry-refresh {
@@ -1896,18 +2038,13 @@ code {
 }
 
 .telemetry-error {
-  flex-basis: 100%;
-  margin: 0;
+  margin: 8px 0 0;
   font-size: 0.75rem;
   color: var(--error, #b00020);
 }
 
 @media (max-width: 640px) {
-  .conversation-telemetry-row {
-    gap: 4px 10px;
-  }
-
-  .telemetry-text {
-    max-width: 60vw;
+  .conversation-context-cards {
+    gap: 4px;
   }
 }

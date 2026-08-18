@@ -166,9 +166,9 @@ describe("D4 live activity tray row", () => {
     expect(container.querySelector(".composer-action-row .dock-run-status")).toBeNull();
     // Exactly one named row for all runs.
     expect(container.querySelectorAll(".conversation-activity-row")).toHaveLength(1);
-    // Order: approval surface, then the activity row, then the T6 telemetry
-    // row, then composer controls.
-    expect(trayChildOrder()).toEqual(["approval-cards", "conversation-activity-row", "conversation-telemetry-row", "composer-action-row"]);
+    // Order: approval surface, then the activity row, then composer controls,
+    // then the compact Context cards row last (below the composer).
+    expect(trayChildOrder()).toEqual(["approval-cards", "conversation-activity-row", "composer-action-row", "conversation-context-cards"]);
     // The composer keeps its place inside the composer action row.
     expect(container.querySelector(".composer-action-row .mock-composer")).not.toBeNull();
     // Exact compact source fields: broker-provided agent + truthful phase.

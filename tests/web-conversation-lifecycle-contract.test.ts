@@ -259,11 +259,15 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
         // CONTROLS remain forbidden everywhere):
         //  - conversation-telemetry.ts: the bounded per-agent telemetry line
         //    (T6 release-gate contract §3.4);
+        //  - conversation-context-cards.ts + ConversationTelemetryPopup.tsx:
+        //    the accepted context-cards/telemetry-popup design displays the
+        //    bounded thinking LEVEL as a read-only detail field (T6 §9 choice
+        //    10). Never a control.
         //  - DashboardView.tsx + conversation-agents.ts: the Dashboard model
         //    card DISPLAYS and parses the gateway-projected configured
         //    model's thinking level (split from the existing authenticated
         //    `provider/model:thinking` string). Never a control.
-        if (forbidden === "thinking" && (name === "conversation-telemetry.ts" || name === "DashboardView.tsx" || name === "conversation-agents.ts")) continue;
+        if (forbidden === "thinking" && (name === "conversation-telemetry.ts" || name === "conversation-context-cards.ts" || name === "ConversationTelemetryPopup.tsx" || name === "DashboardView.tsx" || name === "conversation-agents.ts")) continue;
         expect(content, `${name} must not contain ${forbidden}`).not.toContain(forbidden);
       }
     }
