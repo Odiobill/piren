@@ -209,18 +209,21 @@ function handle(cmd) {
       }
     }
 
-    // T5: generic scripted-handoff seam (test-only). A prompt containing the
-    // "c6script" token makes the fake poll a JSON script file (env
-    // FAKE_PI_SCRIPT_FILE) for a rule {match, to, text} whose `match`
-    // substring appears in the prompt, then emit the reserved conversation
-    // handoff envelope with the scripted {to, text}. This lets a test publish
-    // a runtime-determined handoff (for example one carrying a just-created
-    // task path) while the stage run is held. A missing/invalid file or no
-    // matching rule within the bounded wait completes the turn WITHOUT a
-    // handoff (a visible test failure, never a fabricated one). Checked AFTER
-    // the marker flow so a root prompt carrying both a marker and the token
-    // keeps the deterministic marker path.
-    if (typeof cmd.message === "string" && cmd.message.includes("c6script")) {
+    // T5: generic scripted-handoff seam (test-only). A prompt whose CURRENT
+    // request section (after the last "Handoff request:", or the whole
+    // message) contains the "c6script" token makes the fake poll a JSON
+    // script file (env FAKE_PI_SCRIPT_FILE) for a rule {match, to, text}
+    // whose `match` substring appears in the section, then emit the reserved
+    // conversation handoff envelope with the scripted {to, text}. The file
+    // may be an array of rules or an object {rules: [...], releases: {...}}.
+    // Section-scoping keeps prior-context replay from re-triggering the seam.
+    // A missing/invalid file or no matching rule within the bounded wait
+    // completes the turn WITHOUT a handoff (visible failure, never
+    // fabricated). Checked AFTER the marker flow so a root prompt carrying
+    // both a marker and the token keeps the deterministic marker path.
+    const c6SectionIndex = typeof cmd.message === "string" ? cmd.message.lastIndexOf("Handoff request:") : -1;
+    const c6Section = c6SectionIndex >= 0 ? cmd.message.slice(c6SectionIndex + "Handoff request:".length) : cmd.message;
+    if (typeof c6Section === "string" && c6Section.includes("c6script")) {
       const scriptFile = process.env.FAKE_PI_SCRIPT_FILE;
       const scriptTimeoutMs = Number(process.env.FAKE_PI_SCRIPT_TIMEOUT_MS ?? 5000);
       const scriptStart = Date.now();
@@ -230,6 +233,7 @@ function handle(cmd) {
           try {
             const parsed = JSON.parse(require("node:fs").readFileSync(scriptFile, "utf8"));
             if (Array.isArray(parsed)) rules = parsed;
+            else if (parsed && Array.isArray(parsed.rules)) rules = parsed.rules;
           } catch {
             // not ready yet (missing/invalid): keep polling until the bound
           }
@@ -243,7 +247,7 @@ function handle(cmd) {
                   typeof r.match === "string" &&
                   typeof r.to === "string" &&
                   typeof r.text === "string" &&
-                  cmd.message.includes(r.match),
+                  c6Section.includes(r.match),
               );
         if (rule) {
           waitingConversationHandoffId = "convhandoff-req-" + Date.now() + "-" + process.pid + "-" + ++conversationHandoffSeq;
@@ -274,6 +278,54 @@ function handle(cmd) {
         setTimeout(tryScript, 25);
       };
       tryScript();
+      return;
+    }
+
+    // T5: generic hold/release seam (test-only). A prompt whose CURRENT
+    // request section contains "c6hold:<id>" holds the turn (no agent_end)
+    // while the fake polls the same JSON script file for a release entry in
+    // an object {rules: [...], releases: {<id>: "text"}}. On release the fake
+    // completes the turn with the scripted final text (default "Released."),
+    // making the test-controlled terminal message the durable stage reply. A
+    // missing/invalid file or no release within the bounded wait completes
+    // WITHOUT it (visible test failure). Generic fixture behavior supplied
+    // wholly by test data; no production logic.
+    const holdMatch = typeof c6Section === "string" ? c6Section.match(/c6hold:([a-z0-9-]+)/) : null;
+    if (holdMatch) {
+      const holdId = holdMatch[1];
+      const scriptFile = process.env.FAKE_PI_SCRIPT_FILE;
+      const scriptTimeoutMs = Number(process.env.FAKE_PI_SCRIPT_TIMEOUT_MS ?? 5000);
+      const scriptStart = Date.now();
+      const tryRelease = () => {
+        let releases = null;
+        if (scriptFile) {
+          try {
+            const parsed = JSON.parse(require("node:fs").readFileSync(scriptFile, "utf8"));
+            if (parsed && !Array.isArray(parsed) && parsed.releases && typeof parsed.releases === "object") {
+              releases = parsed.releases;
+            }
+          } catch {
+            // not ready yet (missing/invalid): keep polling until the bound
+          }
+        }
+        if (releases !== null && Object.prototype.hasOwnProperty.call(releases, holdId)) {
+          const finalText = typeof releases[holdId] === "string" ? releases[holdId] : "Released.";
+          emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: finalText } });
+          emit({ type: "queue_update", steering: [], followUp: [] });
+          emit({ type: "agent_end", messages: [] });
+          emit({ type: "agent_settled" });
+          return;
+        }
+        if (Date.now() - scriptStart >= scriptTimeoutMs) {
+          emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "No c6hold release arrived." } });
+          emit({ type: "queue_update", steering: [], followUp: [] });
+          emit({ type: "agent_end", messages: [] });
+          emit({ type: "agent_settled" });
+          return;
+        }
+        setTimeout(tryRelease, 25);
+      };
+      tryRelease();
       return;
     }
 

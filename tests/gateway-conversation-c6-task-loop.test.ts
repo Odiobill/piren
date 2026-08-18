@@ -161,7 +161,7 @@ async function openStream(conversationId: string): Promise<{ approvals: Record<s
 }
 
 describe("T5 C6 task-directed loop mechanics (authenticated fake-Pi + real extension tools)", () => {
-  it("runs the full exact-path Lead → Developer → Lead loop with bidirectional task/conversation correlation", async () => {
+  it("runs the full exact-path Lead → Developer → Lead loop with bidirectional task/conversation correlation", { timeout: 30000 }, async () => {
     const sam = await bootAgent("sam");
     const dipu = await bootAgent("dipu");
     await startServer();
@@ -223,15 +223,42 @@ describe("T5 C6 task-directed loop mechanics (authenticated fake-Pi + real exten
     expect(review.details.from).toBe("dipu");
 
     // 6. Publish the scripted return handoff for the held Developer stage run.
-    await writeFile(scriptFile, JSON.stringify([{ match: pathDev, to: "sam", text: `Review ${pathReview} and record the verdict.` }]), "utf8");
+    //    The return text carries the exact review path AND the hold token that
+    //    keeps the Lead stage live until the lead choreography releases it.
+    await writeFile(
+      scriptFile,
+      JSON.stringify([{ match: pathDev, to: "sam", text: `Review ${pathReview} and record the verdict. c6hold:lead-review` }]),
+      "utf8",
+    );
 
-    // 7. The whole sequential chain resolves after the Lead stage completes.
+    // 7. The Lead stage run launches and stays LIVE (hold token) while the
+    //    scripted Lead inspects, claims, and records the verdict inside it.
+    await waitFor(async () => (await readConversationEvents({ vaultRoot: root, conversationId })).filter((e) => e.kind === "run_started").length >= 3);
+    const reviewRead = await sam.tools.vault_read.execute("c6", { path: pathReview });
+    expect(reviewRead.content[0].text).toContain(pathDev);
+    const leadClaim = await sam.tools.task_claim.execute("c7", { task_path: pathReview, device_id: "test-sam" });
+    const claimedReview = leadClaim.details.path as string;
+    expect(claimedReview).toContain(".claimed.test-sam.md");
+    await sam.tools.task_update_status.execute("c8", {
+      task_path: claimedReview,
+      status: "completed",
+      result: "Accepted: evidence verified; scope respected.",
+    });
+    // Release the held Lead stage with its visible verdict report.
+    await writeFile(
+      scriptFile,
+      JSON.stringify({ releases: { "lead-review": `Verdict recorded inside the Lead stage: accepted. Review ${pathReview} completed; developer task ${pathDev} evidence verified.` } }),
+      "utf8",
+    );
+
+    // 8. The whole sequential chain resolves only after the Lead stage settles.
     const response = await dispatch;
     expect(response.status).toBe(200);
     const outcome = (await response.json()) as { dispatch: { agent: string; status: string }[] };
     expect(outcome.dispatch).toEqual([{ agent: "sam", status: "completed" }]);
 
-    // 8. Durable conversation evidence is path-exact and bidirectional.
+    // 9. Durable conversation evidence is path-exact and bidirectional, and
+    //    the verdict report is durable Lead-stage evidence (not post-settle).
     const events = await readConversationEvents({ vaultRoot: root, conversationId });
     const handoffs = events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string");
     expect(handoffs.map((e) => `${e.author}->${e.addressedAgent}`)).toEqual(["sam->dipu", "dipu->sam"]);
@@ -245,21 +272,20 @@ describe("T5 C6 task-directed loop mechanics (authenticated fake-Pi + real exten
     expect(new Set(events.map((e) => e.kind)).size).toBeLessThanOrEqual(4);
     const manifest = await readConversation({ vaultRoot: root, conversationId });
     expect(manifest.audience).toEqual(["sam", "dipu"]);
-
-    // 9. Scripted Lead: inspect, claim exactly, record the verdict.
-    const reviewRead = await sam.tools.vault_read.execute("c6", { path: pathReview });
-    expect(reviewRead.content[0].text).toContain(pathDev);
-    const leadClaim = await sam.tools.task_claim.execute("c7", { task_path: pathReview, device_id: "test-sam" });
-    const claimedReview = leadClaim.details.path as string;
-    expect(claimedReview).toContain(".claimed.test-sam.md");
-    await sam.tools.task_update_status.execute("c8", {
-      task_path: claimedReview,
-      status: "completed",
-      result: "Accepted: evidence verified; scope respected.",
-    });
+    const verdictReply = events.find((e) => e.kind === "agent_message" && e.author === "sam" && e.addressedAgent === undefined && e.body.includes("Verdict recorded inside the Lead stage"));
+    expect(verdictReply).toBeDefined();
+    expect(verdictReply?.body).toContain(pathReview);
 
     // 10. Task files keep the ordinary schema and carry the exact references.
     const devContent = await readFile(join(root, claimedDev), "utf8");
+
+    // Causal ordering, captured explicitly: the Developer task existed BEFORE
+    // the dispatch steward_message that requested the gate.
+    const dispatchEvent = events.find((e) => e.kind === "steward_message" && e.body.includes("conversationhandoff->"));
+    const devCreatedLine = /\ncreated: (.+)\n/.exec(devContent)?.[1] ?? "";
+    expect(devCreatedLine).not.toBe("");
+    expect(devCreatedLine <= (dispatchEvent?.created ?? "")).toBe(true);
+
     expect(devContent).toContain("type: Task");
     expect(devContent).toContain("from: sam");
     expect(devContent).toContain("to: dipu");
@@ -276,7 +302,7 @@ describe("T5 C6 task-directed loop mechanics (authenticated fake-Pi + real exten
     await stream.cancel();
   });
 
-  it("gate rejection: no dispatch/audience/handoff/budget side effects; the Lead records cancelled on the exact pre-created task", async () => {
+  it("gate rejection: no dispatch/audience/handoff/budget side effects; the Lead records cancelled on the exact pre-created task", { timeout: 30000 }, async () => {
     const sam = await bootAgent("sam");
     await bootAgent("dipu");
     await startServer();
@@ -354,5 +380,53 @@ describe("T5 C6 task-directed loop mechanics (authenticated fake-Pi + real exten
     expect(dipuInbox.filter((name) => name.includes(".claimed."))).toHaveLength(1);
     const samInbox = await readdir(join(root, "team", "sam", "inbox"));
     expect(samInbox.filter((name) => name.includes(".claimed."))).toHaveLength(0);
+  });
+
+  it("a live scripted stage visibly reports an exact claim failure and does not improvise", { timeout: 30000 }, async () => {
+    const sam = await bootAgent("sam");
+    const dipu = await bootAgent("dipu");
+    await startServer();
+
+    // The gated handoff names an exact task path that does not exist.
+    const ghostPath = "team/dipu/inbox/20260101T000000000Z-ghost-task.md";
+    const conversationId = (await (await post("/api/conversations", { text: "Seed no mention" })).json() as any).conversation.id as string;
+    const stream = await openStream(conversationId);
+    const dispatch = post(`/api/conversations/${conversationId}/messages`, {
+      text: `conversationhandoff->dipu:c6hold:dev-claim Inspect and claim ${ghostPath} exactly. @sam`,
+    });
+    await waitFor(async () => stream.approvals.length >= 1);
+    const gate = stream.approvals[0] as Record<string, unknown>;
+    expect(String((gate.payload as { text?: unknown }).text)).toContain(ghostPath);
+    const approve = await post(`/api/conversations/${conversationId}/approve`, { agent: "sam", request_id: gate.requestId, confirmed: true });
+    expect(approve.status).toBe(200);
+
+    // The Developer stage run launches and stays LIVE (hold token) while the
+    // scripted Developer attempts the exact claim with the real tool.
+    await waitFor(async () => (await readConversationEvents({ vaultRoot: root, conversationId })).filter((e) => e.kind === "run_started").length >= 2);
+    const failure = await dipu.tools.task_claim.execute("c1", { task_path: ghostPath, device_id: "test-dipu" });
+    expect(failure.isError).toBe(true);
+    const failureText = String(failure.content[0].text);
+
+    // The stage visibly reports ONLY the exact condition as its durable reply.
+    await writeFile(
+      scriptFile,
+      JSON.stringify({ releases: { "dev-claim": `Cannot claim ${ghostPath}: ${failureText}. No substitute work attempted.` } }),
+      "utf8",
+    );
+    const response = await dispatch;
+    expect(response.status).toBe(200);
+
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const report = events.find((e) => e.kind === "agent_message" && e.author === "dipu" && e.addressedAgent === undefined);
+    expect(report?.body).toContain(`Cannot claim ${ghostPath}`);
+    expect(report?.body).toContain("No substitute work attempted");
+
+    // No substitute claim, no scan-driven work, no retry/reroute/child dispatch.
+    const dipuInbox = await readdir(join(root, "team", "dipu", "inbox"));
+    expect(dipuInbox.filter((name) => name.includes(".claimed."))).toHaveLength(0);
+    expect(events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string")).toHaveLength(1);
+    expect(events.filter((e) => e.kind === "run_started")).toHaveLength(2);
+
+    await stream.cancel();
   });
 });
