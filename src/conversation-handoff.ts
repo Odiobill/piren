@@ -115,13 +115,24 @@ export interface ConversationWorkflowState {
  * edge is an `agent_message` event with an `addressedAgent` correlated to the
  * workflow root; the lead is the first mention of the root steward_message.
  * Events of other workflows and ordinary replies are ignored.
+ *
+ * `brokerRootAgent` is broker-owned active-run root identity (the agent of
+ * the steward-dispatched root run). Used ONLY when the root steward_message
+ * exists with zero mentions (a single-member zero-mention dispatch), so the
+ * dispatched root is part of the workflow at initial-edge acceptance time.
+ * Never derived from user/browser input, audience membership, task files, or
+ * new wire fields.
  */
 export function deriveConversationWorkflowState(
   events: readonly ConversationEventRecord[],
   rootEventId: string,
+  brokerRootAgent?: string,
 ): ConversationWorkflowState {
   const root = events.find((event) => event.id === rootEventId && event.kind === "steward_message");
-  const rootAgent = root !== undefined && root.mentions.length > 0 ? root.mentions[0] : undefined;
+  // Accepted edges first: when the root was a zero-mention dispatch, the
+  // durable first edge's author is the broker-dispatched root (only a
+  // steward-dispatched root run may request the initial gate), so later
+  // derivations recover the root from the event chain alone.
   const edges: ConversationHandoffEdge[] = [];
   for (const event of events) {
     if (
@@ -134,6 +145,12 @@ export function deriveConversationWorkflowState(
     }
   }
   edges.sort((a, b) => a.sequence - b.sequence);
+  const rootAgent =
+    root !== undefined
+      ? root.mentions.length > 0
+        ? root.mentions[0]
+        : brokerRootAgent ?? (edges.length > 0 ? edges[0]?.source : undefined)
+      : undefined;
   const depthByAgent = new Map<string, number>();
   if (rootAgent !== undefined) {
     depthByAgent.set(rootAgent, 0);

@@ -131,6 +131,56 @@ describe("deriveConversationWorkflowState (pure, from durable events)", () => {
     );
     expect(noEdge.edges).toEqual([]);
   });
+
+  it("uses the broker-owned root identity for a zero-mention root at first-edge acceptance", () => {
+    // Single-member zero-mention dispatch: the root steward_message has no
+    // mentions; the broker supplies the dispatched root run's agent.
+    const events = [event({ id: ROOT, sequence: 1, mentions: [] })];
+    const state = deriveConversationWorkflowState(events, ROOT, "sam");
+    expect(state.rootAgent).toBe("sam");
+    expect(state.depthByAgent.get("sam")).toBe(0);
+    const plan = planConversationHandoffEdge({
+      conversationId: "c1",
+      sourceAgent: "sam",
+      request: { to: "dipu", text: "go" },
+      runnableAgents: ["sam", "dipu", "kimi"],
+      activeKeys: [],
+      workflow: state,
+    });
+    expect(plan).toEqual({ ok: true, depth: 1 });
+  });
+
+  it("recovers the root as the first accepted edge's author for later zero-mention derivations", () => {
+    // After the first edge is durable, no broker identity is needed: the root
+    // is the author of the first accepted edge (only a steward-dispatched
+    // root may request the initial gate).
+    const events = [
+      event({ id: ROOT, sequence: 1, mentions: [] }),
+      handoffEvent(2, "sam", "dipu", ROOT, "h1"),
+      handoffEvent(3, "dipu", "kimi", ROOT, "h2"),
+    ];
+    const state = deriveConversationWorkflowState(events, ROOT);
+    expect(state.rootAgent).toBe("sam");
+    expect(state.depthByAgent.get("sam")).toBe(0);
+    expect(state.depthByAgent.get("dipu")).toBe(1);
+    expect(state.depthByAgent.get("kimi")).toBe(2);
+  });
+
+  it("keeps mentioned-root precedence over broker identity and leaves an absent root undefined", () => {
+    // Ordinary mentioned-root behavior is byte-for-byte: the first mention
+    // wins even when broker identity is supplied.
+    const mentioned = deriveConversationWorkflowState(
+      [event({ id: ROOT, sequence: 1, mentions: ["zai"] }), handoffEvent(2, "zai", "dipu", ROOT, "h1")],
+      ROOT,
+      "sam",
+    );
+    expect(mentioned.rootAgent).toBe("zai");
+    expect(mentioned.depthByAgent.get("zai")).toBe(0);
+    // A missing root stays undefined even with broker identity supplied.
+    const absent = deriveConversationWorkflowState([], ROOT, "sam");
+    expect(absent.rootAgent).toBeUndefined();
+    expect(absent.depthByAgent.size).toBe(0);
+  });
 });
 
 describe("planConversationHandoffEdge (pure, deterministic, bounded)", () => {

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GatewayServer, type GatewayHandle } from "../src/gateway-http.js";
 import { initVault } from "../src/init.js";
 import { readConversation, readConversationEvents } from "../src/conversations.js";
+import { deriveConversationWorkflowState } from "../src/conversation-handoff.js";
 import type { ConversationEventRecord } from "../src/conversations.js";
 
 const fakePiScript = join(process.cwd(), "tests", "fixtures", "fake-pi-rpc.cjs");
@@ -229,6 +230,102 @@ describe("C5-3 authenticated gateway conversation-handoff loop (fake Pi)", () =>
     expect(stream.approvals).toHaveLength(0);
     const events = await readConversationEvents({ vaultRoot: root, conversationId });
     expect(events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string")).toHaveLength(0);
+    await stream.cancel();
+  });
+
+  it("accepts the initial root gate for a single-member zero-mention dispatch and keeps the derived root for later stages", async () => {
+    // Agent-first Sam start: an open single-member Conversation (audience
+    // exactly [sam]); the greeting run is NOT a C5 root.
+    const startResponse = await post(url("/api/conversations/start"), { agent: "sam" }, token);
+    expect(startResponse.status).toBe(201);
+    const startBody = (await startResponse.json()) as { conversation: { id: string } };
+    const conversationId = startBody.conversation.id;
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["sam"]);
+
+    const stream = await openStream(conversationId);
+
+    // Zero-mention steward message: the single-member default dispatches the
+    // sole durable member (sam) as a steward-dispatched workflow ROOT. The
+    // root requests its first handoff to dipu through the gated tool; the
+    // embedded remainder lets the dipu stage hand off to kimi so the test can
+    // prove later workflow derivation retains the root.
+    const rootText =
+      "Please complete the evidence, then conversationhandoff->kimi:Review it and stop.";
+    const dispatch = post(
+      url(`/api/conversations/${conversationId}/messages`),
+      { text: `conversationhandoff->dipu:${rootText}` },
+      token,
+    );
+
+    // The live gate card arrives while the root run is held (live-only).
+    await waitForStreamValue(async () => stream.approvals.length >= 1);
+    const gate = stream.approvals[0] as Record<string, unknown>;
+    expect(Object.keys(gate).sort()).toEqual(["agent", "conversationId", "method", "payload", "requestId"]);
+    expect(gate.agent).toBe("sam");
+    expect(gate.method).toBe("confirm");
+    expect((gate.payload as { to?: string }).to).toBe("dipu");
+
+    // No handoff edge or audience effect before confirmation.
+    let events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string")).toHaveLength(0);
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["sam"]);
+
+    // Confirmation through the existing approve route must accept the stored
+    // root edge even though the root steward_message carried zero mentions.
+    const approve = await post(
+      url(`/api/conversations/${conversationId}/approve`),
+      { agent: "sam", request_id: gate.requestId, confirmed: true },
+      token,
+    );
+    expect(approve.status).toBe(200);
+    expect(await approve.json()).toEqual({ ok: true });
+
+    // The root settles completed, the deferred first edge launches dipu, and
+    // dipu's stage hands off to kimi within the same sequential chain.
+    const response = await dispatch;
+    expect(response.status).toBe(200);
+    const outcome = (await response.json()) as { dispatch: { agent: string; status: string }[] };
+    expect(outcome.dispatch).toEqual([{ agent: "sam", status: "completed" }]);
+
+    events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events[0]?.kind).toBe("conversation_start_requested");
+    const rootId = events.find((e) => e.kind === "steward_message")?.id ?? "";
+    expect(rootId).not.toBe("");
+    expect(events.find((e) => e.id === rootId && e.kind === "steward_message")?.mentions).toEqual([]);
+
+    // Exactly two accepted edges, in order, both correlated to the root; the
+    // first edge's source is the zero-mention dispatched root (sam).
+    const handoffs = events.filter((e) => e.kind === "agent_message" && typeof e.addressedAgent === "string");
+    expect(handoffs.map((e) => `${e.author}->${e.addressedAgent}`)).toEqual(["sam->dipu", "dipu->kimi"]);
+    for (const handoff of handoffs) {
+      expect(handoff.correlationId).toBe(rootId);
+    }
+
+    // The accepted durable first edge lets subsequent derivation retain the
+    // correct root (sam at depth 0) from the event chain alone.
+    const workflow = deriveConversationWorkflowState(events, rootId);
+    expect(workflow.rootAgent).toBe("sam");
+    expect([...workflow.depthByAgent.entries()]).toEqual([
+      ["sam", 0],
+      ["dipu", 1],
+      ["kimi", 2],
+    ]);
+    expect(workflow.edges.map((e) => `${e.source}->${e.target}`)).toEqual(["sam->dipu", "dipu->kimi"]);
+
+    // Sequential lifecycle: the dipu stage ran after sam's terminal and the
+    // kimi stage after dipu's terminal; every run completed. (The agent-first
+    // greeting run started before the root and is correlated to the start
+    // origin, not the workflow root.)
+    const started = events.filter((e) => e.kind === "run_started");
+    const finished = events.filter((e) => e.kind === "run_finished");
+    expect(finished.every((f) => f.runStatus === "completed")).toBe(true);
+    const handoffIds = [handoffs[0]?.id ?? "", handoffs[1]?.id ?? ""];
+    const stageStarts = started.filter((s) => handoffIds.includes(s.correlationId ?? ""));
+    expect(stageStarts.map((s) => s.correlationId)).toEqual([handoffs[0]?.id, handoffs[1]?.id]);
+
+    // Exactly one approval frame ever: the root gate. No stage gets a second
+    // gate (workflow envelopes are answered via the control path, never SSE).
+    expect(stream.approvals).toHaveLength(1);
     await stream.cancel();
   });
 });

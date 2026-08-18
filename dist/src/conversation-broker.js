@@ -1429,7 +1429,12 @@ export class ConversationBroker {
         catch {
             return { status: "rejected", reason: "conversation handoff could not read the workflow history" };
         }
-        const workflow = deriveConversationWorkflowState(events, rootEventId);
+        // Broker-owned active-run identity: when this run IS the steward-
+        // dispatched root (zero-mention single-member dispatch included), its
+        // agent is the workflow root even though the root steward_message
+        // carries no mentions. Workflow-stage runs derive the root from the
+        // durable first edge instead.
+        const workflow = deriveConversationWorkflowState(events, rootEventId, run.c5?.role === "root" ? run.agent : undefined);
         const plan = planConversationHandoffEdge({
             conversationId,
             sourceAgent: run.agent,

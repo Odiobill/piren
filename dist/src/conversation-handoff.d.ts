@@ -84,8 +84,15 @@ export interface ConversationWorkflowState {
  * edge is an `agent_message` event with an `addressedAgent` correlated to the
  * workflow root; the lead is the first mention of the root steward_message.
  * Events of other workflows and ordinary replies are ignored.
+ *
+ * `brokerRootAgent` is broker-owned active-run root identity (the agent of
+ * the steward-dispatched root run). Used ONLY when the root steward_message
+ * exists with zero mentions (a single-member zero-mention dispatch), so the
+ * dispatched root is part of the workflow at initial-edge acceptance time.
+ * Never derived from user/browser input, audience membership, task files, or
+ * new wire fields.
  */
-export declare function deriveConversationWorkflowState(events: readonly ConversationEventRecord[], rootEventId: string): ConversationWorkflowState;
+export declare function deriveConversationWorkflowState(events: readonly ConversationEventRecord[], rootEventId: string, brokerRootAgent?: string): ConversationWorkflowState;
 /** Inputs for the deterministic server-side handoff edge planner. */
 export interface PlanConversationHandoffEdgeInput {
     conversationId: string;
