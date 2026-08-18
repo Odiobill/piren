@@ -1956,7 +1956,10 @@ code {
 }
 
 /* Telemetry details popup: same dialog family as the details modal. No
-   entry/exit animation; reduced-motion safe. */
+   entry/exit animation; reduced-motion safe. Its content is strictly bounded
+   (state line, one bar, <=6 permitted fields, one action row, one bounded
+   error), so it carries NO max-height and NO overflow: it never becomes an
+   inner scroll region — the document remains the single scroll owner. */
 .telemetry-popup-backdrop {
   position: fixed;
   inset: 0;
@@ -1969,8 +1972,6 @@ code {
 
 .telemetry-popup {
   width: min(26rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 2rem);
-  overflow: auto;
   border-radius: 10px;
   background: var(--bg, #ffffff);
   color: var(--fg, #1a1a1a);

@@ -157,6 +157,19 @@ describe("Tracer B layout styles (static)", () => {
     expect(styles).not.toContain(".conversation-scroll");
   });
 
+  it("the telemetry details popup never becomes an inner scroll region (no overflow auto/scroll, no max-height clip)", async () => {
+    // Accepted context-cards design §4/§2.1: no new scroll region — the
+    // document remains the single scroll owner. The popup content is strictly
+    // bounded (state line, one bar, <=6 permitted fields, one action row, one
+    // bounded error), so the rule needs no overflow or max-height at all.
+    const styles = await readFile(join(webSrc, "styles.css"), "utf8");
+    const start = styles.indexOf(".telemetry-popup {");
+    expect(start).toBeGreaterThan(-1);
+    const rule = styles.slice(start, styles.indexOf("}", start));
+    expect(rule).not.toMatch(/overflow(-y|-x)?:\s*(auto|scroll)/);
+    expect(rule).not.toMatch(/max-height/);
+  });
+
   it("the active Conversation shell clips to the viewport (no root-document workaround for the active layout)", async () => {
     const styles = await readFile(join(webSrc, "styles.css"), "utf8");
     expect(styles).toMatch(/\.shell\.shell-conversation-active\s*\{[\s\S]*height:\s*100dvh/);
