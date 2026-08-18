@@ -274,9 +274,12 @@ export function ConversationNavigator({
   }, [surfaceKey]);
 
   // T6: session-only telemetry never survives a selection change — a later
-  // history reload must never reconstruct it. The generation bump also
-  // invalidates any in-flight refresh completion (stale completions are inert).
-  useEffect(() => {
+  // history reload must never reconstruct it. The generation bump lives in a
+  // LAYOUT effect so invalidation is synchronous with the selection commit:
+  // a refresh promise can only settle after the commit (microtasks run after
+  // the synchronous commit+layout phase), so a stale completion always sees
+  // the new generation and is structurally inert — never transiently applied.
+  useLayoutEffect(() => {
     telemetryGenerationRef.current += 1;
     setTelemetryByAgent(emptyConversationTelemetryState());
     setTelemetryRefresh(null);

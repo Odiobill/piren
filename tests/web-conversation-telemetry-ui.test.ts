@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // React 19 requires the act environment flag for component-test state flushing.
@@ -338,5 +340,76 @@ describe("T6 cross-selection refresh race guard (correction)", () => {
     expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenLastCalledWith("c2", "dipu", "t");
     expect(telemetryRow()?.textContent).toContain("dipu · no context window information");
+  });
+});
+
+describe("T6 commit-window race guard (final correction)", () => {
+  const CONVERSATION_B2 = {
+    id: "c2",
+    title: "Conversation B",
+    audience: ["dipu"],
+    status: "open",
+    path: "collaboration/conversations/c2/index.md",
+    createdBy: "steward",
+    created: "2026-08-15T14:00:00.000Z",
+    updated: "2026-08-15T14:00:00.000Z",
+  };
+
+  it("invalidates the refresh generation synchronously with the selection commit (layout-effect boundary, static pin)", async () => {
+    // Structural guard: the generation bump lives in a useLayoutEffect keyed
+    // on surfaceKey. Layout effects run synchronously with the selection
+    // commit, while a refresh promise can only settle afterwards (promise
+    // continuations are microtasks that run after the synchronous commit and
+    // its layout effects). A stale completion therefore ALWAYS observes the
+    // new generation after B commits — there is no passive-effect window.
+    const source = await readFile(join(process.cwd(), "web", "src", "ConversationNavigator.tsx"), "utf8");
+    const bump = source.indexOf("telemetryGenerationRef.current += 1;");
+    expect(bump).toBeGreaterThan(-1);
+    const boundary = source.lastIndexOf("useLayoutEffect(() => {", bump);
+    expect(boundary).toBeGreaterThan(-1);
+    expect(source.slice(boundary, bump + 200)).toContain("[surfaceKey]");
+    // Not left in a passive effect.
+    const passive = source.lastIndexOf("useEffect(() => {", bump);
+    expect(passive === -1 || passive < boundary).toBe(true);
+  });
+
+  it("a refresh settling in the selection-change batch never leaves A telemetry, error, or busy state in B", async () => {
+    let resolveA: ((value: unknown) => void) | undefined;
+    vi.mocked(fetchConversationTelemetry).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveA = resolve;
+        }),
+    );
+    await mountNavigator();
+    await act(async () => {
+      telemetryRow()?.querySelector<HTMLButtonElement>('[aria-label="Refresh context telemetry for dipu"]')?.click();
+    });
+    await flush();
+    expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledTimes(1);
+
+    vi.mocked(fetchConversation).mockImplementation(async (id: string) => (id === "c2" ? CONVERSATION_B2 : CONVERSATION));
+    vi.mocked(attachConversation).mockResolvedValue({ conversation: CONVERSATION_B2, attached: true, gate: { ok: true, missing: [], malformed: [] } });
+
+    // Adversarial batch: the hashchange and A's late resolution happen
+    // together. Whether the continuation lands pre-commit (legitimately
+    // applied to the still-selected A, then cleared at B's commit) or
+    // post-commit (rejected by the layout-effect generation guard), B must
+    // end with none of A's telemetry, error, or busy state and no new fetch.
+    window.location.hash = "#conversation/c2";
+    resolveA?.({ sessionState: "live", contextState: "ok", context: { tokens: 60000, contextWindow: 200000, percent: 30 } });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await flush();
+    await flush();
+
+    const rowB = telemetryRow();
+    expect(rowB).not.toBeNull();
+    expect(rowB?.textContent).toContain("dipu");
+    expect(rowB?.textContent).not.toContain("60.0k / 200.0k context");
+    expect(rowB?.textContent).not.toContain("Refreshing…");
+    expect(rowB?.querySelector('[role="alert"]')).toBeNull();
+    expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledTimes(1);
   });
 });
