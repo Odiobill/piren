@@ -545,6 +545,32 @@ code {
   line-height: 1.35;
 }
 
+/* Three compact configured-model lines: provider; emphasized model id;
+   visually secondary thinking level. No "Configured model:" prefix; a
+   malformed value renders as the raw truthful string. */
+.agent-model {
+  display: block;
+}
+
+.agent-model-provider,
+.agent-model-id,
+.agent-model-thinking {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-model-id {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.agent-model-thinking {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
 /* D1: the Gateway row reports only the accepted authenticated-read fact (a
    successful read may say the gateway is connected). D2.3: the managed
    service observation group is visually and semantically separate; its rows
@@ -693,6 +719,15 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Origin-fact created timestamp above the sidebar conversation title: compact
+   and visually secondary so the title stays primary. */
+.sidebar-conversation-created {
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
 }
 
 /* P2 — the selected sidebar row is visibly distinguished (hash-selected). */

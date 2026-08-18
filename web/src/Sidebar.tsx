@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchConversations, UnauthorizedError } from "./api";
 import { formatConversationHash, selectedConversationIdFromHash } from "./hash-route";
-import { conversationAudienceSummary, type ConversationRecord } from "./conversations";
+import { conversationAudienceSummary, formatConversationCreatedTimestamp, type ConversationRecord } from "./conversations";
 import type { Page } from "./nav";
 
 /** ADR-0044: the Dashboard is the default surface; the sidebar stays the conversation switcher. */
@@ -108,6 +108,11 @@ export function Sidebar({
                     aria-current={selected ? "true" : undefined}
                     onClick={() => openConversation(conversation.id)}
                   >
+                    {/* Origin-fact timestamp: the durable created value renders
+                        above the title with a machine-readable time value;
+                        malformed/unavailable values fail quiet (no fabricated
+                        date, no fetch, no state). */}
+                    <ConversationCreatedTimestamp created={conversation.created} />
                     <span>{conversation.title}</span>
                     <small>{conversationAudienceSummary(conversation.audience)}</small>
                   </button>
@@ -118,5 +123,21 @@ export function Sidebar({
         )}
       </section>
     </nav>
+  );
+}
+
+/**
+ * Origin-fact created timestamp above a sidebar conversation title: an
+ * accessible local date/time with a machine-readable `dateTime` value when
+ * the durable `created` is valid; malformed/unavailable values fail quiet
+ * (render nothing — never a fabricated date).
+ */
+function ConversationCreatedTimestamp({ created }: { created: string }) {
+  const parts = formatConversationCreatedTimestamp(created);
+  if (parts === null) return null;
+  return (
+    <time className="sidebar-conversation-created" dateTime={parts.dateTime}>
+      {parts.text}
+    </time>
   );
 }

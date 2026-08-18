@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import logoUrl from "./assets/piren-logo.png";
 import { fetchConversationAgents, fetchServiceStatus, startConversation, UnauthorizedError } from "./api";
 import type { ConversationAgentEntry } from "./conversation-agents";
+import { parseConfiguredModelLabel } from "./conversation-agents";
 import {
   SERVICE_MANAGER_LABELS,
   SERVICE_STATE_LABELS,
@@ -9,7 +10,7 @@ import {
   serviceStateStatusClass,
   type ServiceStatusSnapshot,
 } from "./service-observation";
-import { MessageIcon } from "./icons";
+import { MessageIcon, RetryIcon } from "./icons";
 
 /**
  * ADR-0044 + D1 — the Dashboard: the default Workbench surface. Presentation
@@ -35,6 +36,26 @@ type LoadState =
   | { phase: "ready"; agents: ConversationAgentEntry[] };
 
 type StartState = { phase: "idle" } | { phase: "busy" } | { phase: "error"; message: string };
+
+/**
+ * The three compact model-card lines: provider, visually emphasized model id,
+ * and a visually secondary thinking level. Presentation over the existing
+ * authenticated configured-model data only; a malformed value keeps the raw
+ * string truthfully and is never interpreted or invented.
+ */
+function ConfiguredModelPresentation({ model }: { model: string }) {
+  const parts = parseConfiguredModelLabel(model);
+  if (parts === null) {
+    return <span className="agent-model-raw">{model}</span>;
+  }
+  return (
+    <span className="agent-model">
+      <span className="agent-model-provider">{parts.provider}</span>
+      <span className="agent-model-id">{parts.modelId}</span>
+      {parts.thinking !== null && <span className="agent-model-thinking">{parts.thinking}</span>}
+    </span>
+  );
+}
 
 /**
  * D2.3 observation state. "loading" also clears any previous snapshot so a
@@ -195,6 +216,7 @@ export function DashboardView({
           Could not load the dashboard: <code>{load.message}</code>
         </p>
         <button type="button" className="button button-primary" onClick={handleRetry}>
+          <RetryIcon size={14} />
           Retry
         </button>
       </section>
@@ -254,13 +276,15 @@ export function DashboardView({
                         )}
                       </span>
                       <span className="agent-card-description">
-                        {/* D5: the gateway-projected configured model replaces the
-                            redundant runnable/not-runnable copy; the label names it
-                            as the declared startup configuration, never live
-                            Pi/provider/session state. Absent (malformed or missing
-                            configuration) is truthfully unavailable — never an
-                            invented or inferred value. */}
-                        {agent.model !== undefined ? `Configured model: ${agent.model}` : "Configured model unavailable"}
+                        {/* Three compact lines with no "Configured model:"
+                            prefix: provider; visually emphasized model id;
+                            visually secondary thinking level. Existing
+                            authenticated configuration-derived presentation,
+                            never a live provider/model claim. Absent
+                            (malformed or missing configuration) stays
+                            truthfully unavailable; a malformed value keeps
+                            the raw string. */}
+                        {agent.model !== undefined ? <ConfiguredModelPresentation model={agent.model} /> : "Configured model unavailable"}
                       </span>
                     </span>
                   </button>
@@ -321,6 +345,7 @@ export function DashboardView({
                 Service observation unavailable.
               </p>
               <button type="button" className="button" onClick={handleObservationRetry}>
+                <RetryIcon size={14} />
                 Retry service observation
               </button>
             </>

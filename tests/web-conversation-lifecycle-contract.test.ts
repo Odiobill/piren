@@ -255,11 +255,15 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
       // C3-C3 (2026-08-07) authorizes /approve and /abort on the
       // Conversation surface; they are no longer repo-wide forbidden.
       for (const forbidden of ["localStorage", "sessionStorage", "new EventSource", "/api/chat", "/api/vault", "thinking", "window.confirm"]) {
-        // T6 (0.2.0 release-gate contract §3.4) authorizes read-only
-        // thinking-level DISPLAY inside the bounded per-agent telemetry
-        // line; thinking CONTROLS remain forbidden. The exception is scoped
-        // to the telemetry core module only.
-        if (forbidden === "thinking" && name === "conversation-telemetry.ts") continue;
+        // Scoped read-only thinking-level DISPLAY exceptions (thinking
+        // CONTROLS remain forbidden everywhere):
+        //  - conversation-telemetry.ts: the bounded per-agent telemetry line
+        //    (T6 release-gate contract §3.4);
+        //  - DashboardView.tsx + conversation-agents.ts: the Dashboard model
+        //    card DISPLAYS and parses the gateway-projected configured
+        //    model's thinking level (split from the existing authenticated
+        //    `provider/model:thinking` string). Never a control.
+        if (forbidden === "thinking" && (name === "conversation-telemetry.ts" || name === "DashboardView.tsx" || name === "conversation-agents.ts")) continue;
         expect(content, `${name} must not contain ${forbidden}`).not.toContain(forbidden);
       }
     }

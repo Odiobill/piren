@@ -35,7 +35,7 @@ import {
 } from "./conversation-lifecycle";
 import { parseHashRoute, routeToIntent } from "./hash-route";
 import { renameAnnouncement, type RenameError } from "./conversation-details";
-import { CheckIcon, InfoIcon, StopIcon, XIcon } from "./icons";
+import { CheckIcon, InfoIcon, RefreshIcon, RetryIcon, StopIcon, XIcon } from "./icons";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
@@ -756,6 +756,7 @@ export function ConversationNavigator({
           <code>{load.message}</code>
         </p>
         <button type="button" className="button button-primary" onClick={handleRetry}>
+          <RetryIcon size={14} />
           Retry
         </button>
       </section>
@@ -880,6 +881,7 @@ export function ConversationNavigator({
                             disabled={busy}
                             onClick={() => void refreshTelemetry(selection.conversation.id, agent)}
                           >
+                            <RefreshIcon size={14} />
                             {busy ? "Refreshing…" : "Refresh"}
                           </button>
                           {failed && (
@@ -1215,6 +1217,7 @@ function ApprovalCard({
         <div className="lifecycle-error" role="alert">
           <p className="error-message">{failure.error.message}</p>
           <button type="button" className="button button-small" disabled={submitting} onClick={() => onRespond(approval, failure.attempted)}>
+            <RetryIcon size={14} />
             Retry
           </button>
         </div>

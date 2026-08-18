@@ -57,6 +57,18 @@ export function conversationAudienceSummary(audience: readonly string[], options
   return `${audience.length} members`;
 }
 
+/**
+ * Origin-fact timestamp for the sidebar: the durable `created` value rendered
+ * as a localized text plus a machine-readable `dateTime`. Returns null when
+ * the value is not a valid date so the caller fails quiet — a malformed or
+ * unavailable time is never turned into a fabricated date.
+ */
+export function formatConversationCreatedTimestamp(created: string): { text: string; dateTime: string } | null {
+  const date = new Date(created);
+  if (Number.isNaN(date.getTime())) return null;
+  return { text: date.toLocaleString(), dateTime: date.toISOString() };
+}
+
 export interface ConversationEventRecord {
   id: string;
   conversationId: string;

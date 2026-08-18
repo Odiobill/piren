@@ -4,7 +4,7 @@ import { classifyAudienceMembers } from "./attach";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import type { ConversationLifecycleAction, LifecycleActionError } from "./conversation-lifecycle";
 import { normalizeConversationTitle, type RenameError } from "./conversation-details";
-import { XIcon } from "./icons";
+import { ArchiveIcon, CheckIcon, ReopenIcon, RetryIcon, XIcon } from "./icons";
 
 /**
  * U2 — Conversation details modal (accepted
@@ -183,9 +183,11 @@ export function ConversationDetailsModal({
           </p>
           <div className="details-rename-actions">
             <button type="submit" className="button button-primary" disabled={saveDisabled}>
+              <CheckIcon size={14} />
               Save
             </button>
             <button type="button" className="button" onClick={onClose} disabled={busy}>
+              <XIcon size={14} />
               Cancel
             </button>
           </div>
@@ -193,6 +195,7 @@ export function ConversationDetailsModal({
             <div className="details-rename-error" role="alert">
               <p className="error-message">{renameState.error.message}</p>
               <button type="button" className="button button-small" onClick={handleRetry}>
+                <RetryIcon size={14} />
                 Retry
               </button>
             </div>
@@ -314,6 +317,7 @@ export function ConversationLifecycleControls({
     return (
       <div className="lifecycle-controls">
         <button type="button" className="button" onClick={onReopen} disabled={busy}>
+          <ReopenIcon size={14} />
           Reopen
         </button>
         {phase === "error" && error !== null && <LifecycleErrorNotice error={error} onRetry={onRetry} />}
@@ -324,6 +328,7 @@ export function ConversationLifecycleControls({
   return (
     <div className="lifecycle-controls">
       <button type="button" ref={archiveButtonRef} className="button" onClick={onArchiveRequest} disabled={busy}>
+        <ArchiveIcon size={14} />
         Archive
       </button>
       {confirmingArchive && (
@@ -331,9 +336,11 @@ export function ConversationLifecycleControls({
           <p>{copy.intro}</p>
           <div className="confirmation-actions">
             <button type="button" ref={confirmArchiveRef} className="button button-primary" onClick={onConfirmArchive} disabled={busy}>
+              <CheckIcon size={14} />
               {copy.confirm}
             </button>
             <button type="button" className="button" onClick={onCancelArchive} disabled={busy}>
+              <XIcon size={14} />
               {copy.cancel}
             </button>
           </div>
@@ -350,6 +357,7 @@ function LifecycleErrorNotice({ error, onRetry }: { error: LifecycleActionError;
     <div className="lifecycle-error" role="alert">
       <p className="error-message">{error.message}</p>
       <button type="button" className="button button-small" onClick={onRetry}>
+        <RetryIcon size={14} />
         Retry
       </button>
     </div>

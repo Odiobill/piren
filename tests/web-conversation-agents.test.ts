@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConversationAgents } from "../web/src/conversation-agents.js";
+import { parseConversationAgents, parseConfiguredModelLabel } from "../web/src/conversation-agents.js";
 
 /**
  * D5 — the Workbench roster parser carries the additive gateway-projected
@@ -43,5 +43,26 @@ describe("parseConversationAgents configured model (D5)", () => {
     expect(() => parseConversationAgents({ agents: [{ name: "", online: true }] })).toThrow("unexpected roster entry");
     expect(() => parseConversationAgents({ agents: [{ name: "kimi" }] })).toThrow("unexpected roster entry");
     expect(() => parseConversationAgents({})).toThrow("unexpected /api/conversation-agents response");
+  });
+});
+
+describe("parseConfiguredModelLabel (model-card presentation parts)", () => {
+  it("parses provider/model and provider/model:thinking", () => {
+    expect(parseConfiguredModelLabel("anthropic/claude-opus-4.6")).toEqual({
+      provider: "anthropic",
+      modelId: "claude-opus-4.6",
+      thinking: null,
+    });
+    expect(parseConfiguredModelLabel("moonshotai/kimi-k2:high")).toEqual({
+      provider: "moonshotai",
+      modelId: "kimi-k2",
+      thinking: "high",
+    });
+  });
+
+  it("returns null for malformed values so the raw string is shown truthfully", () => {
+    for (const bad of ["", "nope", "a/", "/b", "a/b:", "a/b:c:d", "a:/b"]) {
+      expect(parseConfiguredModelLabel(bad), JSON.stringify(bad)).toBeNull();
+    }
   });
 });

@@ -22,6 +22,39 @@ export interface ConversationAgentsResponse {
   agents: ConversationAgentEntry[];
 }
 
+/**
+ * The bounded parts of the gateway-projected configured-model string
+ * (`provider/model[:thinking]`), rendered as three compact card lines.
+ */
+export interface ConfiguredModelParts {
+  provider: string;
+  modelId: string;
+  thinking: string | null;
+}
+
+/**
+ * Parse the gateway-projected configured-model string into its presentation
+ * parts. Returns null when the value is not `provider/model[:thinking]` — the
+ * caller then shows the raw string truthfully (no browser-derived
+ * interpretation of malformed data).
+ */
+export function parseConfiguredModelLabel(model: string): ConfiguredModelParts | null {
+  const providerIndex = model.indexOf("/");
+  if (providerIndex <= 0) return null;
+  const provider = model.slice(0, providerIndex);
+  // A colon may appear only as the single thinking separator after the model
+  // id; a colon in the provider part is malformed (raw fallback).
+  if (provider.includes(":")) return null;
+  const rest = model.slice(providerIndex + 1);
+  if (rest === "") return null;
+  const colonIndex = rest.indexOf(":");
+  if (colonIndex < 0) return { provider, modelId: rest, thinking: null };
+  const modelId = rest.slice(0, colonIndex);
+  const thinking = rest.slice(colonIndex + 1);
+  if (modelId === "" || thinking === "" || thinking.includes(":")) return null;
+  return { provider, modelId, thinking };
+}
+
 /** Fail-closed validation of GET /api/conversation-agents. */
 export function parseConversationAgents(json: unknown): ConversationAgentsResponse {
   if (typeof json !== "object" || json === null || !("agents" in json)) {

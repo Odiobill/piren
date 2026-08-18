@@ -167,14 +167,35 @@ describe("DashboardView (ADR-0044)", () => {
     const avatar = dipu.querySelector(".agent-card-avatar");
     expect(avatar?.getAttribute("aria-hidden")).toBe("true");
     expect(avatar?.textContent).toBe("D");
-    // D5: the card description is the gateway-projected configured model,
-    // never the redundant runnable/not-runnable copy; the label makes clear
-    // it is the declared startup configuration, not live state.
-    expect(dipu.querySelector(".agent-card-description")?.textContent).toBe("Configured model: anthropic/claude-opus-4.6");
+    // The card description renders the gateway-projected configured model as
+    // three compact presentation lines with no "Configured model:" prefix:
+    // provider, visually emphasized model id, and a visually secondary
+    // thinking level when present. Presentation over existing authenticated
+    // data only — never a live provider/model claim.
+    const dipuDescription = dipu.querySelector(".agent-card-description");
+    expect(dipuDescription?.querySelector(".agent-model-provider")?.textContent).toBe("anthropic");
+    expect(dipuDescription?.querySelector(".agent-model-id")?.textContent).toBe("claude-opus-4.6");
+    expect(dipuDescription?.querySelector(".agent-model-thinking")).toBeNull();
     const kimi = agentButton("kimi");
-    expect(kimi.querySelector(".agent-card-description")?.textContent).toBe("Configured model: moonshotai/kimi-k2:high");
+    const kimiDescription = kimi.querySelector(".agent-card-description");
+    expect(kimiDescription?.querySelector(".agent-model-provider")?.textContent).toBe("moonshotai");
+    expect(kimiDescription?.querySelector(".agent-model-id")?.textContent).toBe("kimi-k2");
+    expect(kimiDescription?.querySelector(".agent-model-thinking")?.textContent).toBe("high");
+    expect(container.textContent).not.toContain("Configured model:");
     expect(container.textContent).not.toContain("Runnable on this installation — local policy");
     expect(container.textContent).not.toContain("Not runnable on this installation — local policy");
+  });
+
+  it("keeps a malformed configured model truthful (raw value, no invented parts)", async () => {
+    vi.mocked(fetchConversationAgents).mockResolvedValue({
+      agents: [{ name: "quirk", online: true, model: "not-a-valid-model" }],
+    });
+    renderDashboard();
+    await flush();
+    const quirk = agentButton("quirk");
+    const description = quirk.querySelector(".agent-card-description");
+    expect(description?.textContent).toBe("not-a-valid-model");
+    expect(description?.querySelector(".agent-model")).toBeNull();
   });
 
   it("visibly distinguishes an unavailable configured model instead of inventing one (D5)", async () => {
