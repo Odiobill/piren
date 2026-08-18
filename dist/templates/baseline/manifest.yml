@@ -5,4 +5,4 @@ entries:
     name: piren-inbox-task-lifecycle
     scope: shared
     source: shared/piren-inbox-task-lifecycle/SKILL.md
-    content_sha256: 3ba2ae41685f2231e1d7e9821fba39527bba8269a1a8f07185e031197db063bf
+    content_sha256: aa5a9929fa76bc22562d46b5f014a258b3020038f0f159277c6e23d35a018734

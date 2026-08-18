@@ -2,7 +2,7 @@
 
 A project bundle is the subset of vault knowledge that travels with a specific code repository. It lets a project carry its own decisions, logs, handoffs, and runbooks alongside the source, while the shared vault holds the full cross-project knowledge substrate.
 
-The Piren repository itself is the reference example: its vault project bundle mirrors this structure.
+A project's vault bundle mirrors this structure: the repository carries code and operator-facing docs, while the shared vault holds the deeper project knowledge.
 
 ## The Projects/ orientation
 
@@ -47,11 +47,10 @@ Projects/
 
 ## Co-locating project docs with source
 
-A project bundle can be checked into the same repository as the source code, or kept in the shared vault only. The Piren project keeps the authoritative project docs in its vault project bundle, and the repository carries `AGENTS.md` and `docs/` as the code-adjacent surface.
+A project bundle can be checked into the same repository as the source code, or kept in the shared vault only.
 
 The split:
 
-- `AGENTS.md` in the repo: stable implementation rules agents must follow when working in that source tree.
 - `docs/` in the repo: operator-facing documentation shipped with the package.
 - `Projects/<p>/` in the vault: synthesized project knowledge (decision records, logs, handoffs, runbooks).
 

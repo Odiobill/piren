@@ -129,11 +129,11 @@ Example output:
 ```text
 SCHEDULER REPORT
 
-  agent: sam
-    [TRIAGE] team/sam/inbox/20260725T120000000Z-stuck.claimed.thor.md - claimed by thor; requires manual triage: may be active, interrupted, or ambiguous — vault state alone cannot tell
+  agent: analyst
+    [TRIAGE] team/analyst/inbox/20260725T120000000Z-stuck.claimed.device-b.md - claimed by device-b; requires manual triage: may be active, interrupted, or ambiguous — vault state alone cannot tell
              authority: Piren cannot tell from vault state whether the claim is active, interrupted, or an ambiguous failure (no ambiguity classification is persisted).
-             next: piren task show team/sam/inbox/20260725T120000000Z-stuck.claimed.thor.md
-  agent: nora
+             next: piren task show team/analyst/inbox/20260725T120000000Z-stuck.claimed.device-b.md
+  agent: builder
     (no findings)
 
 1 findings (0 cycle, 0 retry, 1 manual-triage)
@@ -149,20 +149,20 @@ The `authority:` line for each category is fixed and non-action: triage states t
 Scheduler runtime config is local installation authority and lives in `~/.config/piren/config.yml` under `scheduler:`. It is never placed in the vault, agent `SOUL.md`, Web UI, gateway state, or `.env` files.
 
 ```yaml
-vault_root: /mnt/nas/Piren
+vault_root: /path/to/vault
 allowed_agents:
-  - zai
-  - sam
+  - analyst
+  - builder
 excluded_agents: []
 
 scheduler:
   poll_interval_seconds: 30    # seconds between loop ticks (default 30)
   stale_after_seconds: 300      # device heartbeat staleness threshold (default 300)
   max_concurrent_agents: 1      # parsed and reported; effective concurrency is 1 (one-at-a-time)
-  device_id: thor               # optional explicit override; absent -> sanitized hostname
+  device_id: workstation        # optional explicit override; absent -> sanitized hostname
 ```
 
-Defaults are conservative: 30s poll interval, 300s stale-after, effective concurrency 1. Invalid/non-positive values fall back to the defaults deterministically and are surfaced as warnings in the loop's startup summary. An explicit `device_id` is passed verbatim (not sanitized); when absent, the loop uses a sanitized-hostname fallback so hosts like `Ironman` or `Ironman.local` work out of the box.
+Defaults are conservative: 30s poll interval, 300s stale-after, effective concurrency 1. Invalid/non-positive values fall back to the defaults deterministically and are surfaced as warnings in the loop's startup summary. An explicit `device_id` is passed verbatim (not sanitized); when absent, the loop uses a sanitized-hostname fallback so hosts like `workstation` or `workstation.local` work out of the box.
 
 The loop reads this config once at startup; each tick re-reads local config for `vault_root` and `allowed_agents`, so agent-set changes take effect without restarting the scheduler.
 
@@ -178,16 +178,16 @@ The scheduler composes with existing local authority:
 Example device records for one agent:
 
 ```text
-team/codex/devices/ironman.json
-team/codex/devices/thor.json
-team/codex/devices/heimdall.json
+team/analyst/devices/device-a.json
+team/analyst/devices/device-b.json
+team/analyst/devices/device-c.json
 ```
 
-If `thor` has priority `1` and is active, it owns suitable background work. If `thor` stops refreshing its heartbeat and becomes stale, `heimdall` with priority `2` becomes eligible. If `ironman` is off, it is simply stale and ignored.
+If `device-b` has priority `1` and is active, it owns suitable background work. If `device-b` stops refreshing its heartbeat and becomes stale, `device-c` with priority `2` becomes eligible. If `device-a` is off, it is simply stale and ignored.
 
 ## Priority preservation on heartbeat refresh
 
-A key fix shipped with the dry-run: refreshing a device heartbeat now preserves a manually-edited priority. Stewards can edit `team/<agent>/devices/<device>.json` to change `priority` from the default `10` to `1`, and the next heartbeat refresh keeps it. An explicit priority passed at registration time still overrides.
+Heartbeat refresh preserves a manually-edited priority. Stewards can edit `team/<agent>/devices/<device>.json` to change `priority` from the default `10` to `1`, and the next heartbeat refresh keeps it. An explicit priority passed at registration time still overrides.
 
 ## Service lifecycle
 
@@ -214,7 +214,7 @@ The generated systemd user unit is `piren-scheduler.service`; the tmux + `@reboo
 
 ## Relationship to agent fallback
 
-The scheduler handles device failover for the same agent across devices (for example, moving background work from `thor` to `heimdall` when `thor` is stale). Agent fallback handles semantic fallback between different agents (for example, selecting an eligible teammate when a provider is down). These features remain distinct.
+The scheduler handles device failover for the same agent across devices (for example, moving background work from `device-b` to `device-c` when `device-b` is stale). Agent fallback handles semantic fallback between different agents (for example, selecting an eligible teammate when a provider is down). These features remain distinct.
 
 See [agent groups and fallback](agent-groups.md) for the semantic fallback story.
 

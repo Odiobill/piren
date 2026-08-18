@@ -22,7 +22,7 @@ This makes agent behavior debuggable. When something changes in the vault, you c
 
 Inbox tasks are one Markdown file each, dropped into `team/<agent>/inbox/`. Each task carries frontmatter (id, status, from, to, created, updated) and a body describing the work. Tasks are claimed atomically by rename, so two devices never silently pick up the same task.
 
-This is the coordination primitive for the whole team. Nora, the release coordinator, assigns work by writing one task file. Developers claim it by renaming it. Reviewers see the result in the vault. The steward sees the full trail in Obsidian.
+This is the coordination primitive for the whole team. A coordinator agent assigns work by writing one task file. Developers claim it by renaming it. Reviewers see the result in the vault. The steward sees the full trail in Obsidian.
 
 
 ## 4. Opt-in, visible automation

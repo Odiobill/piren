@@ -34,10 +34,10 @@ remains the concurrency boundary.
   frontmatter field (`pending | in_progress | completed | cancelled`). Neither
   is ever inferred from the other.
 - **Direct work stays claimed.** Directly completed work remains
-  `.claimed.<device>.md`. Scheduler R3 completion release is scheduler-only and
+  `.claimed.<device>.md`. Scheduler completion release is scheduler-only and
   is never used for direct work.
 - **Scheduler claims are the scheduler's.** The scheduler claims, executes, and
-  R3-releases only its own scheduler-executed successful tasks. An agent never
+  releases only its own scheduler-executed successful tasks. An agent never
   re-claims or releases a scheduler claim. Local device priority is placement
   policy, never claim authority.
 

@@ -18,14 +18,14 @@ This creates:
 Use a different first agent name when needed:
 
 ```bash
-piren init --vault-root /path/to/vault --agent thor
+piren init --vault-root /path/to/vault --agent analyst
 ```
 
 See [vault layout](vault-layout.md) for the full directory reference.
 
 ## The OKF starter graph
 
-A fresh vault starts nearly empty, with a small starter graph of concept documents under `wiki/concepts/` and `wiki/entities/` to orient new agents and stewards, plus the **inbox-lifecycle baseline**: a concise mandatory `## Inbox task lifecycle (mandatory)` rule in `steward-directives.md` and the shared `piren-inbox-task-lifecycle` skill under `skills/` (carrying a manifest-bound `template` provenance block). The baseline is created for genuinely new vaults only: running `piren init` against a recognized existing vault (`.piren-vault` marker, existing `steward-directives.md`, or any `team/<agent>/SOUL.md`) never adds or overwrites it, even with `--force`. All other starter skills stay explicit opt-in through the package `okf` profile (`piren skills seed --profile okf`); see [Skills](skills.md).
+A fresh vault starts nearly empty, with a small starter graph of concept documents under `wiki/concepts/` and `wiki/entities/` to orient new agents and stewards, plus the **inbox task lifecycle starter**: a concise mandatory `## Inbox task lifecycle (mandatory)` rule in `steward-directives.md` and the shared `piren-inbox-task-lifecycle` skill under `skills/` (carrying a manifest-bound `template` provenance block). The starter is created for genuinely new vaults only: running `piren init` against a recognized existing vault (`.piren-vault` marker, existing `steward-directives.md`, or any `team/<agent>/SOUL.md`) never adds or overwrites it, even with `--force`. All other starter skills stay explicit opt-in through the package `okf` profile (`piren skills seed --profile okf`); see [Skills](skills.md).
 
 The starter graph includes:
 
@@ -50,7 +50,7 @@ A vault is independent of the machine it runs on. To point a second device at an
 vault_root: /path/to/the/same/vault
 allowed_agents:
   - piren
-  - thor
+  - analyst
 ```
 
 4. Run `piren doctor` to verify.

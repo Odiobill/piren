@@ -10,18 +10,18 @@ A group lives under `agent-groups/<group>/`. Group membership and fallback order
 
 ```yaml
 agents:
-  - dipu
-  - zai
-  - sam
-  - dario
+  - analyst
+  - reviewer
+  - writer
+  - archivist
 fallback_order:
-  zai:
-    - dipu
-    - sam
-  dipu:
-    - zai
-  sam:
-    - zai
+  reviewer:
+    - analyst
+    - writer
+  analyst:
+    - reviewer
+  writer:
+    - reviewer
 ```
 
 - `agents` lists the members of the group.

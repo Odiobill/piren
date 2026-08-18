@@ -104,7 +104,7 @@ describe("residual Rooms cleanup: stale active-product claims corrected (Convers
 
   it("docs/configuration.md describes the Conversation broker as the only broker", async () => {
     const configuration = await readFile(configurationPath, "utf8");
-    expect(configuration).toContain("The conversation broker (model fallback TB6)");
+    expect(configuration).toContain("The conversation broker rotates");
     expect(configuration).toContain("conversation×agent");
     expect(configuration).toContain("conversation approvals stay exact");
   });
@@ -146,6 +146,6 @@ describe("residual Rooms cleanup: historical Room-record taxonomy and exclusion 
       expect(okfDoc, type).toContain(type);
     }
     const vaultLayout = await readFile(join(root, "docs", "vault-layout.md"), "utf8");
-    expect(vaultLayout).toContain("Historical vault data is not deleted by the decommission");
+    expect(vaultLayout).toContain("existing historical vault data is left untouched");
   });
 });

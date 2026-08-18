@@ -61,7 +61,7 @@ Operational directories:
 
 Do not put `.env` or `AGENTS.md` under `team/<agent>/`. Secrets live outside the vault, and Piren identity is `SOUL.md`.
 
-The retired Rooms collaboration area (`collaboration/rooms/`) is decommissioned (Rooms product decommission): the Workbench is Conversation-only, and fresh vaults no longer create the obsolete directory. Historical vault data is not deleted by the decommission.
+Piren no longer creates the legacy `collaboration/rooms/` collaboration area; the Workbench is Conversation-only, and existing historical vault data is left untouched.
 
 ## Agent groups
 

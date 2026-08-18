@@ -95,34 +95,12 @@ Cron behavior depends on job mode:
   - The script file exists and is executable by the worker user.
   - The run record under `cron/runs/` or `team/<agent>/cron/runs/` contains stdout, stderr, exit code, and timeout status.
 
-## Tests pass but typecheck fails
-
-Vitest uses esbuild and does not prove strict TypeScript correctness. Always run:
-
-```bash
-npm run typecheck
-```
-
-Common issues are `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, and optional properties passed as explicit `undefined`.
-
 ## Global command cannot find files
 
-For source checkouts, run:
+If `piren` cannot be found after a global install, reinstall it from the registry:
 
 ```bash
-npm run build
+npm install -g @odiobill/piren
 ```
 
-For git global installs, Piren expects committed `dist/` release artifacts. Use `npm install -g --install-links github:Odiobill/piren` on npm 11 so the global binary points at a copied package rather than npm's temporary git cache. If a packaged asset is missing, verify the installed source includes `dist/public/` and `dist/src/cli.js`.
-
-## Clean-install check fails
-
-`npm run clean-install:check` runs a real install into an isolated HOME. If it reports `[FAIL] dist-cli`, the installed GitHub source or tarball did not include the expected `dist/` artifacts.
-
-Fix by rebuilding and committing `dist/`, then reinstalling from GitHub after the commit is pushed. For tarballs, create a fresh one with:
-
-```bash
-npm pack
-```
-
-If `[FAIL] pi-runtime` appears alongside a passing binary, the clean environment does not have `pi` on PATH. Install Pi with `curl -fsSL https://pi.dev/install.sh | sh`, restart the shell, and rerun the check.
+Then verify with `piren status`.

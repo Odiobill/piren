@@ -23,7 +23,7 @@ Recovery is manual. The shipped scheduler never reclaims a claimed inbox task â€
 
 ```bash
 cd /path/to/vault
-mv team/codex/inbox/task-1.claimed.thor.md team/codex/inbox/task-1.md
+mv team/analyst/inbox/task-1.claimed.device-b.md team/analyst/inbox/task-1.md
 ```
 
 Both steps are required: the status edit makes the task eligible and the rename makes it unclaimed. There is no CLI pending/requeue command.

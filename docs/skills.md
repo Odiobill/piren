@@ -28,7 +28,7 @@ Precedence is: shared skills, then group-scoped skills, then agent-specific skil
 
 Piren ships a small package-owned starter profile, `okf`, with three shared starter procedures (`okf-authoring`, `piren-vault-operations`, `piren-knowledge-lifecycle`). Starter skills are **templates copied deliberately into a vault**: once seeded, they are ordinary steward-owned vault skills with normal precedence. They are never hidden prompt text and never loaded at runtime from the package.
 
-Fresh `piren init` places exactly one skill automatically: the shared `piren-inbox-task-lifecycle` procedure (the fresh-vault inbox-lifecycle baseline), plus a mandatory `## Inbox task lifecycle (mandatory)` rule in the generated `steward-directives.md`. Both are created only for genuinely new vaults; a recognized existing vault never gains or overwrites them, even with `--force`. All other starter skills (the `okf` profile) stay explicit opt-in:
+Fresh `piren init` places exactly one skill automatically: the shared `piren-inbox-task-lifecycle` procedure (the fresh-vault inbox task lifecycle starter), plus a mandatory `## Inbox task lifecycle (mandatory)` rule in the generated `steward-directives.md`. Both are created only for genuinely new vaults; a recognized existing vault never gains or overwrites them, even with `--force`. All other starter skills (the `okf` profile) stay explicit opt-in:
 
 ```bash
 # Plan only (never writes)
@@ -103,7 +103,7 @@ Agents can belong to groups that share a skill set. Skills load in this preceden
 2. **Group** (`agent-groups/<group>/skills/`) - loaded for agents in the group, later groups override earlier.
 3. **Agent-specific** (`team/<agent>/skills/`) - overrides everything by name.
 
-This lets a `developers` group share a TDD workflow skill pack without duplicating it under every developer agent. See [agent groups and fallback](agent-groups.md) for group configuration and fallback policy.
+This lets a `research` group share a workflow skill pack without duplicating it under every agent. See [agent groups and fallback](agent-groups.md) for group configuration and fallback policy.
 
 ## Staged imports (inactive)
 

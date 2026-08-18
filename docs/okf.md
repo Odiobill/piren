@@ -39,9 +39,9 @@ Type values are not centrally registered and consumers tolerate unknown types. T
 | `Task` | An inbox task file | `team/<agent>/inbox/`, `steward-inbox/alerts/` |
 | `Cron Job` | A scheduled job definition | `cron/jobs/`, `team/<agent>/cron/jobs/` |
 | `Cron Run` | A scheduled run record | `cron/runs/`, `team/<agent>/cron/runs/` |
-| `Room Manifest` | A collaboration room's `index.md` | `collaboration/rooms/<id>/index.md` |
-| `Room Event` | An immutable room event record | `collaboration/rooms/<id>/events/` |
-| `Room Summary` | A curated room summary | `collaboration/rooms/<id>/summary.md` |
+| `Room Manifest` | A legacy collaboration room's `index.md` (historical vaults only; Piren no longer creates this area) | `collaboration/rooms/<id>/index.md` |
+| `Room Event` | An immutable legacy room event record (historical vaults only) | `collaboration/rooms/<id>/events/` |
+| `Room Summary` | A curated legacy room summary (historical vaults only) | `collaboration/rooms/<id>/summary.md` |
 
 Unknown types are fine. The taxonomy is descriptive, not an allowlist.
 

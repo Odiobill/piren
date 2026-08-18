@@ -1,6 +1,6 @@
 # Getting started
 
-This guide gets Piren running from source with a disposable vault.
+This guide gets Piren running with a disposable vault.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ This guide gets Piren running from source with a disposable vault.
 npm install -g @odiobill/piren
 ```
 
-This installs the current stable release from the npm registry `latest` channel. The executable is `piren`; no `--install-links` flag is needed for registry installs.
+This installs the current stable release from the npm registry `latest` channel. The executable is `piren`.
 
 To update an existing global install later:
 
@@ -25,16 +25,15 @@ piren update
 
 `piren update` installs the latest `@odiobill/piren` release from the npm registry. It refuses a major-version jump unless you pass `--yes` (`piren update --yes`), never prompts interactively, and has no automatic rollback.
 
-### Contributor / emergency install
+### Offline / emergency install
 
-GitHub and local-tarball installs are not the normal operator path; use them only for contributor workflows, offline or emergency installs, or clean-install verification:
+For offline or emergency installs from a local tarball:
 
 ```bash
-npm install -g --install-links github:Odiobill/piren   # contributor/emergency; needs git-dependency support
 npm install -g /path/to/odiobill-piren-<version>.tgz   # local packed tarball
 ```
 
-`--install-links` is required only for npm 11 GitHub/git-dependency installs: it makes npm copy the package into the global prefix instead of leaving the `piren` command pointing into npm's temporary Git cache.
+This path is not the normal operator install; use the registry command above unless you need an offline or emergency install.
 
 ## Configure Pi
 
@@ -64,7 +63,7 @@ This creates a `.piren-vault` marker, shared directories, and the default `team/
 Use another first agent name when needed:
 
 ```bash
-piren init --vault-root /tmp/piren-vault --agent thor
+piren init --vault-root /tmp/piren-vault --agent analyst
 ```
 
 ## Configure the local installation
@@ -164,10 +163,10 @@ permission (local `allowed_agents` in `~/.config/piren/config.yml`). The
 
 ```bash
 piren agent list                  # show vault agents + permission status
-piren agent add thor              # scaffold team/thor/ and permit it
-piren agent clone piren sage      # copy team/piren/ to team/sage/ and permit sage
-piren agent remove thor           # drop permission; prompts before deleting the dir
-piren agent remove thor --yes     # non-interactive: also delete the vault dir
+piren agent add analyst            # scaffold team/analyst/ and permit it
+piren agent clone piren writer      # copy team/piren/ to team/writer/ and permit writer
+piren agent remove analyst          # drop permission; prompts before deleting the dir
+piren agent remove analyst --yes    # non-interactive: also delete the vault dir
 ```
 
 `add` scaffolds the agent directory (SOUL.md, MEMORY.md, config.yml, and the
@@ -213,12 +212,3 @@ piren gateway --host 0.0.0.0
 ```
 
 Piren auto-generates and persists a gateway token when needed. See [Security](security.md).
-
-## Verify the repository
-
-```bash
-npm test
-npm run typecheck
-npm run build
-npm run smoke
-```

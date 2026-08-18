@@ -2,7 +2,7 @@
 
 Piren core is minimal. Additional capability comes from Pi extension packages: npm packages that export Pi extensions, declared in `~/.config/piren/config.yml` under the `packages` field. Piren resolves each declared package to its installed entry point and appends it as an additional `--extension` flag to the Pi command.
 
-This page is a cookbook for declaring, writing, and testing extensions.
+This page is a guide for integrators who want to extend Piren with Pi extension packages: how to declare them, how Piren resolves them, and when to choose a package over a vault skill.
 
 ## Declare a package
 
@@ -23,11 +23,11 @@ Piren's core extension loads first, then package extensions load in declaration 
 
 Piren calls Node's `require.resolve` on each declared package name to find its main entry point (defined by the package's `main` or `exports` field in its `package.json`). The resolved path becomes the `--extension` argument passed to Pi.
 
-A package that cannot be resolved is recorded as missing, not fatal. This lets `piren doctor` report all missing packages in one pass. See `src/packages.ts` for the pure resolution logic.
+A package that cannot be resolved is recorded as missing, not fatal. This lets `piren doctor` report all missing packages in one pass.
 
 ## Write a minimal extension
 
-A Pi extension is a module that registers tools and commands with the Pi runtime. The Piren extension (`src/pi-extension.ts`) is the reference. A minimal package extension follows the same shape:
+A Pi extension is a module that registers tools and commands with the Pi runtime, following the Pi Coding Agent SDK. A minimal package extension looks like this:
 
 ```typescript
 // my-piren-extension/index.ts
@@ -55,7 +55,7 @@ export default function extension(pi: PiExtensionApi) {
 }
 ```
 
-The exact `PiExtensionApi` shape comes from the Pi Coding Agent SDK. Match the patterns in `src/pi-extension.ts` for parameter validation, error handling, and content-block formatting.
+The exact `PiExtensionApi` shape, parameter validation, error handling, and content-block formatting follow the Pi Coding Agent SDK documentation.
 
 ## When to use a package vs a vault skill
 
@@ -98,16 +98,6 @@ packages:
 ```
 
 Use when the steward wants a low-overhead knowledge curator. Piren core vault tools plus web extraction and arXiv search, writing results into the OKF wiki.
-
-## Testing extensions
-
-Extensions should be testable without live Pi auth. Follow the pattern in `tests/pi-extension.test.ts`: use the fake Pi harness and fake filesystem to exercise tool registration and execution in isolation. Core logic should live in pure modules callable directly from tests, with the extension file doing only adaptation.
-
-Run the smoke test to verify the full extension surface loads:
-
-```bash
-npm run smoke
-```
 
 ## Related
 

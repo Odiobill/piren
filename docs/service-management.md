@@ -71,11 +71,10 @@ $ systemctl --user start piren-gateway.service
 Piren service install gateway (systemd)
 ```
 
-When Piren is run from source or dist (`node dist/src/cli.js`), the generated
-unit's `ExecStart` automatically prepends `node` so systemd can execute it:
+The generated unit's `ExecStart` runs the resolved Piren command directly:
 
 ```text
-ExecStart=node /home/you/src/piren/dist/src/cli.js gateway --vault-root /path/to/vault --agent piren
+ExecStart=/path/to/piren gateway --vault-root /path/to/vault --agent piren
 ```
 
 When run through the globally installed `piren` binary, `ExecStart` is the
@@ -226,50 +225,12 @@ See [Scheduler](scheduler.md).
   platform connectivity. In particular, under tmux-cron a tmux session for a
   disconnected transport still reports as present.
 
-## Local service observation core
-
-`src/service-observability.ts` is a small read-only observation core with
-injected command/file/clock seams (`observeServiceStatus(deps)`). It samples
-the fixed non-gateway targets — `telegram`, `discord`, `scheduler`, always in
-that order — and returns a bounded typed snapshot:
-
-```ts
-interface ServiceStatusSnapshot {
-  observedAt: string; // canonical ISO, from the injected clock
-  manager: "systemd-user" | "tmux-cron" | "unavailable";
-  targets: { target: "telegram" | "discord" | "scheduler"; state: ServiceObservedState }[];
-}
-```
-
-State meanings are exact and fail-safe:
-
-- `active` / `inactive` — the selected manager directly reported the target
-  active/inactive at the sample time (literal `systemctl --user is-active`
-  words, or `tmux has-session` exit 0/1).
-- `not-installed` — the manager-specific fixed Piren artifact was absent
-  (`~/.config/systemd/user/piren-<target>.service`, or
-  `~/.config/piren/services/piren-<target>.tmux.sh`). It never asserts the
-  target cannot be running manually.
-- `unavailable` — no usable supported manager (the same precedence as
-  `piren service`: systemd user, then tmux plus crontab). Never a fabricated
-  inactive.
-- `unknown` — probe error, timeout (fixed 4s bound), malformed output,
-  signal, or race. Each target is classified independently, so one failed
-  probe never contaminates the others.
-
-The gateway service is deliberately excluded: a successful authenticated
-Workbench read is already the exact gateway-connection fact. The core runs
-fixed argument arrays only (never a shell), performs no service control, no
-writes, no network, no polling, and no persistence, and never returns raw
-diagnostics, paths, or secrets. There is no HTTP route or Dashboard wiring
-yet; those are separately gated future slices.
-
 ## Scheduler
 
 The device-local scheduler is a background supervisor that
 demand-starts bounded agent executions when vault work is due. The dry-run
 planner, the one-shot `--once` tick, the always-on `piren scheduler` loop, and
-service lifecycle integration are all shipped.
+service lifecycle integration are all available.
 
 Install the scheduler as a user service just like the transports:
 
