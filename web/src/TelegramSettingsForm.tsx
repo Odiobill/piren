@@ -38,6 +38,8 @@ export function TelegramSettingsForm({
   const [chatIdsText, setChatIdsText] = useState("");
   const [defaultAgent, setDefaultAgent] = useState("");
   const [feedback, setFeedback] = useState(true);
+  // Preserve an absent feedback declaration unless the steward changes it.
+  const [feedbackTouched, setFeedbackTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -91,7 +93,7 @@ export function TelegramSettingsForm({
 
     const trimmedAgent = defaultAgent.trim();
     if (trimmedAgent !== "") patch.defaultAgent = trimmedAgent;
-    patch.feedbackEnabled = feedback;
+    if (feedbackTouched) patch.feedbackEnabled = feedback;
 
     setSaving(true);
     void saveTelegramSettings(patch, token)
@@ -160,7 +162,10 @@ export function TelegramSettingsForm({
               className="settings-form-feedback"
               type="checkbox"
               checked={feedback}
-              onChange={(event) => setFeedback(event.target.checked)}
+              onChange={(event) => {
+                setFeedback(event.target.checked);
+                setFeedbackTouched(true);
+              }}
             />
             Transport feedback (receipt reactions and typing indicator)
           </label>

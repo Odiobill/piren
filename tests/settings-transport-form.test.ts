@@ -135,7 +135,7 @@ describe("TelegramSettingsForm: validation + save", () => {
     await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
     expect(mockedTelegramSave).toHaveBeenCalledWith(
-      { botToken: "NEWTOKEN", allowedChatIds: [123, -456], feedbackEnabled: true },
+      { botToken: "NEWTOKEN", allowedChatIds: [123, -456] },
       "T",
     );
     // Cleared on successful save.
@@ -192,7 +192,7 @@ describe("DiscordSettingsForm: snowflake validation smoke", () => {
     await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
     expect(mockedDiscordSave).toHaveBeenCalledWith(
-      { botToken: "DISCORDTOKEN", allowedGuildIds: ["123456789012345678"], feedbackEnabled: true },
+      { botToken: "DISCORDTOKEN", allowedGuildIds: ["123456789012345678"] },
       "T",
     );
     expect(inputByClass("settings-form-token").value).toBe("");

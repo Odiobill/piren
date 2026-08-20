@@ -40,6 +40,8 @@ export function DiscordSettingsForm({
   const [dmUserIds, setDmUserIds] = useState("");
   const [defaultAgent, setDefaultAgent] = useState("");
   const [feedback, setFeedback] = useState(true);
+  // Preserve an absent feedback declaration unless the steward changes it.
+  const [feedbackTouched, setFeedbackTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -119,7 +121,7 @@ export function DiscordSettingsForm({
 
     const trimmedAgent = defaultAgent.trim();
     if (trimmedAgent !== "") patch.defaultAgent = trimmedAgent;
-    patch.feedbackEnabled = feedback;
+    if (feedbackTouched) patch.feedbackEnabled = feedback;
 
     setSaving(true);
     void saveDiscordSettings(patch, token)
@@ -219,7 +221,10 @@ export function DiscordSettingsForm({
               className="settings-form-feedback"
               type="checkbox"
               checked={feedback}
-              onChange={(event) => setFeedback(event.target.checked)}
+              onChange={(event) => {
+                setFeedback(event.target.checked);
+                setFeedbackTouched(true);
+              }}
             />
             Transport feedback (receipt reactions and typing indicator)
           </label>
