@@ -888,6 +888,13 @@ export function ConversationNavigator({
                 tabIndex={0}
                 ref={historyRef}
               >
+                {/* U1 — one polite live announcement region (always mounted,
+                    never per token/tick): the removal line remains announced
+                    after cards are gone. It precedes the durable timeline so
+                    cards directly follow it as the final transient content. */}
+                <p className="sr-only" role="status" aria-live="polite" data-activity-announcement="true">
+                  {activityAnnouncement}
+                </p>
                 <ConversationTimeline
                   conversationId={selection.conversation.id}
                   token={token}
@@ -909,14 +916,7 @@ export function ConversationNavigator({
                     REPLACE the D4 tray row (removed below). Each card is
                     exactly agent + working…/typing… + the scoped abort
                     action; no partial text, no tools/reasons, no summary, no
-                    red badge. One polite announcement per appearance/
-                    transition/removal via the dedicated live region. */}
-                {/* U1 — one polite live announcement region (always mounted,
-                    never per token/tick): the removal line must remain
-                    announced after the cards themselves are gone. */}
-                <p className="sr-only" role="status" aria-live="polite" data-activity-announcement="true">
-                  {activityAnnouncement}
-                </p>
+                    red badge. */}
                 {dockRuns.length > 0 && (
                   <div className="conversation-activity-cards" aria-label="Live agent activity">
                     {dockRuns.map((run) => {

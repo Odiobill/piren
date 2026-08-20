@@ -155,6 +155,10 @@ describe("U1 status-only activity cards", () => {
     expect(children.findIndex((child) => child.className.includes("conversation-activity-cards"))).toBeGreaterThan(
       children.findIndex((child) => child.className === "mock-timeline"),
     );
+    // The card container directly follows the durable timeline and is the
+    // final transient history child; the polite live region cannot interpose.
+    expect(cards?.previousElementSibling?.className).toBe("mock-timeline");
+    expect(history?.lastElementChild).toBe(cards);
     // The D4 tray activity row is removed (never duplicated in the tray).
     expect(container.querySelector(".interaction-tray .conversation-activity-row")).toBeNull();
     expect(container.querySelector(".interaction-tray .dock-run-status")).toBeNull();
