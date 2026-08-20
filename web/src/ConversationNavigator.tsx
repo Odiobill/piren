@@ -131,6 +131,7 @@ export function ConversationNavigator({
   onValidated,
   onConversationsChanged,
   onSelectionChange,
+  reAnchorKey,
 }: {
   token: string;
   onUnauthorized: () => void;
@@ -142,6 +143,13 @@ export function ConversationNavigator({
    * (active or read-only), or null when no conversation is selected.
    */
   onSelectionChange?: (title: string | null, active: boolean) => void;
+  /**
+   * W1: the smallest existing re-anchor signal. The split-shell bumps this
+   * key on resizer commit; the bump flows into the existing content-version
+   * anchor wiring so an anchored reader re-anchors immediately after a pure
+   * pane resize (anchor core unchanged). Omitted/0 = never bumped.
+   */
+  reAnchorKey?: number;
 }) {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [selection, setSelection] = useState<SelectionState>({ phase: "none" });
@@ -177,6 +185,16 @@ export function ConversationNavigator({
       history load; the layout effect applies the anchor decision per commit. */
   const [contentVersion, setContentVersion] = useState(0);
   const bumpContentVersion = useCallback(() => setContentVersion((version) => version + 1), []);
+  /**
+   * W1: a split-shell resizer commit bumps the existing content-version so
+   * the P8 commit-time anchor wiring re-runs against the new pane geometry.
+   * This is the smallest existing re-anchor signal; the anchor core is
+   * untouched. reAnchorKey starts at 0 (never bumped by the shell until a
+   * companion commit exists).
+   */
+  useEffect(() => {
+    if (reAnchorKey !== undefined && reAnchorKey > 0) bumpContentVersion();
+  }, [reAnchorKey, bumpContentVersion]);
   /**
    * R2 — compact source-truthful live run state for the stable bottom dock:
    * reported by the subscribed timeline (agent + working/typing only, never

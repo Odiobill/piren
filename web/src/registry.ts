@@ -9,6 +9,17 @@
  */
 import type { Page } from "./nav.js";
 
+/**
+ * W1 (0.2.0 amendment §3; accepted companion split architecture §1): where a
+ * module renders in the shell. `page` — today's model, the module owns the
+ * full workspace when its page is selected (unchanged). `companion` — usable
+ * alongside the active chat in the split workspace. The registry stays a
+ * compile-time const; no runtime discovery, no dynamic imports, no plugin
+ * installation. No companion module is registered yet (W2 is separately
+ * gated); the flag is declarative so any future module can opt in.
+ */
+export type ModulePlacement = "page" | "companion";
+
 export interface WorkbenchModule {
   /** Stable first-party id; the shell nav and the registry agree on it. */
   id: string;
@@ -18,6 +29,8 @@ export interface WorkbenchModule {
   navOrder: number;
   /** The nav page this module renders. */
   page: Page;
+  /** Where the module renders: full page or companion split (W1). */
+  placement: ModulePlacement;
   /** Declared gateway endpoint families this module consumes. */
   consumes: readonly string[];
   /** Declared cross-module intents this module may emit (none today). */
@@ -31,6 +44,7 @@ export const WORKBENCH_MODULES: readonly WorkbenchModule[] = [
     label: "Conversations",
     navOrder: 0,
     page: "conversations",
+    placement: "page",
     consumes: ["conversations", "conversation-agents"],
     emits: [],
   },

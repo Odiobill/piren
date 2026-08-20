@@ -2049,3 +2049,120 @@ code {
     gap: 4px;
   }
 }
+
+/* ===========================================================================
+   W1 — companion split workspace shell (0.2.0 scope amendment §3; accepted
+   companion split architecture §2/§3/§4/§6).
+
+   The split is SHELL LAYOUT ONLY: the upper companion pane, the accessible
+   horizontal resizer, and the lower live Conversation chat pane inside the
+   existing workspace panel. One scroll owner per pane (the companion pane
+   owns its own scroll; .conversation-history stays the chat pane's sole
+   scroll owner). The balanced 50/50 default and the deterministic min/max
+   clamps come from the pure split-workspace core (inline flex-basis); CSS
+   enforces the minimums (chat >= 280px, companion >= 200px) and the mobile
+   one-pane-at-a-time fallback. Closed / no companion: the shell is a DOM
+   pass-through, so none of this applies.
+   =========================================================================== */
+
+.split-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.split-companion-pane {
+  flex: 1 1 0;
+  min-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.split-resizer-host {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 14px;
+}
+
+.split-resizer {
+  flex: 1;
+  align-self: stretch;
+  margin-block: 3px;
+  border-radius: 3px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.split-resizer:hover {
+  background: var(--accent, #4a6cf7);
+}
+
+.split-resizer:focus-visible {
+  outline: 2px solid var(--accent, #4a6cf7);
+  outline-offset: -1px;
+}
+
+.split-chat-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 280px;
+  overflow: hidden;
+}
+
+/* The R1 workspace min-height calc must not overflow the constrained pane. */
+.split-chat-pane .conversation-workspace {
+  min-height: 0;
+}
+
+/* Mobile/portrait one-pane-at-a-time toggle (hidden on desktop). */
+.split-mobile-toggle {
+  display: none;
+  flex: none;
+  gap: 8px;
+  justify-content: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.split-mobile-toggle button {
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.split-mobile-toggle button[aria-pressed="true"] {
+  background: var(--accent, #4a6cf7);
+  border-color: var(--accent, #4a6cf7);
+  color: #fff;
+}
+
+.split-companion-pane[hidden],
+.split-chat-pane[hidden] {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  /* Portrait/mobile: strictly one pane at a time, no stacked split, no
+     resizer; the chat stays mounted and live underneath the toggle. */
+  .split-resizer-host {
+    display: none;
+  }
+
+  .split-mobile-toggle {
+    display: flex;
+  }
+
+  .split-companion-pane,
+  .split-chat-pane {
+    flex: 1 1 0;
+    border-bottom: 0;
+  }
+}

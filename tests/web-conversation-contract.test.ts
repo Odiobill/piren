@@ -58,6 +58,7 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
       label: "Conversations",
       navOrder: 0,
       page: "conversations",
+      placement: "page",
       consumes: ["conversations", "conversation-agents"],
       emits: [],
     });

@@ -6,6 +6,8 @@ import { Sidebar } from "./Sidebar";
 import { MobileDrawer } from "./MobileDrawer";
 import { ConversationNavigator } from "./ConversationNavigator";
 import { DashboardView } from "./DashboardView";
+import { SplitWorkspaceShell } from "./SplitWorkspaceShell";
+import { initialSplitWorkspaceState, type SplitWorkspaceState } from "./split-workspace";
 import { formatConversationHash } from "./hash-route";
 
 /**
@@ -51,6 +53,20 @@ export function AppShell({
     setContextualTitle(title);
     setConversationActive(active);
   }, []);
+  /**
+   * W1 (0.2.0 amendment §3): shell-level companion split state — in-memory
+   * only, closed by default. No companion module is registered in W1 (W2 is
+   * separately gated), so the split shell is an inert pass-through today; it
+   * is ready to receive a future companion without any user-visible change.
+   */
+  const [splitState, setSplitState] = useState<SplitWorkspaceState>(initialSplitWorkspaceState);
+  /**
+   * W1: the smallest existing re-anchor signal — bumped on every resizer
+   * commit so the anchored reader re-anchors after a pure pane resize
+   * (anchor core unchanged). Never bumped while the split is closed.
+   */
+  const [reAnchorKey, setReAnchorKey] = useState(0);
+  const handleSplitReAnchor = useCallback(() => setReAnchorKey((key) => key + 1), []);
 
   function handleSelect(page: Page) {
     // A selection made from the open mobile drawer closes it and must return
@@ -154,12 +170,23 @@ export function AppShell({
             </section>
           )}
           <div className="workspace-panel workspace-panel-conversations" hidden={nav.page !== "conversations"}>
-            <ConversationNavigator
-              token={token}
-              onValidated={onValidated}
-              onUnauthorized={onUnauthorized}
-              onConversationsChanged={handleConversationsChanged}
-              onSelectionChange={handleSelectionChange}
+            <SplitWorkspaceShell
+              state={splitState}
+              onStateChange={setSplitState}
+              chat={
+                <ConversationNavigator
+                  token={token}
+                  onValidated={onValidated}
+                  onUnauthorized={onUnauthorized}
+                  onConversationsChanged={handleConversationsChanged}
+                  onSelectionChange={handleSelectionChange}
+                  reAnchorKey={reAnchorKey}
+                />
+              }
+              resizerLabel="Resize chat pane"
+              chatLabel="Chat"
+              companionLabel="Companion"
+              onReAnchor={handleSplitReAnchor}
             />
           </div>
           <div className="workspace-panel" hidden={nav.page !== "dashboard"}>
