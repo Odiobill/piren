@@ -185,6 +185,14 @@ describe("resolveSchedulerConfig: enabled master gate (0.2.0 S1)", () => {
     }
   });
 
+  it("never echoes a malformed enabled value in a warning", () => {
+    const secret = "scheduler-secret-must-not-appear";
+    const resolved = resolveSchedulerConfig({
+      scheduler: { enabled: secret as unknown as boolean },
+    });
+    expect(resolved.warnings.join("\n")).not.toContain(secret);
+  });
+
   it("an unknown-key-only scheduler block is not established legacy: enabled=false without a migration signal", () => {
     const resolved = resolveSchedulerConfig({
       scheduler: { mystery: 1 },
@@ -261,10 +269,15 @@ describe("resolveAutomationClasses: closed class resolution (0.2.0 S1)", () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it("unknown automation keys are reported-and-ignored with a deterministic warning and no semantics", () => {
-    const result = resolveAutomationClasses({ inbox_tasks: true, polling_enabled: true });
-    expect(result.classes).toEqual({ inboxTasks: true, agentCron: false, scriptCron: false });
-    expect(result.warnings.some((w) => w.includes("polling_enabled"))).toBe(true);
+  it("unknown automation keys are reported-and-ignored without echoing key or value", () => {
+    const secret = "scheduler-secret-must-not-appear";
+    const result = resolveAutomationClasses({
+      inbox_tasks: secret,
+      [secret]: secret,
+    });
+    expect(result.classes).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(result.warnings).toHaveLength(2);
+    expect(result.warnings.join("\n")).not.toContain(secret);
   });
 });
 

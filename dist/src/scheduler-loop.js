@@ -57,6 +57,10 @@ function isPlainRecord(value) {
 function isAbsentLike(value) {
     return value === undefined || value === null;
 }
+/** Return a bounded value category for diagnostics without echoing local config content. */
+function configValueKind(value) {
+    return Array.isArray(value) ? "array" : typeof value;
+}
 /**
  * Pure fail-closed resolver for the closed `scheduler.automation` block
  * (0.2.0 scope amendment §2). Takes the raw `automation` value (which may be
@@ -80,7 +84,7 @@ export function resolveAutomationClasses(automation) {
         return { classes: allFalse, warnings };
     }
     if (!isPlainRecord(automation)) {
-        warnings.push(`scheduler.automation=${JSON.stringify(automation)} is invalid; disabling all automation classes (fail closed).`);
+        warnings.push(`scheduler.automation has invalid ${configValueKind(automation)} content; disabling all automation classes (fail closed).`);
         return { classes: allFalse, warnings };
     }
     const classes = { ...allFalse };
@@ -102,7 +106,7 @@ export function resolveAutomationClasses(automation) {
             classes[classKeys[key]] = raw;
             continue;
         }
-        warnings.push(`scheduler.automation.${key}=${JSON.stringify(raw)} is invalid; disabling ${classLabels[key]} automation (fail closed).`);
+        warnings.push(`scheduler.automation.${key} has invalid ${configValueKind(raw)} content; disabling ${classLabels[key]} automation (fail closed).`);
     }
     // Unknown keys under `automation` are reported-and-ignored (never assigned
     // semantics), mirroring the manifest tolerance convention. Sorted so the
@@ -111,8 +115,8 @@ export function resolveAutomationClasses(automation) {
     const unknownKeys = Object.keys(automation)
         .filter((key) => !knownClasses.includes(key))
         .sort();
-    for (const key of unknownKeys) {
-        warnings.push(`scheduler.automation.${key} is not a recognized automation class; ignoring it.`);
+    if (unknownKeys.length > 0) {
+        warnings.push(`scheduler.automation contains ${unknownKeys.length} unrecognized class key(s); ignoring them.`);
     }
     return { classes, warnings };
 }
@@ -184,7 +188,7 @@ export function resolveSchedulerConfig(config) {
         enabled = enabledRaw;
     }
     else {
-        warnings.push(`scheduler.enabled=${JSON.stringify(enabledRaw)} is invalid; treating the scheduler as disabled (fail closed).`);
+        warnings.push(`scheduler.enabled has invalid ${configValueKind(enabledRaw)} content; treating the scheduler as disabled (fail closed).`);
         enabled = false;
     }
     const automationResult = resolveAutomationClasses(sched.automation);

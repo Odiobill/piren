@@ -107,6 +107,11 @@ function isAbsentLike(value: unknown): boolean {
   return value === undefined || value === null;
 }
 
+/** Return a bounded value category for diagnostics without echoing local config content. */
+function configValueKind(value: unknown): string {
+  return Array.isArray(value) ? "array" : typeof value;
+}
+
 /**
  * Pure fail-closed resolver for the closed `scheduler.automation` block
  * (0.2.0 scope amendment §2). Takes the raw `automation` value (which may be
@@ -131,7 +136,7 @@ export function resolveAutomationClasses(automation: unknown): ResolveAutomation
   }
   if (!isPlainRecord(automation)) {
     warnings.push(
-      `scheduler.automation=${JSON.stringify(automation)} is invalid; disabling all automation classes (fail closed).`,
+      `scheduler.automation has invalid ${configValueKind(automation)} content; disabling all automation classes (fail closed).`,
     );
     return { classes: allFalse, warnings };
   }
@@ -155,7 +160,7 @@ export function resolveAutomationClasses(automation: unknown): ResolveAutomation
       continue;
     }
     warnings.push(
-      `scheduler.automation.${key}=${JSON.stringify(raw)} is invalid; disabling ${classLabels[key]} automation (fail closed).`,
+      `scheduler.automation.${key} has invalid ${configValueKind(raw)} content; disabling ${classLabels[key]} automation (fail closed).`,
     );
   }
 
@@ -166,8 +171,10 @@ export function resolveAutomationClasses(automation: unknown): ResolveAutomation
   const unknownKeys = Object.keys(automation)
     .filter((key) => !knownClasses.includes(key))
     .sort();
-  for (const key of unknownKeys) {
-    warnings.push(`scheduler.automation.${key} is not a recognized automation class; ignoring it.`);
+  if (unknownKeys.length > 0) {
+    warnings.push(
+      `scheduler.automation contains ${unknownKeys.length} unrecognized class key(s); ignoring them.`,
+    );
   }
   return { classes, warnings };
 }
@@ -291,7 +298,7 @@ export function resolveSchedulerConfig(config: LocalPirenConfig): ResolvedSchedu
     enabled = enabledRaw;
   } else {
     warnings.push(
-      `scheduler.enabled=${JSON.stringify(enabledRaw)} is invalid; treating the scheduler as disabled (fail closed).`,
+      `scheduler.enabled has invalid ${configValueKind(enabledRaw)} content; treating the scheduler as disabled (fail closed).`,
     );
     enabled = false;
   }
