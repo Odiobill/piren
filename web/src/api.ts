@@ -39,6 +39,18 @@ import {
 } from "./conversation-controls";
 import { parseConversationTelemetryReadResponse, type ConversationTelemetryReadResult } from "./conversation-telemetry";
 import { parseVaultListResponse, parseVaultReadResponse, type VaultListResponse, type VaultReadResponse } from "./vault-explorer";
+import {
+  buildDiscordSettingsEnvelope,
+  buildTelegramSettingsEnvelope,
+  parseDiscordSettingsRead,
+  parseSettingsWriteResponse,
+  parseTelegramSettingsRead,
+  type DiscordSettingsPatchInput,
+  type DiscordSettingsProjection,
+  type SettingsReadResult,
+  type TelegramSettingsPatchInput,
+  type TelegramSettingsProjection,
+} from "./settings-transport";
 
 /** Typed bounded lifecycle action error (L2 404/409/500 / network). */
 export class LifecycleHttpError extends Error {
@@ -352,6 +364,69 @@ export async function fetchVaultRead(path: string, token: string, signal?: Abort
   const res = await authedFetch(`/api/vault/read?path=${encodeURIComponent(path)}`, token, signal === undefined ? undefined : { signal });
   if (!res.ok) throw new Error(`vault read HTTP ${res.status}`);
   return parseVaultReadResponse(await res.json());
+}
+
+/**
+ * W5 — typed transport Settings transport over the EXISTING gateway auth
+ * gate. Narrow per-transport read/write routes only (no generic /api/
+ * settings reader/patcher); reads are fully redacted; writes carry the
+ * closed envelope plus an optional write-only token, and the response never
+ * echoes it. A 401 surfaces through UnauthorizedError; non-401 write
+ * failures surface as a bounded typed SettingsHttpError.
+ */
+export type SettingsHttpErrorKind = "invalid" | "conflict" | "server" | "network";
+
+export class SettingsHttpError extends Error {
+  readonly kind: SettingsHttpErrorKind;
+  constructor(kind: SettingsHttpErrorKind, message: string) {
+    super(message);
+    this.name = "SettingsHttpError";
+    this.kind = kind;
+  }
+}
+
+/** GET /api/settings/telegram — redacted telegram projection. */
+export async function fetchTelegramSettings(token: string, signal?: AbortSignal): Promise<SettingsReadResult<TelegramSettingsProjection>> {
+  const res = await authedFetch("/api/settings/telegram", token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`telegram settings HTTP ${res.status}`);
+  return parseTelegramSettingsRead(await res.json());
+}
+
+/** GET /api/settings/discord — redacted discord projection. */
+export async function fetchDiscordSettings(token: string, signal?: AbortSignal): Promise<SettingsReadResult<DiscordSettingsProjection>> {
+  const res = await authedFetch("/api/settings/discord", token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`discord settings HTTP ${res.status}`);
+  return parseDiscordSettingsRead(await res.json());
+}
+
+async function postSettings(path: string, body: Record<string, unknown>, token: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await authedFetch(path, token, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (cause) {
+    if (cause instanceof UnauthorizedError) throw cause;
+    throw new SettingsHttpError("network", "The settings save could not reach the gateway.");
+  }
+  if (res.status === 200) {
+    parseSettingsWriteResponse(await res.json());
+    return;
+  }
+  const kind: SettingsHttpErrorKind = res.status === 400 ? "invalid" : res.status === 409 ? "conflict" : "server";
+  throw new SettingsHttpError(kind, kind === "conflict" ? "The config changed since it was read; re-read and retry." : "The settings save failed; nothing was changed.");
+}
+
+/** POST /api/settings/telegram — closed telegram patch (write-only token). */
+export async function saveTelegramSettings(block: TelegramSettingsPatchInput, token: string): Promise<void> {
+  await postSettings("/api/settings/telegram", buildTelegramSettingsEnvelope(block), token);
+}
+
+/** POST /api/settings/discord — closed discord patch (write-only token). */
+export async function saveDiscordSettings(block: DiscordSettingsPatchInput, token: string): Promise<void> {
+  await postSettings("/api/settings/discord", buildDiscordSettingsEnvelope(block), token);
 }
 
 export interface ConversationEventStreamHandlers {

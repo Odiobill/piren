@@ -72,14 +72,15 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
       consumes: ["vault-list", "vault-read"],
       emits: [],
     });
-    // W3: the static full-page Settings shell declares zero consumption.
+    // W5: the Settings module consumes only the narrow transport settings
+    // family (typed Telegram/Discord read/write routes; W3 was zero-consumption).
     expect(WORKBENCH_MODULES[2]).toEqual({
       id: "settings",
       label: "Settings",
       navOrder: 2,
       page: "settings",
       placement: "page",
-      consumes: [],
+      consumes: ["settings-transports"],
       emits: [],
     });
   });

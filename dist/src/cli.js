@@ -161,6 +161,7 @@ try {
             authToken: resolvedToken.token !== "" ? resolvedToken.token : undefined,
             publicDir: resolvePublicDir(thisDir),
             serviceStatusReader: createLocalServiceStatusReader(),
+            settingsConfigPath: DEFAULT_CONFIG_PATH,
         });
         const handle = await server.start(port ?? 7317, bindHost);
         console.log(`Piren gateway listening on http://${handle.hostname}:${handle.port}`);

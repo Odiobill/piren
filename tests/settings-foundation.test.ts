@@ -256,6 +256,7 @@ describe("readLocalConfigRedacted", () => {
       allowedThreadIds: null,
       allowedDmUserIds: null,
       defaultAgent: null,
+      feedbackEnabled: null,
     });
     expect(projection.scheduler).toMatchObject({
       present: true,

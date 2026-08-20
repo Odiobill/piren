@@ -3,23 +3,27 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * W4 boundary proof (0.2.0 amendment §5; ADR-0046): the Settings foundation
- * is a server-side core with NO browser-facing surface. These pins prove the
- * gateway gained no Settings route, the web transport gained no Settings
- * call, the Settings UI gained no fetch/form, and nothing imports the
- * foundation from any HTTP/CLI/UI dispatch path. W5/W6 will add the actual
- * per-workflow routes and their bind-independent auth proof.
+ * W4 + W5 boundary proof (0.2.0 amendment §5; ADR-0046): the Settings
+ * foundation is a server-side core; W5 exposes ONLY the narrow typed
+ * transport routes over it. These pins prove the gateway gained only the
+ * four Telegram/Discord read/write routes (no generic /api/settings), the
+ * web transport gained only the matching narrow helpers, the Settings UI
+ * uses the typed forms (never a direct foundation call or raw editor), and
+ * nothing imports the foundation from a CLI/config wizard path.
  */
 
 const repoRoot = process.cwd();
 
-describe("W4 boundary: no browser-facing Settings surface", () => {
-  it("the gateway HTTP server has no Settings route or settings-foundation import", async () => {
+describe("W5 boundary: narrow transport Settings surface only", () => {
+  it("the gateway exposes ONLY the four transport Settings routes (no generic /api/settings)", async () => {
     const gateway = await readFile(join(repoRoot, "src", "gateway-http.ts"), "utf8");
-    expect(gateway).not.toMatch(/\/api\/settings/i);
-    expect(gateway).not.toContain("settings-foundation");
-    expect(gateway).not.toContain("applyLocalSettingsIntent");
-    expect(gateway).not.toContain("applyAgentSettingsIntent");
+    expect(gateway).toContain("/api/settings/telegram");
+    expect(gateway).toContain("/api/settings/discord");
+    // No generic reader/patcher/editor.
+    expect(gateway).not.toMatch(/\/api\/settings["`)]/);
+    expect(gateway).not.toContain("/api/settings/patch");
+    expect(gateway).not.toContain("/api/settings/raw");
+    expect(gateway).not.toContain("applyAgentSettingsIntent"); // W6, not W5
   });
 
   it("the CLI dispatcher does not wire the foundation (configure stays the S3 wizard)", async () => {
@@ -29,19 +33,23 @@ describe("W4 boundary: no browser-facing Settings surface", () => {
     expect(cli).not.toContain("applyAgentSettingsIntent");
   });
 
-  it("the web typed transport has no Settings endpoint family", async () => {
+  it("the web typed transport has ONLY the narrow transport Settings family (no generic reader/patcher)", async () => {
     const api = await readFile(join(repoRoot, "web", "src", "api.ts"), "utf8");
-    expect(api).not.toMatch(/settings/i);
+    expect(api).toContain("/api/settings/telegram");
+    expect(api).toContain("/api/settings/discord");
+    expect(api).not.toMatch(/\/api\/settings["`]/);
+    expect(api).not.toContain("/api/settings/patch");
+    expect(api).not.toContain("/api/settings/raw");
   });
 
-  it("the Settings shell stays a static read-only inventory (no fetch/form mutation)", async () => {
+  it("the Settings shell uses the typed forms and never calls the foundation or edits raw config", async () => {
     const view = await readFile(join(repoRoot, "web", "src", "SettingsView.tsx"), "utf8");
+    expect(view).toContain("TelegramSettingsForm");
+    expect(view).toContain("DiscordSettingsForm");
     expect(view).not.toContain("fetch(");
-    expect(view).not.toContain("<form");
-    expect(view).not.toContain("<input");
-    expect(view).not.toContain("<button");
     expect(view).not.toContain("applyLocalSettingsIntent");
     expect(view).not.toContain("applyAgentSettingsIntent");
+    expect(view).not.toContain("dangerouslySetInnerHTML");
   });
 
   it("the foundation module itself performs no network, platform, service, or scheduler action", async () => {

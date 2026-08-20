@@ -473,6 +473,7 @@ export async function readLocalConfigRedacted(io, configPath) {
         allowedThreadIds: countListOrNull(discordBlock?.allowed_thread_ids),
         allowedDmUserIds: countListOrNull(discordBlock?.allowed_dm_user_ids),
         defaultAgent: asNonEmptyStringOrNull(discordBlock?.default_agent),
+        feedbackEnabled: asBooleanOrNull(isRecord(discordBlock?.feedback) ? discordBlock.feedback.enabled : undefined),
     };
     const automationBlock = isRecord(schedulerBlock?.automation) ? schedulerBlock.automation : undefined;
     const scheduler = {

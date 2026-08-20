@@ -60,17 +60,15 @@ export const WORKBENCH_MODULES: readonly WorkbenchModule[] = [
     emits: [],
   },
   {
-    // W3 (0.2.0 amendment §5; ADR-0046): the static full-page Settings
-    // shell. It is a read-only workflow inventory in W3: it declares NO
-    // endpoint consumption and NO intents — no config reads, no mutation,
-    // no service action. Typed workflows arrive only in the separately
-    // gated W4–W6 slices.
+    // W3 (0.2.0 amendment §5; ADR-0046): the full-page Settings module.
+    // W5 adds the narrow typed transport Settings family (Telegram/Discord
+    // read/write routes with write-only tokens); nothing broader is consumed.
     id: "settings",
     label: "Settings",
     navOrder: 2,
     page: "settings",
     placement: "page",
-    consumes: [],
+    consumes: ["settings-transports"],
     emits: [],
   },
 ];

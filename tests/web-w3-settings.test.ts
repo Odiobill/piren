@@ -37,9 +37,9 @@ describe("W3 registry: settings module", () => {
     expect(moduleForPage("settings")?.id).toBe("settings");
   });
 
-  it("declares NO endpoint consumption and NO intents (read-only static shell)", () => {
+  it("declares only the narrow transport settings family and no intents (W5)", () => {
     const settings = getModuleById("settings");
-    expect(settings?.consumes).toEqual([]);
+    expect(settings?.consumes).toEqual(["settings-transports"]);
     expect(settings?.emits).toEqual([]);
   });
 

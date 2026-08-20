@@ -266,7 +266,7 @@ export function AppShell({
               page. Read-only inventory only; no fetch, no state, no controls.
               Hidden-toggling preserves the mounted Conversation surface. */}
           <div className="workspace-panel" hidden={nav.page !== "settings" || (explorerOpen && !hasSelectedConversation)}>
-            <SettingsView />
+            <SettingsView token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
           </div>
         </main>
       </div>

@@ -1,4 +1,5 @@
 import { type RpcSpawnTarget } from "./gateway-rpc.js";
+import { type SettingsFoundationIo } from "./settings-foundation.js";
 import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 import { type ServiceStatusReader } from "./service-observability.js";
 export type RpcTargetBuilder = (agent: string) => Promise<RpcSpawnTarget>;
@@ -65,6 +66,19 @@ export interface GatewayServerOptions {
      * returns a bounded non-diagnostic failure (never a fabricated snapshot).
      */
     serviceStatusReader?: ServiceStatusReader | undefined;
+    /**
+     * W5 (ADR-0046): the machine-local config path for the typed transport
+     * Settings routes. Absent => the settings routes return a bounded 404
+     * (settings unavailable); the routes never create a directory or read a
+     * default path on their own.
+     */
+    settingsConfigPath?: string | undefined;
+    /**
+     * W5: filesystem seam for the settings routes. Defaults to the production
+     * node adapter; tests inject a fake so the gateway never touches the real
+     * local config. Reads/writes stay atomic and revision-checked (W4).
+     */
+    settingsIo?: SettingsFoundationIo | undefined;
 }
 export interface GatewayHandle {
     port: number;
@@ -99,6 +113,8 @@ export declare class GatewayServer {
     private shuttingDown;
     private readonly fallbackPolicyLoader;
     private readonly serviceStatusReader;
+    private readonly settingsConfigPath;
+    private readonly settingsIo;
     /** TB4: explicit steward model selection disables automatic fallback for this session. */
     private explicitModelSelected;
     /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
@@ -239,6 +255,21 @@ export declare class GatewayServer {
      * non-diagnostic 503, never a fabricated observation.
      */
     private handleServiceStatus;
+    /**
+     * GET /api/settings/telegram|discord — the fully-redacted transport
+     * projection (token `configured` boolean, ID counts, default agent,
+     * feedback). Never a token, fingerprint, raw config, or unknown field.
+     * Missing/malformed config fails closed with a bounded non-secret reason.
+     */
+    private handleTransportSettingsRead;
+    /**
+     * POST /api/settings/telegram|discord — apply one closed transport intent
+     * through the W4 atomic/revision-checked foundation. The route enforces the
+     * family match; a write-only token flows only into the written document.
+     * Responses are fully redacted ({ wrote: true }); errors are bounded and
+     * never echo the submitted token or raw config.
+     */
+    private handleTransportSettingsWrite;
     private safeConversation;
     private safeConversationEvent;
     private conversationError;

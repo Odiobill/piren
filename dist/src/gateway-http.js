@@ -8,6 +8,7 @@ import { vaultBrowserList, vaultBrowserRead } from "./vault-browser.js";
 import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
 import { createInboxTask } from "./inbox.js";
+import { applyLocalSettingsIntent, createNodeSettingsFoundationIo, parseSettingsIntent, readLocalConfigRedacted, SettingsFoundationError, } from "./settings-foundation.js";
 import { buildOkfGraph } from "./okf-graph.js";
 import { ConversationBroker } from "./conversation-broker.js";
 import { buildConversationAgentsResponse } from "./conversation-agents.js";
@@ -66,6 +67,41 @@ const MIME_TYPES = {
     ".woff": "font/woff",
     ".map": "application/json; charset=utf-8",
 };
+/** W5: map a settings foundation error code to an HTTP status. */
+function settingsErrorStatus(code) {
+    switch (code) {
+        case "invalid-intent":
+        case "invalid-agent":
+        case "malformed-config":
+            return 400;
+        case "not-found":
+            return 404;
+        case "revision-changed":
+            return 409;
+        case "write-failed":
+        case "read-failed":
+        default:
+            return 500;
+    }
+}
+/** W5: bounded non-secret error body per foundation code (never raw content). */
+function settingsErrorBoundedMessage(code) {
+    switch (code) {
+        case "invalid-intent":
+        case "invalid-agent":
+            return "The settings values were rejected.";
+        case "malformed-config":
+            return "The local config is malformed; refusing to modify it.";
+        case "not-found":
+            return "The target config was not found.";
+        case "revision-changed":
+            return "The config changed since it was read; refusing to overwrite it. Re-read and retry.";
+        case "write-failed":
+        case "read-failed":
+        default:
+            return "Settings could not be written.";
+    }
+}
 function createVaultRelativeDirReader(vaultRoot) {
     const root = resolve(vaultRoot);
     function resolveInsideVault(path) {
@@ -132,6 +168,8 @@ export class GatewayServer {
     shuttingDown = false;
     fallbackPolicyLoader;
     serviceStatusReader;
+    settingsConfigPath;
+    settingsIo;
     /** TB4: explicit steward model selection disables automatic fallback for this session. */
     explicitModelSelected = false;
     /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
@@ -150,6 +188,8 @@ export class GatewayServer {
         this.publicDir = options.publicDir;
         this.fallbackPolicyLoader = options.fallbackPolicyLoader;
         this.serviceStatusReader = options.serviceStatusReader;
+        this.settingsConfigPath = options.settingsConfigPath;
+        this.settingsIo = options.settingsIo ?? createNodeSettingsFoundationIo();
         // C2: the conversation broker is wired with the same runtime options;
         // conversation runs use isolated conversation × agent clients, never the
         // global gateway chat client. (The retired room broker is gone — no
@@ -296,6 +336,18 @@ export class GatewayServer {
         }
         else if (req.method === "POST" && url.pathname === "/api/vault/inbox") {
             await this.handleVaultInbox(req, res);
+        }
+        else if (req.method === "GET" && url.pathname === "/api/settings/telegram") {
+            await this.handleTransportSettingsRead(res, "telegram");
+        }
+        else if (req.method === "GET" && url.pathname === "/api/settings/discord") {
+            await this.handleTransportSettingsRead(res, "discord");
+        }
+        else if (req.method === "POST" && url.pathname === "/api/settings/telegram") {
+            await this.handleTransportSettingsWrite(req, res, "telegram");
+        }
+        else if (req.method === "POST" && url.pathname === "/api/settings/discord") {
+            await this.handleTransportSettingsWrite(req, res, "discord");
         }
         else if (req.method === "GET" && url.pathname === "/api/services/status") {
             await this.handleServiceStatus(res);
@@ -1310,6 +1362,77 @@ export class GatewayServer {
         catch {
             // Raw reader diagnostics stay server-side; the failure body is fixed.
             this.writeJson(res, 503, { error: "service observation unavailable" });
+        }
+    }
+    // -------------------------------------------------------------------------
+    // W5 — typed transport Settings routes (ADR-0046)
+    // -------------------------------------------------------------------------
+    /**
+     * GET /api/settings/telegram|discord — the fully-redacted transport
+     * projection (token `configured` boolean, ID counts, default agent,
+     * feedback). Never a token, fingerprint, raw config, or unknown field.
+     * Missing/malformed config fails closed with a bounded non-secret reason.
+     */
+    async handleTransportSettingsRead(res, family) {
+        if (this.settingsConfigPath === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        try {
+            const projection = await readLocalConfigRedacted(this.settingsIo, this.settingsConfigPath);
+            if (projection.available) {
+                if (family === "telegram") {
+                    this.writeJson(res, 200, { available: true, telegram: projection.telegram });
+                }
+                else {
+                    this.writeJson(res, 200, { available: true, discord: projection.discord });
+                }
+                return;
+            }
+            this.writeJson(res, 200, { available: false, reason: projection.reason });
+        }
+        catch (error) {
+            // Bounded, non-secret: never the raw error, config content, or a token.
+            const message = error instanceof SettingsFoundationError && error.code === "read-failed"
+                ? "Local config could not be read."
+                : "Settings could not be read.";
+            this.writeJson(res, 500, { error: message });
+        }
+    }
+    /**
+     * POST /api/settings/telegram|discord — apply one closed transport intent
+     * through the W4 atomic/revision-checked foundation. The route enforces the
+     * family match; a write-only token flows only into the written document.
+     * Responses are fully redacted ({ wrote: true }); errors are bounded and
+     * never echo the submitted token or raw config.
+     */
+    async handleTransportSettingsWrite(req, res, family) {
+        if (this.settingsConfigPath === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        const body = await this.readJsonBody(req);
+        if (!body.ok) {
+            this.writeJson(res, body.status, { error: body.error });
+            return;
+        }
+        const parsed = parseSettingsIntent(body.value);
+        if (!parsed.ok) {
+            this.writeJson(res, 400, { error: parsed.error });
+            return;
+        }
+        if (parsed.intent.surface !== "local" || parsed.intent.family !== family) {
+            this.writeJson(res, 400, { error: "Settings intent does not match this transport route." });
+            return;
+        }
+        try {
+            await applyLocalSettingsIntent(this.settingsIo, this.settingsConfigPath, parsed.intent);
+            this.writeJson(res, 200, { wrote: true });
+        }
+        catch (error) {
+            const status = error instanceof SettingsFoundationError ? settingsErrorStatus(error.code) : 500;
+            const message = error instanceof SettingsFoundationError ? settingsErrorBoundedMessage(error.code) : "Settings could not be written.";
+            this.writeJson(res, status, { error: message });
         }
     }
     // -------------------------------------------------------------------------

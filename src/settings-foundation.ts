@@ -477,6 +477,8 @@ export interface RedactedDiscordProjection {
   allowedThreadIds: number | null;
   allowedDmUserIds: number | null;
   defaultAgent: string | null;
+  /** W5: the §5.1 inventory lists feedback for both transports. */
+  feedbackEnabled: boolean | null;
 }
 
 export interface RedactedSchedulerProjection {
@@ -582,6 +584,7 @@ export async function readLocalConfigRedacted(
     allowedThreadIds: countListOrNull(discordBlock?.allowed_thread_ids),
     allowedDmUserIds: countListOrNull(discordBlock?.allowed_dm_user_ids),
     defaultAgent: asNonEmptyStringOrNull(discordBlock?.default_agent),
+    feedbackEnabled: asBooleanOrNull(isRecord(discordBlock?.feedback) ? discordBlock.feedback.enabled : undefined),
   };
 
   const automationBlock = isRecord(schedulerBlock?.automation) ? schedulerBlock.automation : undefined;

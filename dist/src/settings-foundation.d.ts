@@ -149,6 +149,8 @@ export interface RedactedDiscordProjection {
     allowedThreadIds: number | null;
     allowedDmUserIds: number | null;
     defaultAgent: string | null;
+    /** W5: the §5.1 inventory lists feedback for both transports. */
+    feedbackEnabled: boolean | null;
 }
 export interface RedactedSchedulerProjection {
     present: boolean;

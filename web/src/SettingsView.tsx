@@ -1,19 +1,21 @@
 import { familiesForTier, type SettingsFamily, type SettingsTier } from "./settings-inventory.js";
+import { TelegramSettingsForm } from "./TelegramSettingsForm.js";
+import { DiscordSettingsForm } from "./DiscordSettingsForm.js";
 
 /**
- * W3 (0.2.0 amendment §5; ADR-0046): the static full-page Settings shell —
- * a read-only rendering of the explicit Tier A/B/C workflow inventory. It
- * has NO config values, NO status probes, NO inputs/forms/controls, NO
- * fetch, NO storage, and NO service/platform action. It only describes what
- * the separately gated W4–W6 slices will add. Everything renders from the
- * compile-time SETTINGS_INVENTORY model.
+ * W3 + W5 (0.2.0 amendment §5; ADR-0046): the full-page Settings module.
+ * W3 rendered the static read-only Tier A/B/C inventory; W5 replaces the
+ * Telegram and Discord "not available" presentations with typed, validated
+ * write-only-token workflows. Every OTHER family stays static/read-only; no
+ * model/thinking/live-session/runnable-policy/gateway-token/provider-credential
+ * UI is added. No generic editor, no storage, no service/platform action.
  */
 
 const TIER_PRESENTATION: Record<SettingsTier, { heading: string; blurb: string }> = {
   "tier-a": {
     heading: "Typed configuration workflows",
     blurb:
-      "These families will gain typed, validated edit workflows in later gated slices (W4–W6). None of them is available in this shell.",
+      "Telegram and Discord transports are editable here through typed, validated workflows. The remaining families stay gated until later slices.",
   },
   "tier-b": {
     heading: "Read-only inspection",
@@ -43,15 +45,43 @@ function FamilyItem({ family }: { family: SettingsFamily }) {
   );
 }
 
-export function SettingsView() {
+function FamilyContent({
+  family,
+  token,
+  onUnauthorized,
+  onValidated,
+}: {
+  family: SettingsFamily;
+  token: string;
+  onUnauthorized: () => void;
+  onValidated: () => void;
+}) {
+  if (family.id === "telegram") {
+    return <TelegramSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />;
+  }
+  if (family.id === "discord") {
+    return <DiscordSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />;
+  }
+  return <FamilyItem family={family} />;
+}
+
+export function SettingsView({
+  token,
+  onUnauthorized,
+  onValidated,
+}: {
+  token: string;
+  onUnauthorized: () => void;
+  onValidated: () => void;
+}) {
   const tiers: SettingsTier[] = ["tier-a", "tier-b", "tier-c"];
   return (
     <div className="settings-page">
       <header className="settings-header">
         <h2>Settings</h2>
         <p className="muted">
-          This page maps the configuration families Workbench Settings will manage. Nothing on this page reads or
-          changes any configuration yet — the typed workflows arrive only in separately gated slices.
+          This page manages the configuration families Workbench Settings supports. Telegram and Discord transport
+          workflows are available here; the other families arrive only in separately gated slices.
         </p>
       </header>
       {tiers.map((tier) => {
@@ -62,7 +92,13 @@ export function SettingsView() {
             <p className="muted">{presentation.blurb}</p>
             <ul className="settings-family-list">
               {familiesForTier(tier).map((family) => (
-                <FamilyItem key={family.id} family={family} />
+                <FamilyContent
+                  key={family.id}
+                  family={family}
+                  token={token}
+                  onUnauthorized={onUnauthorized}
+                  onValidated={onValidated}
+                />
               ))}
             </ul>
           </section>

@@ -2361,3 +2361,57 @@ code {
 .settings-availability {
   font-style: italic;
 }
+
+/* ===========================================================================
+   W5 — typed transport Settings workflows (0.2.0 amendment §5; ADR-0046).
+   Narrow Telegram/Discord forms inside the full-page Settings module. The
+   bot token field is password/write-only; the form never persists anything.
+   =========================================================================== */
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.settings-field input[type="text"],
+.settings-field input[type="password"] {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg, #fff);
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.settings-field-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-form-error,
+.settings-form-save-error {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--error, #b00020);
+}
+
+.settings-form-saved {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.settings-form-save {
+  align-self: flex-start;
+}
