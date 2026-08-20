@@ -353,11 +353,13 @@ export async function runSchedulerConfigure(
   if (deviceId !== undefined) input.deviceId = deviceId;
   const managedBlock = buildSchedulerConfigBlock(input);
   const mergedYaml = mergeSchedulerIntoConfig(existingText ?? "", managedBlock);
-  const mergedBlock = mergeSchedulerBlock(asRecord(existingRoot.scheduler) ?? {}, managedBlock);
 
   log("");
-  log(`The following scheduler block will be written to ${configPath} (nothing else changes):`);
-  log(renderSchedulerPreview(mergedBlock)
+  log(`The following managed scheduler patch will be written to ${configPath} (unmanaged fields remain unchanged):`);
+  // Preview only the managed inventory. Preserved unknown scheduler fields are
+  // not part of this patch and must never be echoed through this bounded,
+  // non-secret operator surface.
+  log(renderSchedulerPreview(managedBlock)
     .split("\n")
     .map((line) => "  " + line)
     .join("\n"));

@@ -231,7 +231,9 @@ function resolvePositiveInt(
   // falls back, so a missing scheduler block produces no warnings.
   if (value === undefined) return fallback;
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
-    warnings.push(`scheduler.${name}=${JSON.stringify(value)} is invalid; falling back to ${fallback}.`);
+    warnings.push(
+      `scheduler.${name} has invalid ${configValueKind(value)} content; falling back to ${fallback}.`,
+    );
     return fallback;
   }
   return value;

@@ -480,6 +480,25 @@ describe("runSchedulerConfigure", () => {
     });
   });
 
+  it("previews only the managed scheduler patch and never echoes preserved unknown content", async () => {
+    const secret = "scheduler-secret-must-not-appear";
+    const existing = [
+      "scheduler:",
+      `  future_unknown_key: ${secret}`,
+      "  automation:",
+      `    future_unknown_class: ${secret}`,
+      "",
+    ].join("\n");
+    const { prompt } = fakePrompt({ confirmAnswers: CONFIRM_ALL_YES });
+    const { io, writes } = fakeIo(existing);
+    const logs: string[] = [];
+
+    await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: (message) => logs.push(message) });
+
+    expect(writes[0]!.content).toContain(secret);
+    expect(logs.join("\n")).not.toContain(secret);
+  });
+
   it("clears a previously configured device_id when the operator leaves it blank", async () => {
     const existing = "scheduler:\n  enabled: true\n  device_id: thor\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n";
     const { prompt } = fakePrompt({

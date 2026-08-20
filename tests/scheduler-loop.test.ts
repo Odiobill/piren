@@ -69,6 +69,14 @@ describe("resolveSchedulerConfig: invalid values fall back deterministically", (
     }
   });
 
+  it("never echoes a malformed interval value in a warning", () => {
+    const secret = "scheduler-secret-must-not-appear";
+    const resolved = resolveSchedulerConfig({
+      scheduler: { poll_interval_seconds: secret as unknown as number },
+    });
+    expect(resolved.warnings.join("\n")).not.toContain(secret);
+  });
+
   it("falls back to default stale_after_seconds for non-positive/non-integer values and warns", () => {
     const resolved = resolveSchedulerConfig({
       scheduler: { stale_after_seconds: 0 },
