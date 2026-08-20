@@ -164,6 +164,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** A declared structured config block must be a mapping; null/scalars fail closed. */
+function isPresentNonRecord(value: unknown): boolean {
+  return value !== undefined && !isRecord(value);
+}
+
 function unknownKeys(record: Record<string, unknown>, allowed: readonly string[]): string[] {
   return Object.keys(record).filter((key) => !allowed.includes(key)).sort();
 }
@@ -333,6 +338,9 @@ export function parseSettingsIntent(raw: unknown): ParseIntentResult {
   }
 
   if (surface === "local") {
+    if (unknownKeys(raw, ["surface", "family", "block"]).length > 0) {
+      return { ok: false, error: "Unknown field(s) in the local Settings intent envelope (closed inventory)." };
+    }
     const block = raw.block;
     if (!isRecord(block)) return { ok: false, error: "Settings intent block must be an object." };
     if (family === "telegram") {
@@ -371,11 +379,17 @@ export function parseSettingsIntent(raw: unknown): ParseIntentResult {
     return { ok: false, error: "Invalid agent name for an agent Settings intent." };
   }
   if (family === "context-injection") {
+    if (unknownKeys(raw, ["surface", "agent", "family", "mode"]).length > 0) {
+      return { ok: false, error: "Unknown field(s) in the context-injection Settings intent envelope (closed inventory)." };
+    }
     const mode = raw.mode;
     if (mode !== "per_turn" && mode !== "session_start_only") {
       return { ok: false, error: "context-injection mode must be 'per_turn' or 'session_start_only'." };
     }
     return { ok: true, intent: { surface: "agent", agent, family: "context-injection", mode } };
+  }
+  if (unknownKeys(raw, ["surface", "agent", "family", "block"]).length > 0) {
+    return { ok: false, error: "Unknown field(s) in the agent Settings intent envelope (closed inventory)." };
   }
   const block = raw.block;
   if (!isRecord(block)) return { ok: false, error: "Settings intent block must be an object." };
@@ -535,7 +549,25 @@ export async function readLocalConfigRedacted(
     return { available: false, reason: "Local config is not parseable YAML." };
   }
 
+  if (
+    isPresentNonRecord(root.telegram) ||
+    isPresentNonRecord(root.discord) ||
+    isPresentNonRecord(root.scheduler)
+  ) {
+    return { available: false, reason: "Local config contains a malformed Settings block." };
+  }
+
   const telegramBlock = isRecord(root.telegram) ? root.telegram : undefined;
+  const discordBlock = isRecord(root.discord) ? root.discord : undefined;
+  const schedulerBlock = isRecord(root.scheduler) ? root.scheduler : undefined;
+  if (
+    isPresentNonRecord(telegramBlock?.feedback) ||
+    isPresentNonRecord(discordBlock?.feedback) ||
+    isPresentNonRecord(schedulerBlock?.automation)
+  ) {
+    return { available: false, reason: "Local config contains a malformed Settings block." };
+  }
+
   const telegram: RedactedTelegramProjection = {
     configured: asNonEmptyStringOrNull(telegramBlock?.bot_token) !== null,
     allowedChatIds: countList(telegramBlock?.allowed_chat_ids),
@@ -543,7 +575,6 @@ export async function readLocalConfigRedacted(
     feedbackEnabled: asBooleanOrNull(isRecord(telegramBlock?.feedback) ? telegramBlock.feedback.enabled : undefined),
   };
 
-  const discordBlock = isRecord(root.discord) ? root.discord : undefined;
   const discord: RedactedDiscordProjection = {
     configured: asNonEmptyStringOrNull(discordBlock?.bot_token) !== null,
     allowedGuildIds: countList(discordBlock?.allowed_guild_ids),
@@ -553,7 +584,6 @@ export async function readLocalConfigRedacted(
     defaultAgent: asNonEmptyStringOrNull(discordBlock?.default_agent),
   };
 
-  const schedulerBlock = isRecord(root.scheduler) ? root.scheduler : undefined;
   const automationBlock = isRecord(schedulerBlock?.automation) ? schedulerBlock.automation : undefined;
   const scheduler: RedactedSchedulerProjection = {
     present: schedulerBlock !== undefined,
@@ -618,10 +648,20 @@ export async function readAgentConfigRedacted(
     return { available: false, reason: "Agent config is not parseable YAML." };
   }
 
+  if (
+    isPresentNonRecord(root.model) ||
+    isPresentNonRecord(root.context_injection) ||
+    isPresentNonRecord(root.self_improvement)
+  ) {
+    return { available: false, reason: "Agent config contains a malformed Settings block." };
+  }
   const modelBlock = isRecord(root.model) ? root.model : undefined;
-  const fallbackBlock = isRecord(modelBlock?.fallback) ? modelBlock.fallback : undefined;
   const contextBlock = isRecord(root.context_injection) ? root.context_injection : undefined;
   const selfBlock = isRecord(root.self_improvement) ? root.self_improvement : undefined;
+  if (isPresentNonRecord(modelBlock?.fallback) || isPresentNonRecord(selfBlock?.review_loop)) {
+    return { available: false, reason: "Agent config contains a malformed Settings block." };
+  }
+  const fallbackBlock = isRecord(modelBlock?.fallback) ? modelBlock.fallback : undefined;
   const reviewBlock = isRecord(selfBlock?.review_loop) ? selfBlock.review_loop : undefined;
 
   return {
@@ -756,6 +796,19 @@ function parseConfigDocument(text: string | null, what: string): Record<string, 
 }
 
 /** Round-trip proof: the rendered document must parse back to a mapping. */
+function requireExistingRecord(
+  parent: Record<string, unknown>,
+  key: string,
+  what: string,
+): Record<string, unknown> {
+  const value = parent[key];
+  if (value === undefined) return {};
+  if (!isRecord(value)) {
+    throw new SettingsFoundationError("malformed-config", `${what} is not a YAML mapping; refusing to modify it.`);
+  }
+  return { ...value };
+}
+
 function assertRoundTrip(yaml: string, what: string): void {
   let parsed: unknown;
   try {
@@ -829,20 +882,20 @@ export async function applyLocalSettingsIntent(
   const root = parseConfigDocument(before, "Local config");
 
   const familyKey = intent.family;
-  const block: Record<string, unknown> = { ...(isRecord(root[familyKey]) ? (root[familyKey] as Record<string, unknown>) : {}) };
+  const block = requireExistingRecord(root, familyKey, `Local config ${familyKey}`);
   applyPatchEntries(block, localManagedEntries(intent));
 
   // feedbackEnabled is a nested toggle, applied only when present in the patch.
   if (intent.family === "telegram" || intent.family === "discord") {
     const feedbackEnabled = intent.block.feedbackEnabled;
     if (feedbackEnabled !== undefined) {
-      const feedback: Record<string, unknown> = { ...(isRecord(block.feedback) ? (block.feedback as Record<string, unknown>) : {}) };
+      const feedback = requireExistingRecord(block, "feedback", `Local config ${intent.family}.feedback`);
       feedback.enabled = feedbackEnabled;
       block.feedback = feedback;
     }
   }
   if (intent.family === "scheduler" && intent.block.automation !== undefined) {
-    const automation: Record<string, unknown> = { ...(isRecord(block.automation) ? (block.automation as Record<string, unknown>) : {}) };
+    const automation = requireExistingRecord(block, "automation", "Local config scheduler.automation");
     applyPatchEntries(automation, Object.entries(intent.block.automation));
     block.automation = automation;
   }
@@ -884,7 +937,7 @@ export async function applyAgentSettingsIntent(
 
   switch (intent.family) {
     case "model": {
-      const model: Record<string, unknown> = { ...(isRecord(root.model) ? (root.model as Record<string, unknown>) : {}) };
+      const model = requireExistingRecord(root, "model", "Agent config model");
       applyPatchEntries(model, [
         ["id", intent.block.id],
         ["thinking", intent.block.thinking],
@@ -893,24 +946,29 @@ export async function applyAgentSettingsIntent(
       break;
     }
     case "model-fallback": {
-      const model: Record<string, unknown> = { ...(isRecord(root.model) ? (root.model as Record<string, unknown>) : {}) };
-      const fallback: Record<string, unknown> = { ...(isRecord(model.fallback) ? (model.fallback as Record<string, unknown>) : {}) };
+      const model = requireExistingRecord(root, "model", "Agent config model");
+      const fallback = requireExistingRecord(model, "fallback", "Agent config model.fallback");
       applyPatchEntries(fallback, [
         ["auto_switch", intent.block.autoSwitch],
         ["models", intent.block.models],
       ] as const);
+      // Validate the complete merged declaration, including preserved values,
+      // with the delivered bounded fallback parser before any write.
+      if (!parseModelFallbackConfig(fallback).ok) {
+        throw new SettingsFoundationError("malformed-config", "Agent model fallback declaration is invalid; refusing to modify it.");
+      }
       model.fallback = fallback;
       root.model = model;
       break;
     }
     case "context-injection": {
-      const block: Record<string, unknown> = { ...(isRecord(root.context_injection) ? (root.context_injection as Record<string, unknown>) : {}) };
+      const block = requireExistingRecord(root, "context_injection", "Agent config context_injection");
       block.mode = intent.mode;
       root.context_injection = block;
       break;
     }
     case "self-improvement": {
-      const block: Record<string, unknown> = { ...(isRecord(root.self_improvement) ? (root.self_improvement as Record<string, unknown>) : {}) };
+      const block = requireExistingRecord(root, "self_improvement", "Agent config self_improvement");
       const b = intent.block;
       if (b.autoNudge !== undefined) block.auto_nudge = b.autoNudge;
       const reviewEntries: Array<readonly [string, unknown]> = [
@@ -920,7 +978,7 @@ export async function applyAgentSettingsIntent(
         ["timeout_ms", b.reviewLoopTimeoutMs],
       ];
       if (reviewEntries.some(([, value]) => value !== undefined)) {
-        const review: Record<string, unknown> = { ...(isRecord(block.review_loop) ? (block.review_loop as Record<string, unknown>) : {}) };
+        const review = requireExistingRecord(block, "review_loop", "Agent config self_improvement.review_loop");
         applyPatchEntries(review, reviewEntries);
         block.review_loop = review;
       }

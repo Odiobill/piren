@@ -57,6 +57,15 @@ describe("parseSettingsIntent: closed kind model", () => {
     }
   });
 
+  it("rejects unknown envelope fields as well as block fields (never a generic patch envelope)", () => {
+    for (const raw of [
+      { surface: "local", family: "telegram", block: { allowedChatIds: [42] }, revision: "opaque" },
+      { surface: "agent", agent: "kimi", family: "context-injection", mode: "per_turn", block: {} },
+    ]) {
+      expect(parseSettingsIntent(raw).ok).toBe(false);
+    }
+  });
+
   it("rejects unknown fields inside a block (closed inventory, no outside keys)", () => {
     const result = parseSettingsIntent({
       surface: "local",
@@ -296,6 +305,15 @@ describe("readLocalConfigRedacted", () => {
     expect(projection.reason).not.toContain("unclosed");
   });
 
+  it("fails closed when a declared local inventory block is not a mapping", async () => {
+    const projection = await readLocalConfigRedacted(
+      fakeFs(new Map([["/cfg/config.yml", "telegram: malformed-block\n"]])).io,
+      "/cfg/config.yml",
+    );
+    expect(projection.available).toBe(false);
+    expect(projection.reason).toMatch(/malformed/i);
+  });
+
   it("propagates non-ENOENT read failures as bounded read-failed errors", async () => {
     const io: SettingsFoundationIo = {
       async readFile() {
@@ -369,6 +387,16 @@ describe("readAgentConfigRedacted", () => {
     );
     expect(malformed.available).toBe(false);
     expect(malformed.reason).toMatch(/parse|malformed/i);
+  });
+
+  it("fails closed when a declared agent inventory block is not a mapping", async () => {
+    const projection = await readAgentConfigRedacted(
+      fakeFs(new Map([["/vault/team/kimi/config.yml", "model: malformed-block\n"]])).io,
+      "/vault",
+      "kimi",
+    );
+    expect(projection.available).toBe(false);
+    expect(projection.reason).toMatch(/malformed/i);
   });
 
   it("rejects invalid agent names before any read", async () => {
@@ -709,6 +737,20 @@ describe("applyLocalSettingsIntent", () => {
     expect(fs.files.get("/cfg/config.yml")).toBe("telegram: [unclosed\n: : :");
   });
 
+  it("refuses a malformed target family block rather than replacing it", async () => {
+    const original = "telegram: not-a-mapping\nunknown: preserve\n";
+    const fs = statefulFs(new Map([["/cfg/config.yml", original]]));
+
+    await expect(
+      applyLocalSettingsIntent(fs.io, "/cfg/config.yml", {
+        surface: "local",
+        family: "telegram",
+        block: { allowedChatIds: [1] },
+      }, { nowMs: NOW }),
+    ).rejects.toMatchObject({ code: "malformed-config" });
+    expect(fs.files.get("/cfg/config.yml")).toBe(original);
+  });
+
   it("creates a new config when none exists (expected source null)", async () => {
     const fs = statefulFs(new Map());
     await applyLocalSettingsIntent(fs.io, "/cfg/config.yml", {
@@ -834,6 +876,44 @@ describe("applyAgentSettingsIntent", () => {
       }, { nowMs: NOW }),
     ).rejects.toMatchObject({ code: "malformed-config" });
     expect(fs.files.get("/vault/team/kimi/config.yml")).toBe("model: [unclosed\n: : :");
+  });
+
+  it("revalidates the merged fallback declaration rather than writing an invalid preserved list", async () => {
+    const original = [
+      "model:",
+      "  fallback:",
+      "    auto_switch: true",
+      "    models:",
+      "      - not-a-valid-model-id!",
+      "unknown: preserve",
+      "",
+    ].join("\n");
+    const fs = agentFs(original);
+
+    await expect(
+      applyAgentSettingsIntent(fs.io, "/vault", {
+        surface: "agent",
+        agent: "kimi",
+        family: "model-fallback",
+        block: { autoSwitch: false },
+      }, { nowMs: NOW }),
+    ).rejects.toMatchObject({ code: "malformed-config" });
+    expect(fs.files.get("/vault/team/kimi/config.yml")).toBe(original);
+  });
+
+  it("refuses a malformed model block rather than replacing it", async () => {
+    const original = "model: not-a-mapping\nunknown: preserve\n";
+    const fs = agentFs(original);
+
+    await expect(
+      applyAgentSettingsIntent(fs.io, "/vault", {
+        surface: "agent",
+        agent: "kimi",
+        family: "model",
+        block: { thinking: "high" },
+      }, { nowMs: NOW }),
+    ).rejects.toMatchObject({ code: "malformed-config" });
+    expect(fs.files.get("/vault/team/kimi/config.yml")).toBe(original);
   });
 
   it("refuses to clobber a concurrently changed agent config", async () => {
