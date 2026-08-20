@@ -1154,6 +1154,20 @@ code {
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
 
+.composer-submit-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  border-color: var(--border);
+}
+
+/* U2 — the visible interlock reason referenced by aria-describedby (never a
+   focus/scroll/action target; the composer stays visible while interlocked). */
+.composer-interlock-reason {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 /* U3 — @ mention convenience popup (runnable roster only, keyboard navigable). */
 .mention-popup {
   position: absolute;

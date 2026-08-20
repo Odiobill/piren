@@ -52,6 +52,9 @@ import {
   nextApprovalSelection,
 } from "./conversation-approval-pager";
 import {
+  composeInterlockReason,
+} from "./composer-interlock";
+import {
   conversationActivityLiveAnnouncement,
   conversationActivityRunAbortLabel,
   conversationActivityRunStateLabel,
@@ -239,25 +242,6 @@ export function ConversationNavigator({
   }, [dockRuns]);
 
   /**
-   * U1 — focus restoration: when a focused activity-card abort disappears
-   * (terminal/settled/selection/reconnect cleanup), focus returns to the
-   * composer textarea, or the history container when the composer is not
-   * present. This never steals focus on card appearance/transition and never
-   * moves focus on any other path.
-   */
-  useLayoutEffect(() => {
-    if (!restoreAbortFocusRef.current) return;
-    restoreAbortFocusRef.current = false;
-    const conversationId = selection.phase === "active" ? selection.conversation.id : null;
-    const composer = conversationId !== null ? document.getElementById(`conversation-message-${conversationId}`) : null;
-    if (composer instanceof HTMLElement) {
-      composer.focus();
-    } else {
-      historyRef.current?.focus();
-    }
-  }, [dockRuns]);
-
-  /**
    * T6 — per-agent session-only telemetry for the SELECTED active
    * Conversation: in-memory only, fed by validated scoped SSE frames and by
    * explicit steward refresh reads. Cleared on every selection change so
@@ -389,6 +373,37 @@ export function ConversationNavigator({
     | { phase: "busy"; agent: string }
     | { phase: "error"; agent: string; error: ConversationControlError }
   >({ phase: "idle" });
+
+  /**
+   * U2 — the composer interlock is a pure reflection of broker-authoritative
+   * state: an active broker run (activity cards) OR a steward-scoped pending
+   * approval. Never a second lock; never derived from any other source.
+   */
+  const interlocked = dockRuns.length > 0 || pendingApprovals.length > 0;
+  const interlockReason = composeInterlockReason({ activeRuns: dockRuns, approvals: pendingApprovals }) ?? "";
+
+  /**
+   * U1+U2 — focus restoration: when a focused activity-card abort disappears
+   * (terminal/settled/selection/reconnect cleanup), focus returns to the
+   * composer textarea, or the history container when the composer is
+   * interlocked (or absent). This never steals focus on card appearance/
+   * transition and never moves focus on any other path.
+   */
+  useLayoutEffect(() => {
+    if (!restoreAbortFocusRef.current) return;
+    restoreAbortFocusRef.current = false;
+    if (interlocked) {
+      historyRef.current?.focus();
+      return;
+    }
+    const conversationId = selection.phase === "active" ? selection.conversation.id : null;
+    const composer = conversationId !== null ? document.getElementById(`conversation-message-${conversationId}`) : null;
+    if (composer instanceof HTMLElement) {
+      composer.focus();
+    } else {
+      historyRef.current?.focus();
+    }
+  }, [dockRuns, pendingApprovals, interlocked]);
 
   /** Reset the lifecycle controls when leaving the current view. */
   function resetLifecycleControls() {
@@ -962,12 +977,15 @@ export function ConversationNavigator({
                     composer-right details action is preserved. */}
                 <div className="composer-action-row">
                   <ConversationComposer
+                    key={selection.conversation.id}
                     conversationId={selection.conversation.id}
                     token={token}
                     agents={load.phase === "ready" ? load.agents : []}
                     onUnauthorized={onUnauthorized}
                     onAnnounce={setAnnouncement}
                     onSent={handleMessageSent}
+                    interlocked={interlocked}
+                    interlockReason={interlockReason}
                   />
                   <DetailsToggleButton buttonRef={detailsButtonRef} onClick={openDetails} />
                 </div>

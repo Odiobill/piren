@@ -12,6 +12,12 @@ import {
   type ConversationSubmitPolicy,
 } from "./conversation-composer";
 import {
+  COMPOSER_INTERLOCK_CLEARED_ANNOUNCEMENT,
+  composerInterlockVisibleText,
+  reduceComposerInterlock,
+  type ComposerInterlockState,
+} from "./composer-interlock";
+import {
   applyMentionCompletion,
   filterRunnableCompletions,
   findMentionTrigger,
@@ -54,6 +60,8 @@ export function ConversationComposer({
   onUnauthorized,
   onAnnounce,
   onSent,
+  interlocked = false,
+  interlockReason = "",
 }: {
   /** The selected durable conversation (active surface). */
   conversationId: string;
@@ -68,6 +76,14 @@ export function ConversationComposer({
    * Never called on a bounded failure or for a mention-completion insertion.
    */
   onSent?: () => void;
+  /**
+   * U2: whether the selected Conversation currently has authoritative live
+   * agent work (an active broker run) or a steward-scoped pending approval.
+   * Honest browser reflection of broker state only — never a second lock.
+   */
+  interlocked?: boolean;
+  /** U2: the specific visible interlock reason (aria-describedby target). */
+  interlockReason?: string;
 }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
@@ -78,6 +94,15 @@ export function ConversationComposer({
   const [submitPolicy, setSubmitPolicy] = useState<ConversationSubmitPolicy>("enter");
   /** Explicit popup visibility: Escape dismisses it until the draft changes. */
   const [mentionVisible, setMentionVisible] = useState(false);
+  /** U2: the interlock state machine (editable / interlocked-draft / interlocked-ack). */
+  const [interlockState, setInterlockState] = useState<ComposerInterlockState>({ state: "editable" });
+  /** U2: the accepted-send text retained until authoritative interlock follows. */
+  const pendingAckRef = useRef<string | null>(null);
+  /** U2: the latest live draft (byte-for-byte interlock capture). */
+  const textRef = useRef("");
+  /** U2: synchronous view of the interlock state for the transition effect. */
+  const interlockStateRef = useRef<ComposerInterlockState>({ state: "editable" });
+  const wasInterlockedRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const pendingCaretRef = useRef<number | null>(null);
@@ -87,13 +112,18 @@ export function ConversationComposer({
   const activeAtSubmitRef = useRef<Element | null>(null);
   const inputId = `conversation-message-${conversationId}`;
   const popupId = `${inputId}-mention-popup`;
+  const reasonId = `${inputId}-interlock-reason`;
+
+  // U2: the visible textarea text is derived from the interlock state.
+  const visibleText = composerInterlockVisibleText(interlockState, text);
 
   // Caret-local @ trigger over the current draft text (never a text scan).
   const mention = findMentionTrigger(text, caret);
   const matches = mention.ok ? filterRunnableCompletions(agents, mention.trigger.token) : [];
   // The popup is visible only while a valid trigger exists AND it was not
-  // explicitly dismissed (Escape); typing/editing re-syncs it.
-  const mentionOpen = mentionVisible && mention.ok && matches.length > 0;
+  // explicitly dismissed (Escape); typing/editing re-syncs it. An interlocked
+  // composer never offers the picker (read-only, no recipient derivation).
+  const mentionOpen = !interlocked && mentionVisible && mention.ok && matches.length > 0;
 
   // Keep the popup in sync with the trigger: any text/caret edit after an
   // Escape dismissal must resynchronize a still-valid runnable-only picker
@@ -125,7 +155,45 @@ export function ConversationComposer({
     input.focus({ preventScroll: true });
   }, [busy]);
 
-  // Auto-grow: content height bounded by the composer range; scrolls once capped.
+  // U2: keep the synchronous draft/interlock views in sync for the transition
+  // effect (byte-for-byte capture and restoration).
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
+  useEffect(() => {
+    interlockStateRef.current = interlockState;
+  }, [interlockState]);
+
+  /**
+   * U2 — the interlock transition effect. It NEVER moves focus, scrolls,
+   * fetches, or mutates anything beyond the interlock state, the draft
+   * restoration/acknowledgement text, and ONE polite announcement per
+   * transition (begin/clear; never per event tick).
+   */
+  useEffect(() => {
+    const was = wasInterlockedRef.current;
+    wasInterlockedRef.current = interlocked;
+    if (interlocked === was) return;
+    if (interlocked) {
+      if (interlockReason !== "") onAnnounce(interlockReason);
+      if (pendingAckRef.current !== null) {
+        setInterlockState(reduceComposerInterlock(interlockStateRef.current, { type: "send-accepted", text: pendingAckRef.current, interlockFollows: true }));
+        pendingAckRef.current = null;
+      } else {
+        setInterlockState(reduceComposerInterlock(interlockStateRef.current, { type: "interlock-begin", draft: textRef.current }));
+      }
+    } else {
+      onAnnounce(COMPOSER_INTERLOCK_CLEARED_ANNOUNCEMENT);
+      const prev = interlockStateRef.current;
+      setInterlockState(reduceComposerInterlock(prev, { type: "interlock-clear" }));
+      if (prev.state === "interlocked-draft") setText(prev.draft); // transition 6: restore byte-for-byte
+      else if (prev.state === "interlocked-ack") setText(""); // transition 7: clear the ack
+    }
+  }, [interlocked]);
+
+  // Auto-grow: content height bounded by the composer range; scrolls once
+  // capped. Driven by the VISIBLE text so an interlocked draft/acknowledgement
+  // still grows the box correctly.
   useEffect(() => {
     const input = inputRef.current;
     if (!input) return;
@@ -133,7 +201,7 @@ export function ConversationComposer({
     const target = clampComposerHeight(input.scrollHeight, COMPOSER_MIN_HEIGHT_PX, COMPOSER_MAX_HEIGHT_PX);
     input.style.height = `${target}px`;
     input.style.overflowY = input.scrollHeight > COMPOSER_MAX_HEIGHT_PX ? "auto" : "hidden";
-  }, [text]);
+  }, [visibleText]);
 
   // After a completion insertion, place the caret where the text lands.
   useEffect(() => {
@@ -164,6 +232,7 @@ export function ConversationComposer({
   }
 
   async function handleSubmit() {
+    if (interlocked) return;
     const validation = validateConversationText(text);
     if (!validation.ok) {
       setError("Enter a message first.");
@@ -186,6 +255,11 @@ export function ConversationComposer({
       // separate gateway-truth read (onSent), never an optimistic write.
       setText("");
       setCaret(0);
+      // U2: retain the accepted text so a following authoritative interlock
+      // presents it as a non-resendable read-only acknowledgement (transition
+      // 3); when no interlock follows the composer simply stays cleared
+      // (transition 4 clear-on-success).
+      pendingAckRef.current = raw;
       // P8 (§1): only an ACCEPTED send requests focus restoration.
       restoreFocusRef.current = true;
       onSent?.();
@@ -203,6 +277,7 @@ export function ConversationComposer({
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (interlocked) return;
     const composing = event.nativeEvent.isComposing || composingRef.current || event.keyCode === 229;
     if (event.key === "Enter" && !composing) {
       // An open picker keeps its Enter-to-choose semantics under either
@@ -273,7 +348,7 @@ export function ConversationComposer({
           <textarea
             id={inputId}
             ref={inputRef}
-            value={text}
+            value={visibleText}
             onChange={(event) => {
               setText(event.target.value);
               setCaret(event.target.selectionStart ?? event.target.value.length);
@@ -291,6 +366,9 @@ export function ConversationComposer({
             placeholder="Write a message…"
             rows={1}
             disabled={busy}
+            readOnly={interlocked}
+            aria-disabled={interlocked ? "true" : undefined}
+            aria-describedby={interlocked ? reasonId : undefined}
             aria-autocomplete="list"
             aria-expanded={mentionOpen}
             aria-controls={mentionOpen ? popupId : undefined}
@@ -321,11 +399,17 @@ export function ConversationComposer({
           aria-pressed={submitPolicy === "enter"}
           aria-label={submitPolicyAccessibleName(submitPolicy)}
           title={submitPolicyTooltip(submitPolicy)}
+          disabled={interlocked}
           onClick={() => setSubmitPolicy((policy) => (policy === "enter" ? "ctrl-enter" : "enter"))}
         >
           <ReturnKeyIcon size={16} />
         </button>
       </div>
+      {interlocked && (
+        <p id={reasonId} className="composer-interlock-reason">
+          {interlockReason}
+        </p>
+      )}
       {error && (
         <p className="error-message" role="status">
           {error}

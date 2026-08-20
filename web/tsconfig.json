@@ -50,6 +50,8 @@
     "../tests/web-w2-browser-layout.test.ts",
     "../tests/settings-api.test.ts",
     "../tests/settings-transport-form.test.ts",
-    "../tests/web-u1-activity-cards.test.ts"
+    "../tests/web-u1-activity-cards.test.ts",
+    "../tests/web-conversation-composer-interlock.test.ts",
+    "../tests/web-u2-interlock-navigator.test.ts"
   ]
 }
