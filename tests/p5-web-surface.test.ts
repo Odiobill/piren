@@ -18,10 +18,11 @@ describe("P5+R2 transient live run state (static)", () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     // R2 — the transcript renders NO transient activity panel: the compact
-    // dock state is broker-activity-driven and identifies the exact agent.
+    // status-only cards are broker-activity-driven and identify the exact
+    // agent, rendered in the history region (U1 replaced the D4 dock row).
     expect(timeline).not.toContain("transient-run-panel");
     expect(timeline).not.toContain("ConversationActivityDisplay");
-    expect(navigator).toContain("dock-run-status");
+    expect(navigator).toContain("conversation-activity-cards");
     expect(navigator).toContain("run.agent");
     // The truthful working/typing labels come from the pure activity core
     // (conversationActivityRunStateLabel), never partial work content.
@@ -30,8 +31,10 @@ describe("P5+R2 transient live run state (static)", () => {
     expect(activity).toContain('"is working…"');
     expect(activity).toContain('"is typing…"');
     // The accessible labelled inline-SVG abort targets the broker-provided
-    // agent only via the existing abort route, moved into the dock.
-    expect(navigator).toContain("Abort ${run.agent} run");
+    // agent only via the existing abort route, with the U1 pinned label from
+    // the pure activity core.
+    expect(navigator).toContain("conversationActivityRunAbortLabel(run.agent)");
+    expect(navigator).not.toContain("Abort ${run.agent} run");
     expect(navigator).toContain("StopIcon");
     expect(navigator).toContain("handleAbort(run.agent)");
     expect(navigator).toContain("abortConversationRun(");

@@ -96,8 +96,8 @@ function deliverApproval(approval: { requestId: string; agent?: string; method?:
   });
 }
 
-function activityRow(): HTMLElement | null {
-  return container.querySelector<HTMLElement>(".conversation-activity-row");
+function activityCards(): HTMLElement | null {
+  return container.querySelector<HTMLElement>(".conversation-activity-cards");
 }
 
 function trayChildOrder(): string[] {
@@ -145,8 +145,8 @@ async function mountNavigator(): Promise<void> {
   await flush();
 }
 
-describe("D4 live activity tray row", () => {
-  it("renders active runs in one named tray sibling row above composer controls, never inside the composer row", async () => {
+describe("U1 live activity cards (replace the D4 tray row)", () => {
+  it("renders active runs as cards in the history region; the tray no longer carries the activity row", async () => {
     await mountNavigator();
     await act(async () => deliverApproval({ requestId: "req-1" }));
     await act(async () =>
@@ -157,31 +157,33 @@ describe("D4 live activity tray row", () => {
     );
     await flush();
 
-    const row = activityRow();
-    expect(row).not.toBeNull();
-    // A direct named sibling row of the interaction tray.
-    expect(row?.parentElement?.classList.contains("interaction-tray")).toBe(true);
-    // Never inside the horizontal composer action row (old placement gone).
+    const cards = activityCards();
+    expect(cards).not.toBeNull();
+    // Cards live inside the history region (single scroll owner), after the
+    // durable timeline.
+    expect(cards?.parentElement?.classList.contains("conversation-history")).toBe(true);
+    // The D4 tray activity row is removed (never duplicated in the tray).
     expect(container.querySelector(".composer-action-row .conversation-activity-row")).toBeNull();
     expect(container.querySelector(".composer-action-row .dock-run-status")).toBeNull();
-    // Exactly one named row for all runs.
-    expect(container.querySelectorAll(".conversation-activity-row")).toHaveLength(1);
-    // Order: approval surface, then the activity row, then composer controls,
-    // then the compact Context cards row last (below the composer).
-    expect(trayChildOrder()).toEqual(["approval-cards", "conversation-activity-row", "composer-action-row", "conversation-context-cards"]);
-    // The composer keeps its place inside the composer action row.
+    expect(container.querySelector(".interaction-tray .conversation-activity-row")).toBeNull();
+    expect(container.querySelector(".interaction-tray .dock-run-status")).toBeNull();
+    // Exactly one cards container for all runs.
+    expect(container.querySelectorAll(".conversation-activity-cards")).toHaveLength(1);
+    // Order: approval cards, then composer controls, then context cards
+    // (the activity row is no longer a tray child).
+    expect(trayChildOrder()).toEqual(["approval-cards", "composer-action-row", "conversation-context-cards"]);
     expect(container.querySelector(".composer-action-row .mock-composer")).not.toBeNull();
     // Exact compact source fields: broker-provided agent + truthful phase.
-    expect(row?.textContent).toContain("dipu");
-    expect(row?.textContent).toContain("is working…");
-    expect(row?.textContent).toContain("zai");
-    expect(row?.textContent).toContain("is typing…");
-    // The exact agent-scoped abort affordance is preserved.
-    expect(row?.querySelector('[aria-label="Abort dipu run"]')).not.toBeNull();
-    expect(row?.querySelector('[aria-label="Abort zai run"]')).not.toBeNull();
+    expect(cards?.textContent).toContain("dipu");
+    expect(cards?.textContent).toContain("is working…");
+    expect(cards?.textContent).toContain("zai");
+    expect(cards?.textContent).toContain("is typing…");
+    // The exact agent-scoped abort affordance is preserved, with the U1 label.
+    expect(cards?.querySelector('[aria-label="Abort dipu\'s current work"]')).not.toBeNull();
+    expect(cards?.querySelector('[aria-label="Abort zai\'s current work"]')).not.toBeNull();
   });
 
-  it("keeps the exact abort busy/error/manual-retry semantics in the tray row", async () => {
+  it("keeps the exact abort busy/error/manual-retry semantics in the cards", async () => {
     let release: (() => void) | undefined;
     vi.mocked(abortConversationRun).mockImplementation(
       () =>
@@ -192,13 +194,13 @@ describe("D4 live activity tray row", () => {
     await mountNavigator();
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
-    const abort = activityRow()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu run"]');
+    const abort = activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]');
     expect(abort).toBeDefined();
     act(() => {
       abort?.click();
     });
     expect(vi.mocked(abortConversationRun)).toHaveBeenCalledWith("c1", "dipu", "t");
-    expect(activityRow()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu run"]')?.disabled).toBe(true);
+    expect(activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]')?.disabled).toBe(true);
     await act(async () => {
       release?.();
     });
@@ -207,32 +209,30 @@ describe("D4 live activity tray row", () => {
     // Error path: bounded visible error; retry is only an explicit fresh click.
     vi.mocked(abortConversationRun).mockRejectedValueOnce(new Error("abort HTTP 500"));
     await act(async () => {
-      activityRow()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu run"]')?.click();
+      activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]')?.click();
     });
     await flush();
-    const error = activityRow()?.querySelector("[role='alert']");
+    const error = activityCards()?.querySelector("[role='alert']");
     expect(error?.textContent).toContain("abort HTTP 500");
     expect(vi.mocked(abortConversationRun)).toHaveBeenCalledTimes(2);
   });
 
-  it("renders no activity row with no runs, after cleanup, and never on read-only inspection", async () => {
+  it("renders no cards with no runs, after cleanup, and never on read-only inspection", async () => {
     await mountNavigator();
     await flush();
-    expect(activityRow()).toBeNull();
+    expect(activityCards()).toBeNull();
 
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
-    expect(activityRow()).not.toBeNull();
+    expect(activityCards()).not.toBeNull();
 
-    // Every fail-closed cleanup path reports an empty run list; the row
-    // disappears with it (no settled summary, no partial text).
     await act(async () => deliverActivity([]));
     await flush();
-    expect(activityRow()).toBeNull();
+    expect(activityCards()).toBeNull();
     expect(container.textContent).not.toContain("is working");
   });
 
-  it("read-only inspection has no activity row and no activity wiring", async () => {
+  it("read-only inspection has no activity cards and no activity wiring", async () => {
     vi.mocked(attachConversation).mockResolvedValue({
       attached: false,
       error: "agent 'dipu' is not runnable",
@@ -242,7 +242,7 @@ describe("D4 live activity tray row", () => {
     await flush();
     expect(container.querySelector(".attach-banner")).not.toBeNull();
     expect(container.querySelector(".interaction-tray")).toBeNull();
-    expect(activityRow()).toBeNull();
+    expect(activityCards()).toBeNull();
     expect(timelineProps.onActivityChange).toBeUndefined();
   });
 });
@@ -362,14 +362,18 @@ describe("D4 recognized handoff approval presentation", () => {
 });
 
 describe("D4 static contract pins", () => {
-  it("the activity row has tray-row styles and no animation was added", async () => {
+  it("the U1 activity cards have history-region styles with no animation and no second scroll region", async () => {
     const styles = await readFile(join(process.cwd(), "web", "src", "styles.css"), "utf8");
-    expect(styles).toContain(".conversation-activity-row");
-    // Explicit pin: NO animated behavior was introduced for the activity row.
-    const activityRule = styles.match(/\.conversation-activity-row[^{]*\{[^}]*\}/g) ?? [];
+    expect(styles).toContain(".conversation-activity-cards");
+    // The D4 tray-row styles are removed (never duplicated).
+    expect(styles).not.toContain(".conversation-activity-row");
+    expect(styles).not.toContain(".dock-run-status");
+    // Explicit pin: NO animated behavior was introduced for the cards.
+    const activityRule = styles.match(/\.conversation-activity-cards[^{]*\{[^}]*\}/g) ?? [];
     expect(activityRule.length).toBeGreaterThan(0);
     for (const rule of activityRule) {
       expect(rule).not.toContain("animation");
+      expect(rule).not.toMatch(/overflow(-y|-x)?:\s*(auto|scroll)/);
     }
     expect(styles).not.toMatch(/@keyframes[^\n]*activity/);
     // The composer row keeps its flex path (never sticky, composer flexes).
@@ -388,8 +392,9 @@ describe("D4 static contract pins", () => {
 
   it("the navigator source adds no animated dots or new authority to the activity/handoff surfaces", async () => {
     const navigator = await readFile(join(process.cwd(), "web", "src", "ConversationNavigator.tsx"), "utf8");
-    expect(navigator).toContain("conversation-activity-row");
-    expect(navigator).not.toMatch(/conversation-activity-row[\s\S]{0,400}busy-dots/);
+    expect(navigator).toContain("conversation-activity-cards");
+    expect(navigator).not.toContain("conversation-activity-row");
+    expect(navigator).not.toMatch(/conversation-activity-cards[\s\S]{0,400}busy-dots/);
     // Approval/abort routes and exactly-one bodies are the pre-existing ones.
     expect(navigator).toContain("approveConversationApproval");
     expect(navigator).toContain("abortConversationRun");

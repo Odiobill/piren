@@ -57,6 +57,7 @@
     "tests/web-vault-explorer-shell.test.ts",
     "tests/web-w2-browser-layout.test.ts",
     "tests/web-settings-view.test.ts",
+    "tests/web-u1-activity-cards.test.ts",
     "tests/settings-api.test.ts",
     "tests/settings-transport-form.test.ts"
   ]

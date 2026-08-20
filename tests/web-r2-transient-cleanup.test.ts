@@ -69,10 +69,10 @@ describe("R2 run-summary removal and partial-content removal (static)", () => {
   it("compact source-truthful live run state renders in the stable bottom dock, not the transcript", async () => {
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
-    // The dock carries the compact per-run state (exact agent + working/typing
-    // labels sourced from the pure activity core).
+    // The cards carry the compact per-run state (exact agent + working/typing
+    // labels sourced from the pure activity core) inside the history region.
     expect(navigator).toContain("composer-action-row");
-    expect(navigator).toContain("dock-run-status");
+    expect(navigator).toContain("conversation-activity-cards");
     expect(navigator).toContain("conversationActivityRunStateLabel(run.phase)");
     expect(navigator).toContain("transient-run-abort");
     // The live-state flows from the subscribed timeline to the navigator dock.

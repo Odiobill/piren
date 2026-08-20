@@ -5,11 +5,15 @@ import {
   clearConversationActivityForAgent,
   CONVERSATION_ACTIVITY_DELTA_MAX,
   CONVERSATION_ACTIVITY_PARTIAL_MAX,
+  compactActivityRuns,
+  conversationActivityLiveAnnouncement,
+  conversationActivityRunAbortLabel,
   emptyConversationActivity,
   parseConversationActivityFrame,
   reconcileConversationActivity,
   type ConversationActivityFrame,
   type ConversationActivityState,
+  type ConversationCompactActivityRun,
 } from "../web/src/conversation-activity.js";
 import { parseConversationEventRecord, type ConversationEventRecord } from "../web/src/conversations.js";
 
@@ -236,5 +240,39 @@ describe("fail-closed invalid/stale/contradictory activity (U4 correction)", () 
     // The earliest tombstone was dropped; the newest ones are retained.
     expect(state.settled).toContain("run-0099");
     expect(state.settled).not.toContain("run-0000");
+  });
+});
+
+describe("U1 status-only card helpers (pure)", () => {
+  it("labels the scoped abort action as the exact agent's current work", () => {
+    expect(conversationActivityRunAbortLabel("dipu")).toBe("Abort dipu's current work");
+    expect(conversationActivityRunAbortLabel("zai")).toBe("Abort zai's current work");
+  });
+
+  function run(runId: string, agent: string, phase: "working" | "typing"): ConversationCompactActivityRun {
+    return { runId, agent, phase };
+  }
+
+  it("announces one polite line per card appearance, phase transition, and removal (never per token)", () => {
+    // Appearance (working).
+    expect(conversationActivityLiveAnnouncement([], [run("r1", "dipu", "working")])).toBe("dipu is working…");
+    // working -> typing transition.
+    expect(conversationActivityLiveAnnouncement([run("r1", "dipu", "working")], [run("r1", "dipu", "typing")])).toBe("dipu is typing…");
+    // Removal (neutral, never a completion/failure claim).
+    expect(conversationActivityLiveAnnouncement([run("r1", "dipu", "typing")], [])).toBe("dipu is no longer working");
+  });
+
+  it("returns null when the card set is byte-identical (no redundant announcement)", () => {
+    const before = [run("r1", "dipu", "working")];
+    const after = [run("r1", "dipu", "working")];
+    expect(conversationActivityLiveAnnouncement(before, after)).toBeNull();
+    expect(conversationActivityLiveAnnouncement([], [])).toBeNull();
+  });
+
+  it("joins simultaneous changes into one announcement and leaves unrelated runs unannounced", () => {
+    const previous = [run("r1", "dipu", "working"), run("r2", "zai", "typing")];
+    const next = [run("r2", "zai", "typing"), run("r3", "kim", "working")];
+    // r1 removed, r3 appeared; r2 unchanged (not re-announced).
+    expect(conversationActivityLiveAnnouncement(previous, next)).toBe("kim is working…. dipu is no longer working");
   });
 });

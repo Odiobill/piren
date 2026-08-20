@@ -345,12 +345,14 @@ describe("U4 transient live activity surface (static)", () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
     const activity = await readFile(join(webSrc, "conversation-activity.ts"), "utf8");
     const navigator = await readFile(join(webSrc, "ConversationNavigator.tsx"), "utf8");
-    // R2 — the labels are rendered in the bottom dock via the pure core; the
-    // transcript no longer hosts a transient panel or partial work content.
+    // R2 — the labels are rendered in the history-region status-only cards
+    // via the pure core; the transcript no longer hosts a transient panel or
+    // partial work content. U1 replaced the D4 dock row with these cards.
     expect(activity).toContain('"is working…"');
     expect(activity).toContain('"is typing…"');
     expect(navigator).toContain("conversationActivityRunStateLabel(run.phase)");
-    expect(navigator).toContain("dock-run-status");
+    expect(navigator).toContain("conversation-activity-cards");
+    expect(navigator).not.toContain("dock-run-status");
     expect(timeline).not.toContain("transient-run-panel");
     expect(timeline).not.toContain("is working");
     expect(timeline).not.toContain("is typing");

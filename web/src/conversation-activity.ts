@@ -136,6 +136,41 @@ export function conversationActivityRunStateLabel(phase: "working" | "typing"): 
   return phase === "working" ? "is working…" : "is typing…";
 }
 
+/** U1 — the normally focusable, labelled scoped abort action for one exact agent run. */
+export function conversationActivityRunAbortLabel(agent: string): string {
+  return `Abort ${agent}'s current work`;
+}
+
+/**
+ * U1 — compute at most ONE polite live announcement for a card-set change.
+ * Reports each appearance and working→typing transition as a truthful
+ * `<agent> is working…` / `<agent> is typing…` line, and each removal as a
+ * neutral `<agent> is no longer working` line (never a completion/failure
+ * claim). Returns null when the compact card set is byte-identical, so the
+ * announcement never fires per token/tick. The compact projection carries no
+ * partial text, so no delta content can ever enter an announcement.
+ */
+export function conversationActivityLiveAnnouncement(
+  previous: readonly ConversationCompactActivityRun[],
+  next: readonly ConversationCompactActivityRun[],
+): string | null {
+  const prevByRun = new Map(previous.map((item) => [item.runId, item]));
+  const nextByRun = new Map(next.map((item) => [item.runId, item]));
+  const parts: string[] = [];
+  for (const item of next) {
+    const prior = prevByRun.get(item.runId);
+    if (prior === undefined || prior.phase !== item.phase) {
+      parts.push(`${item.agent} ${conversationActivityRunStateLabel(item.phase)}`);
+    }
+  }
+  for (const item of previous) {
+    if (!nextByRun.has(item.runId)) {
+      parts.push(`${item.agent} is no longer working`);
+    }
+  }
+  return parts.length === 0 ? null : parts.join(". ");
+}
+
 /** Fail-closed: remove every transient run while retaining the settled tombstones. */
 export function clearConversationActivity(state: ConversationActivityState): ConversationActivityState {
   return { runs: [], settled: state.settled };

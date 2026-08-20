@@ -1526,34 +1526,37 @@ code {
    with the scoped abort control. Partial/truncation presentation and the
    old panel are removed; durable replies/terminals are the only visible
    record of work. */
-/* D4 — the live activity row is its own named interaction-tray sibling row
-   (after any approval surface, above the composer controls), never inside
-   the horizontal composer action row. It renders the same compact R2 source
-   fields; no animation. */
-.conversation-activity-row {
-  padding-top: 10px;
-}
-
-.dock-run-status {
+/* U1 — status-only live activity cards render as the final transient content
+   of .conversation-history, immediately after the durable timeline (the
+   existing scroll owner). They replace the D4 tray activity row. Status-only:
+   agent + working…/typing… + scoped abort; no partial text, no animation,
+   and no second scroll region. */
+.conversation-activity-cards {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  gap: 8px;
+  margin-top: 14px;
+  padding-bottom: 4px;
 }
 
-.dock-run {
-  display: inline-flex;
+.activity-card {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  min-width: 0;
 }
 
-.dock-run-agent {
+.activity-card-agent {
   font-weight: 700;
   font-size: 0.875rem;
 }
 
-.dock-run-state {
+.activity-card-state {
   font-weight: 600;
   font-size: 0.875rem;
   color: var(--muted);

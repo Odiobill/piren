@@ -52,6 +52,8 @@ import {
   nextApprovalSelection,
 } from "./conversation-approval-pager";
 import {
+  conversationActivityLiveAnnouncement,
+  conversationActivityRunAbortLabel,
   conversationActivityRunStateLabel,
   type ConversationCompactActivityRun,
 } from "./conversation-activity";
@@ -178,6 +180,8 @@ export function ConversationNavigator({
   /** U2 details modal: open state + the invoking button for focus return. */
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsButtonRef = useRef<HTMLButtonElement>(null);
+  /** U1: the named .conversation-history region (focus fallback for abort removal). */
+  const historyRef = useRef<HTMLDivElement>(null);
   /** P8 (§5): commit-time anchor wiring — pre-commit metrics ref + one-shot
       initial-anchor flag, driven by the content-version layout effect. */
   const scrollWiringRef = useRef<ConversationScrollWiringState>(EMPTY_CONVERSATION_SCROLL_WIRING);
@@ -204,9 +208,53 @@ export function ConversationNavigator({
    * content immediately above the dock (R1 contract §6).
    */
   const [dockRuns, setDockRuns] = useState<ConversationCompactActivityRun[]>([]);
-  const handleActivityChange = useCallback((runs: ConversationCompactActivityRun[]) => setDockRuns(runs), []);
+  /**
+   * U1 — one polite live announcement per card appearance/state transition/
+   * removal (never per token/tick). Computed from the COMPACT card set (agent
+   * + phase only), so no partial text can ever enter an announcement.
+   */
+  const [activityAnnouncement, setActivityAnnouncement] = useState("");
+  /** U1: the compact card set as of the previous activity change (announcement diff). */
+  const previousDockRunsRef = useRef<ConversationCompactActivityRun[]>([]);
+  /** U1: a focused abort card is being removed → restore focus after the commit. */
+  const restoreAbortFocusRef = useRef(false);
+  const handleActivityChange = useCallback((runs: ConversationCompactActivityRun[]) => {
+    // Focus-restore decision BEFORE the removal commit: if the focused element
+    // is one of the activity abort buttons and its runId is leaving the card
+    // set, the composer (or history region) reclaims focus after the commit.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.dataset.activityAbortRunId !== undefined) {
+      const focusedRunId = active.dataset.activityAbortRunId;
+      if (!runs.some((run) => run.runId === focusedRunId)) {
+        restoreAbortFocusRef.current = true;
+      }
+    }
+    const announcement = conversationActivityLiveAnnouncement(previousDockRunsRef.current, runs);
+    previousDockRunsRef.current = runs;
+    if (announcement !== null) setActivityAnnouncement(announcement);
+    setDockRuns(runs);
+  }, []);
   useEffect(() => {
     bumpContentVersion();
+  }, [dockRuns]);
+
+  /**
+   * U1 — focus restoration: when a focused activity-card abort disappears
+   * (terminal/settled/selection/reconnect cleanup), focus returns to the
+   * composer textarea, or the history container when the composer is not
+   * present. This never steals focus on card appearance/transition and never
+   * moves focus on any other path.
+   */
+  useLayoutEffect(() => {
+    if (!restoreAbortFocusRef.current) return;
+    restoreAbortFocusRef.current = false;
+    const conversationId = selection.phase === "active" ? selection.conversation.id : null;
+    const composer = conversationId !== null ? document.getElementById(`conversation-message-${conversationId}`) : null;
+    if (composer instanceof HTMLElement) {
+      composer.focus();
+    } else {
+      historyRef.current?.focus();
+    }
   }, [dockRuns]);
 
   /**
@@ -361,6 +409,11 @@ export function ConversationNavigator({
     // R2: the compact dock live state is session-scoped and never survives a
     // fresh open flow (the timeline also clears it on reread/selection).
     setDockRuns([]);
+    // U1: the activity announcement diff must not fire a stale removal line
+    // when a prior selection's cards are discarded on navigation.
+    previousDockRunsRef.current = [];
+    setActivityAnnouncement("");
+    restoreAbortFocusRef.current = false;
   }
 
   /** Invalidate any in-flight open flow (navigation home/back/invalid). */
@@ -833,6 +886,7 @@ export function ConversationNavigator({
                 role="region"
                 aria-label="Conversation history"
                 tabIndex={0}
+                ref={historyRef}
               >
                 <ConversationTimeline
                   conversationId={selection.conversation.id}
@@ -849,35 +903,35 @@ export function ConversationNavigator({
                     bumpContentVersion();
                   }}
                 />
-              </div>
-              <div className="interaction-tray">
-                <ConversationApprovalCards
-                  approvals={pendingApprovals}
-                  submit={approvalSubmit}
-                  onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
-                />
-                {/* D4 — the compact broker-authoritative live-run/abort state
-                    is its own named tray row: AFTER any approval surface and
-                    ABOVE the composer controls, never inside the horizontal
-                    composer action row, so the text input never shrinks. It
-                    renders only while broker-valid runs exist (active surface
-                    only) and keeps the exact R2 source fields (agent +
-                    working/typing + scoped abort). No partial work text, no
-                    settled summaries, no animation. */}
+                {/* U1 — status-only live activity cards: the final transient
+                    content of the history region, immediately after the
+                    durable timeline. They use this same scroll owner and
+                    REPLACE the D4 tray row (removed below). Each card is
+                    exactly agent + working…/typing… + the scoped abort
+                    action; no partial text, no tools/reasons, no summary, no
+                    red badge. One polite announcement per appearance/
+                    transition/removal via the dedicated live region. */}
+                {/* U1 — one polite live announcement region (always mounted,
+                    never per token/tick): the removal line must remain
+                    announced after the cards themselves are gone. */}
+                <p className="sr-only" role="status" aria-live="polite" data-activity-announcement="true">
+                  {activityAnnouncement}
+                </p>
                 {dockRuns.length > 0 && (
-                  <div className="conversation-activity-row dock-run-status" aria-label="Live agent runs" aria-live="polite">
+                  <div className="conversation-activity-cards" aria-label="Live agent activity">
                     {dockRuns.map((run) => {
                       const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
                       const failed = abortState?.phase === "error" && abortState.agent === run.agent;
                       return (
-                        <div key={run.runId} className={`dock-run dock-run-${run.phase}`}>
-                          <span className="dock-run-agent">{run.agent}</span>
-                          <span className="dock-run-state">{conversationActivityRunStateLabel(run.phase)}</span>
+                        <div key={run.runId} className={`activity-card activity-card-${run.phase}`}>
+                          <span className="activity-card-agent">{run.agent}</span>
+                          <span className="activity-card-state">{conversationActivityRunStateLabel(run.phase)}</span>
                           <button
                             type="button"
                             className="transient-run-abort"
-                            aria-label={`Abort ${run.agent} run`}
-                            title={`Abort ${run.agent} run`}
+                            data-activity-abort-run-id={run.runId}
+                            aria-label={conversationActivityRunAbortLabel(run.agent)}
+                            title={conversationActivityRunAbortLabel(run.agent)}
                             disabled={aborting}
                             onClick={() => void handleAbort(run.agent)}
                           >
@@ -893,6 +947,17 @@ export function ConversationNavigator({
                     })}
                   </div>
                 )}
+              </div>
+              <div className="interaction-tray">
+                <ConversationApprovalCards
+                  approvals={pendingApprovals}
+                  submit={approvalSubmit}
+                  onRespond={(approval, response) => void handleApprovalResponse(approval, response)}
+                />
+                {/* U1: the D4 tray activity row is removed — the status-only
+                    activity cards now render inside .conversation-history
+                    immediately after the durable timeline (single scroll
+                    owner, never duplicated here). */}
                 {/* U3/R2: the composer is the bottom of the tray. U2's
                     composer-right details action is preserved. */}
                 <div className="composer-action-row">

@@ -239,7 +239,7 @@ describe("Context cards tray row", () => {
     expect(cardButton("dipu")?.textContent).toContain("0%");
   });
 
-  it("tray order with approvals/activity present: approval cards, activity row, composer controls, context cards last", async () => {
+  it("tray order with approvals/activity present: approval cards, composer controls, context cards last (activity cards live in history)", async () => {
     await mountNavigator();
     const onApproval = timelineProps.onApproval as (approval: unknown) => void;
     const onActivityChange = timelineProps.onActivityChange as (runs: unknown) => void;
@@ -248,7 +248,9 @@ describe("Context cards tray row", () => {
     );
     await act(async () => onActivityChange([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
-    expect(trayChildOrder()).toEqual(["approval-cards", "conversation-activity-row", "composer-action-row", "conversation-context-cards"]);
+    // U1: the activity row moved out of the tray into .conversation-history.
+    expect(trayChildOrder()).toEqual(["approval-cards", "composer-action-row", "conversation-context-cards"]);
+    expect(container.querySelector(".conversation-history .conversation-activity-cards")).not.toBeNull();
   });
 
   it("read-only inspection renders no cards row", async () => {

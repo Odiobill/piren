@@ -28,16 +28,20 @@ describe("Tracer B active DOM separation (static)", () => {
     expect(activeBranch).toContain('className="interaction-tray"');
     // Order: history region first, tray after it.
     expect(activeBranch.indexOf('className="conversation-history"')).toBeLessThan(activeBranch.indexOf('className="interaction-tray"'));
-    // The history region contains the durable timeline.
+    // The history region contains the durable timeline AND the U1 status-only
+    // live activity cards (the final transient content, immediately after the
+    // timeline; the D4 tray row was removed).
     const history = activeBranch.slice(activeBranch.indexOf('className="conversation-history"'), activeBranch.indexOf('className="interaction-tray"'));
     expect(history).toContain("<ConversationTimeline");
+    expect(history).toContain("conversation-activity-cards");
     expect(history).not.toContain("ConversationApprovalCards");
     expect(history).not.toContain("ConversationComposer");
-    // The tray contains the existing approval cards, compact live-run state,
-    // and the composer/details controls.
+    // The tray contains the existing approval cards and the composer/details
+    // controls (no activity row — it moved into the history region).
     const tray = activeBranch.slice(activeBranch.indexOf('className="interaction-tray"'));
     expect(tray).toContain("ConversationApprovalCards");
-    expect(tray).toContain("dock-run-status");
+    expect(tray).not.toContain("dock-run-status");
+    expect(tray).not.toContain("conversation-activity-row");
     expect(tray).toContain("composer-action-row");
     expect(tray).toContain("ConversationComposer");
     expect(tray).toContain("DetailsToggleButton");
