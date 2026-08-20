@@ -259,7 +259,16 @@ export function ConversationComposer({
       // presents it as a non-resendable read-only acknowledgement (transition
       // 3); when no interlock follows the composer simply stays cleared
       // (transition 4 clear-on-success).
-      pendingAckRef.current = raw;
+      // If broker activity interlocked while the existing POST was in flight,
+      // acceptance converts the preserved text into an acknowledgement now.
+      // Otherwise retain it only for the immediately following interlock.
+      // In both cases it is never restored as an unsent draft on clear.
+      if (wasInterlockedRef.current) {
+        setInterlockState(reduceComposerInterlock(interlockStateRef.current, { type: "send-accepted", text: raw, interlockFollows: true }));
+        pendingAckRef.current = null;
+      } else {
+        pendingAckRef.current = raw;
+      }
       // P8 (§1): only an ACCEPTED send requests focus restoration.
       restoreFocusRef.current = true;
       onSent?.();
@@ -350,6 +359,11 @@ export function ConversationComposer({
             ref={inputRef}
             value={visibleText}
             onChange={(event) => {
+              // An explicit new draft supersedes any accepted message that
+              // did not immediately enter authoritative interlock. A later,
+              // unrelated run must preserve this draft, never resurrect the
+              // old send as a read-only acknowledgement.
+              pendingAckRef.current = null;
               setText(event.target.value);
               setCaret(event.target.selectionStart ?? event.target.value.length);
             }}

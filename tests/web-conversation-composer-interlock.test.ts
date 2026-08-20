@@ -137,12 +137,50 @@ describe("ConversationComposer interlock (U2)", () => {
     expect(textarea().value).toBe("");
   });
 
+  it("treats an interlock that begins while an accepted send is in flight as a non-resendable acknowledgement", async () => {
+    let resolveSend: (() => void) | undefined;
+    vi.mocked(sendConversationMessage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSend = () => resolve({ event: { id: "e1", conversationId: "c1", kind: "steward_message", created: "2026-08-11T00:00:00.000Z" } });
+        }),
+    );
+    render(createElement(Harness, { conversationId: "c1" }));
+    await act(async () => typeText(textarea(), "in-flight accepted send"));
+    act(() => key(textarea(), "Enter"));
+
+    // Broker activity may arrive while the existing POST is in flight. Once
+    // that POST is accepted, its retained text is acknowledgement-only, not
+    // an unsent draft to restore when the authoritative interlock clears.
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" })));
+    await act(async () => resolveSend?.());
+    expect(textarea().readOnly).toBe(true);
+    expect(textarea().value).toBe("in-flight accepted send");
+
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: false })));
+    expect(textarea().readOnly).toBe(false);
+    expect(textarea().value).toBe("");
+  });
+
   it("an accepted send with no following interlock stays editable and cleared (clear-on-success regression)", async () => {
     render(createElement(Harness, { conversationId: "c1" }));
     await act(async () => typeText(textarea(), "quick note"));
     await act(async () => key(textarea(), "Enter"));
     expect(textarea().value).toBe("");
     expect(textarea().readOnly).toBe(false);
+  });
+
+  it("does not reuse a prior no-interlock send as an acknowledgement after the steward resumes drafting", async () => {
+    render(createElement(Harness, { conversationId: "c1" }));
+    await act(async () => typeText(textarea(), "old accepted message"));
+    await act(async () => key(textarea(), "Enter"));
+    // Transition 4: the accepted send had no authoritative interlock and is
+    // cleared. A later, independent broker interlock must preserve the new
+    // unsent draft, never resurrect that old message as an acknowledgement.
+    await act(async () => typeText(textarea(), "new unsent draft"));
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" })));
+    expect(textarea().readOnly).toBe(true);
+    expect(textarea().value).toBe("new unsent draft");
   });
 
   it("a failed send stays editable with the bounded error surfaced and never acknowledges", async () => {
