@@ -80,7 +80,7 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
       navOrder: 2,
       page: "settings",
       placement: "page",
-      consumes: ["settings-transports"],
+      consumes: ["settings-transports", "settings-scheduler", "settings-agents"],
       emits: [],
     });
   });

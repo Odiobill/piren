@@ -65,7 +65,7 @@ describe("W3 Settings files: forbidden surface (static)", () => {
 describe("W3 registry + shell wiring (static)", () => {
   it("the settings module declares only the narrow transport settings family (W5)", () => {
     const settings = WORKBENCH_MODULES.find((m) => m.id === "settings");
-    expect(settings?.consumes).toEqual(["settings-transports"]);
+    expect(settings?.consumes).toEqual(["settings-transports", "settings-scheduler", "settings-agents"]);
     expect(settings?.emits).toEqual([]);
     expect(settings?.placement).toBe("page");
   });

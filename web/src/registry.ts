@@ -61,14 +61,14 @@ export const WORKBENCH_MODULES: readonly WorkbenchModule[] = [
   },
   {
     // W3 (0.2.0 amendment §5; ADR-0046): the full-page Settings module.
-    // W5 adds the narrow typed transport Settings family (Telegram/Discord
-    // read/write routes with write-only tokens); nothing broader is consumed.
+    // W5 adds the typed transport Settings family; W6 adds the scheduler and
+    // vault-owned agent-preference families. Nothing broader is consumed.
     id: "settings",
     label: "Settings",
     navOrder: 2,
     page: "settings",
     placement: "page",
-    consumes: ["settings-transports"],
+    consumes: ["settings-transports", "settings-scheduler", "settings-agents"],
     emits: [],
   },
 ];

@@ -40,13 +40,26 @@ import {
 import { parseConversationTelemetryReadResponse, type ConversationTelemetryReadResult } from "./conversation-telemetry";
 import { parseVaultListResponse, parseVaultReadResponse, type VaultListResponse, type VaultReadResponse } from "./vault-explorer";
 import {
+  buildAgentContextInjectionEnvelope,
+  buildAgentModelEnvelope,
+  buildAgentModelFallbackEnvelope,
+  buildAgentSelfImprovementEnvelope,
   buildDiscordSettingsEnvelope,
+  buildSchedulerSettingsEnvelope,
   buildTelegramSettingsEnvelope,
+  parseAgentPreferencesRead,
   parseDiscordSettingsRead,
+  parseSchedulerSettingsRead,
   parseSettingsWriteResponse,
   parseTelegramSettingsRead,
+  type AgentModelFallbackPatchInput,
+  type AgentModelPatchInput,
+  type AgentPreferencesProjection,
+  type AgentSelfImprovementPatchInput,
   type DiscordSettingsPatchInput,
   type DiscordSettingsProjection,
+  type SchedulerSettingsPatchInput,
+  type SchedulerSettingsProjection,
   type SettingsReadResult,
   type TelegramSettingsPatchInput,
   type TelegramSettingsProjection,
@@ -427,6 +440,49 @@ export async function saveTelegramSettings(block: TelegramSettingsPatchInput, to
 /** POST /api/settings/discord — closed discord patch (write-only token). */
 export async function saveDiscordSettings(block: DiscordSettingsPatchInput, token: string): Promise<void> {
   await postSettings("/api/settings/discord", buildDiscordSettingsEnvelope(block), token);
+}
+
+/**
+ * W6 — typed scheduler + vault-owned agent-preference Settings transport.
+ * Same existing-auth/redaction/foundation contract as W5. Agent routes are
+ * path-contained (`/api/settings/agents/<agent>`); the agent is a locally-
+ * runnable name only.
+ */
+export async function fetchSchedulerSettings(token: string, signal?: AbortSignal): Promise<SettingsReadResult<SchedulerSettingsProjection>> {
+  const res = await authedFetch("/api/settings/scheduler", token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`scheduler settings HTTP ${res.status}`);
+  return parseSchedulerSettingsRead(await res.json());
+}
+
+export async function saveSchedulerSettings(block: SchedulerSettingsPatchInput, token: string): Promise<void> {
+  await postSettings("/api/settings/scheduler", buildSchedulerSettingsEnvelope(block), token);
+}
+
+export async function fetchAgentPreferences(agent: string, token: string, signal?: AbortSignal): Promise<SettingsReadResult<AgentPreferencesProjection>> {
+  const res = await authedFetch(`/api/settings/agents/${encodeURIComponent(agent)}`, token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`agent settings HTTP ${res.status}`);
+  return parseAgentPreferencesRead(await res.json());
+}
+
+export async function saveAgentModel(agent: string, block: AgentModelPatchInput, token: string): Promise<void> {
+  await postSettings(`/api/settings/agents/${encodeURIComponent(agent)}`, buildAgentModelEnvelope(agent, block), token);
+}
+
+export async function saveAgentModelFallback(
+  agent: string,
+  block: AgentModelFallbackPatchInput,
+  confirmAutoSwitch: boolean,
+  token: string,
+): Promise<void> {
+  await postSettings(`/api/settings/agents/${encodeURIComponent(agent)}`, buildAgentModelFallbackEnvelope(agent, block, confirmAutoSwitch), token);
+}
+
+export async function saveAgentContextInjection(agent: string, mode: "per_turn" | "session_start_only", token: string): Promise<void> {
+  await postSettings(`/api/settings/agents/${encodeURIComponent(agent)}`, buildAgentContextInjectionEnvelope(agent, mode), token);
+}
+
+export async function saveAgentSelfImprovement(agent: string, block: AgentSelfImprovementPatchInput, token: string): Promise<void> {
+  await postSettings(`/api/settings/agents/${encodeURIComponent(agent)}`, buildAgentSelfImprovementEnvelope(agent, block), token);
 }
 
 export interface ConversationEventStreamHandlers {

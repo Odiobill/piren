@@ -8,7 +8,7 @@ import { vaultBrowserList, vaultBrowserRead } from "./vault-browser.js";
 import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
 import { createInboxTask } from "./inbox.js";
-import { applyLocalSettingsIntent, createNodeSettingsFoundationIo, parseSettingsIntent, readLocalConfigRedacted, SettingsFoundationError, } from "./settings-foundation.js";
+import { applyAgentSettingsIntent, applyLocalSettingsIntent, createNodeSettingsFoundationIo, parseSettingsIntent, readAgentConfigRedacted, readLocalConfigRedacted, SettingsFoundationError, } from "./settings-foundation.js";
 import { buildOkfGraph } from "./okf-graph.js";
 import { ConversationBroker } from "./conversation-broker.js";
 import { buildConversationAgentsResponse } from "./conversation-agents.js";
@@ -348,6 +348,21 @@ export class GatewayServer {
         }
         else if (req.method === "POST" && url.pathname === "/api/settings/discord") {
             await this.handleTransportSettingsWrite(req, res, "discord");
+        }
+        else if (req.method === "GET" && url.pathname === "/api/settings/scheduler") {
+            await this.handleSchedulerSettingsRead(res);
+        }
+        else if (req.method === "POST" && url.pathname === "/api/settings/scheduler") {
+            await this.handleSchedulerSettingsWrite(req, res);
+        }
+        else if (url.pathname.startsWith("/api/settings/agents/")) {
+            const agent = url.pathname.slice("/api/settings/agents/".length);
+            if (req.method === "GET")
+                await this.handleAgentPreferencesRead(res, agent);
+            else if (req.method === "POST")
+                await this.handleAgentPreferencesWrite(req, res, agent);
+            else
+                this.writeJson(res, 405, { error: "method not allowed" });
         }
         else if (req.method === "GET" && url.pathname === "/api/services/status") {
             await this.handleServiceStatus(res);
@@ -1430,6 +1445,147 @@ export class GatewayServer {
             this.writeJson(res, 200, { wrote: true });
         }
         catch (error) {
+            const status = error instanceof SettingsFoundationError ? settingsErrorStatus(error.code) : 500;
+            const message = error instanceof SettingsFoundationError ? settingsErrorBoundedMessage(error.code) : "Settings could not be written.";
+            this.writeJson(res, status, { error: message });
+        }
+    }
+    /**
+     * W6 — GET /api/settings/scheduler: the redacted scheduler projection
+     * (master gate, closed automation classes, and the editable poll/stale/
+     * concurrency/device values). Fail-closed S1 semantics; no tick/claim/spawn.
+     */
+    async handleSchedulerSettingsRead(res) {
+        if (this.settingsConfigPath === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        try {
+            const projection = await readLocalConfigRedacted(this.settingsIo, this.settingsConfigPath);
+            if (projection.available) {
+                this.writeJson(res, 200, { available: true, scheduler: projection.scheduler });
+                return;
+            }
+            this.writeJson(res, 200, { available: false, reason: projection.reason });
+        }
+        catch (error) {
+            const message = error instanceof SettingsFoundationError && error.code === "read-failed" ? "Local config could not be read." : "Settings could not be read.";
+            this.writeJson(res, 500, { error: message });
+        }
+    }
+    /** W6 — POST /api/settings/scheduler: closed scheduler intent via the W4 atomic writer. */
+    async handleSchedulerSettingsWrite(req, res) {
+        if (this.settingsConfigPath === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        const body = await this.readJsonBody(req);
+        if (!body.ok) {
+            this.writeJson(res, body.status, { error: body.error });
+            return;
+        }
+        const parsed = parseSettingsIntent(body.value);
+        if (!parsed.ok) {
+            this.writeJson(res, 400, { error: parsed.error });
+            return;
+        }
+        if (parsed.intent.surface !== "local" || parsed.intent.family !== "scheduler") {
+            this.writeJson(res, 400, { error: "Settings intent does not match the scheduler route." });
+            return;
+        }
+        try {
+            await applyLocalSettingsIntent(this.settingsIo, this.settingsConfigPath, parsed.intent);
+            this.writeJson(res, 200, { wrote: true });
+        }
+        catch (error) {
+            const status = error instanceof SettingsFoundationError ? settingsErrorStatus(error.code) : 500;
+            const message = error instanceof SettingsFoundationError ? settingsErrorBoundedMessage(error.code) : "Settings could not be written.";
+            this.writeJson(res, status, { error: message });
+        }
+    }
+    /** Validate a path agent is a locally-runnable name; bounded 403 otherwise. */
+    assertRunnableSettingsAgent(agent) {
+        if (!this.runnableAgents.includes(agent)) {
+            throw new SettingsFoundationError("invalid-agent", "Agent is not locally runnable.");
+        }
+    }
+    /** W6 — GET /api/settings/agents/<agent>: redacted vault-owned agent-preference projection. */
+    async handleAgentPreferencesRead(res, agent) {
+        if (this.vaultRoot === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        try {
+            this.assertRunnableSettingsAgent(agent);
+            const projection = await readAgentConfigRedacted(this.settingsIo, this.vaultRoot, agent);
+            if (projection.available) {
+                this.writeJson(res, 200, {
+                    available: true,
+                    model: projection.model,
+                    modelFallback: projection.modelFallback,
+                    contextInjection: projection.contextInjection,
+                    selfImprovement: projection.selfImprovement,
+                });
+                return;
+            }
+            this.writeJson(res, 200, { available: false, reason: projection.reason });
+        }
+        catch (error) {
+            if (error instanceof SettingsFoundationError && error.code === "invalid-agent") {
+                this.writeJson(res, 403, { error: "Agent is not locally runnable." });
+                return;
+            }
+            const message = error instanceof SettingsFoundationError && error.code === "read-failed" ? "Agent config could not be read." : "Settings could not be read.";
+            this.writeJson(res, 500, { error: message });
+        }
+    }
+    /** W6 — POST /api/settings/agents/<agent>: closed agent-preference intent via the W4 atomic writer. */
+    async handleAgentPreferencesWrite(req, res, agent) {
+        if (this.vaultRoot === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        const body = await this.readJsonBody(req);
+        if (!body.ok) {
+            this.writeJson(res, body.status, { error: body.error });
+            return;
+        }
+        const parsed = parseSettingsIntent(body.value);
+        if (!parsed.ok) {
+            this.writeJson(res, 400, { error: parsed.error });
+            return;
+        }
+        if (parsed.intent.surface !== "agent") {
+            this.writeJson(res, 400, { error: "Settings intent is not an agent preference." });
+            return;
+        }
+        if (parsed.intent.agent !== agent) {
+            this.writeJson(res, 400, { error: "Settings intent agent does not match the route agent." });
+            return;
+        }
+        try {
+            this.assertRunnableSettingsAgent(agent);
+            // W6 model-fallback: any save that leaves auto-switch ENABLED requires
+            // the exact route-specific confirmation (absent auto_switch defaults to
+            // enabled, so a models-only edit on an undeclared/enabled declaration
+            // also requires it). Disabled/absent saves never require it.
+            if (parsed.intent.family === "model-fallback") {
+                const current = await readAgentConfigRedacted(this.settingsIo, this.vaultRoot, agent);
+                const currentAutoSwitch = current.available && current.modelFallback !== undefined ? current.modelFallback.autoSwitch : null;
+                const resultAutoSwitch = parsed.intent.block.autoSwitch ?? currentAutoSwitch ?? true;
+                if (resultAutoSwitch === true && parsed.intent.confirmAutoSwitch !== true) {
+                    this.writeJson(res, 400, { error: "Enabling model fallback auto-switch requires explicit confirmation." });
+                    return;
+                }
+            }
+            await applyAgentSettingsIntent(this.settingsIo, this.vaultRoot, parsed.intent);
+            this.writeJson(res, 200, { wrote: true });
+        }
+        catch (error) {
+            if (error instanceof SettingsFoundationError && error.code === "invalid-agent") {
+                this.writeJson(res, 403, { error: "Agent is not locally runnable." });
+                return;
+            }
             const status = error instanceof SettingsFoundationError ? settingsErrorStatus(error.code) : 500;
             const message = error instanceof SettingsFoundationError ? settingsErrorBoundedMessage(error.code) : "Settings could not be written.";
             this.writeJson(res, status, { error: message });

@@ -149,7 +149,14 @@ export type LocalSettingsIntent =
 
 export type AgentSettingsIntent =
   | { surface: "agent"; agent: string; family: "model"; block: AgentModelPatch }
-  | { surface: "agent"; agent: string; family: "model-fallback"; block: AgentModelFallbackPatch }
+  | {
+      surface: "agent";
+      agent: string;
+      family: "model-fallback";
+      block: AgentModelFallbackPatch;
+      /** W6: explicit route-specific confirmation required when the save leaves auto-switch enabled. */
+      confirmAutoSwitch?: boolean;
+    }
   | { surface: "agent"; agent: string; family: "context-injection"; mode: "per_turn" | "session_start_only" }
   | { surface: "agent"; agent: string; family: "self-improvement"; block: AgentSelfImprovementPatch };
 
@@ -388,7 +395,11 @@ export function parseSettingsIntent(raw: unknown): ParseIntentResult {
     }
     return { ok: true, intent: { surface: "agent", agent, family: "context-injection", mode } };
   }
-  if (unknownKeys(raw, ["surface", "agent", "family", "block"]).length > 0) {
+  const envelopeKeys =
+    family === "model-fallback"
+      ? ["surface", "agent", "family", "block", "confirmAutoSwitch"]
+      : ["surface", "agent", "family", "block"];
+  if (unknownKeys(raw, envelopeKeys).length > 0) {
     return { ok: false, error: "Unknown field(s) in the agent Settings intent envelope (closed inventory)." };
   }
   const block = raw.block;
@@ -414,6 +425,10 @@ export function parseSettingsIntent(raw: unknown): ParseIntentResult {
     if (!hasAnyKey(block, FALLBACK_KEYS)) return { ok: false, error: "The model-fallback Settings block changes nothing." };
     const autoSwitch = asOptionalBoolean(block, "autoSwitch");
     if (autoSwitch === "invalid") return { ok: false, error: "Invalid auto_switch value in the model-fallback Settings block." };
+    const confirmRaw = raw.confirmAutoSwitch;
+    if (confirmRaw !== undefined && typeof confirmRaw !== "boolean") {
+      return { ok: false, error: "confirmAutoSwitch must be a boolean." };
+    }
     // Read the models list WITHOUT dedup: duplicate detection belongs to the
     // delivered fallback parser below.
     let models: string[] | undefined;
@@ -433,7 +448,9 @@ export function parseSettingsIntent(raw: unknown): ParseIntentResult {
     const patch: AgentModelFallbackPatch = {};
     if (autoSwitch !== undefined) patch.autoSwitch = autoSwitch;
     if (models !== undefined) patch.models = models;
-    return { ok: true, intent: { surface: "agent", agent, family: "model-fallback", block: patch } };
+    const intent: AgentSettingsIntent = { surface: "agent", agent, family: "model-fallback", block: patch };
+    if (confirmRaw === true) intent.confirmAutoSwitch = true;
+    return { ok: true, intent };
   }
   if (family === "self-improvement") {
     if (unknownKeys(block, SELF_IMPROVEMENT_KEYS).length > 0) {
@@ -486,6 +503,11 @@ export interface RedactedSchedulerProjection {
   enabled: boolean;
   automation: { inboxTasks: boolean; agentCron: boolean; scriptCron: boolean };
   deviceIdConfigured: boolean;
+  /** W6: the editable non-secret scheduler values (null = absent/default). */
+  pollIntervalSeconds: number | null;
+  staleAfterSeconds: number | null;
+  maxConcurrentAgents: number | null;
+  deviceId: string | null;
 }
 
 export interface RedactedLocalConfigProjection {
@@ -501,9 +523,20 @@ export interface RedactedAgentConfigProjection {
   available: boolean;
   reason?: string;
   model?: { id: string | null; thinking: string | null };
-  modelFallback?: { declared: boolean; autoSwitch: boolean | null; modelCount: number };
+  modelFallback?: {
+    declared: boolean;
+    autoSwitch: boolean | null;
+    modelCount: number;
+    /** W6: the editable fallback declaration list (empty when undeclared). */
+    models: string[];
+  };
   contextInjection?: { mode: string | null };
-  selfImprovement?: { autoNudge: boolean | null; reviewLoopEnabled: boolean | null };
+  selfImprovement?: {
+    autoNudge: boolean | null;
+    reviewLoopEnabled: boolean | null;
+    /** W6: the editable bounded review-loop numeric values (null = absent). */
+    reviewLoop: { intervalTurns: number | null; recentMessages: number | null; timeoutMs: number | null };
+  };
 }
 
 function asNonEmptyStringOrNull(value: unknown): string | null {
@@ -512,6 +545,15 @@ function asNonEmptyStringOrNull(value: unknown): string | null {
 
 function asBooleanOrNull(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function asPositiveIntOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string");
 }
 
 function countList(value: unknown): number {
@@ -597,6 +639,10 @@ export async function readLocalConfigRedacted(
       scriptCron: automationBlock?.script_cron === true,
     },
     deviceIdConfigured: asNonEmptyStringOrNull(schedulerBlock?.device_id) !== null,
+    pollIntervalSeconds: asPositiveIntOrNull(schedulerBlock?.poll_interval_seconds),
+    staleAfterSeconds: asPositiveIntOrNull(schedulerBlock?.stale_after_seconds),
+    maxConcurrentAgents: asPositiveIntOrNull(schedulerBlock?.max_concurrent_agents),
+    deviceId: asNonEmptyStringOrNull(schedulerBlock?.device_id),
   };
 
   return { available: true, telegram, discord, scheduler };
@@ -677,11 +723,17 @@ export async function readAgentConfigRedacted(
       declared: fallbackBlock !== undefined,
       autoSwitch: asBooleanOrNull(fallbackBlock?.auto_switch),
       modelCount: countList(fallbackBlock?.models),
+      models: asStringList(fallbackBlock?.models),
     },
     contextInjection: { mode: asNonEmptyStringOrNull(contextBlock?.mode) },
     selfImprovement: {
       autoNudge: asBooleanOrNull(selfBlock?.auto_nudge),
       reviewLoopEnabled: asBooleanOrNull(reviewBlock?.enabled),
+      reviewLoop: {
+        intervalTurns: asPositiveIntOrNull(reviewBlock?.interval_turns),
+        recentMessages: asPositiveIntOrNull(reviewBlock?.recent_messages),
+        timeoutMs: asPositiveIntOrNull(reviewBlock?.timeout_ms),
+      },
     },
   };
 }

@@ -270,6 +270,20 @@ export declare class GatewayServer {
      * never echo the submitted token or raw config.
      */
     private handleTransportSettingsWrite;
+    /**
+     * W6 — GET /api/settings/scheduler: the redacted scheduler projection
+     * (master gate, closed automation classes, and the editable poll/stale/
+     * concurrency/device values). Fail-closed S1 semantics; no tick/claim/spawn.
+     */
+    private handleSchedulerSettingsRead;
+    /** W6 — POST /api/settings/scheduler: closed scheduler intent via the W4 atomic writer. */
+    private handleSchedulerSettingsWrite;
+    /** Validate a path agent is a locally-runnable name; bounded 403 otherwise. */
+    private assertRunnableSettingsAgent;
+    /** W6 — GET /api/settings/agents/<agent>: redacted vault-owned agent-preference projection. */
+    private handleAgentPreferencesRead;
+    /** W6 — POST /api/settings/agents/<agent>: closed agent-preference intent via the W4 atomic writer. */
+    private handleAgentPreferencesWrite;
     private safeConversation;
     private safeConversationEvent;
     private conversationError;

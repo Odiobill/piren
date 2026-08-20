@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAgentModelFallbackEnvelope,
   buildDiscordSettingsEnvelope,
+  buildSchedulerSettingsEnvelope,
   buildTelegramSettingsEnvelope,
+  isValidContextInjectionMode,
+  isValidFallbackModelId,
+  isValidThinkingLevel,
+  parseAgentPreferencesRead,
   parseDiscordSettingsRead,
-  parseDiscordSnowflakesInput,
+  parseOptionalPositiveInt,
+  parseSchedulerSettingsRead,
   parseSettingsWriteResponse,
   parseTelegramChatIdsInput,
+  parseDiscordSnowflakesInput,
   parseTelegramSettingsRead,
 } from "../web/src/settings-transport.js";
 
@@ -153,6 +161,120 @@ describe("closed write intent builders (never include unknown fields)", () => {
         defaultAgent: "a",
         feedbackEnabled: false,
       },
+    });
+  });
+});
+
+describe("W6 scheduler settings read parser", () => {
+  it("parses the redacted scheduler projection incl. poll/stale/concurrency/device", () => {
+    const read = parseSchedulerSettingsRead({
+      available: true,
+      scheduler: {
+        present: true,
+        enabled: true,
+        automation: { inboxTasks: true, agentCron: false, scriptCron: false },
+        deviceIdConfigured: true,
+        pollIntervalSeconds: 15,
+        staleAfterSeconds: null,
+        maxConcurrentAgents: 1,
+        deviceId: "thor",
+      },
+    });
+    expect(read).toEqual({
+      available: true,
+      value: {
+        present: true,
+        enabled: true,
+        automation: { inboxTasks: true, agentCron: false, scriptCron: false },
+        deviceIdConfigured: true,
+        pollIntervalSeconds: 15,
+        staleAfterSeconds: null,
+        maxConcurrentAgents: 1,
+        deviceId: "thor",
+      },
+    });
+  });
+
+  it("fails closed on malformed scheduler projections", () => {
+    expect(() => parseSchedulerSettingsRead({ available: true })).toThrow();
+    expect(() => parseSchedulerSettingsRead({ available: true, scheduler: { enabled: "yes" } })).toThrow();
+    expect(() => parseSchedulerSettingsRead({ available: false })).toThrow();
+  });
+});
+
+describe("W6 agent preferences read parser", () => {
+  it("parses the full editable agent-preference projection", () => {
+    const read = parseAgentPreferencesRead({
+      available: true,
+      model: { id: "anthropic/claude-sonnet-4-6", thinking: "high" },
+      modelFallback: { declared: true, autoSwitch: true, modelCount: 2, models: ["a/b", "c/d"] },
+      contextInjection: { mode: "session_start_only" },
+      selfImprovement: { autoNudge: true, reviewLoopEnabled: true, reviewLoop: { intervalTurns: 10, recentMessages: 20, timeoutMs: 120000 } },
+    });
+    expect(read).toEqual({
+      available: true,
+      value: {
+        model: { id: "anthropic/claude-sonnet-4-6", thinking: "high" },
+        modelFallback: { declared: true, autoSwitch: true, modelCount: 2, models: ["a/b", "c/d"] },
+        contextInjection: { mode: "session_start_only" },
+        selfImprovement: { autoNudge: true, reviewLoopEnabled: true, reviewLoop: { intervalTurns: 10, recentMessages: 20, timeoutMs: 120000 } },
+      },
+    });
+  });
+
+  it("fails closed on malformed agent projections", () => {
+    expect(() => parseAgentPreferencesRead({ available: true })).toThrow();
+    expect(() => parseAgentPreferencesRead({ available: true, model: { id: 1 } })).toThrow();
+    expect(() => parseAgentPreferencesRead({ available: true, model: {}, modelFallback: {}, contextInjection: {}, selfImprovement: {} })).toThrow();
+  });
+});
+
+describe("W6 validators", () => {
+  it("validates thinking levels and context-injection modes", () => {
+    expect(isValidThinkingLevel("low")).toBe(true);
+    expect(isValidThinkingLevel("max")).toBe(false);
+    expect(isValidContextInjectionMode("per_turn")).toBe(true);
+    expect(isValidContextInjectionMode("always")).toBe(false);
+  });
+
+  it("validates fallback model ids against the delivered grammar", () => {
+    expect(isValidFallbackModelId("openai/gpt-4o")).toBe(true);
+    expect(isValidFallbackModelId("ollama/llama3.1:8b")).toBe(true);
+    expect(isValidFallbackModelId("gpt-4o")).toBe(false);
+    expect(isValidFallbackModelId("OpenAI/gpt-4o")).toBe(false);
+  });
+
+  it("parses optional positive integers (blank = null, invalid = invalid)", () => {
+    expect(parseOptionalPositiveInt("")).toBeNull();
+    expect(parseOptionalPositiveInt("10")).toBe(10);
+    expect(parseOptionalPositiveInt("0")).toBe("invalid");
+    expect(parseOptionalPositiveInt("-3")).toBe("invalid");
+    expect(parseOptionalPositiveInt("1.5")).toBe("invalid");
+  });
+});
+
+describe("W6 closed write intent builders", () => {
+  it("builds the scheduler envelope with snake_case automation keys", () => {
+    expect(buildSchedulerSettingsEnvelope({ automation: { inbox_tasks: true } })).toEqual({
+      surface: "local",
+      family: "scheduler",
+      block: { automation: { inbox_tasks: true } },
+    });
+  });
+
+  it("builds the model-fallback envelope with confirmAutoSwitch only when true", () => {
+    expect(buildAgentModelFallbackEnvelope("kimi", { autoSwitch: true }, true)).toEqual({
+      surface: "agent",
+      agent: "kimi",
+      family: "model-fallback",
+      block: { autoSwitch: true },
+      confirmAutoSwitch: true,
+    });
+    expect(buildAgentModelFallbackEnvelope("kimi", { autoSwitch: false }, false)).toEqual({
+      surface: "agent",
+      agent: "kimi",
+      family: "model-fallback",
+      block: { autoSwitch: false },
     });
   });
 });

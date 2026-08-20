@@ -218,3 +218,244 @@ export function parseDiscordSnowflakesInput(
   }
   return { ok: true, ids };
 }
+
+// ---------------------------------------------------------------------------
+// W6 — scheduler + vault-owned agent-preference Settings cores
+// ---------------------------------------------------------------------------
+
+export interface SchedulerSettingsProjection {
+  present: boolean;
+  enabled: boolean;
+  automation: { inboxTasks: boolean; agentCron: boolean; scriptCron: boolean };
+  deviceIdConfigured: boolean;
+  pollIntervalSeconds: number | null;
+  staleAfterSeconds: number | null;
+  maxConcurrentAgents: number | null;
+  deviceId: string | null;
+}
+
+export interface AgentPreferencesProjection {
+  model: { id: string | null; thinking: string | null };
+  modelFallback: { declared: boolean; autoSwitch: boolean | null; modelCount: number; models: string[] };
+  contextInjection: { mode: string | null };
+  selfImprovement: {
+    autoNudge: boolean | null;
+    reviewLoopEnabled: boolean | null;
+    reviewLoop: { intervalTurns: number | null; recentMessages: number | null; timeoutMs: number | null };
+  };
+}
+
+function asOptionalPositiveIntOrNull(value: unknown): number | null | "invalid" {
+  if (value === null) return null;
+  return asCount(value);
+}
+
+function asStringList(value: unknown): string[] | "invalid" {
+  if (!Array.isArray(value)) return "invalid";
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string" || entry === "") return "invalid";
+    out.push(entry);
+  }
+  return out;
+}
+
+function asMode(value: unknown): string | null | "invalid" {
+  if (value === null) return null;
+  return typeof value === "string" ? value : "invalid";
+}
+
+/** Fail-closed parser for the scheduler read projection. */
+export function parseSchedulerSettingsRead(json: unknown): SettingsReadResult<SchedulerSettingsProjection> {
+  if (!isRecord(json) || typeof json.available !== "boolean") {
+    throw new Error("unexpected scheduler settings read");
+  }
+  if (json.available === true) {
+    const s = json.scheduler;
+    if (!isRecord(s)) throw new Error("unexpected scheduler settings read");
+    if (typeof s.present !== "boolean" || typeof s.enabled !== "boolean" || typeof s.deviceIdConfigured !== "boolean") {
+      throw new Error("unexpected scheduler settings read");
+    }
+    const automation = s.automation;
+    if (!isRecord(automation) || typeof automation.inboxTasks !== "boolean" || typeof automation.agentCron !== "boolean" || typeof automation.scriptCron !== "boolean") {
+      throw new Error("unexpected scheduler settings read");
+    }
+    if (
+      asOptionalPositiveIntOrNull(s.pollIntervalSeconds) === "invalid" ||
+      asOptionalPositiveIntOrNull(s.staleAfterSeconds) === "invalid" ||
+      asOptionalPositiveIntOrNull(s.maxConcurrentAgents) === "invalid" ||
+      asMode(s.deviceId) === "invalid"
+    ) {
+      throw new Error("unexpected scheduler settings read");
+    }
+    return {
+      available: true,
+      value: {
+        present: s.present as boolean,
+        enabled: s.enabled as boolean,
+        automation: {
+          inboxTasks: automation.inboxTasks as boolean,
+          agentCron: automation.agentCron as boolean,
+          scriptCron: automation.scriptCron as boolean,
+        },
+        deviceIdConfigured: s.deviceIdConfigured as boolean,
+        pollIntervalSeconds: s.pollIntervalSeconds as number | null,
+        staleAfterSeconds: s.staleAfterSeconds as number | null,
+        maxConcurrentAgents: s.maxConcurrentAgents as number | null,
+        deviceId: s.deviceId as string | null,
+      },
+    };
+  }
+  if (typeof json.reason !== "string" || json.reason === "") {
+    throw new Error("unexpected scheduler settings read");
+  }
+  return { available: false, reason: json.reason };
+}
+
+/** Fail-closed parser for the agent-preference read projection. */
+export function parseAgentPreferencesRead(json: unknown): SettingsReadResult<AgentPreferencesProjection> {
+  if (!isRecord(json) || typeof json.available !== "boolean") {
+    throw new Error("unexpected agent settings read");
+  }
+  if (json.available === true) {
+    return { available: true, value: parseAgentPreferencesProjection(json) };
+  }
+  if (typeof json.reason !== "string" || json.reason === "") {
+    throw new Error("unexpected agent settings read");
+  }
+  return { available: false, reason: json.reason };
+}
+
+function parseAgentPreferencesProjection(json: Record<string, unknown>): AgentPreferencesProjection {
+  const model = json.model;
+  if (!isRecord(model)) throw new Error("unexpected agent settings read");
+  if (asStringOrNull(model.id) === "invalid" || asStringOrNull(model.thinking) === "invalid") {
+    throw new Error("unexpected agent settings read");
+  }
+  const fallback = json.modelFallback;
+  if (!isRecord(fallback)) throw new Error("unexpected agent settings read");
+  if (typeof fallback.declared !== "boolean" || asBoolean(fallback.autoSwitch) === "invalid" || asCount(fallback.modelCount) === "invalid") {
+    throw new Error("unexpected agent settings read");
+  }
+  if (asStringList(fallback.models) === "invalid") throw new Error("unexpected agent settings read");
+  const contextInjection = json.contextInjection;
+  if (!isRecord(contextInjection) || asMode(contextInjection.mode) === "invalid") {
+    throw new Error("unexpected agent settings read");
+  }
+  const selfImprovement = json.selfImprovement;
+  if (!isRecord(selfImprovement) || asBoolean(selfImprovement.autoNudge) === "invalid" || asBoolean(selfImprovement.reviewLoopEnabled) === "invalid") {
+    throw new Error("unexpected agent settings read");
+  }
+  const reviewLoop = selfImprovement.reviewLoop;
+  if (!isRecord(reviewLoop) || asOptionalPositiveIntOrNull(reviewLoop.intervalTurns) === "invalid" || asOptionalPositiveIntOrNull(reviewLoop.recentMessages) === "invalid" || asOptionalPositiveIntOrNull(reviewLoop.timeoutMs) === "invalid") {
+    throw new Error("unexpected agent settings read");
+  }
+  return {
+    model: { id: model.id as string | null, thinking: model.thinking as string | null },
+    modelFallback: {
+      declared: fallback.declared as boolean,
+      autoSwitch: fallback.autoSwitch as boolean | null,
+      modelCount: fallback.modelCount as number,
+      models: fallback.models as string[],
+    },
+    contextInjection: { mode: contextInjection.mode as string | null },
+    selfImprovement: {
+      autoNudge: selfImprovement.autoNudge as boolean | null,
+      reviewLoopEnabled: selfImprovement.reviewLoopEnabled as boolean | null,
+      reviewLoop: {
+        intervalTurns: reviewLoop.intervalTurns as number | null,
+        recentMessages: reviewLoop.recentMessages as number | null,
+        timeoutMs: reviewLoop.timeoutMs as number | null,
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// W6 closed write intent builders
+// ---------------------------------------------------------------------------
+
+export interface SchedulerSettingsPatchInput {
+  enabled?: boolean;
+  automation?: { inbox_tasks?: boolean; agent_cron?: boolean; script_cron?: boolean };
+  pollIntervalSeconds?: number;
+  staleAfterSeconds?: number;
+  maxConcurrentAgents?: number;
+  deviceId?: string | null;
+}
+
+export interface AgentModelPatchInput {
+  id?: string;
+  thinking?: string;
+}
+
+export interface AgentModelFallbackPatchInput {
+  autoSwitch?: boolean;
+  models?: string[];
+}
+
+export interface AgentSelfImprovementPatchInput {
+  autoNudge?: boolean;
+  reviewLoopEnabled?: boolean;
+  reviewLoopIntervalTurns?: number;
+  reviewLoopRecentMessages?: number;
+  reviewLoopTimeoutMs?: number;
+}
+
+export function buildSchedulerSettingsEnvelope(block: SchedulerSettingsPatchInput): Record<string, unknown> {
+  return { surface: "local", family: "scheduler", block };
+}
+
+export function buildAgentModelEnvelope(agent: string, block: AgentModelPatchInput): Record<string, unknown> {
+  return { surface: "agent", agent, family: "model", block };
+}
+
+export function buildAgentModelFallbackEnvelope(
+  agent: string,
+  block: AgentModelFallbackPatchInput,
+  confirmAutoSwitch: boolean,
+): Record<string, unknown> {
+  const envelope: Record<string, unknown> = { surface: "agent", agent, family: "model-fallback", block };
+  if (confirmAutoSwitch) envelope.confirmAutoSwitch = true;
+  return envelope;
+}
+
+export function buildAgentContextInjectionEnvelope(agent: string, mode: "per_turn" | "session_start_only"): Record<string, unknown> {
+  return { surface: "agent", agent, family: "context-injection", mode };
+}
+
+export function buildAgentSelfImprovementEnvelope(agent: string, block: AgentSelfImprovementPatchInput): Record<string, unknown> {
+  return { surface: "agent", agent, family: "self-improvement", block };
+}
+
+// ---------------------------------------------------------------------------
+// W6 structural input validation
+// ---------------------------------------------------------------------------
+
+export const THINKING_LEVELS = ["low", "medium", "high"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const CONTEXT_INJECTION_MODES = ["per_turn", "session_start_only"] as const;
+
+export function isValidThinkingLevel(value: string): boolean {
+  return (THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+export function isValidContextInjectionMode(value: string): boolean {
+  return (CONTEXT_INJECTION_MODES as readonly string[]).includes(value);
+}
+
+/** Mirror of the delivered FALLBACK_MODEL_ID_PATTERN (provider/modelId grammar). */
+const FALLBACK_MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/;
+
+export function isValidFallbackModelId(value: string): boolean {
+  return FALLBACK_MODEL_ID_PATTERN.test(value);
+}
+
+/** Bounded review-loop numeric field (positive safe integer), or null when blank. */
+export function parseOptionalPositiveInt(input: string): number | null | "invalid" {
+  const trimmed = input.trim();
+  if (trimmed === "") return null;
+  const value = Number(trimmed);
+  if (!Number.isSafeInteger(value) || value <= 0) return "invalid";
+  return value;
+}

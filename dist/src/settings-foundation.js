@@ -320,7 +320,10 @@ export function parseSettingsIntent(raw) {
         }
         return { ok: true, intent: { surface: "agent", agent, family: "context-injection", mode } };
     }
-    if (unknownKeys(raw, ["surface", "agent", "family", "block"]).length > 0) {
+    const envelopeKeys = family === "model-fallback"
+        ? ["surface", "agent", "family", "block", "confirmAutoSwitch"]
+        : ["surface", "agent", "family", "block"];
+    if (unknownKeys(raw, envelopeKeys).length > 0) {
         return { ok: false, error: "Unknown field(s) in the agent Settings intent envelope (closed inventory)." };
     }
     const block = raw.block;
@@ -354,6 +357,10 @@ export function parseSettingsIntent(raw) {
         const autoSwitch = asOptionalBoolean(block, "autoSwitch");
         if (autoSwitch === "invalid")
             return { ok: false, error: "Invalid auto_switch value in the model-fallback Settings block." };
+        const confirmRaw = raw.confirmAutoSwitch;
+        if (confirmRaw !== undefined && typeof confirmRaw !== "boolean") {
+            return { ok: false, error: "confirmAutoSwitch must be a boolean." };
+        }
         // Read the models list WITHOUT dedup: duplicate detection belongs to the
         // delivered fallback parser below.
         let models;
@@ -376,7 +383,10 @@ export function parseSettingsIntent(raw) {
             patch.autoSwitch = autoSwitch;
         if (models !== undefined)
             patch.models = models;
-        return { ok: true, intent: { surface: "agent", agent, family: "model-fallback", block: patch } };
+        const intent = { surface: "agent", agent, family: "model-fallback", block: patch };
+        if (confirmRaw === true)
+            intent.confirmAutoSwitch = true;
+        return { ok: true, intent };
     }
     if (family === "self-improvement") {
         if (unknownKeys(block, SELF_IMPROVEMENT_KEYS).length > 0) {
@@ -412,6 +422,14 @@ function asNonEmptyStringOrNull(value) {
 }
 function asBooleanOrNull(value) {
     return typeof value === "boolean" ? value : null;
+}
+function asPositiveIntOrNull(value) {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+function asStringList(value) {
+    if (!Array.isArray(value))
+        return [];
+    return value.filter((entry) => typeof entry === "string");
 }
 function countList(value) {
     return Array.isArray(value) ? value.length : 0;
@@ -485,6 +503,10 @@ export async function readLocalConfigRedacted(io, configPath) {
             scriptCron: automationBlock?.script_cron === true,
         },
         deviceIdConfigured: asNonEmptyStringOrNull(schedulerBlock?.device_id) !== null,
+        pollIntervalSeconds: asPositiveIntOrNull(schedulerBlock?.poll_interval_seconds),
+        staleAfterSeconds: asPositiveIntOrNull(schedulerBlock?.stale_after_seconds),
+        maxConcurrentAgents: asPositiveIntOrNull(schedulerBlock?.max_concurrent_agents),
+        deviceId: asNonEmptyStringOrNull(schedulerBlock?.device_id),
     };
     return { available: true, telegram, discord, scheduler };
 }
@@ -556,11 +578,17 @@ export async function readAgentConfigRedacted(io, vaultRoot, agent) {
             declared: fallbackBlock !== undefined,
             autoSwitch: asBooleanOrNull(fallbackBlock?.auto_switch),
             modelCount: countList(fallbackBlock?.models),
+            models: asStringList(fallbackBlock?.models),
         },
         contextInjection: { mode: asNonEmptyStringOrNull(contextBlock?.mode) },
         selfImprovement: {
             autoNudge: asBooleanOrNull(selfBlock?.auto_nudge),
             reviewLoopEnabled: asBooleanOrNull(reviewBlock?.enabled),
+            reviewLoop: {
+                intervalTurns: asPositiveIntOrNull(reviewBlock?.interval_turns),
+                recentMessages: asPositiveIntOrNull(reviewBlock?.recent_messages),
+                timeoutMs: asPositiveIntOrNull(reviewBlock?.timeout_ms),
+            },
         },
     };
 }

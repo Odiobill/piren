@@ -7,11 +7,18 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TelegramSettingsForm } from "../web/src/TelegramSettingsForm.js";
 import { DiscordSettingsForm } from "../web/src/DiscordSettingsForm.js";
+import { SchedulerSettingsForm } from "../web/src/SchedulerSettingsForm.js";
+import { AgentPreferencesForm } from "../web/src/AgentPreferencesForm.js";
 import {
   fetchTelegramSettings,
   fetchDiscordSettings,
   saveTelegramSettings,
   saveDiscordSettings,
+  fetchConversationAgents,
+  fetchSchedulerSettings,
+  saveSchedulerSettings,
+  fetchAgentPreferences,
+  saveAgentModelFallback,
   SettingsHttpError,
   UnauthorizedError,
 } from "../web/src/api.js";
@@ -24,6 +31,11 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
     fetchDiscordSettings: vi.fn(),
     saveTelegramSettings: vi.fn(),
     saveDiscordSettings: vi.fn(),
+    fetchConversationAgents: vi.fn(),
+    fetchSchedulerSettings: vi.fn(),
+    saveSchedulerSettings: vi.fn(),
+    fetchAgentPreferences: vi.fn(),
+    saveAgentModelFallback: vi.fn(),
   };
 });
 
@@ -198,3 +210,136 @@ describe("DiscordSettingsForm: snowflake validation smoke", () => {
     expect(inputByClass("settings-form-token").value).toBe("");
   });
 });
+
+describe("SchedulerSettingsForm: closed diff save (W6)", () => {
+  const SCHED = {
+    available: true as const,
+    value: {
+      present: true,
+      enabled: false,
+      automation: { inboxTasks: false, agentCron: false, scriptCron: false },
+      deviceIdConfigured: false,
+      pollIntervalSeconds: null,
+      staleAfterSeconds: null,
+      maxConcurrentAgents: null,
+      deviceId: null,
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue(SCHED);
+  });
+
+  it("sends only the fields the steward changed", async () => {
+    vi.mocked(saveSchedulerSettings).mockResolvedValue();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(SchedulerSettingsForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+
+    const enabled = inputByClass("settings-scheduler-enabled");
+    setChecked(enabled, true);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+
+    expect(saveSchedulerSettings).toHaveBeenCalledWith({ enabled: true }, "T");
+  });
+
+  it("rejects a non-positive poll interval with a bounded field error", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(SchedulerSettingsForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+    setInput(inputByClass("settings-scheduler-poll"), "0");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container.textContent).toMatch(/positive integer/i);
+    expect(saveSchedulerSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentPreferencesForm: roster + fallback confirmation (W6)", () => {
+  const PREF = {
+    available: true as const,
+    value: {
+      model: { id: "anthropic/claude-sonnet-4-6", thinking: "high" },
+      modelFallback: { declared: true, autoSwitch: true, modelCount: 1, models: ["openrouter/kimi-k3"] },
+      contextInjection: { mode: "session_start_only" },
+      selfImprovement: { autoNudge: true, reviewLoopEnabled: true, reviewLoop: { intervalTurns: 10, recentMessages: 20, timeoutMs: 120000 } },
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "kimi", online: true }, { name: "ghost", online: false }] });
+    vi.mocked(fetchAgentPreferences).mockResolvedValue(PREF);
+  });
+
+  it("lists only locally-runnable agents and requires confirmation for an enabled auto-switch edit", async () => {
+    vi.mocked(saveAgentModelFallback).mockResolvedValue();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(AgentPreferencesForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+    // Only runnable agents appear in the select.
+    const options = Array.from(container.querySelectorAll(".settings-agent-select option")).map((o) => o.getAttribute("value"));
+    expect(options).toEqual(["", "kimi"]);
+
+    // Select the agent and load preferences.
+    const select = container.querySelector(".settings-agent-select") as HTMLSelectElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, "kimi");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+
+    // Editing models while auto-switch stays enabled needs the confirm checkbox.
+    const fallbackSave = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save fallback") as HTMLButtonElement;
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.textContent).toMatch(/confirm/i);
+    expect(saveAgentModelFallback).not.toHaveBeenCalled();
+
+    const confirm = inputByClass("settings-agent-confirm");
+    setChecked(confirm, true);
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveAgentModelFallback).toHaveBeenCalledWith("kimi", expect.anything(), true, "T");
+  });
+
+  it("disabling auto-switch never requires confirmation", async () => {
+    vi.mocked(saveAgentModelFallback).mockResolvedValue();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(AgentPreferencesForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+    const select = container.querySelector(".settings-agent-select") as HTMLSelectElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, "kimi");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    setChecked(inputByClass("settings-agent-autoswitch"), false);
+    const fallbackSave = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save fallback") as HTMLButtonElement;
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveAgentModelFallback).toHaveBeenCalledWith("kimi", { models: ["openrouter/kimi-k3"], autoSwitch: false }, false, "T");
+  });
+});
+
+function setChecked(input: HTMLInputElement, checked: boolean): void {
+  act(() => {
+    // React's checkbox onChange is driven by the native click toggle.
+    if (input.checked !== checked) input.click();
+  });
+}

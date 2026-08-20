@@ -7,12 +7,13 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { SettingsView } from "../web/src/SettingsView.js";
 import { Sidebar } from "../web/src/Sidebar.js";
-import { fetchConversations, fetchTelegramSettings, fetchDiscordSettings } from "../web/src/api.js";
+import { fetchConversations, fetchTelegramSettings, fetchDiscordSettings, fetchSchedulerSettings, fetchConversationAgents } from "../web/src/api.js";
 
 /**
- * W3+W5 (0.2.0 amendment §5) — jsdom tests for the full-page Settings
+ * W3+W5+W6 (0.2.0 amendment §5) — jsdom tests for the full-page Settings
  * shell: W3 semantic structure + non-action language for the static families,
- * and W5 typed Telegram/Discord transport workflows (write-only tokens).
+ * W5 typed Telegram/Discord transport workflows, and W6 typed scheduler and
+ * agent-preference workflows.
  */
 
 vi.mock("../web/src/api.js", async (importOriginal) => {
@@ -22,6 +23,8 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
     fetchConversations: vi.fn(),
     fetchTelegramSettings: vi.fn(),
     fetchDiscordSettings: vi.fn(),
+    fetchSchedulerSettings: vi.fn(),
+    fetchConversationAgents: vi.fn(),
   };
 });
 
@@ -34,6 +37,8 @@ beforeEach(() => {
   root = createRoot(container);
   vi.mocked(fetchTelegramSettings).mockResolvedValue({ available: false, reason: "Local config is not present." });
   vi.mocked(fetchDiscordSettings).mockResolvedValue({ available: false, reason: "Local config is not present." });
+  vi.mocked(fetchSchedulerSettings).mockResolvedValue({ available: false, reason: "Local config is not present." });
+  vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [] });
 });
 
 afterEach(() => {
@@ -66,8 +71,8 @@ describe("SettingsView (W5 typed transport forms + static families)", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("Telegram transport");
     expect(text).toContain("Discord transport");
-    expect(text).toContain("Scheduler");
-    expect(text).toMatch(/model preference/i);
+    expect(text).toContain("Scheduler automation");
+    expect(text).toMatch(/agent preferences/i);
     expect(text).toMatch(/same agent/i);
     expect(text).toMatch(/same live session|same session/i);
     expect(text).not.toMatch(/inert groundwork/i);
@@ -80,21 +85,21 @@ describe("SettingsView (W5 typed transport forms + static families)", () => {
     expect(text).toMatch(/not available in this shell/i);
   });
 
-  it("Telegram and Discord gain typed forms while the other Tier A families stay static", async () => {
+  it("Telegram/Discord/scheduler/agent families gain typed forms while Tier B/C stay static", async () => {
     vi.mocked(fetchTelegramSettings).mockResolvedValue({ available: true, value: { configured: false, allowedChatIds: 0, defaultAgent: null, feedbackEnabled: null } });
     vi.mocked(fetchDiscordSettings).mockResolvedValue({ available: true, value: { configured: false, allowedGuildIds: 0, allowedChannelIds: 0, allowedThreadIds: null, allowedDmUserIds: null, defaultAgent: null, feedbackEnabled: null } });
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue({ available: true, value: { present: false, enabled: false, automation: { inboxTasks: false, agentCron: false, scriptCron: false }, deviceIdConfigured: false, pollIntervalSeconds: null, staleAfterSeconds: null, maxConcurrentAgents: null, deviceId: null } });
+    vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "kimi", online: true }] });
     await renderSettings();
-    // The two transport workflows now expose the write-only token input.
-    const tokenInputs = container.querySelectorAll(".settings-form-token");
-    expect(tokenInputs.length).toBe(2);
-    for (const input of tokenInputs) {
-      expect((input as HTMLInputElement).type).toBe("password");
-    }
-    // The scheduler family remains a static, non-interactive description.
-    const familyText = [...container.querySelectorAll(".settings-family")].map((el) => el.textContent ?? "");
-    const scheduler = familyText.find((t) => t.startsWith("Scheduler automation"));
-    expect(scheduler).toBeDefined();
-    expect(scheduler).not.toMatch(/save|input/i);
+    // The two transport workflows expose the write-only token input; the
+    // scheduler form exposes its master-gate checkbox; the agent form exposes
+    // the runnable-agent selector.
+    expect(container.querySelectorAll(".settings-form-token").length).toBe(2);
+    expect(container.querySelector(".settings-scheduler-enabled")).not.toBeNull();
+    expect(container.querySelector(".settings-agent-select")).not.toBeNull();
+    // Tier B/C stay read-only/action descriptions (no inputs).
+    const tierB = container.querySelector("#settings-tier-b-heading")?.closest("section");
+    expect(tierB?.querySelectorAll("input, select, button").length).toBe(0);
   });
 
   it("lists the boundaries Settings will never cross", async () => {

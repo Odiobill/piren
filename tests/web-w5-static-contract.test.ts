@@ -13,14 +13,21 @@ import { WORKBENCH_MODULES } from "../web/src/registry.js";
 
 const repoRoot = process.cwd();
 const webSrc = join(repoRoot, "web", "src");
-const W5_WEB_FILES = ["settings-transport.ts", "TelegramSettingsForm.tsx", "DiscordSettingsForm.tsx", "SettingsView.tsx"];
+const W5_WEB_FILES = [
+  "settings-transport.ts",
+  "TelegramSettingsForm.tsx",
+  "DiscordSettingsForm.tsx",
+  "SchedulerSettingsForm.tsx",
+  "AgentPreferencesForm.tsx",
+  "SettingsView.tsx",
+];
 const FORBIDDEN = ["localStorage", "sessionStorage", "indexedDB", "eval(", "new Function", "import(", "dangerouslySetInnerHTML"];
 
 describe("Settings module consumes only the transport settings family (W5)", () => {
   it("the settings module declares the transport settings family and nothing broader", () => {
     const settings = WORKBENCH_MODULES.find((m) => m.id === "settings");
     expect(settings?.placement).toBe("page");
-    expect(settings?.consumes).toEqual(["settings-transports"]);
+    expect(settings?.consumes).toEqual(["settings-transports", "settings-scheduler", "settings-agents"]);
   });
 });
 
@@ -52,10 +59,12 @@ describe("W5 web files forbidden surface", () => {
     }
   });
 
-  it("the shared API transport adds ONLY the four narrow transport settings routes", async () => {
+  it("the shared API transport adds ONLY the narrow transport/scheduler/agent settings routes", async () => {
     const api = await readFile(join(webSrc, "api.ts"), "utf8");
     expect(api).toContain('"/api/settings/telegram"');
     expect(api).toContain('"/api/settings/discord"');
+    expect(api).toContain('"/api/settings/scheduler"');
+    expect(api).toContain("/api/settings/agents/${");
     // No generic /api/settings reader/patcher.
     expect(api).not.toMatch(/"\/api\/settings["`]/);
     expect(api).not.toContain("/api/settings/patch");

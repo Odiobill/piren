@@ -1,6 +1,8 @@
 import { familiesForTier, type SettingsFamily, type SettingsTier } from "./settings-inventory.js";
 import { TelegramSettingsForm } from "./TelegramSettingsForm.js";
 import { DiscordSettingsForm } from "./DiscordSettingsForm.js";
+import { SchedulerSettingsForm } from "./SchedulerSettingsForm.js";
+import { AgentPreferencesForm } from "./AgentPreferencesForm.js";
 
 /**
  * W3 + W5 (0.2.0 amendment §5; ADR-0046): the full-page Settings module.
@@ -15,7 +17,7 @@ const TIER_PRESENTATION: Record<SettingsTier, { heading: string; blurb: string }
   "tier-a": {
     heading: "Typed configuration workflows",
     blurb:
-      "Telegram and Discord transports are editable here through typed, validated workflows. The remaining families stay gated until later slices.",
+      "Telegram, Discord, scheduler automation, and agent preferences are editable here through typed, validated workflows. The remaining families stay gated until later slices.",
   },
   "tier-b": {
     heading: "Read-only inspection",
@@ -61,6 +63,17 @@ function FamilyContent({
   }
   if (family.id === "discord") {
     return <DiscordSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />;
+  }
+  if (family.id === "scheduler") {
+    return <SchedulerSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />;
+  }
+  if (family.id === "agent-model-preference") {
+    return <AgentPreferencesForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />;
+  }
+  if (family.id === "agent-model-fallback" || family.id === "agent-context-injection" || family.id === "agent-self-improvement") {
+    // W6: these agent-config families are edited in the combined Agent
+    // preferences workflow above; no duplicate static form is rendered.
+    return <FamilyItem family={{ ...family, availability: "Managed in the Agent preferences workflow above." }} />;
   }
   return <FamilyItem family={family} />;
 }

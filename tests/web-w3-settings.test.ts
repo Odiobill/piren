@@ -39,7 +39,7 @@ describe("W3 registry: settings module", () => {
 
   it("declares only the narrow transport settings family and no intents (W5)", () => {
     const settings = getModuleById("settings");
-    expect(settings?.consumes).toEqual(["settings-transports"]);
+    expect(settings?.consumes).toEqual(["settings-transports", "settings-scheduler", "settings-agents"]);
     expect(settings?.emits).toEqual([]);
   });
 

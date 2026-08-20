@@ -361,7 +361,12 @@ describe("readAgentConfigRedacted", () => {
     expect(calls).toEqual(["read:/vault/team/kimi/config.yml"]);
     expect(projection.available).toBe(true);
     expect(projection.model).toEqual({ id: "anthropic/claude-sonnet-4-6", thinking: "high" });
-    expect(projection.modelFallback).toEqual({ declared: true, autoSwitch: true, modelCount: 2 });
+    expect(projection.modelFallback).toEqual({
+      declared: true,
+      autoSwitch: true,
+      modelCount: 2,
+      models: ["openrouter/kimi-k3", "opencode-go/kimi-k3"],
+    });
     expect(projection.contextInjection).toEqual({ mode: "session_start_only" });
     expect(projection.selfImprovement).toMatchObject({ autoNudge: true, reviewLoopEnabled: true });
     // Unknown agent-config keys (polling) never appear.
@@ -369,11 +374,17 @@ describe("readAgentConfigRedacted", () => {
     expect(JSON.stringify(projection)).not.toContain("interval_seconds");
   });
 
-  it("never lists fallback model ids (count only)", async () => {
+  it("exposes only the editable fallback declaration (models list) while hiding raw config and unknown keys", async () => {
     const { io } = fakeFs(new Map([["/vault/team/kimi/config.yml", AGENT_DOC]]));
     const serialized = JSON.stringify(await readAgentConfigRedacted(io, "/vault", "kimi"));
-    expect(serialized).not.toContain("openrouter");
-    expect(serialized).not.toContain("opencode-go");
+    // The W6 contract permits the fallback-model list ONLY because it is the
+    // explicitly editable model.fallback declaration itself.
+    expect(serialized).toContain("openrouter/kimi-k3");
+    expect(serialized).toContain("opencode-go/kimi-k3");
+    // No other raw config or unknown key leaks.
+    expect(serialized).not.toContain("polling");
+    expect(serialized).not.toContain("interval_seconds");
+    expect(serialized).not.toContain("review_loop");
   });
 
   it("fails closed for missing and malformed agent configs", async () => {

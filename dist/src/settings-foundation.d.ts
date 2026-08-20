@@ -111,6 +111,8 @@ export type AgentSettingsIntent = {
     agent: string;
     family: "model-fallback";
     block: AgentModelFallbackPatch;
+    /** W6: explicit route-specific confirmation required when the save leaves auto-switch enabled. */
+    confirmAutoSwitch?: boolean;
 } | {
     surface: "agent";
     agent: string;
@@ -161,6 +163,11 @@ export interface RedactedSchedulerProjection {
         scriptCron: boolean;
     };
     deviceIdConfigured: boolean;
+    /** W6: the editable non-secret scheduler values (null = absent/default). */
+    pollIntervalSeconds: number | null;
+    staleAfterSeconds: number | null;
+    maxConcurrentAgents: number | null;
+    deviceId: string | null;
 }
 export interface RedactedLocalConfigProjection {
     available: boolean;
@@ -181,6 +188,8 @@ export interface RedactedAgentConfigProjection {
         declared: boolean;
         autoSwitch: boolean | null;
         modelCount: number;
+        /** W6: the editable fallback declaration list (empty when undeclared). */
+        models: string[];
     };
     contextInjection?: {
         mode: string | null;
@@ -188,6 +197,12 @@ export interface RedactedAgentConfigProjection {
     selfImprovement?: {
         autoNudge: boolean | null;
         reviewLoopEnabled: boolean | null;
+        /** W6: the editable bounded review-loop numeric values (null = absent). */
+        reviewLoop: {
+            intervalTurns: number | null;
+            recentMessages: number | null;
+            timeoutMs: number | null;
+        };
     };
 }
 /**
