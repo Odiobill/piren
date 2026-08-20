@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { initVault, scaffoldAgentDirectory } from "./init.js";
 import { spawnPiRun, buildPiRunCommand } from "./run.js";
 import { formatSetupReport, setupPiren } from "./setup.js";
+import { formatPostSetupWorkbenchSuggestion } from "./setup-guidance.js";
 import { buildAgentConfigYaml, readPiDefaultModel, runWizard } from "./wizard.js";
 import { ReadlinePrompt } from "./prompt.js";
 import { runSchedulerConfigure } from "./scheduler-configure.js";
@@ -475,6 +476,12 @@ try {
       const report = await setupPiren(setupOptions);
       console.log(formatSetupReport(report));
       if (report.checks.some((check) => check.status === "fail")) process.exit(1);
+      // G1 (0.2.0 amendment §7): after a SUCCESSFUL `--apply` (no CLI-failing
+      // check) append the bounded, text-only Workbench suggestion. Plain
+      // inspection runs (no --apply) keep their existing output. The
+      // suggestion never starts anything and never implies the Workbench is
+      // running.
+      if (parsed.apply) console.log(formatPostSetupWorkbenchSuggestion());
     }
   } else if (command === "service") {
     const [actionRaw, transportRaw] = positionals;

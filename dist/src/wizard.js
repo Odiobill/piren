@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { initVault } from "./init.js";
 import { defaultPiCommandResolver } from "./run.js";
+import { formatPostSetupWorkbenchSuggestion } from "./setup-guidance.js";
 export const PI_PROVIDERS = [
     { id: "anthropic", name: "Anthropic (Claude)", envVar: "ANTHROPIC_API_KEY", defaultModel: "anthropic/claude-sonnet-4-20250514:medium" },
     { id: "openai", name: "OpenAI", envVar: "OPENAI_API_KEY" },
@@ -496,6 +497,15 @@ export async function runWizard(prompt, deps = {}) {
     log("  piren service install gateway");
     log("  piren service install telegram");
     log("  piren service install discord");
+    // G1 (0.2.0 amendment §7): only after a SUCCESSFUL, already-confirmed
+    // setup (the operator confirmed the local-config write) append the
+    // bounded, text-only Workbench suggestion. Early exits above and a
+    // declined write emit nothing. The suggestion never starts anything and
+    // never implies the Workbench is running.
+    if (wroteConfig) {
+        log("");
+        log(formatPostSetupWorkbenchSuggestion());
+    }
     const result = {
         completed: true,
         vaultRoot,

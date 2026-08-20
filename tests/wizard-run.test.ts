@@ -76,6 +76,9 @@ describe("runWizard: first-run preflight", () => {
     expect(result.completed).toBe(false);
     expect(result.exitReason).toBe("missing-pi");
     expect(logs.join("\n")).toContain("curl -fsSL https://pi.dev/install.sh | sh");
+    // G1: no post-setup Workbench suggestion on the missing-Pi early exit.
+    expect(logs.join("\n")).not.toContain("not running yet");
+    expect(logs.join("\n")).not.toContain("piren gateway");
     await expect(access(configPath)).rejects.toThrow();
     await expect(access(vault)).rejects.toThrow();
   });
@@ -99,6 +102,9 @@ describe("runWizard: first-run preflight", () => {
     expect(logs.join("\n")).toContain("/login");
     expect(logs.join("\n")).toContain("/quit");
     expect(logs.join("\n")).toContain("piren setup");
+    // G1: no post-setup Workbench suggestion on the Pi-auth early exit.
+    expect(logs.join("\n")).not.toContain("not running yet");
+    expect(logs.join("\n")).not.toContain("piren gateway");
     await expect(access(configPath)).rejects.toThrow();
     await expect(access(vault)).rejects.toThrow();
   });
@@ -146,6 +152,51 @@ describe("runWizard: minimal first-run setup", () => {
     expect(logText).toContain("piren service install gateway");
     expect(logText).toContain("piren service install telegram");
     expect(logText).toContain("piren service install discord");
+  });
+
+  it("G1: prints the bounded optional Workbench suggestion exactly once after a successful confirmed setup", async () => {
+    const vault = join(root, "newvault");
+    const configPath = join(root, "config.yml");
+    const piHome = join(root, "pi-home");
+    const logs: string[] = [];
+    await seedPiAuth(piHome);
+
+    const result = await runWizard(fakePrompt({ vaultPath: vault, firstAgent: "piren" }), {
+      configPath,
+      piHome,
+      piCommandChecker: piInstalled,
+      log: (m) => logs.push(m),
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.wroteConfig).toBe(true);
+    const logText = logs.join("\n");
+    // Exactly one bounded suggestion: names `piren gateway`, states the
+    // localhost default bind, optional framing, never implies it is running.
+    expect(logText.split("piren gateway").length - 1).toBe(1);
+    expect(logText).toContain("127.0.0.1");
+    expect(logText).toContain("not running yet");
+  });
+
+  it("G1: a declined config write emits no Workbench suggestion", async () => {
+    const vault = join(root, "newvault");
+    const configPath = join(root, "config.yml");
+    const piHome = join(root, "pi-home");
+    const logs: string[] = [];
+    await seedPiAuth(piHome);
+
+    const result = await runWizard(fakePrompt({ vaultPath: vault, firstAgent: "piren", confirmWrite: false }), {
+      configPath,
+      piHome,
+      piCommandChecker: piInstalled,
+      log: (m) => logs.push(m),
+    });
+
+    expect(result.completed).toBe(true);
+    expect(result.wroteConfig).toBe(false);
+    const logText = logs.join("\n");
+    expect(logText).not.toContain("piren gateway");
+    expect(logText).not.toContain("not running yet");
   });
 
   it("reuses an existing vault and lets the operator select local runnable agents", async () => {
