@@ -8,6 +8,7 @@ import { spawnPiRun, buildPiRunCommand } from "./run.js";
 import { formatSetupReport, setupPiren } from "./setup.js";
 import { buildAgentConfigYaml, readPiDefaultModel, runWizard } from "./wizard.js";
 import { ReadlinePrompt } from "./prompt.js";
+import { runSchedulerConfigure } from "./scheduler-configure.js";
 import { GatewayServer } from "./gateway-http.js";
 import { TelegramBotApiHttpClient, TelegramTransport, runTelegramPolling } from "./telegram-transport.js";
 import { DiscordBotApiHttpClient, DiscordTransport, runDiscordGateway, createNativeDiscordGatewaySocket, DISCORD_GATEWAY_INTENTS } from "./discord-transport.js";
@@ -532,6 +533,25 @@ try {
             process.exit(1);
     }
     else if (command === "scheduler") {
+        if (positionals[0] === "configure") {
+            // Guided atomic local-config writer (0.2.0 S3). Interactive only: it
+            // reads/prompts/writes ~/.config/piren/config.yml and never starts a
+            // service, ticks the scheduler, contacts a platform, or writes the
+            // vault. Explicit exit: the readline interface can keep the event
+            // loop alive (same unsettled-top-level-await concern as the wizard).
+            const prompter = new ReadlinePrompt();
+            try {
+                await runSchedulerConfigure(prompter, { log: (m) => console.log(m) });
+            }
+            finally {
+                prompter.close();
+            }
+            process.exit(0);
+        }
+        else if (positionals[0] !== undefined) {
+            console.error("Usage: piren scheduler [--once [--force] | --dry-run | --report | configure]");
+            process.exit(2);
+        }
         if (parsed.report) {
             // Read-only operator report (ADR-0038 R3): vault + local config reads
             // only. Never claims, spawns, writes, or calls Pi.

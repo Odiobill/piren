@@ -239,6 +239,25 @@ alert_mirror:
 
 Gateway token can be passed through `--token`, `PIREN_TOKEN`, or `~/.config/piren/gateway-token`.
 
+## Scheduler config
+
+The device-local scheduler is **disabled by default** and configured under `scheduler:` in the same local file:
+
+```yaml
+scheduler:
+  enabled: true               # master gate (default false)
+  automation:
+    inbox_tasks: true         # default false, even when cron classes are on
+    agent_cron: true          # default false
+    script_cron: true         # default false
+  poll_interval_seconds: 30
+  stale_after_seconds: 300
+  max_concurrent_agents: 1
+  device_id: workstation      # optional; absent -> sanitized hostname
+```
+
+Absent or malformed values fail closed. An established legacy block with legacy keys but no `enabled` key resolves effective `enabled: true` with a read-only migration notice until an explicit confirmed write materializes it. `piren scheduler configure` is the guided interactive writer (current-state display, preview, confirmation, atomic write; never starts anything). See [scheduler.md](scheduler.md) for the full semantics, including the bounded `piren scheduler --once --force` override (master and inbox gates only, one tick, never persisted).
+
 ## Environment variables
 
 Common overrides:

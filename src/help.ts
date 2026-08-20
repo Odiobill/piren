@@ -120,8 +120,8 @@ export const HELP_TOPICS: readonly CommandHelpTopic[] = [
   },
   {
     command: "scheduler",
-    short: "Device-local scheduler. Disabled by default (fail-closed scheduler.enabled); bare runs the opt-in loop; --once runs one bounded tick; --once --force overrides only the master and inbox gates for one non-persistent tick; --dry-run previews planned claims; --report prints a read-only operator report (LLM-free).",
-    flags: ["--once", "--force", "--dry-run", "--report"],
+    short: "Device-local scheduler. Disabled by default (fail-closed scheduler.enabled); bare runs the opt-in loop; --once runs one bounded tick; --once --force overrides only the master and inbox gates for one non-persistent tick; --dry-run previews planned claims; --report prints a read-only operator report (LLM-free); configure runs the guided interactive local-config writer (preview + confirmation, atomic write, never starts anything).",
+    flags: ["--once", "--force", "--dry-run", "--report", "configure"],
     example: "piren scheduler  # opt-in loop until SIGINT/SIGTERM (configure under scheduler: in config.yml)",
   },
   {

@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 const repoRoot = process.cwd();
 const cliJs = join(repoRoot, "dist", "src", "cli.js");
 
-function runScheduler(args: string[], env: Record<string, string>): { status: number | null; stdout: string; stderr: string } {
+function runScheduler(args: string[], env: Record<string, string>, input?: string): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [cliJs, "scheduler", ...args], {
     encoding: "utf8",
     env: { ...process.env, ...env },
@@ -24,6 +24,7 @@ function runScheduler(args: string[], env: Record<string, string>): { status: nu
     // alive must fail the test, not hang the suite forever.
     timeout: 15000,
     killSignal: "SIGKILL",
+    ...(input !== undefined ? { input } : {}),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
@@ -292,5 +293,64 @@ describe("piren scheduler CLI gates (0.2.0 S2)", () => {
     } finally {
       await rm(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("piren scheduler configure (CLI dispatch, 0.2.0 S3)", () => {
+  async function makeHome(configText: string | undefined): Promise<{ home: string; vault: string; configPath: string }> {
+    const home = await mkdtemp(join(tmpdir(), "piren-scheduler-configure-home-"));
+    const vault = join(home, "vault");
+    await mkdir(join(vault, "team", "codex"), { recursive: true });
+    await writeFile(join(vault, ".piren-vault"), "");
+    const configPath = join(home, ".config", "piren", "config.yml");
+    await mkdir(join(home, ".config", "piren"), { recursive: true });
+    if (configText !== undefined) await writeFile(configPath, configText);
+    return { home, vault, configPath };
+  }
+
+  it("guided flow: piped answers produce a preview, confirmation, and an atomic write", async () => {
+    const { home, configPath } = await makeHome("vault_root: /v\nallowed_agents:\n  - codex\n");
+    try {
+      // enabled yes, inbox yes, agent no, script no, intervals default,
+      // device blank, write yes.
+      const answers = "y\ny\nn\nn\n\n\n\n\ny\n";
+      const result = runScheduler(["configure"], { HOME: home }, answers);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("scheduler enabled: no");
+      expect(result.stdout).toContain("scheduler:");
+      expect(result.stdout).toContain("Wrote");
+      const { readFile } = await import("node:fs/promises");
+      const written = await readFile(configPath, "utf8");
+      expect(written).toContain("enabled: true");
+      expect(written).toContain("inbox_tasks: true");
+      expect(written).toContain("agent_cron: false");
+      expect(written).toContain("script_cron: false");
+      // Unrelated blocks preserved.
+      expect(written).toContain("vault_root: /v");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("declining the write confirmation leaves the config byte-for-byte intact", async () => {
+    const original = "vault_root: /v\nallowed_agents:\n  - codex\nscheduler:\n  poll_interval_seconds: 45\n";
+    const { home, configPath } = await makeHome(original);
+    try {
+      // defaults accepted (legacy resolves enabled=true), write declined.
+      const answers = "\n\n\n\n\n\n\n\nn\n";
+      const result = runScheduler(["configure"], { HOME: home }, answers);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Cancelled");
+      const { readFile } = await import("node:fs/promises");
+      expect(await readFile(configPath, "utf8")).toBe(original);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("an unknown scheduler subcommand fails with usage", () => {
+    const result = runScheduler(["bogus"], { HOME: "" });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/usage: piren scheduler/i);
   });
 });

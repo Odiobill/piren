@@ -100,3 +100,11 @@ describe("scheduler help (0.2.0 S2)", () => {
     expect(text).toMatch(/disabled|fail.closed|enabled/i);
   });
 });
+
+describe("scheduler help configure (0.2.0 S3)", () => {
+  it("documents the guided atomic configure flow", () => {
+    const text = formatCommandHelp("scheduler") ?? "";
+    expect(text).toContain("configure");
+    expect(text).toMatch(/guided|wizard|interactive/i);
+  });
+});

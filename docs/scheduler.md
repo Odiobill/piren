@@ -10,8 +10,12 @@ The scheduler provides four explicit ways to operate: a read-only dry-run planne
 piren scheduler --dry-run   # LLM-free, claim-free: preview proposed claims for one tick
 piren scheduler --report    # read-only operator report: cycles, retry metadata, claimed-task triage items
 piren scheduler --once      # one live tick: refresh, plan, claim, execute at most one item, stop
+piren scheduler --once --force  # bounded one-shot override of only the master and inbox gates
 piren scheduler             # opt-in loop: repeats --once every poll interval until SIGINT/SIGTERM
+piren scheduler configure   # guided interactive local-config writer (preview + confirmation, atomic)
 ```
+
+The scheduler is **disabled by default** (fail-closed `scheduler.enabled`). With no `scheduler:` block — or with `enabled: false` — `piren scheduler` and `--once` no-op immediately with a bounded notice: no heartbeat refresh, planning, claim, spawn, or sleep. `--dry-run` and `--report` stay read-only and run regardless, showing the resolved master/class state. The closed automation classes (`automation.inbox_tasks`, `automation.agent_cron`, `automation.script_cron`) each default to **off**; a disabled class is never proposed, claimed, or executed. `inbox_tasks` is off even when the scheduler and cron classes are enabled. `piren scheduler --once --force` is the only override: it turns on **only the master and inbox gates** for one non-persistent bounded tick — it never enables disabled cron classes, never writes config, and never starts a service.
 
 The dry-run loads vault state for every agent in local `allowed_agents`, plans proposed claim attempts for one tick, and prints them grouped by agent. It does not claim, does not spawn, and does not invoke any LLM.
 
@@ -156,15 +160,31 @@ allowed_agents:
 excluded_agents: []
 
 scheduler:
+  enabled: true               # master gate (default false; fresh installs are off)
+  automation:
+    inbox_tasks: true         # claim + execute pending inbox tasks (default false, even when cron classes are on)
+    agent_cron: true          # claim + execute due agent-mode cron jobs (default false)
+    script_cron: true         # execute due script-mode cron jobs directly (default false)
   poll_interval_seconds: 30    # seconds between loop ticks (default 30)
   stale_after_seconds: 300      # device heartbeat staleness threshold (default 300)
   max_concurrent_agents: 1      # parsed and reported; effective concurrency is 1 (one-at-a-time)
   device_id: workstation        # optional explicit override; absent -> sanitized hostname
 ```
 
-Defaults are conservative: 30s poll interval, 300s stale-after, effective concurrency 1. Invalid/non-positive values fall back to the defaults deterministically and are surfaced as warnings in the loop's startup summary. An explicit `device_id` is passed verbatim (not sanitized); when absent, the loop uses a sanitized-hostname fallback so hosts like `workstation` or `workstation.local` work out of the box.
+Defaults are fail-closed: absent `enabled`/`automation` keys resolve **off**, and present-but-malformed values fail closed with deterministic non-secret warnings. One deliberate exception preserves upgrade intent: an established legacy `scheduler:` block that sets legacy keys (`poll_interval_seconds`, `stale_after_seconds`, `max_concurrent_agents`, or `device_id`) but no `enabled` key resolves effective `enabled: true` and surfaces a read-only migration notice; only an explicit confirmed write (for example through `piren scheduler configure`) materializes `scheduler.enabled: true` — nothing persists it automatically. Interval values default to 30s poll, 300s stale-after, effective concurrency 1; invalid/non-positive values fall back deterministically with warnings in the loop's startup summary. An explicit `device_id` is passed verbatim (not sanitized); when absent, the loop uses a sanitized-hostname fallback so hosts like `workstation` or `workstation.local` work out of the box.
 
 The loop reads this config once at startup; each tick re-reads local config for `vault_root` and `allowed_agents`, so agent-set changes take effect without restarting the scheduler.
+
+## Guided configuration (`piren scheduler configure`)
+
+`piren scheduler configure` is an interactive, guided writer for the `scheduler:` block — the same pattern as `piren telegram configure`:
+
+1. It displays the **current effective state** resolved from your existing config (fail-closed for fresh installs; legacy blocks show effective `enabled: true` plus the migration notice).
+2. It prompts for exactly the closed inventory: the master gate, the three automation classes, poll/stale/concurrency values, and an optional device id (blank keeps the sanitized-hostname fallback).
+3. It shows a bounded **preview** of the exact scheduler block, then requires an explicit **confirmation**.
+4. Only then does it write — **atomically** (temp file + rename), preserving every unrelated block (`telegram:`, `discord:`, `allowed_agents`, …) and any unknown scheduler fields. Confirming after a legacy migration notice materializes explicit `scheduler.enabled: true`.
+
+Cancellation, a malformed existing config, invalid input, or a write failure leaves the old config **byte-for-byte intact**. The flow never starts or installs a service, never runs or ticks the scheduler, never contacts a platform, and never writes the vault. Installing/starting the service remains a separate explicit action (`piren service install scheduler`).
 
 ## Device ownership model
 
