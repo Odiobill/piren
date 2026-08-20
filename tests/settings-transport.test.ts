@@ -232,7 +232,10 @@ describe("W6 agent preferences read parser", () => {
 describe("W6 validators", () => {
   it("validates thinking levels and context-injection modes", () => {
     expect(isValidThinkingLevel("low")).toBe(true);
-    expect(isValidThinkingLevel("max")).toBe(false);
+    expect(isValidThinkingLevel("minimal")).toBe(true);
+    expect(isValidThinkingLevel("xhigh")).toBe(true);
+    expect(isValidThinkingLevel("max")).toBe(true);
+    expect(isValidThinkingLevel("banana")).toBe(false);
     expect(isValidContextInjectionMode("per_turn")).toBe(true);
     expect(isValidContextInjectionMode("always")).toBe(false);
   });

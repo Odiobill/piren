@@ -245,6 +245,8 @@ const SCHEDULER_KEYS = [
 ] as const;
 const AUTOMATION_KEYS = ["inbox_tasks", "agent_cron", "script_cron"] as const;
 const MODEL_KEYS = ["id", "thinking"] as const;
+/** Pi-native durable thinking preference enum; live-session controls stay out of Settings. */
+const AGENT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const FALLBACK_KEYS = ["autoSwitch", "models"] as const;
 const SELF_IMPROVEMENT_KEYS = [
   "autoNudge",
@@ -414,7 +416,12 @@ export function parseSettingsIntent(raw: unknown): ParseIntentResult {
     if (id === "invalid") return { ok: false, error: "Invalid model id in the model Settings block." };
     if (id !== undefined) patch.id = id;
     const thinking = asOptionalNonEmptyString(block, "thinking");
-    if (thinking === "invalid") return { ok: false, error: "Invalid thinking level in the model Settings block." };
+    if (
+      thinking === "invalid" ||
+      (thinking !== undefined && !(AGENT_THINKING_LEVELS as readonly string[]).includes(thinking))
+    ) {
+      return { ok: false, error: "Invalid thinking level in the model Settings block." };
+    }
     if (thinking !== undefined) patch.thinking = thinking;
     return { ok: true, intent: { surface: "agent", agent, family: "model", block: patch } };
   }

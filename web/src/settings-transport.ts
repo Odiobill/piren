@@ -432,7 +432,7 @@ export function buildAgentSelfImprovementEnvelope(agent: string, block: AgentSel
 // W6 structural input validation
 // ---------------------------------------------------------------------------
 
-export const THINKING_LEVELS = ["low", "medium", "high"] as const;
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export const CONTEXT_INJECTION_MODES = ["per_turn", "session_start_only"] as const;
 

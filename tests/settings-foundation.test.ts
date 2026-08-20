@@ -89,6 +89,7 @@ describe("parseSettingsIntent: closed kind model", () => {
       { surface: "local", family: "scheduler", block: { automation: { inbox_tasks: "true" } } },
       { surface: "local", family: "scheduler", block: { automation: { unknown_class: true } } },
       { surface: "agent", agent: "kimi", family: "context-injection", mode: "sometimes" },
+      { surface: "agent", agent: "kimi", family: "model", block: { thinking: "banana" } },
       { surface: "agent", agent: "kimi", family: "self-improvement", block: { reviewLoopIntervalTurns: -1 } },
     ]) {
       expect(parseSettingsIntent(raw).ok, JSON.stringify(raw)).toBe(false);

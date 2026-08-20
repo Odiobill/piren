@@ -280,9 +280,13 @@ export function AgentPreferencesForm({
                 Thinking level
                 <select className="settings-agent-thinking" value={thinking} onChange={(e) => setThinking(e.target.value)}>
                   <option value="">Default</option>
+                  <option value="off">off</option>
+                  <option value="minimal">minimal</option>
                   <option value="low">low</option>
                   <option value="medium">medium</option>
                   <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="max">max</option>
                 </select>
               </label>
               <button type="button" className="settings-form-save button" disabled={saving} onClick={saveModel}>
