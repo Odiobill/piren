@@ -2149,7 +2149,7 @@ code {
   display: none;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 560px), (orientation: portrait) {
   /* Portrait/mobile: strictly one pane at a time, no stacked split, no
      resizer; the chat stays mounted and live underneath the toggle. */
   .split-resizer-host {

@@ -4,7 +4,7 @@ import {
   mobileSelectPane,
   setChatPaneHeight,
   splitBounds,
-  SPLIT_MOBILE_BREAKPOINT_PX,
+  SPLIT_MOBILE_MEDIA_QUERY,
   type MobileSplitPane,
   type SplitWorkspaceState,
 } from "./split-workspace.js";
@@ -66,6 +66,7 @@ export function SplitWorkspaceShell({
 
   // Measure the available split height (layout observation only; no polling).
   useLayoutEffect(() => {
+    if (!active) return;
     const measure = () => {
       if (containerRef.current !== null) setAvailableHeight(containerRef.current.clientHeight);
     };
@@ -76,8 +77,8 @@ export function SplitWorkspaceShell({
 
   // Mobile/portrait one-pane-at-a-time (existing 560px workbench breakpoint).
   useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const mql = window.matchMedia(`(max-width: ${SPLIT_MOBILE_BREAKPOINT_PX}px)`);
+    if (!active || typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia(SPLIT_MOBILE_MEDIA_QUERY);
     const apply = () => setIsMobile(mql.matches);
     apply();
     mql.addEventListener("change", apply);

@@ -16,6 +16,8 @@ export const COMPANION_PANE_MIN_PX = 200;
 export const RESIZER_STEP_PX = 10;
 /** Existing workbench mobile/portrait layout breakpoint (px). */
 export const SPLIT_MOBILE_BREAKPOINT_PX = 560;
+/** One-pane fallback on narrow screens or portrait layouts. */
+export const SPLIT_MOBILE_MEDIA_QUERY = `(max-width: ${SPLIT_MOBILE_BREAKPOINT_PX}px), (orientation: portrait)`;
 
 /** The mobile one-pane-at-a-time selection. */
 export type MobileSplitPane = "chat" | "companion";

@@ -134,6 +134,17 @@ describe("SplitWorkspaceShell: pass-through (closed / no companion)", () => {
     expect(companion).toBeNull();
     expect(separator).toBeNull();
   });
+
+  it("does not install viewport listeners or media observers while the inert shell is a pass-through", async () => {
+    const mql = stubMatchMedia(false);
+    const addWindowListener = vi.spyOn(window, "addEventListener");
+
+    await renderShell();
+
+    expect(window.matchMedia).not.toHaveBeenCalled();
+    expect(addWindowListener).not.toHaveBeenCalledWith("resize", expect.any(Function));
+    expect(mql.addEventListener).not.toHaveBeenCalled();
+  });
 });
 
 describe("SplitWorkspaceShell: desktop split layout", () => {
@@ -183,8 +194,19 @@ describe("SplitWorkspaceShell: desktop split layout", () => {
 });
 
 describe("SplitWorkspaceShell: mobile/portrait one-pane-at-a-time", () => {
+  it("uses the mobile-or-portrait media query rather than treating only narrow viewports as one-pane", async () => {
+    stubMatchMedia(true);
+
+    await renderShell({
+      state: openState(),
+      companion: createElement("div", { className: "fake-companion" }),
+    });
+
+    expect(window.matchMedia).toHaveBeenCalledWith("(max-width: 560px), (orientation: portrait)");
+  });
+
   it("shows one labelled toggle and keeps the chat mounted (hidden, not unmounted)", async () => {
-    stubMatchMedia(true); // <= 560px portrait
+    stubMatchMedia(true); // <= 560px or portrait
     const { chat, companion } = await renderShell({
       state: openState(),
       companion: createElement("div", { className: "fake-companion" }),
