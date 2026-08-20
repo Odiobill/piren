@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { fetchConversations, UnauthorizedError } from "./api";
 import { formatConversationHash, selectedConversationIdFromHash } from "./hash-route";
 import { conversationAudienceSummary, formatConversationCreatedTimestamp, type ConversationRecord } from "./conversations";
@@ -21,6 +21,9 @@ export function Sidebar({
   onValidated,
   onUnauthorized,
   conversationsReloadKey,
+  explorerOpen,
+  onToggleExplorer,
+  explorerToggleRef,
 }: {
   page: Page;
   token: string;
@@ -28,6 +31,11 @@ export function Sidebar({
   onValidated: () => void;
   onUnauthorized: () => void;
   conversationsReloadKey: number;
+  /** W2: the companion open/close affordance state (aria-pressed). */
+  explorerOpen: boolean;
+  onToggleExplorer: () => void;
+  /** W2: the toggle button for close-returns-focus. */
+  explorerToggleRef: RefObject<HTMLButtonElement | null>;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,6 +98,22 @@ export function Sidebar({
             </button>
           </li>
         ))}
+      </ul>
+      {/* W2: the single explicit companion open/close affordance in the
+          Conversation context (a shell-level workspace state, not a nav
+          page, no URL/hash change). aria-pressed reflects the open state. */}
+      <ul className="sidebar-companions">
+        <li>
+          <button
+            type="button"
+            ref={explorerToggleRef}
+            className={explorerOpen ? "nav-item active" : "nav-item"}
+            aria-pressed={explorerOpen}
+            onClick={onToggleExplorer}
+          >
+            Vault Explorer
+          </button>
+        </li>
       </ul>
       <section className="sidebar-conversations" aria-labelledby="sidebar-conversations-heading">
         <div className="sidebar-section-heading">

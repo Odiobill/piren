@@ -52,6 +52,9 @@
     "tests/web-sidebar.test.ts",
     "tests/web-split-resizer-component.test.ts",
     "tests/web-split-shell-component.test.ts",
-    "tests/web-w1-browser-layout.test.ts"
+    "tests/web-w1-browser-layout.test.ts",
+    "tests/web-vault-explorer-component.test.ts",
+    "tests/web-vault-explorer-shell.test.ts",
+    "tests/web-w2-browser-layout.test.ts"
   ]
 }

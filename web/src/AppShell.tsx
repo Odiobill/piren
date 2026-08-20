@@ -7,7 +7,9 @@ import { MobileDrawer } from "./MobileDrawer";
 import { ConversationNavigator } from "./ConversationNavigator";
 import { DashboardView } from "./DashboardView";
 import { SplitWorkspaceShell } from "./SplitWorkspaceShell";
-import { initialSplitWorkspaceState, type SplitWorkspaceState } from "./split-workspace";
+import { initialSplitWorkspaceState, mobileSelectPane, type SplitWorkspaceState } from "./split-workspace";
+import { getModuleById } from "./registry";
+import { VaultExplorer } from "./VaultExplorer";
 import { formatConversationHash } from "./hash-route";
 
 /**
@@ -67,6 +69,38 @@ export function AppShell({
    */
   const [reAnchorKey, setReAnchorKey] = useState(0);
   const handleSplitReAnchor = useCallback(() => setReAnchorKey((key) => key + 1), []);
+  /**
+   * W2 (0.2.0 amendment §4): the first companion module open/close state —
+   * in-memory only. The single explicit affordance is the sidebar toggle;
+   * opening never steals chat focus, closing returns focus to the opener.
+   */
+  const [explorerOpen, setExplorerOpen] = useState(false);
+  const explorerButtonRef = useRef<HTMLButtonElement>(null);
+  /**
+   * W2: the smallest existing typed selection signal at the shell boundary.
+   * The navigator reports the gateway-authoritative title (or null) via
+   * onSelectionChange; null means no selected Conversation -> the open
+   * Explorer falls back to a full-page module surface (no split/resizer).
+   */
+  const hasSelectedConversation = contextualTitle !== null;
+  const vaultExplorerLabel = getModuleById("vault-explorer")?.label ?? "Vault Explorer";
+
+  function handleToggleExplorer() {
+    if (explorerOpen) {
+      // Close: restore the normal view and return focus to the opener.
+      setExplorerOpen(false);
+      setNav((previous) => closeDrawer(previous));
+      const target = explorerButtonRef.current ?? toggleRef.current;
+      target?.focus();
+      return;
+    }
+    // Open: no focus theft (the clicked toggle keeps focus). On mobile/
+    // portrait the Explorer pane is selected first; the labelled toggle
+    // still retains the chat mounted/live underneath.
+    setExplorerOpen(true);
+    setSplitState((previous) => mobileSelectPane(previous, "companion"));
+    setNav((previous) => closeDrawer(previous));
+  }
 
   function handleSelect(page: Page) {
     // A selection made from the open mobile drawer closes it and must return
@@ -137,6 +171,9 @@ export function AppShell({
             onValidated={onValidated}
             onUnauthorized={onUnauthorized}
             conversationsReloadKey={conversationsReloadKey}
+            explorerOpen={explorerOpen}
+            onToggleExplorer={handleToggleExplorer}
+            explorerToggleRef={explorerButtonRef}
           />
         </div>
 
@@ -148,6 +185,9 @@ export function AppShell({
             onValidated={onValidated}
             onUnauthorized={onUnauthorized}
             conversationsReloadKey={conversationsReloadKey}
+            explorerOpen={explorerOpen}
+            onToggleExplorer={handleToggleExplorer}
+            explorerToggleRef={explorerButtonRef}
           />
         </MobileDrawer>
 
@@ -169,9 +209,20 @@ export function AppShell({
               </p>
             </section>
           )}
-          <div className="workspace-panel workspace-panel-conversations" hidden={nav.page !== "conversations"}>
+          {/* W2: with NO selected Conversation the open Explorer is a
+              full-page module surface (no split/resizer); the Conversation UI
+              stays mounted/unchanged behind the view. */}
+          {explorerOpen && !hasSelectedConversation && (
+            <div className="workspace-panel vault-explorer-fullpage">
+              <VaultExplorer token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
+            </div>
+          )}
+          <div
+            className="workspace-panel workspace-panel-conversations"
+            hidden={nav.page !== "conversations" || (explorerOpen && !hasSelectedConversation)}
+          >
             <SplitWorkspaceShell
-              state={splitState}
+              state={{ ...splitState, open: explorerOpen && hasSelectedConversation }}
               onStateChange={setSplitState}
               chat={
                 <ConversationNavigator
@@ -183,13 +234,14 @@ export function AppShell({
                   reAnchorKey={reAnchorKey}
                 />
               }
+              companion={explorerOpen ? <VaultExplorer token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} /> : undefined}
               resizerLabel="Resize chat pane"
               chatLabel="Chat"
-              companionLabel="Companion"
+              companionLabel={vaultExplorerLabel}
               onReAnchor={handleSplitReAnchor}
             />
           </div>
-          <div className="workspace-panel" hidden={nav.page !== "dashboard"}>
+          <div className="workspace-panel" hidden={nav.page !== "dashboard" || (explorerOpen && !hasSelectedConversation)}>
             <DashboardView
               token={token}
               onValidated={onValidated}

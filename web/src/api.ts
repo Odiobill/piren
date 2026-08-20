@@ -38,6 +38,7 @@ import {
   type ConversationAbortOutcome,
 } from "./conversation-controls";
 import { parseConversationTelemetryReadResponse, type ConversationTelemetryReadResult } from "./conversation-telemetry";
+import { parseVaultListResponse, parseVaultReadResponse, type VaultListResponse, type VaultReadResponse } from "./vault-explorer";
 
 /** Typed bounded lifecycle action error (L2 404/409/500 / network). */
 export class LifecycleHttpError extends Error {
@@ -329,6 +330,28 @@ export async function fetchConversationTelemetry(id: string, agent: string, toke
   const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/agents/${encodeURIComponent(agent)}/telemetry`, token);
   if (!res.ok) throw new Error(`conversation telemetry HTTP ${res.status}`);
   return parseConversationTelemetryReadResponse(await res.json());
+}
+
+/**
+ * W2 — GET /api/vault/list?path=<vault-relative> over the EXISTING bounded
+ * read-only route. Vault paths originate from server entries or the bounded
+ * root; the query path is encoded. A 401 surfaces through UnauthorizedError;
+ * any other non-200 or a payload failing the strict parser is a failure.
+ */
+export async function fetchVaultList(path: string, token: string, signal?: AbortSignal): Promise<VaultListResponse> {
+  const res = await authedFetch(`/api/vault/list?path=${encodeURIComponent(path)}`, token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`vault list HTTP ${res.status}`);
+  return parseVaultListResponse(await res.json());
+}
+
+/**
+ * W2 — GET /api/vault/read?path=<vault-relative> over the EXISTING bounded
+ * read-only route. Same fail-closed contract as fetchVaultList.
+ */
+export async function fetchVaultRead(path: string, token: string, signal?: AbortSignal): Promise<VaultReadResponse> {
+  const res = await authedFetch(`/api/vault/read?path=${encodeURIComponent(path)}`, token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`vault read HTTP ${res.status}`);
+  return parseVaultReadResponse(await res.json());
 }
 
 export interface ConversationEventStreamHandlers {

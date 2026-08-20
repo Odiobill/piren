@@ -71,6 +71,9 @@ describe("Sidebar conversation list created timestamp", () => {
           onValidated: () => {},
           onUnauthorized: () => {},
           conversationsReloadKey: 0,
+          explorerOpen: false,
+          onToggleExplorer: () => {},
+          explorerToggleRef: { current: null },
         }),
       );
     });

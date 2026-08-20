@@ -51,8 +51,9 @@ describe("static module registry placement (W1)", () => {
     expect(registry).not.toContain("new Function");
   });
 
-  it("no W2 companion module is registered yet (Vault Explorer is separately gated)", async () => {
-    expect(WORKBENCH_MODULES.some((m) => m.placement === "companion")).toBe(false);
+  it("the only companion module registered is the W2 vault-explorer (graph stays deferred)", async () => {
+    const companions = WORKBENCH_MODULES.filter((m) => m.placement === "companion");
+    expect(companions.map((m) => m.id)).toEqual(["vault-explorer"]);
   });
 });
 

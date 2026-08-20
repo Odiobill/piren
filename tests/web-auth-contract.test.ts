@@ -87,7 +87,7 @@ describe("web auth shell contract (R3b-1)", () => {
       expect(combined).toMatch(/not been validated/i);
     });
 
-    it("the shell calls only its authorized endpoints (auth-info + conversation-agents + conversations)", async () => {
+    it("the shell calls only its authorized endpoints (auth-info + conversation-agents + conversations + vault list/read)", async () => {
       const [app, api] = await Promise.all([
         readFile(join(process.cwd(), "web", "src", "App.tsx"), "utf8"),
         readFile(join(process.cwd(), "web", "src", "api.ts"), "utf8"),
@@ -101,8 +101,11 @@ describe("web auth shell contract (R3b-1)", () => {
       // The retired room routes never appear in the shell client.
       expect(combined).not.toContain("/api/room-agents");
       expect(combined).not.toContain("/api/rooms/");
-      // Chat, vault, and completions endpoints stay outside the workbench shell.
-      for (const forbidden of ["/api/chat", "/api/vault", "/api/v1/"]) {
+      // W2 authorizes the bounded read-only vault list/read routes (api.ts
+      // only); graph, inbox, chat, and completions stay outside the shell.
+      expect(combined).toContain("/api/vault/list?path=");
+      expect(combined).toContain("/api/vault/read?path=");
+      for (const forbidden of ["/api/chat", "/api/vault/graph", "/api/vault/inbox", "/api/v1/"]) {
         expect(combined, `${forbidden} must not be called by the shell`).not.toContain(forbidden);
       }
     });

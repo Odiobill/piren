@@ -50,9 +50,9 @@ function conversationModuleFiles(): string[] {
 }
 
 describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
-  it("the registry is a compile-time const array with exactly the Conversation module", () => {
+  it("the registry is a compile-time const array with the Conversation page module plus the W2 companion", () => {
     expect(Array.isArray(WORKBENCH_MODULES)).toBe(true);
-    expect(WORKBENCH_MODULES).toHaveLength(1);
+    expect(WORKBENCH_MODULES).toHaveLength(2);
     expect(WORKBENCH_MODULES[0]).toEqual({
       id: "conversations",
       label: "Conversations",
@@ -62,12 +62,23 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
       consumes: ["conversations", "conversation-agents"],
       emits: [],
     });
+    // W2: the first companion module is the read-only Vault Explorer.
+    expect(WORKBENCH_MODULES[1]).toEqual({
+      id: "vault-explorer",
+      label: "Vault Explorer",
+      navOrder: 1,
+      page: "conversations",
+      placement: "companion",
+      consumes: ["vault-list", "vault-read"],
+      emits: [],
+    });
   });
 
   it("lookup helpers resolve the Conversation module by id and page", () => {
     expect(getModuleById("conversations")?.label).toBe("Conversations");
     expect(getModuleById("rooms")).toBeUndefined();
     expect(getModuleById("chat")).toBeUndefined();
+    expect(getModuleById("vault-explorer")?.placement).toBe("companion");
     expect(moduleForPage("conversations")?.id).toBe("conversations");
     expect(moduleForPage("dashboard")).toBeUndefined();
   });
@@ -75,6 +86,7 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
   it("every registered module page is a real nav page and the nav replaces Rooms", () => {
     for (const module of WORKBENCH_MODULES) {
       expect(["conversations", "dashboard"]).toContain(module.page);
+      expect(["page", "companion"]).toContain(module.placement);
     }
     const pages: readonly Page[] = ["dashboard", "conversations"];
     expect(pages).toEqual(["dashboard", "conversations"]);

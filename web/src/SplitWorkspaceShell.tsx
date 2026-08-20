@@ -83,7 +83,7 @@ export function SplitWorkspaceShell({
     apply();
     mql.addEventListener("change", apply);
     return () => mql.removeEventListener("change", apply);
-  }, []);
+  }, [active]);
 
   if (!active) return <>{chat}</>;
 

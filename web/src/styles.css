@@ -2166,3 +2166,167 @@ code {
     border-bottom: 0;
   }
 }
+
+/* ===========================================================================
+   W2 — the first companion: read-only Vault Explorer (0.2.0 amendment §4;
+   accepted companion architecture Phase B). Presentation-only over the
+   EXISTING /api/vault/list and /api/vault/read routes. Inside the W1 split
+   the explorer owns its pane's single scroll owner (entries OR document);
+   as a full-page surface (no selected Conversation) it fills the workspace
+   with one internal scroll owner and no split/resizer.
+   =========================================================================== */
+
+.sidebar-companions {
+  list-style: none;
+  margin: 4px 0 10px;
+  padding: 0 8px;
+}
+
+.workspace-panel.vault-explorer-fullpage {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  height: calc(100dvh - var(--shell-chrome-height));
+  min-height: 0;
+}
+
+.vault-explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.vault-explorer-breadcrumb {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+.vault-explorer-breadcrumb button {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.vault-explorer-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.vault-explorer-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.vault-explorer-entries {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+}
+
+.vault-explorer-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 16px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.vault-explorer-entry:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.vault-explorer-entry:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vault-entry-type {
+  flex: none;
+  width: 34px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.vault-entry-bytes {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.vault-explorer-document {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 16px 16px;
+}
+
+.vault-explorer-document-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.vault-explorer-back {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.vault-explorer-document-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.vault-explorer-error {
+  margin: 12px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.vault-explorer-error p {
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+}
+
+.vault-explorer-capped {
+  flex: none;
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}

@@ -267,7 +267,10 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
         //    card DISPLAYS and parses the gateway-projected configured
         //    model's thinking level (split from the existing authenticated
         //    `provider/model:thinking` string). Never a control.
+        //  - api.ts: the W2 shared transport carries ONLY the existing
+        //    bounded read-only vault list/read routes (no graph/inbox).
         if (forbidden === "thinking" && (name === "conversation-telemetry.ts" || name === "conversation-context-cards.ts" || name === "ConversationTelemetryPopup.tsx" || name === "DashboardView.tsx" || name === "conversation-agents.ts")) continue;
+        if (forbidden === "/api/vault" && name === "api.ts") continue;
         expect(content, `${name} must not contain ${forbidden}`).not.toContain(forbidden);
       }
     }

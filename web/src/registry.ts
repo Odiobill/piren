@@ -37,7 +37,7 @@ export interface WorkbenchModule {
   emits: readonly string[];
 }
 
-/** The compiled-in first-party module set (exactly the Conversation module). */
+/** The compiled-in first-party module set (the Conversation page + the W2 companion). */
 export const WORKBENCH_MODULES: readonly WorkbenchModule[] = [
   {
     id: "conversations",
@@ -46,6 +46,17 @@ export const WORKBENCH_MODULES: readonly WorkbenchModule[] = [
     page: "conversations",
     placement: "page",
     consumes: ["conversations", "conversation-agents"],
+    emits: [],
+  },
+  {
+    id: "vault-explorer",
+    label: "Vault Explorer",
+    navOrder: 1,
+    page: "conversations",
+    placement: "companion",
+    // W2: consumes ONLY the existing bounded read-only vault list/read
+    // families; graph presentation is deferred and never consumed here.
+    consumes: ["vault-list", "vault-read"],
     emits: [],
   },
 ];

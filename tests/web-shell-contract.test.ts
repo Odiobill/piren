@@ -163,13 +163,27 @@ describe("app shell source surface (static)", () => {
 
   it("the shell never calls chat endpoints, uses no storage, and has no writes", async () => {
     const sources = await readSourceFiles();
-    const shell = [...sources.values()].join("\n");
     // R3b-3 authorized room event + stream reads; R3b-4 authorized the
     // structured messages POST (composer). C3-C3 (2026-08-07) authorizes the
-    // Conversation approve/abort endpoints. Chat, vault, native SSE, and
-    // storage stay forbidden across the whole workbench.
-    for (const forbidden of ["/api/chat", "new EventSource", "/api/vault", "localStorage", "sessionStorage"]) {
-      expect(shell, `${forbidden} must not appear in the shell surface`).not.toContain(forbidden);
+    // Conversation approve/abort endpoints. W2 (2026-08-20) authorizes ONLY
+    // the bounded read-only vault list/read routes in the shared api.ts
+    // transport (never the graph/inbox routes). Chat, native SSE, storage,
+    // and any other vault route stay forbidden across the workbench.
+    for (const [name, content] of sources) {
+      expect(content, `${name} must not reference /api/chat`).not.toContain("/api/chat");
+      expect(content, `${name} must not use native EventSource`).not.toContain("new EventSource");
+      expect(content, `${name} must not reference vault graph/inbox routes`).not.toContain("/api/vault/graph");
+      expect(content, `${name} must not reference vault inbox routes`).not.toContain("/api/vault/inbox");
+      expect(content, `${name} must not use localStorage`).not.toContain("localStorage");
+      expect(content, `${name} must not use sessionStorage`).not.toContain("sessionStorage");
+      // The W2 vault transport may reference ONLY the existing list/read
+      // routes, and only inside api.ts.
+      if (name === "api.ts") {
+        expect(content).toContain("/api/vault/list?path=");
+        expect(content).toContain("/api/vault/read?path=");
+      } else {
+        expect(content, `${name} must not reference any vault route`).not.toContain("/api/vault");
+      }
     }
   });
 });
