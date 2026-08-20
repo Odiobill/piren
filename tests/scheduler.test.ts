@@ -543,3 +543,111 @@ describe("scheduler planner retry eligibility (ADR-0038 R3)", () => {
     expect(result).toHaveLength(1);
   });
 });
+
+describe("scheduler planner automation class gating (0.2.0 S2)", () => {
+  const owningDevices = new Map<string, PlannerActiveDevice[]>([
+    ["codex", [{ deviceId: "heimdall", priority: 1 }]],
+  ]);
+  const pendingInbox: PlannerTask[] = [
+    { path: "team/codex/inbox/task-1.md", agentName: "codex", status: "pending" },
+  ];
+  const agentCron: PlannerCronJob[] = [
+    {
+      path: "cron/jobs/agent-brief.md",
+      agentName: "codex",
+      devicePolicy: { mode: "highest_priority" as const, allowedDevices: [] },
+      mode: "agent",
+    },
+  ];
+  const scriptCron: PlannerCronJob[] = [
+    {
+      path: "cron/jobs/script-cleanup.md",
+      agentName: "codex",
+      devicePolicy: { mode: "highest_priority" as const, allowedDevices: [] },
+      mode: "script",
+    },
+  ];
+
+  function planWithGates(automation: { inboxTasks: boolean; agentCron: boolean; scriptCron: boolean }) {
+    return planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: pendingInbox,
+      dueCronJobs: [...agentCron, ...scriptCron],
+      activeDevices: owningDevices,
+      deviceId,
+      staleAfterMs,
+      now,
+      automation,
+    });
+  }
+
+  it("proposes all item types when every class is enabled", () => {
+    const result = planWithGates({ inboxTasks: true, agentCron: true, scriptCron: true });
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/agent-brief.md",
+      "cron/jobs/script-cleanup.md",
+      "team/codex/inbox/task-1.md",
+    ]);
+  });
+
+  it("never proposes inbox tasks when inbox_tasks is disabled, keeping enabled cron classes", () => {
+    const result = planWithGates({ inboxTasks: false, agentCron: true, scriptCron: true });
+    expect(result.every((c) => c.itemType === "cron_job")).toBe(true);
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/agent-brief.md",
+      "cron/jobs/script-cleanup.md",
+    ]);
+  });
+
+  it("never proposes agent-mode cron when agent_cron is disabled, keeping script cron", () => {
+    const result = planWithGates({ inboxTasks: true, agentCron: false, scriptCron: true });
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/script-cleanup.md",
+      "team/codex/inbox/task-1.md",
+    ]);
+  });
+
+  it("never proposes script-mode cron when script_cron is disabled, keeping agent cron", () => {
+    const result = planWithGates({ inboxTasks: true, agentCron: true, scriptCron: false });
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/agent-brief.md",
+      "team/codex/inbox/task-1.md",
+    ]);
+  });
+
+  it("proposes nothing when every class is disabled (fail closed)", () => {
+    expect(planWithGates({ inboxTasks: false, agentCron: false, scriptCron: false })).toEqual([]);
+  });
+
+  it("gates a cron job without a mode as agent-mode (cron default)", () => {
+    const modeless: PlannerCronJob[] = [
+      {
+        path: "cron/jobs/modeless.md",
+        agentName: "codex",
+        devicePolicy: { mode: "highest_priority" as const, allowedDevices: [] },
+      },
+    ];
+    const blocked = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: [],
+      dueCronJobs: modeless,
+      activeDevices: owningDevices,
+      deviceId,
+      staleAfterMs,
+      now,
+      automation: { inboxTasks: true, agentCron: false, scriptCron: true },
+    });
+    expect(blocked).toEqual([]);
+    const allowed = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: [],
+      dueCronJobs: modeless,
+      activeDevices: owningDevices,
+      deviceId,
+      staleAfterMs,
+      now,
+      automation: { inboxTasks: true, agentCron: true, scriptCron: false },
+    });
+    expect(allowed).toHaveLength(1);
+  });
+});

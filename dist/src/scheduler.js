@@ -14,11 +14,11 @@ const EMPTY_DUPLICATE_IDS = new Set();
  * jobs, active devices) and executing or displaying the proposed claims.
  */
 export function planSchedulerTick(options) {
-    const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes, duplicateIds } = options;
+    const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes, duplicateIds, automation } = options;
     const claims = [];
     const enabledSet = new Set(enabledAgents);
-    // Process inbox tasks
-    for (const task of pendingTasks) {
+    // Process inbox tasks (skipped entirely when the inbox class is disabled)
+    for (const task of automation !== undefined && !automation.inboxTasks ? [] : pendingTasks) {
         if (!enabledSet.has(task.agentName))
             continue;
         if (task.status === "pending") {
@@ -59,10 +59,18 @@ export function planSchedulerTick(options) {
             }
         }
     }
-    // Process cron jobs
+    // Process cron jobs (class-gated by mode; a missing mode gates as
+    // agent-mode, matching the cron parser default)
     for (const job of dueCronJobs) {
         if (!enabledSet.has(job.agentName))
             continue;
+        if (automation !== undefined) {
+            const isScript = job.mode === "script";
+            if (isScript && !automation.scriptCron)
+                continue;
+            if (!isScript && !automation.agentCron)
+                continue;
+        }
         const agentDevices = activeDevices.get(job.agentName) ?? [];
         const activeList = agentDevices.map((d) => ({
             deviceId: d.deviceId,

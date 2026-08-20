@@ -1,5 +1,7 @@
 import { type ClaimInboxTaskOptions, type ClaimInboxTaskResult } from "./inbox.js";
 import { type ClaimCronJobOptions, type ClaimCronJobResult, type ExecuteScriptCronJobResult } from "./cron.js";
+import { type PlannerAutomation } from "./scheduler.js";
+import { type SchedulerMigrationSignal } from "./scheduler-loop.js";
 import type { ExecuteClaimedInboxTaskResult, ClaimedInboxTaskRunner } from "./scheduler-executor.js";
 import { type ExecuteClaimedAgentCronJobResult } from "./scheduler-cron-executor.js";
 import { type SchedulerReleaseTransition } from "./scheduler-release.js";
@@ -27,6 +29,16 @@ export interface SchedulerOnceOptions {
      * Defaults to the real {@link defaultRetryTransition}.
      */
     retryTransition?: SchedulerOnceRetryTransition;
+    /**
+     * Bounded non-persistent one-shot override (0.2.0 S2 `--once --force`).
+     * Overrides ONLY the master `scheduler.enabled` gate and the
+     * `automation.inbox_tasks` class gate for this tick: a disabled master gate
+     * or inbox class permits one normal bounded tick. It NEVER enables disabled
+     * `agent_cron`/`script_cron` classes, never writes config, never starts or
+     * installs a service, and never alters claim/retry/release/priority or
+     * at-most-one execution semantics.
+     */
+    force?: boolean;
 }
 export interface InboxExecuteInput {
     agentName: string;
@@ -134,6 +146,19 @@ export interface SchedulerOnceResult {
     modelFallback?: string[];
     noWork: boolean;
     summary: string;
+    /**
+     * Resolved automation-class gates applied to this tick (0.2.0 S2), after
+     * any `--force` master/inbox override. Present on normal tick results.
+     */
+    automation?: PlannerAutomation;
+    /** True when this tick ran under the bounded `--force` override. */
+    forced?: boolean;
+    /**
+     * Present when the resolved config carried the pure S1 migration signal
+     * (legacy scheduler block without `enabled`). Read-only notice only; S2
+     * never persists it (the writer/wizard is a later tracer).
+     */
+    migration?: SchedulerMigrationSignal;
 }
 /**
  * Normalize a raw hostname (e.g. os.hostname()) into a safe Piren device id.

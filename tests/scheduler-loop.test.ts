@@ -424,7 +424,15 @@ function baseLoopOptions(overrides: Partial<SchedulerLoopOptions> & { controller
   const logs: string[] = [];
   return {
     configPath: "/tmp/fake-config.yml",
-    schedulerConfig: resolveSchedulerConfig({}),
+    // 0.2.0 S2: the loop no-ops on a disabled master gate, so the default
+    // fixture is an explicitly enabled scheduler block; pre-S2 tests keep
+    // exercising tick cadence unchanged.
+    schedulerConfig: resolveSchedulerConfig({
+      scheduler: {
+        enabled: true,
+        automation: { inbox_tasks: true, agent_cron: true, script_cron: true },
+      },
+    }),
     enabledAgents: ["codex"],
     schedulerOnce: async () => noWorkResult({ executors: throwingExecutors() }),
     executors: throwingExecutors(),
@@ -497,7 +505,7 @@ describe("runSchedulerLoop: config pass-through to schedulerOnce", () => {
     const controller = createSchedulerLoopController();
     const tick = fakeTick({ controller, shutdownAfter: 1 });
     const { sleep } = immediateSleep();
-    const schedulerConfig = resolveSchedulerConfig({}); // no device_id
+    const schedulerConfig = resolveSchedulerConfig({ scheduler: { enabled: true } }); // no device_id
 
     await runSchedulerLoop(baseLoopOptions({ controller, schedulerOnce: tick.fn, sleep, schedulerConfig }));
 
@@ -726,5 +734,114 @@ describe("createRealSchedulerLoopSleep", () => {
     });
     await p2;
     expect(second).toBe(true);
+  });
+});
+
+describe("runSchedulerLoop: master gate and startup summary (0.2.0 S2)", () => {
+  it("no-ops immediately when scheduler.enabled is false: zero ticks, zero sleeps, zero spawns", async () => {
+    const controller = createSchedulerLoopController();
+    const logs: string[] = [];
+    const { sleep, waits } = immediateSleep();
+    // The tick records calls and shuts the loop down after 2 ticks so the
+    // test terminates even before the gate exists (RED); with the gate, it
+    // must never be called at all.
+    const tick = fakeTick({ controller, shutdownAfter: 2 });
+    const schedulerConfig = resolveSchedulerConfig({
+      scheduler: { enabled: false, automation: { inbox_tasks: true, agent_cron: true, script_cron: true } },
+    });
+
+    const result = await runSchedulerLoop(
+      baseLoopOptions({
+        controller,
+        schedulerConfig,
+        sleep,
+        schedulerOnce: tick.fn,
+        log: (m) => logs.push(m),
+      }),
+    );
+
+    expect(tick.calls).toEqual([]);
+    expect(waits).toEqual([]);
+    expect(result.tickCount).toBe(0);
+    expect(result.executedCount).toBe(0);
+    const output = logs.join("\n");
+    expect(output).toMatch(/scheduler disabled/i);
+    expect(output).toContain("no ticks ran");
+    // Bounded and non-secret: no config content beyond the gate state.
+    expect(output).not.toContain("inbox_tasks");
+  });
+
+  it("no-ops for a fresh install with no scheduler block (fail-closed default)", async () => {
+    const controller = createSchedulerLoopController();
+    const logs: string[] = [];
+    const tick = fakeTick({ controller, shutdownAfter: 2 });
+
+    const result = await runSchedulerLoop(
+      baseLoopOptions({
+        controller,
+        schedulerConfig: resolveSchedulerConfig({}),
+        schedulerOnce: tick.fn,
+        log: (m) => logs.push(m),
+      }),
+    );
+
+    expect(tick.calls).toEqual([]);
+    expect(result.tickCount).toBe(0);
+    expect(logs.join("\n")).toMatch(/scheduler disabled/i);
+  });
+
+  it("startup summary lists the resolved automation classes (bounded, non-secret)", async () => {
+    const controller = createSchedulerLoopController();
+    const logs: string[] = [];
+    const schedulerConfig = resolveSchedulerConfig({
+      scheduler: { enabled: true, automation: { inbox_tasks: true, agent_cron: false, script_cron: true } },
+    });
+
+    await runSchedulerLoop(
+      baseLoopOptions({
+        controller,
+        schedulerConfig,
+        schedulerOnce: fakeTick({ controller, shutdownAfter: 1 }).fn,
+        log: (m) => logs.push(m),
+      }),
+    );
+
+    const startup = logs[0] ?? "";
+    expect(startup).toContain("automation: inbox_tasks=on agent_cron=off script_cron=on");
+  });
+
+  it("startup summary surfaces the migration signal as a read-only notice (never persisted)", async () => {
+    const controller = createSchedulerLoopController();
+    const logs: string[] = [];
+    // Legacy established block: legacy key present, no `enabled` key.
+    const schedulerConfig = resolveSchedulerConfig({ scheduler: { poll_interval_seconds: 45 } });
+    expect(schedulerConfig.migration).toBeDefined();
+
+    await runSchedulerLoop(
+      baseLoopOptions({
+        controller,
+        schedulerConfig,
+        schedulerOnce: fakeTick({ controller, shutdownAfter: 1 }).fn,
+        log: (m) => logs.push(m),
+      }),
+    );
+
+    const startup = logs[0] ?? "";
+    expect(startup).toMatch(/migration: .*not persisted/i);
+  });
+
+  it("startup summary omits the migration notice when no signal is present", async () => {
+    const controller = createSchedulerLoopController();
+    const logs: string[] = [];
+
+    await runSchedulerLoop(
+      baseLoopOptions({
+        controller,
+        schedulerOnce: fakeTick({ controller, shutdownAfter: 1 }).fn,
+        log: (m) => logs.push(m),
+      }),
+    );
+
+    expect(logs[0] ?? "").not.toMatch(/migration:/i);
   });
 });

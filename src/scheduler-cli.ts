@@ -13,6 +13,11 @@ import {
   type LoadedInboxTask,
 } from "./scheduler-dependencies.js";
 import { evaluateRetryEligibility } from "./scheduler-retry.js";
+import {
+  resolveSchedulerConfig,
+  type ResolvedSchedulerAutomation,
+  type SchedulerMigrationSignal,
+} from "./scheduler-loop.js";
 
 export interface SchedulerDryRunOptions {
   configPath?: string;
@@ -77,6 +82,15 @@ export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<
     return `SCHEDULER DRY-RUN (device: ${deviceId})\n\nNo enabled agents. Configure allowed_agents in local config.\n`;
   }
 
+  // 0.2.0 S2: resolve the master gate and closed automation classes. The
+  // dry-run stays read-only regardless of the master gate, but it previews an
+  // honest tick: a disabled master gate proposes nothing, and disabled
+  // classes are never proposed (bounded [SKIPPED] lines explain why).
+  const schedulerConfig = resolveSchedulerConfig(config);
+  const masterEnabled = schedulerConfig.enabled;
+  const automation = schedulerConfig.automation;
+  const migration = schedulerConfig.migration;
+
   // Load inbox state (pending candidates + dependency resolver) across all
   // enabled agents. The resolver includes claimed files so an atomic claim
   // never hides a prerequisite (ADR-0038 R1).
@@ -94,6 +108,7 @@ export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<
           path: job.path,
           agentName: job.agent,
           devicePolicy: job.devicePolicy,
+          mode: job.mode,
         });
       }
     } catch {
@@ -116,26 +131,37 @@ export async function schedulerDryRun(options: SchedulerDryRunOptions): Promise<
   }
 
   // Plan claims. The planner excludes dependency-blocked tasks from claim
-  // proposals using the resolver map (fail-closed).
-  const claims = planSchedulerTick({
-    enabledAgents,
-    pendingTasks,
-    dueCronJobs,
-    activeDevices,
-    deviceId,
-    staleAfterMs,
-    now,
-    dependencyNodes: inboxState.dependencyNodes,
-    duplicateIds: inboxState.duplicateIds,
-  });
+  // proposals using the resolver map (fail-closed), and excludes disabled
+  // automation classes (0.2.0 S2). A disabled master gate proposes nothing.
+  const claims = masterEnabled
+    ? planSchedulerTick({
+        enabledAgents,
+        pendingTasks,
+        dueCronJobs,
+        activeDevices,
+        deviceId,
+        staleAfterMs,
+        now,
+        dependencyNodes: inboxState.dependencyNodes,
+        duplicateIds: inboxState.duplicateIds,
+        automation,
+      })
+    : [];
 
   // Separately classify pending candidates for the human-readable report so
   // the dry-run can distinguish runnable from dependency-blocked work without
   // mutating anything. This reuses the same pure evaluator the planner uses.
-  const blocked = classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds, now);
+  // Skipped when the inbox class (or the master gate) is disabled: those
+  // tasks are class-gated, not dependency/retry-blocked.
+  const blocked =
+    masterEnabled && automation.inboxTasks
+      ? classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds, now)
+      : [];
 
   // Format output
-  return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked);
+  const gates: DryRunGateState = { masterEnabled, automation };
+  if (migration !== undefined) gates.migration = migration;
+  return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, gates);
 }
 
 /** Map a loaded inbox task to the planner's task shape, carrying dependency fields. */
@@ -156,6 +182,13 @@ interface BlockedTask {
   agentName: string;
   path: string;
   reason: string;
+}
+
+/** Resolved gate state rendered by the dry-run (0.2.0 S2). */
+interface DryRunGateState {
+  masterEnabled: boolean;
+  automation: ResolvedSchedulerAutomation;
+  migration?: SchedulerMigrationSignal;
 }
 
 /** Evaluate every pending candidate and return the blocked ones with reasons. */
@@ -205,9 +238,25 @@ function formatSchedulerDryRun(
   enabledAgents: string[],
   claims: { agentName: string; itemType: string; itemPath: string; deviceId: string; priority: number; rationale: string }[],
   blocked: BlockedTask[],
+  gates: DryRunGateState,
 ): string {
   const lines: string[] = [];
   lines.push(`SCHEDULER DRY-RUN (device: ${deviceId})`);
+  // 0.2.0 S2: bounded master/class state, then one [SKIPPED] line per
+  // disabled class so the output explains why nothing is proposed for it.
+  lines.push(`scheduler enabled: ${gates.masterEnabled ? "yes" : "no"}`);
+  const classLines: [keyof ResolvedSchedulerAutomation, string][] = [
+    ["inboxTasks", "inbox_tasks"],
+    ["agentCron", "agent_cron"],
+    ["scriptCron", "script_cron"],
+  ];
+  for (const [key, label] of classLines) {
+    if (!gates.automation[key]) lines.push(`[SKIPPED] ${label} - automation disabled`);
+  }
+  if (gates.migration !== undefined) {
+    // Read-only notice only: the dry-run never persists the migration signal.
+    lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+  }
 
   // Group claims by agent
   const agentClaims = new Map<string, typeof claims>();

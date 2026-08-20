@@ -642,11 +642,15 @@ try {
       const output = await schedulerDryRun({});
       console.log(output);
     } else if (parsed.once) {
-      const result = await schedulerOnce({
+      // 0.2.0 S2: `--force` is the bounded non-persistent one-shot override of
+      // ONLY the master and inbox gates (see SchedulerOnceOptions.force).
+      const onceOptions: Parameters<typeof schedulerOnce>[0] = {
         executors: createSchedulerExecutors({
           runner: createAskRunner(),
         }),
-      });
+      };
+      if (parsed.force) onceOptions.force = true;
+      const result = await schedulerOnce(onceOptions);
       console.log(result.summary);
       if (!result.executed && result.noWork) {
         // No work is not an error; exit 0 so --once is safe to run in a

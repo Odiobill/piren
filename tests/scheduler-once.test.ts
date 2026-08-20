@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -45,7 +45,17 @@ beforeEach(async () => {
 
 afterEach(async () => rm(root, { recursive: true, force: true }));
 
-async function writeConfig(opts: { allowed?: string[]; excluded?: string[] }): Promise<void> {
+async function writeConfig(opts: {
+  allowed?: string[];
+  excluded?: string[];
+  /**
+   * Scheduler block fixture (0.2.0 S2). "default" writes a fully-enabled
+   * block so pre-S2 tests keep exercising the execution machinery; "none"
+   * writes no scheduler block (fresh-install resolution); any other string
+   * is appended verbatim as the scheduler block YAML.
+   */
+  scheduler?: "default" | "none" | string;
+}): Promise<void> {
   const lines = [`vault_root: ${vault}`];
   if (opts.allowed && opts.allowed.length > 0) {
     lines.push("allowed_agents:");
@@ -54,6 +64,19 @@ async function writeConfig(opts: { allowed?: string[]; excluded?: string[] }): P
   if (opts.excluded && opts.excluded.length > 0) {
     lines.push("excluded_agents:");
     for (const a of opts.excluded) lines.push(`  - ${a}`);
+  }
+  const scheduler = opts.scheduler ?? "default";
+  if (scheduler === "default") {
+    lines.push(
+      "scheduler:",
+      "  enabled: true",
+      "  automation:",
+      "    inbox_tasks: true",
+      "    agent_cron: true",
+      "    script_cron: true",
+    );
+  } else if (scheduler !== "none") {
+    lines.push(scheduler.replace(/\n$/, ""));
   }
   await writeFile(configPath, lines.join("\n") + "\n");
 }
@@ -1322,3 +1345,200 @@ class OnceFakeAskClient implements PiRpcClientLike {
     if (this.promptError !== undefined) throw this.promptError;
   }
 }
+
+describe("schedulerOnce automation gates (0.2.0 S2)", () => {
+  function gatedOffClaims(calls: string[]): SchedulerOnceClaims {
+    return {
+      claimInboxTask: async () => {
+        calls.push("inbox");
+        throw new Error("must not claim while gated");
+      },
+      claimCronJob: async () => {
+        calls.push("cron");
+        throw new Error("must not claim while gated");
+      },
+    };
+  }
+
+  it("no-ops before heartbeat/planning/claim/spawn when scheduler.enabled is false", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  enabled: false\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true",
+    });
+    await writeInboxTask("codex", "gated-task");
+    const claimCalls: string[] = [];
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: throwingExecutors(),
+      claims: gatedOffClaims(claimCalls),
+    });
+
+    expect(result.executed).toBe(false);
+    expect(result.noWork).toBe(true);
+    expect(result.plannedCount).toBe(0);
+    expect(result.claimAttempts).toEqual([]);
+    expect(result.summary).toMatch(/scheduler disabled/i);
+    expect(claimCalls).toEqual([]);
+    // Zero heartbeat writes: the devices directory stays empty.
+    const deviceFiles = await readdir(join(vault, "team", "codex", "devices"));
+    expect(deviceFiles).toEqual([]);
+  });
+
+  it("no-ops for a fresh install with no scheduler block (fail-closed default)", async () => {
+    await writeConfig({ allowed: ["codex"], scheduler: "none" });
+    await writeInboxTask("codex", "fresh-task");
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors: throwingExecutors(),
+    });
+
+    expect(result.executed).toBe(false);
+    expect(result.noWork).toBe(true);
+    expect(result.summary).toMatch(/scheduler disabled/i);
+    const deviceFiles = await readdir(join(vault, "team", "codex", "devices"));
+    expect(deviceFiles).toEqual([]);
+  });
+
+  it("never claims or executes inbox tasks when inbox_tasks is disabled, but executes enabled agent cron", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  enabled: true\n  automation:\n    inbox_tasks: false\n    agent_cron: true\n    script_cron: true",
+    });
+    await writeInboxTask("codex", "blocked-task");
+    await writeCronJob({ id: "agent-job", agent: "codex", mode: "agent", prompt: "Summarize logs." });
+    const { executors, inboxCalls, cronAgentCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(inboxCalls).toEqual([]);
+    expect(cronAgentCalls).toHaveLength(1);
+    expect(result.executedItemType).toBe("cron_job");
+    expect(result.summary).toContain("inbox_tasks=off");
+  });
+
+  it("never claims or executes agent-mode cron when agent_cron is disabled, but executes script cron", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  enabled: true\n  automation:\n    inbox_tasks: true\n    agent_cron: false\n    script_cron: true",
+    });
+    await mkdir(join(vault, "scripts"), { recursive: true });
+    await writeFile(join(vault, "scripts", "disk-check.sh"), "#!/bin/sh\necho disk-ok\n");
+    await writeCronJob({ id: "agent-job", agent: "codex", mode: "agent", prompt: "Summarize logs." });
+    await writeCronJob({ id: "script-job", agent: "codex", mode: "script", script: "scripts/disk-check.sh" });
+    const { executors, cronAgentCalls, cronScriptCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(cronAgentCalls).toEqual([]);
+    expect(cronScriptCalls).toHaveLength(1);
+    expect(result.executedItemType).toBe("cron_job");
+    expect(result.summary).toContain("agent_cron=off");
+  });
+
+  it("never executes script-mode cron when script_cron is disabled", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  enabled: true\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: false",
+    });
+    await mkdir(join(vault, "scripts"), { recursive: true });
+    await writeFile(join(vault, "scripts", "disk-check.sh"), "#!/bin/sh\necho disk-ok\n");
+    await writeCronJob({ id: "script-job", agent: "codex", mode: "script", script: "scripts/disk-check.sh" });
+    const { executors, cronAgentCalls, cronScriptCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(cronScriptCalls).toEqual([]);
+    expect(cronAgentCalls).toEqual([]);
+    expect(result.executed).toBe(false);
+    expect(result.summary).toContain("script_cron=off");
+  });
+
+  it("--force permits a bounded tick over master+inbox gates but never enables disabled cron classes", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  enabled: false\n  automation:\n    inbox_tasks: false\n    agent_cron: false\n    script_cron: false",
+    });
+    await writeInboxTask("codex", "forced-task");
+    await writeCronJob({ id: "agent-job", agent: "codex", mode: "agent", prompt: "Summarize logs." });
+    const { executors, inboxCalls, cronAgentCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      force: true,
+    });
+
+    expect(inboxCalls).toHaveLength(1);
+    expect(cronAgentCalls).toEqual([]);
+    expect(result.executedItemType).toBe("inbox_task");
+    // The cron class stayed gated: it was never even planned.
+    expect(result.claimAttempts.every((a) => a.itemType === "inbox_task")).toBe(true);
+    expect(result.summary).toMatch(/force/i);
+    expect(result.summary).toContain("agent_cron=off");
+    // Config was NOT written by the force override.
+    const after = await readFile(configPath, "utf8");
+    expect(after).toContain("enabled: false");
+  });
+
+  it("--force with only due cron work and disabled cron classes executes nothing", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  enabled: false\n  automation:\n    agent_cron: false\n    script_cron: false",
+    });
+    await writeCronJob({ id: "agent-job", agent: "codex", mode: "agent", prompt: "Summarize logs." });
+    const { executors, cronAgentCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      force: true,
+    });
+
+    expect(cronAgentCalls).toEqual([]);
+    expect(result.executed).toBe(false);
+    expect(result.plannedCount).toBe(0);
+  });
+
+  it("executes normally without --force when master and all classes are enabled", async () => {
+    await writeConfig({ allowed: ["codex"] });
+    await writeInboxTask("codex", "normal-task");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(inboxCalls).toHaveLength(1);
+    expect(result.executed).toBe(true);
+    expect(result.summary).toContain("inbox_tasks=on");
+    expect(result.summary).not.toMatch(/force/i);
+  });
+});

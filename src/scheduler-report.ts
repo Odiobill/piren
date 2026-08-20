@@ -2,6 +2,11 @@ import type { DependencyTaskNode, LoadedInboxTask } from "./scheduler-dependenci
 import { evaluateTaskDependencyEligibility, loadSchedulerInboxState } from "./scheduler-dependencies.js";
 import { parseRetryPolicy, parseRetryState } from "./scheduler-retry.js";
 import { readYamlConfig, resolveEnabledAgents, DEFAULT_CONFIG_PATH } from "./scheduler-cli.js";
+import {
+  resolveSchedulerConfig,
+  type ResolvedSchedulerAutomation,
+  type SchedulerMigrationSignal,
+} from "./scheduler-loop.js";
 
 /**
  * Read-only scheduler operator report (ADR-0038 R3 operator surface).
@@ -175,10 +180,37 @@ const CONTINUATION_INDENT = " ".repeat(4 /*indent*/ + 8 /*tag field*/ + 1 /*spac
  * requires manual triage and may be active, interrupted, or ambiguous — the
  * report cannot identify which from vault state alone.
  */
-export function formatSchedulerReport(enabledAgents: string[], findings: SchedulerReportFinding[]): string {
+/**
+ * Resolved master/class gate state rendered by the report (0.2.0 S2). The
+ * report stays read-only regardless of the gates; these lines only make the
+ * effective automation surface inspectable.
+ */
+export interface SchedulerReportGateState {
+  masterEnabled: boolean;
+  automation: ResolvedSchedulerAutomation;
+  migration?: SchedulerMigrationSignal;
+}
+
+export function formatSchedulerReport(enabledAgents: string[], findings: SchedulerReportFinding[], gates?: SchedulerReportGateState): string {
   const lines: string[] = [];
   lines.push("SCHEDULER REPORT");
   lines.push("");
+
+  if (gates !== undefined) {
+    // 0.2.0 S2: bounded resolved master/class state (never config content).
+    lines.push(`scheduler enabled: ${gates.masterEnabled ? "yes" : "no"}`);
+    const onOff = (value: boolean): string => (value ? "on" : "off");
+    lines.push(
+      `automation: inbox_tasks=${onOff(gates.automation.inboxTasks)} ` +
+        `agent_cron=${onOff(gates.automation.agentCron)} ` +
+        `script_cron=${onOff(gates.automation.scriptCron)}`,
+    );
+    if (gates.migration !== undefined) {
+      // Read-only notice only: the report never persists the signal.
+      lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+    }
+    lines.push("");
+  }
 
   const byAgent = new Map<string, SchedulerReportFinding[]>();
   for (const finding of findings) {
@@ -253,5 +285,12 @@ export async function schedulerReport(options: SchedulerReportOptions): Promise<
     duplicateIds: inboxState.duplicateIds,
     now,
   });
-  return formatSchedulerReport(enabledAgents, findings);
+  // 0.2.0 S2: resolved master/class state, read-only regardless of the gates.
+  const schedulerConfig = resolveSchedulerConfig(config);
+  const gates: SchedulerReportGateState = {
+    masterEnabled: schedulerConfig.enabled,
+    automation: schedulerConfig.automation,
+  };
+  if (schedulerConfig.migration !== undefined) gates.migration = schedulerConfig.migration;
+  return formatSchedulerReport(enabledAgents, findings, gates);
 }

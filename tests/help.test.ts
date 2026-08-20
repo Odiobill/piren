@@ -92,3 +92,11 @@ describe("help: per-command help", () => {
     expect(text).toContain("bogus");
   });
 });
+
+describe("scheduler help (0.2.0 S2)", () => {
+  it("documents the bounded --force override and the fail-closed default gate", () => {
+    const text = formatCommandHelp("scheduler") ?? "";
+    expect(text).toContain("--force");
+    expect(text).toMatch(/disabled|fail.closed|enabled/i);
+  });
+});

@@ -34,6 +34,24 @@ export interface PlannerCronJob {
   path: string;
   agentName: string;
   devicePolicy: { mode: "highest_priority"; allowedDevices: string[] };
+  /**
+   * Cron job mode (0.2.0 S2). Used only for automation-class gating: a job
+   * without a mode is gated as agent-mode, matching the cron parser default.
+   */
+  mode?: "agent" | "script";
+}
+
+/**
+ * Resolved closed automation classes for planner gating (0.2.0 scope
+ * amendment §2). Mirrors `ResolvedSchedulerAutomation` in scheduler-loop.ts
+ * without a module dependency: when present, items of a disabled class are
+ * never proposed. When absent, the planner retains its pre-S2 behavior and
+ * proposes every eligible class.
+ */
+export interface PlannerAutomation {
+  inboxTasks: boolean;
+  agentCron: boolean;
+  scriptCron: boolean;
 }
 
 export interface PlannerActiveDevice {
@@ -72,6 +90,14 @@ export interface PlanSchedulerTickOptions {
    * duplicated id, is never claimable. Defaults to empty.
    */
   duplicateIds?: Set<string>;
+  /**
+   * Closed automation-class gates (0.2.0 S2). When present, items of a
+   * disabled class are never proposed (fail-closed planner exclusion, scope
+   * amendment §2): `inboxTasks` gates inbox tasks, `agentCron` gates
+   * agent-mode cron, `scriptCron` gates script-mode cron. When omitted, all
+   * classes are permitted (legacy behavior).
+   */
+  automation?: PlannerAutomation;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,12 +113,12 @@ export interface PlanSchedulerTickOptions {
  * jobs, active devices) and executing or displaying the proposed claims.
  */
 export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedClaim[] {
-  const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes, duplicateIds } = options;
+  const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes, duplicateIds, automation } = options;
   const claims: PlannedClaim[] = [];
   const enabledSet = new Set(enabledAgents);
 
-  // Process inbox tasks
-  for (const task of pendingTasks) {
+  // Process inbox tasks (skipped entirely when the inbox class is disabled)
+  for (const task of automation !== undefined && !automation.inboxTasks ? [] : pendingTasks) {
     if (!enabledSet.has(task.agentName)) continue;
 
     if (task.status === "pending") {
@@ -131,9 +157,15 @@ export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedCla
     }
   }
 
-  // Process cron jobs
+  // Process cron jobs (class-gated by mode; a missing mode gates as
+  // agent-mode, matching the cron parser default)
   for (const job of dueCronJobs) {
     if (!enabledSet.has(job.agentName)) continue;
+    if (automation !== undefined) {
+      const isScript = job.mode === "script";
+      if (isScript && !automation.scriptCron) continue;
+      if (!isScript && !automation.agentCron) continue;
+    }
 
     const agentDevices = activeDevices.get(job.agentName) ?? [];
     const activeList: ActiveDevice[] = agentDevices.map((d) => ({

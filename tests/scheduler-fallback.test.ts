@@ -148,6 +148,17 @@ async function writeConfig(opts: { allowed?: string[] }): Promise<void> {
     lines.push("allowed_agents:");
     for (const a of opts.allowed) lines.push(`  - ${a}`);
   }
+  // 0.2.0 S2: these tests exercise the TB8 execution machinery, so the
+  // fixture explicitly enables the scheduler and every automation class
+  // (fresh installs resolve fail-closed disabled).
+  lines.push(
+    "scheduler:",
+    "  enabled: true",
+    "  automation:",
+    "    inbox_tasks: true",
+    "    agent_cron: true",
+    "    script_cron: true",
+  );
   await writeFile(configPath, lines.join("\n") + "\n");
 }
 

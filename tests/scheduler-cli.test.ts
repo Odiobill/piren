@@ -18,10 +18,14 @@ beforeEach(async () => {
 
 afterEach(async () => rm(root, { recursive: true, force: true }));
 
+/** Fully-enabled scheduler block (0.2.0 S2): pre-S2 dry-run tests exercise
+ * proposals, so their local config fixtures explicitly enable every class. */
+const SCHEDULER_ENABLED = "scheduler:\n  enabled: true\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n";
+
 describe("scheduler dry-run CLI", () => {
   it("prints a claim proposal for a pending inbox task", async () => {
     // Write local config allowing thor
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
 
     // Create a pending inbox task for thor
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
@@ -39,7 +43,7 @@ describe("scheduler dry-run CLI", () => {
   });
 
   it("shows no claims when there is no pending work", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
 
     const output = await schedulerDryRun({ configPath });
 
@@ -49,7 +53,7 @@ describe("scheduler dry-run CLI", () => {
 
   it("respects allowed_agents from local config", async () => {
     // Allow codex but tasks exist for thor only
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - codex\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - codex\n${SCHEDULER_ENABLED}`);
 
     await mkdir(join(vault, "team", "codex"), { recursive: true });
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
@@ -67,7 +71,7 @@ describe("scheduler dry-run CLI", () => {
 
   it("excludes excluded_agents and remains claim-free (LLM-free)", async () => {
     // codex allowed but excluded; thor allowed and has a task.
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - codex\n  - thor\nexcluded_agents:\n  - codex\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - codex\n  - thor\nexcluded_agents:\n  - codex\n${SCHEDULER_ENABLED}`);
 
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
     await writeFile(
@@ -87,7 +91,7 @@ describe("scheduler dry-run CLI", () => {
   });
 
   it("shows cron jobs owned by this device", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
 
     // Register a device so it appears as active
     const { registerDevice } = await import("../src/devices.js");
@@ -128,7 +132,7 @@ Run the hourly briefing.`,
   });
 
   it("reports a dependency-blocked task with its reason and proposes no claim for it", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     // Implementation task (pending, no deps) -> claimable.
@@ -157,7 +161,7 @@ Run the hourly briefing.`,
   });
 
   it("proposes a claim for a task once its prerequisite is completed", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     await writeFile(
@@ -178,7 +182,7 @@ Run the hourly briefing.`,
   });
 
   it("resolves a claimed prerequisite as unsatisfied, not missing", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     // The prerequisite is claimed (pending, claimed filename) by another device.
@@ -204,7 +208,7 @@ Run the hourly briefing.`,
   });
 
   it("blocks a review whose prerequisite is a completed but claimed task (ADR-0038)", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     // The prerequisite was claimed and marked completed; it keeps its claimed
@@ -228,7 +232,7 @@ Run the hourly briefing.`,
   });
 
   it("blocks claims and reports an exact reason when task ids are duplicated", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     // Two ordinary files share the same id (one completed, one pending).
@@ -251,7 +255,7 @@ Run the hourly briefing.`,
   });
 
   it("reports a retry-backoff task with the exact R2 reason and proposes no claim for it", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     await writeFile(
@@ -293,7 +297,7 @@ Run the hourly briefing.`,
   });
 
   it("reports an exhausted-retry task with the exact R2 reason", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     await writeFile(
@@ -331,7 +335,7 @@ Run the hourly briefing.`,
   });
 
   it("reports an invalid retry policy with the exact R2 reason", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     await writeFile(
@@ -364,7 +368,7 @@ Run the hourly briefing.`,
   });
 
   it("reports malformed retry_state with the exact R2 reason", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     await writeFile(
@@ -398,7 +402,7 @@ Run the hourly briefing.`,
   });
 
   it("proposes a claim for a retryable task whose backoff has expired", async () => {
-    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${SCHEDULER_ENABLED}`);
     await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
 
     await writeFile(
@@ -433,5 +437,109 @@ Run the hourly briefing.`,
     expect(output).toContain("[CLAIM]");
     expect(output).toContain("retryable-task");
     expect(output).not.toContain("[BLOCK]");
+  });
+});
+
+describe("scheduler dry-run automation gates (0.2.0 S2)", () => {
+  async function writePendingTask(agent: string, name: string): Promise<void> {
+    await mkdir(join(vault, "team", agent, "inbox"), { recursive: true });
+    await writeFile(
+      join(vault, "team", agent, "inbox", `${name}.md`),
+      `---\nid: ${name}\nstatus: pending\nfrom: nora\nto: ${agent}\ncreated: 2026-07-05T09:00:00Z\nupdated: 2026-07-05T09:00:00Z\n---\n\n# ${name}\n\nDo something.`,
+    );
+  }
+
+  async function registerThisDevice(agent: string): Promise<void> {
+    const { registerDevice } = await import("../src/devices.js");
+    await registerDevice({
+      vaultRoot: vault,
+      agentName: agent,
+      deviceId: "test-device",
+      hostname: "test.local",
+      priority: 1,
+      now: () => new Date("2026-07-05T09:00:00Z"),
+    });
+  }
+
+  async function writeOwnedAgentCron(agent: string, id: string): Promise<void> {
+    await mkdir(join(vault, "cron", "jobs"), { recursive: true });
+    await writeFile(
+      join(vault, "cron", "jobs", `${id}.md`),
+      `---\nid: ${id}\nagent: ${agent}\nschedule: "0 * * * *"\nenabled: true\nmode: agent\ndevice_policy:\n  mode: highest_priority\n  allowed_devices:\n    - test-device\n---\n\nRun it.`,
+    );
+  }
+
+  it("emits bounded [SKIPPED] lines for disabled classes and proposes only enabled classes", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  enabled: true\n  automation:\n    inbox_tasks: false\n    agent_cron: true\n    script_cron: false\n`,
+    );
+    await writePendingTask("thor", "gated-task");
+    await registerThisDevice("thor");
+    await writeOwnedAgentCron("thor", "owned-job");
+
+    const output = await schedulerDryRun({
+      configPath,
+      deviceId: "test-device",
+      staleAfterMs: 86_400_000,
+      now: new Date("2026-07-05T10:00:00Z"),
+    });
+
+    expect(output).toContain("scheduler enabled: yes");
+    expect(output).toContain("[SKIPPED] inbox_tasks - automation disabled");
+    expect(output).toContain("[SKIPPED] script_cron - automation disabled");
+    expect(output).not.toContain("[SKIPPED] agent_cron");
+    // Only the enabled class is proposed; the gated inbox task is not.
+    expect(output).toContain("owned-job");
+    expect(output).not.toContain("gated-task");
+    // Read-only: the pending task stays pending and unclaimed.
+    const task = await readFile(join(vault, "team", "thor", "inbox", "gated-task.md"), "utf8");
+    expect(task).toContain("status: pending");
+  });
+
+  it("master gate off: no proposals, bounded master/class state, still read-only", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  enabled: false\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n`,
+    );
+    await writePendingTask("thor", "gated-task");
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toContain("scheduler enabled: no");
+    expect(output).not.toContain("[CLAIM]");
+    const task = await readFile(join(vault, "team", "thor", "inbox", "gated-task.md"), "utf8");
+    expect(task).toContain("status: pending");
+  });
+
+  it("fresh install (no scheduler block): no proposals and [SKIPPED] lines for every class", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
+    await writePendingTask("thor", "fresh-task");
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toContain("scheduler enabled: no");
+    expect(output).toContain("[SKIPPED] inbox_tasks - automation disabled");
+    expect(output).toContain("[SKIPPED] agent_cron - automation disabled");
+    expect(output).toContain("[SKIPPED] script_cron - automation disabled");
+    expect(output).not.toContain("[CLAIM]");
+  });
+
+  it("legacy block surfaces the migration notice as read-only state and still proposes enabled classes", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  poll_interval_seconds: 45\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n`,
+    );
+    await writePendingTask("thor", "legacy-task");
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toContain("scheduler enabled: yes");
+    expect(output).toMatch(/migration: .*not persisted/i);
+    expect(output).toContain("[CLAIM]");
+    expect(output).toContain("legacy-task");
+    // The migration signal is never persisted by the dry-run.
+    const after = await readFile(configPath, "utf8");
+    expect(after).not.toContain("enabled: true");
   });
 });

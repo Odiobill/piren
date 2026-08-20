@@ -21,7 +21,8 @@ import {
   type ExecuteScriptCronJobResult,
   type IsScheduleDueOptions,
 } from "./cron.js";
-import { planSchedulerTick, type PlannerCronJob, type PlannerTask } from "./scheduler.js";
+import { planSchedulerTick, type PlannerAutomation, type PlannerCronJob, type PlannerTask } from "./scheduler.js";
+import { resolveSchedulerConfig, type SchedulerMigrationSignal } from "./scheduler-loop.js";
 import { registerDevice } from "./devices.js";
 import type { ExecuteClaimedInboxTaskResult, ClaimedInboxTaskRunner } from "./scheduler-executor.js";
 import {
@@ -79,6 +80,16 @@ export interface SchedulerOnceOptions {
    * Defaults to the real {@link defaultRetryTransition}.
    */
   retryTransition?: SchedulerOnceRetryTransition;
+  /**
+   * Bounded non-persistent one-shot override (0.2.0 S2 `--once --force`).
+   * Overrides ONLY the master `scheduler.enabled` gate and the
+   * `automation.inbox_tasks` class gate for this tick: a disabled master gate
+   * or inbox class permits one normal bounded tick. It NEVER enables disabled
+   * `agent_cron`/`script_cron` classes, never writes config, never starts or
+   * installs a service, and never alters claim/retry/release/priority or
+   * at-most-one execution semantics.
+   */
+  force?: boolean;
 }
 
 export interface InboxExecuteInput {
@@ -217,6 +228,19 @@ export interface SchedulerOnceResult {
   modelFallback?: string[];
   noWork: boolean;
   summary: string;
+  /**
+   * Resolved automation-class gates applied to this tick (0.2.0 S2), after
+   * any `--force` master/inbox override. Present on normal tick results.
+   */
+  automation?: PlannerAutomation;
+  /** True when this tick ran under the bounded `--force` override. */
+  forced?: boolean;
+  /**
+   * Present when the resolved config carried the pure S1 migration signal
+   * (legacy scheduler block without `enabled`). Read-only notice only; S2
+   * never persists it (the writer/wizard is a later tracer).
+   */
+  migration?: SchedulerMigrationSignal;
 }
 
 function errorMessage(error: unknown): string {
@@ -271,6 +295,11 @@ function noWorkResult(deviceId: string, enabledAgents: string[], summary: string
 function formatSummary(result: SchedulerOnceResult): string {
   const lines: string[] = [`SCHEDULER ONCE (device: ${result.deviceId})`];
   lines.push(`enabled agents: ${result.enabledAgents.join(", ") || "(none)"}`);
+  if (result.automation !== undefined) lines.push(formatGateState(result.automation));
+  if (result.forced === true) lines.push("force: master+inbox gate override (this tick only; not persisted)");
+  if (result.migration !== undefined) {
+    lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+  }
   lines.push(`planned claims: ${result.plannedCount}`);
   if (result.claimAttempts.length > 0) {
     lines.push("claim attempts:");
@@ -299,6 +328,25 @@ function formatSummary(result: SchedulerOnceResult): string {
     lines.push("executed: no");
   }
   if (result.noWork) lines.push("no work to execute this tick.");
+  return lines.join("\n") + "\n";
+}
+
+function formatGateState(automation: PlannerAutomation): string {
+  const onOff = (value: boolean): string => (value ? "on" : "off");
+  return (
+    `automation: inbox_tasks=${onOff(automation.inboxTasks)} ` +
+    `agent_cron=${onOff(automation.agentCron)} ` +
+    `script_cron=${onOff(automation.scriptCron)}`
+  );
+}
+
+function disabledSummary(deviceId: string, enabledAgents: string[]): string {
+  const lines: string[] = [`SCHEDULER ONCE (device: ${deviceId})`];
+  lines.push(`enabled agents: ${enabledAgents.join(", ") || "(none)"}`);
+  lines.push("");
+  lines.push("scheduler disabled (scheduler.enabled resolved false). No heartbeat, planning, claim, or spawn ran.");
+  lines.push("Enable the scheduler in local config, or pass --force for one bounded master/inbox-only tick.");
+  lines.push("no work to execute this tick.");
   return lines.join("\n") + "\n";
 }
 
@@ -338,6 +386,22 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
     );
   }
 
+  // 0.2.0 S2: master gate (fail-closed) + closed automation classes. The
+  // master gate no-ops BEFORE any heartbeat refresh, planning, claim, or
+  // spawn. `--force` overrides ONLY the master and inbox gates for this one
+  // bounded tick; disabled cron classes stay gated.
+  const schedulerConfig = resolveSchedulerConfig(config);
+  const force = options.force === true;
+  if (!schedulerConfig.enabled && !force) {
+    return noWorkResult(deviceId, enabledAgents, disabledSummary(deviceId, enabledAgents));
+  }
+  const automation: PlannerAutomation = {
+    inboxTasks: schedulerConfig.automation.inboxTasks || force,
+    agentCron: schedulerConfig.automation.agentCron,
+    scriptCron: schedulerConfig.automation.scriptCron,
+  };
+  const migration = schedulerConfig.migration;
+
   const root = resolve(vaultRoot);
 
   // 1. Refresh this device heartbeat for each enabled agent. registerDevice
@@ -375,6 +439,7 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
           path: job.path,
           agentName: job.agent,
           devicePolicy: job.devicePolicy,
+          mode: job.mode,
         });
       }
     } catch {
@@ -407,6 +472,7 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
     now: now(),
     dependencyNodes: inboxState.dependencyNodes,
     duplicateIds: inboxState.duplicateIds,
+    automation,
   });
 
   // 4. Walk planned claims in priority order; claim first, execute only on
@@ -636,8 +702,11 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
     claimAttempts,
     executed,
     noWork,
+    automation,
     summary: "",
   };
+  if (force) result.forced = true;
+  if (migration !== undefined) result.migration = migration;
   if (executedItemType !== undefined) result.executedItemType = executedItemType;
   if (executedItemPath !== undefined) result.executedItemPath = executedItemPath;
   if (executedAgentName !== undefined) result.executedAgentName = executedAgentName;

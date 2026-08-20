@@ -27,6 +27,23 @@ export interface PlannerCronJob {
         mode: "highest_priority";
         allowedDevices: string[];
     };
+    /**
+     * Cron job mode (0.2.0 S2). Used only for automation-class gating: a job
+     * without a mode is gated as agent-mode, matching the cron parser default.
+     */
+    mode?: "agent" | "script";
+}
+/**
+ * Resolved closed automation classes for planner gating (0.2.0 scope
+ * amendment §2). Mirrors `ResolvedSchedulerAutomation` in scheduler-loop.ts
+ * without a module dependency: when present, items of a disabled class are
+ * never proposed. When absent, the planner retains its pre-S2 behavior and
+ * proposes every eligible class.
+ */
+export interface PlannerAutomation {
+    inboxTasks: boolean;
+    agentCron: boolean;
+    scriptCron: boolean;
 }
 export interface PlannerActiveDevice {
     deviceId: string;
@@ -62,6 +79,14 @@ export interface PlanSchedulerTickOptions {
      * duplicated id, is never claimable. Defaults to empty.
      */
     duplicateIds?: Set<string>;
+    /**
+     * Closed automation-class gates (0.2.0 S2). When present, items of a
+     * disabled class are never proposed (fail-closed planner exclusion, scope
+     * amendment §2): `inboxTasks` gates inbox tasks, `agentCron` gates
+     * agent-mode cron, `scriptCron` gates script-mode cron. When omitted, all
+     * classes are permitted (legacy behavior).
+     */
+    automation?: PlannerAutomation;
 }
 /**
  * Plan proposed claims for one scheduler tick. Pure function: takes

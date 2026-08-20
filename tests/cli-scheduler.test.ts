@@ -20,6 +20,10 @@ function runScheduler(args: string[], env: Record<string, string>): { status: nu
   const result = spawnSync(process.execPath, [cliJs, "scheduler", ...args], {
     encoding: "utf8",
     env: { ...process.env, ...env },
+    // Bounded safety net: a regression that leaves the long-running loop
+    // alive must fail the test, not hang the suite forever.
+    timeout: 15000,
+    killSignal: "SIGKILL",
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
@@ -99,9 +103,19 @@ describe("piren scheduler (CLI dispatch)", () => {
 
   it("bare 'piren scheduler' runs the opt-in loop and shuts down cleanly on SIGTERM (exit 0)", async () => {
     // Isolated HOME with a no-work config so the first tick is fast and no Pi
-    // is spawned. The loop then sleeps until SIGTERM interrupts it.
+    // is spawned. The loop then sleeps until SIGTERM interrupts it. The
+    // scheduler block is explicitly enabled (0.2.0 S2: fresh installs are
+    // fail-closed disabled).
     const loopHome = await mkdtemp(join(tmpdir(), "piren-scheduler-loop-home-"));
     try {
+      const vault = join(loopHome, "vault");
+      await mkdir(join(vault, "team", "codex"), { recursive: true });
+      await writeFile(join(vault, ".piren-vault"), "");
+      await mkdir(join(loopHome, ".config", "piren"), { recursive: true });
+      await writeFile(
+        join(loopHome, ".config", "piren", "config.yml"),
+        `vault_root: ${vault}\nallowed_agents:\n  - codex\nscheduler:\n  enabled: true\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n`,
+      );
       const result = await runSchedulerLoopUntilSignal([], { HOME: loopHome }, { readyMs: 1000, killMs: 5000 });
       expect(result.status).toBe(0);
       expect(result.signal).toBe(null);
@@ -187,5 +201,96 @@ describe("piren scheduler (CLI dispatch)", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("SCHEDULER ONCE");
     expect(result.stdout).toMatch(/no work/i);
+  });
+});
+
+describe("piren scheduler CLI gates (0.2.0 S2)", () => {
+  async function makeHome(schedulerBlock: string): Promise<{ home: string; vault: string }> {
+    const home = await mkdtemp(join(tmpdir(), "piren-scheduler-gate-home-"));
+    const vault = join(home, "vault");
+    await mkdir(join(vault, "team", "codex", "inbox"), { recursive: true });
+    await mkdir(join(vault, "team", "codex", "devices"), { recursive: true });
+    await writeFile(join(vault, ".piren-vault"), "");
+    await mkdir(join(home, ".config", "piren"), { recursive: true });
+    await writeFile(
+      join(home, ".config", "piren", "config.yml"),
+      `vault_root: ${vault}\nallowed_agents:\n  - codex\n${schedulerBlock}`,
+    );
+    return { home, vault };
+  }
+
+  it("'piren scheduler --once' with scheduler disabled prints a bounded disabled notice, exits 0, writes nothing", async () => {
+    const { home, vault } = await makeHome("scheduler:\n  enabled: false\n");
+    try {
+      const result = runScheduler(["--once"], { HOME: home });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("SCHEDULER ONCE");
+      expect(result.stdout).toMatch(/scheduler disabled/i);
+      expect(result.stdout).not.toContain("[EXEC]");
+      // No heartbeat: the devices directory stays empty.
+      const { readdir } = await import("node:fs/promises");
+      expect(await readdir(join(vault, "team", "codex", "devices"))).toEqual([]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("'piren scheduler --once --force' overrides the master gate for one bounded tick (no persistence)", async () => {
+    const { home } = await makeHome("scheduler:\n  enabled: false\n  automation:\n    agent_cron: false\n    script_cron: false\n");
+    try {
+      const result = runScheduler(["--once", "--force"], { HOME: home });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("SCHEDULER ONCE");
+      expect(result.stdout).toMatch(/force: master\+inbox gate override/);
+      expect(result.stdout).toContain("agent_cron=off");
+      expect(result.stdout).not.toMatch(/scheduler disabled/i);
+      // Config unchanged: force never persists.
+      const after = await import("node:fs/promises").then((fs) =>
+        fs.readFile(join(home, ".config", "piren", "config.yml"), "utf8"),
+      );
+      expect(after).toContain("enabled: false");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("bare 'piren scheduler' with scheduler disabled prints the bounded disabled notice and exits 0 promptly", async () => {
+    const { home } = await makeHome("scheduler:\n  enabled: false\n");
+    try {
+      const result = runScheduler([], { HOME: home });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("SCHEDULER LOOP DISABLED");
+      expect(result.stdout).toMatch(/no ticks ran/i);
+      expect(result.stdout).not.toContain("SCHEDULER LOOP STARTING");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("bare 'piren scheduler' startup summary lists resolved automation classes", async () => {
+    const { home } = await makeHome(
+      "scheduler:\n  enabled: true\n  poll_interval_seconds: 5\n  automation:\n    inbox_tasks: true\n    agent_cron: false\n    script_cron: true\n",
+    );
+    try {
+      const result = await runSchedulerLoopUntilSignal([], { HOME: home }, { readyMs: 1000, killMs: 5000 });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("SCHEDULER LOOP STARTING");
+      expect(result.stdout).toContain("automation: inbox_tasks=on agent_cron=off script_cron=on");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("'piren scheduler --report' renders resolved master/class state and stays read-only", async () => {
+    const { home } = await makeHome("scheduler:\n  enabled: false\n  automation:\n    inbox_tasks: false\n    agent_cron: true\n    script_cron: false\n");
+    try {
+      const result = runScheduler(["--report"], { HOME: home });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("SCHEDULER REPORT");
+      expect(result.stdout).toContain("scheduler enabled: no");
+      expect(result.stdout).toContain("automation: inbox_tasks=off agent_cron=on script_cron=off");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

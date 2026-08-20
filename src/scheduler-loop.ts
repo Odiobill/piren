@@ -479,11 +479,37 @@ function formatStartupSummary(
   lines.push(
     `max_concurrent_agents: ${schedulerConfig.maxConcurrentAgents} (effective: ${schedulerConfig.effectiveConcurrency}, one-at-a-time)`,
   );
+  // 0.2.0 S2: resolved closed automation classes, bounded and non-secret.
+  const onOff = (value: boolean): string => (value ? "on" : "off");
+  lines.push(
+    `automation: inbox_tasks=${onOff(schedulerConfig.automation.inboxTasks)} ` +
+      `agent_cron=${onOff(schedulerConfig.automation.agentCron)} ` +
+      `script_cron=${onOff(schedulerConfig.automation.scriptCron)}`,
+  );
+  if (schedulerConfig.migration !== undefined) {
+    // Read-only notice only: S2 never persists the migration signal (the
+    // writer/wizard is a later separately gated tracer).
+    lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+  }
   if (schedulerConfig.warnings.length > 0) {
     lines.push("config warnings:");
     for (const w of schedulerConfig.warnings) lines.push(`  - ${w}`);
   }
   lines.push("press Ctrl+C (SIGINT/SIGTERM) to stop cleanly after the current tick.");
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Bounded non-secret disabled notice (0.2.0 S2 master gate). Logged when the
+ * resolved `scheduler.enabled` is false: the loop returns immediately with no
+ * tick, heartbeat, planning, claim, spawn, or sleep.
+ */
+function formatDisabledSummary(startedAt: Date): string {
+  const lines: string[] = ["SCHEDULER LOOP DISABLED"];
+  lines.push(`started at: ${startedAt.toISOString()}`);
+  lines.push("scheduler disabled (scheduler.enabled resolved false); no ticks ran.");
+  lines.push("No heartbeat refresh, planning, claim, spawn, or sleep occurred.");
+  lines.push("Enable scheduler.enabled in local config, or use piren scheduler --once --force for one bounded master/inbox-only tick.");
   return lines.join("\n") + "\n";
 }
 
@@ -541,6 +567,24 @@ export async function runSchedulerLoop(options: SchedulerLoopOptions): Promise<S
   const staleAfterMs = schedulerConfig.staleAfterSeconds * 1000;
 
   const startedAt = now();
+
+  // 0.2.0 S2 master gate: a resolved disabled scheduler no-ops immediately -
+  // before any tick (and therefore before any heartbeat refresh, planning,
+  // claim, or spawn) and before any sleep. `--dry-run`/`--report` remain the
+  // read-only operator surfaces while disabled.
+  if (!schedulerConfig.enabled) {
+    const summary = formatDisabledSummary(startedAt);
+    log(summary);
+    return {
+      tickCount: 0,
+      executedCount: 0,
+      startedAt,
+      finishedAt: startedAt,
+      shutdownReason: "scheduler disabled",
+      summary,
+    };
+  }
+
   log(formatStartupSummary(schedulerConfig, options.enabledAgents, startedAt));
 
   let tickCount = 0;
