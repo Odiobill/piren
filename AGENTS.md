@@ -115,7 +115,7 @@ The integrated web UI is intentionally minimal per ADR-0012. It is an emergency 
 
 ## Extensibility
 
-Piren core is minimal. Additional capabilities come from Pi packages (ADR-0013), declared in `~/.config/piren/config.yml` and loaded as additional `--extension` flags. Vault skills (ADR-0014/ADR-0028) provide reusable procedures stored in `vault/skills/`, future group-scoped `agent-groups/<group>/skills/`, and `team/<agent>/skills/`, injected into agent context at startup.
+Piren core is minimal. Additional capabilities come from Pi packages (ADR-0013), declared in `~/.config/piren/config.yml` and loaded as additional `--extension` flags. Vault skills (ADR-0014/ADR-0028) provide reusable procedures stored in `vault/skills/`, group-scoped `agent-groups/<group>/skills/`, and `team/<agent>/skills/`, injected as a lazy catalog into agent context at startup.
 
 ## Development workflow
 
@@ -267,9 +267,9 @@ Implemented extension tools:
 - `vault_conformance_check()`
 
 Vault skills (ADR-0014 + ADR-0017, implemented):
-- `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName)` and `formatSkillCatalogForContext(skills)`. Skills are currently loaded from `vault/skills/` (shared) and `team/<agent>/skills/` (agent-specific, overrides shared on name collision). ADR-0028 reserves `agent-groups/<group>/skills/` as the group-scoped middle layer; fresh scaffolds create `agent-groups/` so vaults are compatible before group resolution is implemented. Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
-- The startup context prompt now injects a compact "Available Skills" catalog only: name, source, description, and vault-relative path. Full skill bodies are not injected at startup.
-- `skill_list()` returns the same compact catalog. `skill_read(name)` returns the selected full skill body and rejects unknown names with a clear error. Agent-specific overrides are resolved at startup by the loader, so the tools use the same precedence as the prompt.
+- `src/skills.ts` exports `loadVaultSkills(vaultRoot, agentName, groups?)` and `formatSkillCatalogForContext(skills)`. Skills load from `vault/skills/` (shared), then `agent-groups/<group>/skills/` for the agent's deterministically resolved groups (later groups override earlier collisions), then `team/<agent>/skills/` (agent-specific overrides lower scopes). `src/pi-extension.ts` resolves group membership at startup and passes it to the loader, so the catalog and tools use `shared < group < agent` precedence. Both loose `.md` files and directory-based `SKILL.md` skills are supported. Frontmatter (`name`, `description`) is parsed; the name falls back to the filename stem. The loader is tolerant: missing directories return an empty list, malformed frontmatter does not crash.
+- The startup context prompt injects a compact "Available Skills" catalog only: name, source, description, and vault-relative path. Full skill bodies are not injected at startup.
+- `skill_list()` returns the same compact catalog. `skill_read(name)` returns the selected full skill body and rejects unknown names with a clear error. Agent-specific and group overrides are resolved at startup by the loader, so the tools use the same precedence as the prompt.
 - `piren_status` reports `skills_loaded: <count>`.
 - Tests: `tests/skills.test.ts` (10 tests), `tests/pi-extension.test.ts` (lazy context catalog, `skill_list`, `skill_read`, and status count).
 
