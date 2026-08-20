@@ -7,8 +7,12 @@ import { join } from "node:path";
  * Prevents stale claims: the exact YAML schema, the per_turn default, the
  * session_start_only semantics, the PIREN_CONTEXT_INJECTION measurement
  * override, the invalid-value fallback, and piren_status visibility must be
- * documented, and the docs must never claim session_start_only is the default
- * or that the preference is a Web UI setting.
+ * documented, and the docs must never claim session_start_only is the
+ * default. The Workbench presentation is contracted to the delivered typed
+ * Settings workflow over the same vault-owned team/<agent>/config.yml file
+ * (0.2.0 scope amendment section 5.1): never a live Pi-session control, a
+ * browser-persisted setting, a generic editor, a provider-credential
+ * workflow, or an alternative authority store.
  */
 
 const root = process.cwd();
@@ -51,7 +55,19 @@ describe("context-injection operator docs", () => {
     expect(CONFIGURATION).not.toMatch(/session_start_only[^\n]*\bis the default\b/i);
   });
 
-  it("never presents the preference as a Web UI setting", () => {
-    expect(CONFIGURATION).not.toMatch(/web ui[^\n]*context_injection|context_injection[^\n]*web ui/i);
+  it("documents the preference as vault-owned, with only the delivered typed Settings workflow in the Workbench", () => {
+    // Remains a vault-owned team/<agent>/config.yml preference.
+    expect(CONFIGURATION).toMatch(/context_injection/);
+    expect(CONFIGURATION).toContain("team/<agent>/config.yml");
+    // The Workbench Settings page may expose only the delivered typed
+    // workflow for that same preference over the same file.
+    expect(CONFIGURATION).toMatch(/Workbench Settings page[^\n]*typed workflow|typed workflow[^\n]*Workbench Settings page/i);
+    // It must never be described as a live Pi-session control, a
+    // browser-persisted setting, a generic editor, a provider-credential
+    // workflow, or an alternative authority store.
+    expect(CONFIGURATION).not.toMatch(/context_injection[^\n]*live (Pi )?session|live (Pi )?session[^\n]*context_injection/i);
+    expect(CONFIGURATION).not.toMatch(/context_injection[^\n]*browser[- ](storage|persist)|browser[- ](storage|persist)[^\n]*context_injection/i);
+    expect(CONFIGURATION).not.toMatch(/context_injection[^\n]*generic editor|generic editor[^\n]*context_injection/i);
+    expect(CONFIGURATION).not.toMatch(/context_injection[^\n]*provider credential|provider credential[^\n]*context_injection/i);
   });
 });
