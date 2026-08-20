@@ -69,5 +69,6 @@ describe("context-injection operator docs", () => {
     expect(CONFIGURATION).not.toMatch(/context_injection[^\n]*browser[- ](storage|persist)|browser[- ](storage|persist)[^\n]*context_injection/i);
     expect(CONFIGURATION).not.toMatch(/context_injection[^\n]*generic editor|generic editor[^\n]*context_injection/i);
     expect(CONFIGURATION).not.toMatch(/context_injection[^\n]*provider credential|provider credential[^\n]*context_injection/i);
+    expect(CONFIGURATION).not.toMatch(/context_injection[^\n]*(alternative authority|authority store)|(alternative authority|authority store)[^\n]*context_injection/i);
   });
 });
