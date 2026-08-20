@@ -144,6 +144,26 @@ describe("AppShell Vault Explorer wiring (W2)", () => {
     expect(document.activeElement).toBe(toggle);
   });
 
+  it("returns mobile-drawer Explorer focus to the persistent menu toggle when the drawer unmounts", async () => {
+    await renderShell();
+    await flush();
+    const menuToggle = container.querySelector<HTMLButtonElement>(".nav-toggle");
+    expect(menuToggle).not.toBeNull();
+
+    await act(async () => menuToggle?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const drawerToggle = Array.from(container.querySelectorAll<HTMLButtonElement>("#mobile-drawer button"))
+      .find((button) => button.textContent?.trim() === "Vault Explorer");
+    expect(drawerToggle).toBeDefined();
+    drawerToggle?.focus();
+
+    await act(async () => drawerToggle?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+
+    expect(container.querySelector("#mobile-drawer")).toBeNull();
+    expect(container.querySelector(".vault-explorer-fullpage")).not.toBeNull();
+    expect(document.activeElement).toBe(menuToggle);
+  });
+
   it("selected Conversation: opening shows the W1 split (upper Explorer, lower live chat)", async () => {
     await renderShell();
     await flush();
@@ -157,6 +177,7 @@ describe("AppShell Vault Explorer wiring (W2)", () => {
     expect(container.querySelector(".vault-explorer-fullpage")).toBeNull();
     const split = container.querySelector<HTMLElement>(".split-workspace");
     expect(split).not.toBeNull();
+    expect(split?.closest<HTMLElement>(".workspace-panel")?.hidden).toBe(false);
     // Upper companion pane holds the Explorer; lower chat pane holds the live navigator.
     expect(split?.querySelector(".split-companion-pane .vault-explorer")).not.toBeNull();
     expect(split?.querySelector(".split-chat-pane .mock-navigator")).not.toBeNull();

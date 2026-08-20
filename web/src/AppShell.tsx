@@ -90,7 +90,7 @@ export function AppShell({
       // Close: restore the normal view and return focus to the opener.
       setExplorerOpen(false);
       setNav((previous) => closeDrawer(previous));
-      const target = explorerButtonRef.current ?? toggleRef.current;
+      const target = nav.drawerOpen ? toggleRef.current : explorerButtonRef.current ?? toggleRef.current;
       target?.focus();
       return;
     }
@@ -99,7 +99,14 @@ export function AppShell({
     // still retains the chat mounted/live underneath.
     setExplorerOpen(true);
     setSplitState((previous) => mobileSelectPane(previous, "companion"));
-    setNav((previous) => closeDrawer(previous));
+    // A selected Conversation opens the companion beside that Conversation,
+    // even when its still-mounted workspace was previously hidden by Dashboard.
+    setNav((previous) =>
+      hasSelectedConversation ? selectPage(closeDrawer(previous), "conversations") : closeDrawer(previous),
+    );
+    // A drawer action unmounts with the drawer; return focus to its persistent
+    // menu opener instead of leaving focus on a removed button.
+    if (nav.drawerOpen) toggleRef.current?.focus();
   }
 
   function handleSelect(page: Page) {
@@ -187,7 +194,6 @@ export function AppShell({
             conversationsReloadKey={conversationsReloadKey}
             explorerOpen={explorerOpen}
             onToggleExplorer={handleToggleExplorer}
-            explorerToggleRef={explorerButtonRef}
           />
         </MobileDrawer>
 

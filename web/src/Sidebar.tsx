@@ -34,8 +34,8 @@ export function Sidebar({
   /** W2: the companion open/close affordance state (aria-pressed). */
   explorerOpen: boolean;
   onToggleExplorer: () => void;
-  /** W2: the toggle button for close-returns-focus. */
-  explorerToggleRef: RefObject<HTMLButtonElement | null>;
+  /** Desktop toggle for close-returns-focus; drawer instances return to Menu. */
+  explorerToggleRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
