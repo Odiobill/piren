@@ -200,18 +200,18 @@ describe("Context cards tray row", () => {
     expect(vi.mocked(fetchConversationTelemetry)).not.toHaveBeenCalled();
   });
 
-  it("a valid live SSE frame updates only the matching card's bar; SSE receipt triggers no fetch", async () => {
+  it("a valid live SSE frame updates only the matching card's bar with two-decimal text; SSE receipt triggers no fetch", async () => {
     await mountNavigator();
     await act(async () => deliverTelemetry(OK_FRAME));
     await flush();
     const bar = cardProgressbar("dipu");
     expect(bar?.getAttribute("aria-valuenow")).toBe("30");
-    expect(bar?.getAttribute("aria-valuetext")).toBe("Context usage: 30% of 200.0k window");
-    expect(cardButton("dipu")?.textContent).toContain("30%");
-    expect(cardButton("dipu")?.getAttribute("aria-label")).toBe("dipu: Context usage: 30% of 200.0k window; activate for details");
+    expect(bar?.getAttribute("aria-valuetext")).toBe("Context usage: 30.00% of 200.0k window");
+    expect(cardButton("dipu")?.textContent).toContain("30.00%");
+    expect(cardButton("dipu")?.getAttribute("aria-label")).toBe("dipu: Context usage: 30.00% of 200.0k window; activate for details");
     // zai remains in the truthful never-sampled state.
     expect(cardProgressbar("zai")?.getAttribute("aria-valuenow")).toBeNull();
-    expect(cardButton("zai")?.textContent).not.toContain("30%");
+    expect(cardButton("zai")?.textContent).not.toContain("30.00%");
     expect(vi.mocked(fetchConversationTelemetry)).not.toHaveBeenCalled();
   });
 
@@ -227,7 +227,7 @@ describe("Context cards tray row", () => {
     expect(cardButton("zai")?.textContent).not.toContain("0%");
   });
 
-  it("a truthful 0% is a real measured value: determinate bar with aria-valuenow 0", async () => {
+  it("a truthful 0% is a real measured value: determinate bar with aria-valuenow 0 and 0.00% text", async () => {
     await mountNavigator();
     await act(async () =>
       deliverTelemetry({ ...OK_FRAME, context: { tokens: 0, contextWindow: 200000, percent: 0 } }),
@@ -235,8 +235,8 @@ describe("Context cards tray row", () => {
     await flush();
     const bar = cardProgressbar("dipu");
     expect(bar?.getAttribute("aria-valuenow")).toBe("0");
-    expect(bar?.getAttribute("aria-valuetext")).toBe("Context usage: 0% of 200.0k window");
-    expect(cardButton("dipu")?.textContent).toContain("0%");
+    expect(bar?.getAttribute("aria-valuetext")).toBe("Context usage: 0.00% of 200.0k window");
+    expect(cardButton("dipu")?.textContent).toContain("0.00%");
   });
 
   it("tray order with approvals/activity present: approval cards, composer controls, context cards last (activity cards live in history)", async () => {
@@ -280,18 +280,35 @@ describe("Telemetry details popup", () => {
     expect(vi.mocked(fetchConversationTelemetry)).not.toHaveBeenCalled();
   });
 
-  it("popup shows only the permitted detail fields from the live entry", async () => {
+  it("popup shows concise short labelled lines for exactly the permitted bounded fields, with two-decimal percent and no expanded sentence", async () => {
     await mountNavigator();
     await act(async () => deliverTelemetry(OK_FRAME));
     await flush();
     const dialog = await openPopup("dipu");
-    expect(dialog.textContent).toContain("Context usage: 30% of 200.0k window");
+    expect(dialog.textContent).toContain("Context usage: 30.00% of 200.0k window");
     expect(dialog.textContent).toContain("60.0k");
     expect(dialog.textContent).toContain("200.0k");
-    expect(dialog.textContent).toContain("30%");
+    expect(dialog.textContent).toContain("30.00%");
     expect(dialog.textContent).toContain("anthropic/claude-sonnet-4");
     expect(dialog.textContent).toContain("high");
     expect(dialog.textContent).toContain("on");
+    // Concise labelled lines: agent and truthful state are dt/dd rows, not a
+    // dense sentence and not a standalone unlabelled paragraph.
+    const rows = Array.from(dialog.querySelectorAll(".telemetry-popup-field"));
+    const pairs = rows.map((row) => [row.querySelector("dt")?.textContent, row.querySelector("dd")?.textContent]);
+    expect(pairs).toEqual([
+      ["Agent", "dipu"],
+      ["State", "Context usage: 30.00% of 200.0k window"],
+      ["Context tokens", "60.0k"],
+      ["Context window", "200.0k"],
+      ["Context usage", "30.00%"],
+      ["Model", "anthropic/claude-sonnet-4"],
+      ["Thinking", "high"],
+      ["Auto-compaction", "on"],
+    ]);
+    expect(dialog.querySelector(".telemetry-popup-state")).toBeNull();
+    // Absence of the old expanded T6 sentence format (dense dot-separated line).
+    expect(dialog.textContent).not.toContain("dipu · 60.0k / 200.0k context");
     // Excluded: run/session ids, totals, cost.
     expect(dialog.textContent).not.toContain("run-0001");
     expect(dialog.textContent?.toLowerCase()).not.toContain("cost");
@@ -442,7 +459,7 @@ describe("explicit-only popup Refresh", () => {
     await act(async () => deliverTelemetry(OK_FRAME));
     await flush();
     const dialog = await openPopup("dipu");
-    expect(dialog.textContent).toContain("30%");
+    expect(dialog.textContent).toContain("30.00%");
 
     vi.mocked(fetchConversationTelemetry).mockRejectedValueOnce(new UnauthorizedError());
     await act(async () => {
@@ -458,7 +475,7 @@ describe("explicit-only popup Refresh", () => {
     await flush();
     // The prior good value stays (not relabeled as fresh) and the failure is
     // visible inside the popup.
-    expect(popup()?.textContent).toContain("30%");
+    expect(popup()?.textContent).toContain("30.00%");
     expect(popup()?.querySelector('[role="alert"]')?.textContent).toContain("500");
   });
 });

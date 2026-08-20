@@ -59,6 +59,15 @@ function formatTokenCount(value: number): string {
   return value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value);
 }
 
+/**
+ * U3 (0.2.0 amendment §6.3): context percentages render with EXACTLY two
+ * decimals ("8.74%"); a truthful 0 renders "0.00%". Unknown/unavailable
+ * states never reach this formatter — they never fabricate a number.
+ */
+function formatPercent(value: number): string {
+  return `${value.toFixed(2)}%`;
+}
+
 interface StatePresentation {
   stateKey: ContextCardStateKey;
   bar: ContextCardBar;
@@ -79,8 +88,8 @@ function presentEntry(entry: ConversationTelemetryEntry | undefined): StatePrese
     return {
       stateKey: "ok",
       bar: { kind: "percent", percent: facts.context.percent },
-      shortText: `${facts.context.percent}%`,
-      stateText: `Context usage: ${facts.context.percent}% of ${formatTokenCount(facts.context.contextWindow)} window`,
+      shortText: formatPercent(facts.context.percent),
+      stateText: `Context usage: ${formatPercent(facts.context.percent)} of ${formatTokenCount(facts.context.contextWindow)} window`,
     };
   }
   if (facts.contextState === "post_compaction_pending") {
@@ -137,13 +146,19 @@ export function contextCardsForSelection(
  */
 export function telemetryPopupViewModel(agent: string, entry: ConversationTelemetryEntry | undefined): TelemetryPopupViewModel {
   const presentation = presentEntry(entry);
-  const fields: TelemetryPopupField[] = [];
+  // U3 concise popup (amendment §6.3): the bounded field set renders as short
+  // labelled lines — agent and truthful state first (always present), then
+  // tokens/window/percent, model, thinking, and auto-compaction when present.
+  const fields: TelemetryPopupField[] = [
+    { label: "Agent", value: agent },
+    { label: "State", value: presentation.stateText },
+  ];
   if (entry !== undefined && entry.kind === "live") {
     const { facts } = entry;
     if (facts.context !== undefined) {
       if (facts.context.tokens !== null) fields.push({ label: "Context tokens", value: formatTokenCount(facts.context.tokens) });
       fields.push({ label: "Context window", value: formatTokenCount(facts.context.contextWindow) });
-      if (facts.context.percent !== null) fields.push({ label: "Context usage", value: `${facts.context.percent}%` });
+      if (facts.context.percent !== null) fields.push({ label: "Context usage", value: formatPercent(facts.context.percent) });
     }
     const provider = facts.model?.provider;
     const id = facts.model?.id;

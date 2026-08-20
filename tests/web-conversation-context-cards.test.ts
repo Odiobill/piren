@@ -69,23 +69,34 @@ describe("contextCardsForSelection — membership, ordering, states", () => {
     expect(contextCardsForSelection({ phase: "none" }, telemetry)).toEqual([]);
   });
 
-  it("an ok entry produces a truthful percent bar (30%) with exact accessible text", () => {
+  it("an ok entry produces a truthful percent bar (30.00%) with exact two-decimal accessible text", () => {
     const cards = contextCardsForSelection({ phase: "active", audience: ["dipu"] }, stateWith(OK_ENTRY_FRAME));
     const card = cardFor("dipu", cards);
     expect(card.stateKey).toBe("ok");
     expect(card.bar).toEqual({ kind: "percent", percent: 30 });
-    expect(card.shortText).toBe("30%");
-    expect(card.stateText).toBe("Context usage: 30% of 200.0k window");
-    expect(card.accessibleName).toBe("dipu: Context usage: 30% of 200.0k window; activate for details");
+    expect(card.shortText).toBe("30.00%");
+    expect(card.stateText).toBe("Context usage: 30.00% of 200.0k window");
+    expect(card.accessibleName).toBe("dipu: Context usage: 30.00% of 200.0k window; activate for details");
   });
 
-  it("a truthful 0% is a real measured value: percent bar with 0, never collapsed into unavailable", () => {
+  it("fractional percents render with exactly two decimals (8.74% / 7.50%)", () => {
+    const fractional = stateWith({ ...OK_ENTRY_FRAME, context: { tokens: 17480, contextWindow: 200000, percent: 8.74 } });
+    const cardA = cardFor("dipu", contextCardsForSelection({ phase: "active", audience: ["dipu"] }, fractional));
+    expect(cardA.shortText).toBe("8.74%");
+    expect(cardA.stateText).toBe("Context usage: 8.74% of 200.0k window");
+    const half = stateWith({ ...OK_ENTRY_FRAME, context: { tokens: 15000, contextWindow: 200000, percent: 7.5 } });
+    const cardB = cardFor("dipu", contextCardsForSelection({ phase: "active", audience: ["dipu"] }, half));
+    expect(cardB.shortText).toBe("7.50%");
+    expect(cardB.stateText).toBe("Context usage: 7.50% of 200.0k window");
+  });
+
+  it("a truthful 0% is a real measured value: percent bar with 0, rendered as 0.00%, never collapsed into unavailable", () => {
     const zero = stateWith({ ...OK_ENTRY_FRAME, context: { tokens: 0, contextWindow: 200000, percent: 0 } });
     const card = cardFor("dipu", contextCardsForSelection({ phase: "active", audience: ["dipu"] }, zero));
     expect(card.stateKey).toBe("ok");
     expect(card.bar).toEqual({ kind: "percent", percent: 0 });
-    expect(card.shortText).toBe("0%");
-    expect(card.stateText).toBe("Context usage: 0% of 200.0k window");
+    expect(card.shortText).toBe("0.00%");
+    expect(card.stateText).toBe("Context usage: 0.00% of 200.0k window");
   });
 
   it("post-compaction pending renders the truthful unavailable phrase, never a fabricated percent", () => {
@@ -147,12 +158,14 @@ describe("telemetryPopupViewModel — bounded permitted fields only", () => {
     expect(model.closeLabel).toBe("Close context telemetry for dipu");
     expect(model.refreshLabel).toBe("Refresh context telemetry for dipu");
     expect(model.stateKey).toBe("ok");
-    expect(model.stateText).toBe("Context usage: 30% of 200.0k window");
+    expect(model.stateText).toBe("Context usage: 30.00% of 200.0k window");
     expect(model.bar).toEqual({ kind: "percent", percent: 30 });
     expect(model.fields).toEqual([
+      { label: "Agent", value: "dipu" },
+      { label: "State", value: "Context usage: 30.00% of 200.0k window" },
       { label: "Context tokens", value: "60.0k" },
       { label: "Context window", value: "200.0k" },
-      { label: "Context usage", value: "30%" },
+      { label: "Context usage", value: "30.00%" },
       { label: "Model", value: "anthropic/claude-sonnet-4" },
       { label: "Thinking", value: "high" },
       { label: "Auto-compaction", value: "on" },
@@ -176,21 +189,34 @@ describe("telemetryPopupViewModel — bounded permitted fields only", () => {
     expect(model.stateKey).toBe("post_compaction_pending");
     expect(model.stateText).toBe("Context usage temporarily unavailable after compaction");
     expect(model.bar).toEqual({ kind: "neutral" });
-    expect(model.fields).toEqual([{ label: "Context window", value: "200.0k" }]);
+    expect(model.fields).toEqual([
+      { label: "Agent", value: "dipu" },
+      { label: "State", value: "Context usage temporarily unavailable after compaction" },
+      { label: "Context window", value: "200.0k" },
+    ]);
   });
 
-  it("no_window and no_live_session and never-sampled carry no context fields", () => {
+  it("no_window and no_live_session and never-sampled carry only the agent and truthful state lines", () => {
     const noWindow = applyConversationTelemetryRead(emptyConversationTelemetryState(), "dipu", { sessionState: "live", contextState: "no_window" });
-    expect(telemetryPopupViewModel("dipu", noWindow.get("dipu")).fields).toEqual([]);
+    expect(telemetryPopupViewModel("dipu", noWindow.get("dipu")).fields).toEqual([
+      { label: "Agent", value: "dipu" },
+      { label: "State", value: "No context window information for this session" },
+    ]);
     const noLive = applyConversationTelemetryRead(emptyConversationTelemetryState(), "dipu", { sessionState: "no_live_session" });
     const noLiveModel = telemetryPopupViewModel("dipu", noLive.get("dipu"));
     expect(noLiveModel.stateKey).toBe("no_live_session");
     expect(noLiveModel.stateText).toBe("No live session");
-    expect(noLiveModel.fields).toEqual([]);
+    expect(noLiveModel.fields).toEqual([
+      { label: "Agent", value: "dipu" },
+      { label: "State", value: "No live session" },
+    ]);
     const neverSampled = telemetryPopupViewModel("dipu", undefined);
     expect(neverSampled.stateKey).toBe("not_sampled");
     expect(neverSampled.stateText).toBe("No context telemetry yet");
-    expect(neverSampled.fields).toEqual([]);
+    expect(neverSampled.fields).toEqual([
+      { label: "Agent", value: "dipu" },
+      { label: "State", value: "No context telemetry yet" },
+    ]);
   });
 
   it("partial optional facts render only the present ones (model id alone, auto-compaction off)", () => {
@@ -205,11 +231,27 @@ describe("telemetryPopupViewModel — bounded permitted fields only", () => {
     });
     const model = telemetryPopupViewModel("dipu", partial.get("dipu"));
     expect(model.fields).toEqual([
+      { label: "Agent", value: "dipu" },
+      { label: "State", value: "Context usage: 10.00% of 1.0k window" },
       { label: "Context tokens", value: "100" },
       { label: "Context window", value: "1.0k" },
-      { label: "Context usage", value: "10%" },
+      { label: "Context usage", value: "10.00%" },
       { label: "Model", value: "gpt-5.6-terra" },
       { label: "Auto-compaction", value: "off" },
     ]);
+  });
+
+  it("popup field labels never exceed the bounded allowlist (agent, state, tokens/window/percent, model, thinking, auto-compaction)", () => {
+    const allowed = ["Agent", "State", "Context tokens", "Context window", "Context usage", "Model", "Thinking", "Auto-compaction"];
+    const models = [
+      telemetryPopupViewModel("dipu", stateWith(OK_ENTRY_FRAME).get("dipu")),
+      telemetryPopupViewModel("dipu", undefined),
+      telemetryPopupViewModel("zai", applyConversationTelemetryRead(emptyConversationTelemetryState(), "zai", { sessionState: "no_live_session" }).get("zai")),
+    ];
+    for (const model of models) {
+      for (const field of model.fields) {
+        expect(allowed).toContain(field.label);
+      }
+    }
   });
 });

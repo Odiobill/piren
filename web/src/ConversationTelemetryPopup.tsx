@@ -8,10 +8,12 @@ import type { TelemetryPopupViewModel } from "./conversation-context-cards";
  *
  * One focus-managed modal dialog for one exact Conversation × agent pair,
  * opened ONLY by explicit card activation. It renders the bounded permitted
- * detail fields from the in-memory T6 entry (context tokens/window/percent,
- * model, thinking, auto-compaction) and never fetches on open — the explicit
- * Refresh control is the only fetch trigger, wired by the navigator through
- * the preserved T6 generation guard.
+ * detail fields as concise short labelled lines (U3 amendment §6.3): agent
+ * and truthful state first, then context tokens/window/percent (two-decimal
+ * percent; unavailable states never fabricate a number), model, thinking,
+ * and auto-compaction from the in-memory T6 entry. It never fetches on open
+ * — the explicit Refresh control is the only fetch trigger, wired by the
+ * navigator through the preserved T6 generation guard.
  *
  * Accessibility (mirrors the ConversationDetailsModal pattern): opening moves
  * focus to the Refresh control (the popup's primary explicit action);
@@ -107,7 +109,6 @@ export function ConversationTelemetryPopup({
             <XIcon size={14} />
           </button>
         </div>
-        <p className="telemetry-popup-state">{viewModel.stateText}</p>
         <div className="telemetry-popup-meter">
           <span className="context-card-label">Context</span>
           <span

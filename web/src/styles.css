@@ -2008,12 +2008,6 @@ code {
   font-size: 1rem;
 }
 
-.telemetry-popup-state {
-  margin: 8px 0 0;
-  font-size: 0.8125rem;
-  color: var(--muted);
-}
-
 .telemetry-popup-meter {
   display: flex;
   align-items: center;
