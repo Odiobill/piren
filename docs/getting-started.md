@@ -106,7 +106,11 @@ Pi-native auth first, then:
 3. Writes the local installation config after showing the content and asking
    for confirmation.
 4. Prints next commands plus optional service install commands for gateway,
-   Telegram, Discord, and the scheduler.
+   Telegram, Discord, and the scheduler. After a successful setup (interactive
+   or `--apply`), Piren also prints an optional text-only suggestion that you
+   can start the Workbench yourself with `piren gateway` (default bind
+   localhost, `127.0.0.1`); the suggestion never starts the Workbench or any
+   service and never implies it is running.
 
 Bare `piren setup` does not configure provider keys, model selection, Telegram,
 Discord, or services interactively. Use Pi's own setup flow for provider/model
@@ -203,7 +207,7 @@ If no model is configured in `team/<agent>/config.yml`, Pi falls back to its nat
 piren gateway
 ```
 
-Open `http://127.0.0.1:7317/`.
+Open `http://127.0.0.1:7317/`. The Workbench offers the Dashboard, Conversations, the read-only Vault Explorer, and a typed Settings page; see [Gateway and web UI](gateway.md).
 
 For LAN exposure, bind a non-localhost address and use a token:
 

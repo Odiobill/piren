@@ -226,7 +226,7 @@ The generated systemd user unit is `piren-scheduler.service`; the tmux + `@reboo
 
 ## What is explicitly NOT shipped
 
-- **Web UI scheduler status.** The gateway may later display scheduler status read-only, but it does not own scheduler lifecycle and adds no scheduler controls to the Web UI.
+- **Web UI scheduler lifecycle.** The Workbench Settings page includes a typed scheduler *configuration* workflow (the same gates, classes, and intervals as `piren scheduler configure`, written atomically and never starting anything), and the Dashboard service card reports read-only observed service status; nothing in the Workbench owns scheduler lifecycle, ticks, claims, or spawns, and there are no scheduler runtime controls.
 - **Broad concurrency.** `max_concurrent_agents` is parsed and reported but effective concurrency is 1 (one-at-a-time); no parallel tick execution is implemented.
 - **Automatic cross-agent fallback.** Device failover (same agent, different device) is supported; semantic fallback between different agents is separate and is never automatic.
 - **Hidden state.** No database, queue, lock file, or lease; the only coordination artifacts are the existing claimed task/job files and run records.
