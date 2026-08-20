@@ -12,11 +12,16 @@ import { readAgentConfigFileBestEffort } from "./agent-config.js";
 import { resolveContextInjectionMode } from "./context-injection.js";
 import { resolveAlertMirrorConfig, type ResolvedAlertMirrorConfig } from "./alert-mirror.js";
 import { parseModelFallbackConfig } from "./model-fallback-config.js";
+import {
+  resolveSchedulerConfig,
+  SCHEDULER_AUTOMATION_CLASSES,
+  type SchedulerAutomationClass,
+} from "./scheduler-loop.js";
 
 /**
  * Fixed non-action authority boundaries for WARN guidance (ADR-0039 E2-S2).
  * Each states what is local-only / not inferable / read-only; none instructs a
- * mutation and none is an action. Applied only to WARN outcomes of the five
+ * mutation and none is an action. Applied only to WARN outcomes of the six
  * local-config checks; OK messages stay byte-for-byte unchanged.
  */
 const AUTHORITY_TRANSPORT = "transport credentials and routing live only in local config and are not inferable from the vault.";
@@ -24,6 +29,7 @@ const AUTHORITY_MIRROR = "mirror destinations and credentials live only in local
 const AUTHORITY_SERVICES = "service supervision is machine-local and doctor is read-only.";
 const AUTHORITY_CONTEXT_INJECTION = "a valid context_injection.mode is not inferred from a malformed declaration; the documented default applies.";
 const AUTHORITY_MODEL_FALLBACK = "model fallback is an agent-local preference and doctor is read-only; doctor never switches models.";
+const AUTHORITY_SCHEDULER = "scheduler automation is machine-local local-config authority and doctor is read-only; Piren will not infer intent.";
 
 const LOCAL_CONFIG_PATH = "~/.config/piren/config.yml";
 
@@ -498,6 +504,86 @@ export function checkServiceConfig(config: ServiceConfig | undefined): DoctorChe
   };
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Display labels for the closed automation classes (0.2.0 S1). */
+const SCHEDULER_CLASS_LABELS: Record<SchedulerAutomationClass, string> = {
+  inbox_tasks: "inbox task",
+  agent_cron: "agent cron",
+  script_cron: "script cron",
+};
+
+/**
+ * Present-only scheduler inspection for `piren doctor` (0.2.0 S4).
+ *
+ * Returns null when no `scheduler:` block is declared at all, so a normal
+ * doctor run never depends on the scheduler being configured. A valid present
+ * block reports ok with bounded resolved master/class state (never config
+ * content/secrets) and may carry the S1 legacy migration state as read-only
+ * status — doctor never writes or migrates config. A malformed present block
+ * (`scheduler` non-mapping, `enabled` non-boolean, `automation` non-mapping,
+ * or a non-boolean known class value) warns with the E2-S2 Authority/Next
+ * structure, targeting the narrowest relevant key. Resolver semantics are
+ * consumed unchanged (S1); no tick/heartbeat/claim/spawn/service action.
+ */
+export function checkSchedulerAutomationConfig(config: LocalPirenConfig): DoctorCheck | null {
+  const block = config.scheduler;
+  if (block === undefined || block === null) return null;
+
+  const warn = (target: string, condition: string): DoctorCheck => ({
+    id: "scheduler",
+    status: "warn",
+    message: withWarnGuidance(condition, AUTHORITY_SCHEDULER, `inspect ${target} in ${LOCAL_CONFIG_PATH}.`),
+  });
+
+  if (!isPlainRecord(block)) {
+    return warn(
+      "scheduler",
+      "scheduler config is present but is not a mapping; the scheduler and all automation classes resolve disabled (fail closed).",
+    );
+  }
+
+  // Narrowest relevant malformed target wins: a known class, then the
+  // automation container, then scheduler.enabled (deterministic ordering).
+  const automation = block.automation;
+  if (isPlainRecord(automation)) {
+    for (const key of SCHEDULER_AUTOMATION_CLASSES) {
+      const raw = automation[key];
+      if (raw !== undefined && raw !== null && typeof raw !== "boolean") {
+        return warn(
+          `scheduler.automation.${key}`,
+          `scheduler.automation.${key} is present but is not a boolean; ${SCHEDULER_CLASS_LABELS[key]} automation resolves disabled (fail closed).`,
+        );
+      }
+    }
+  } else if (automation !== undefined && automation !== null) {
+    return warn(
+      "scheduler.automation",
+      "scheduler.automation is present but is not a mapping; all automation classes resolve disabled (fail closed).",
+    );
+  }
+  if (block.enabled !== undefined && block.enabled !== null && typeof block.enabled !== "boolean") {
+    return warn(
+      "scheduler.enabled",
+      "scheduler.enabled is present but is not a boolean; the scheduler resolves disabled (fail closed).",
+    );
+  }
+
+  const resolved = resolveSchedulerConfig(config);
+  let message =
+    `scheduler: enabled: ${resolved.enabled}; ` +
+    `inbox_tasks: ${resolved.automation.inboxTasks}; ` +
+    `agent_cron: ${resolved.automation.agentCron}; ` +
+    `script_cron: ${resolved.automation.scriptCron}.`;
+  if (resolved.migration !== undefined) {
+    // Read-only status only: S4 never writes or migrates config.
+    message += " Legacy scheduler block: scheduler.enabled materializes true (read-only status; never written by doctor).";
+  }
+  return { id: "scheduler", status: "ok", message };
+}
+
 function execFileText(command: string, args: string[]): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     execFile(command, args, { timeout: 5000 }, (error, stdout, stderr) => {
@@ -842,6 +928,9 @@ export async function doctorPiren(options: DoctorPirenOptions = {}): Promise<Doc
 
   const serviceCheck = checkServiceConfig(config.services);
   if (serviceCheck) checks.push(serviceCheck);
+
+  const schedulerCheck = checkSchedulerAutomationConfig(config);
+  if (schedulerCheck) checks.push(schedulerCheck);
 
   const env = options.env ?? process.env;
   const hasExplicitAgentSelection = Boolean(

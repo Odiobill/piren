@@ -89,6 +89,20 @@ export type ServiceConfig = ServicesLocalConfig;
  */
 export declare function checkServiceConfig(config: ServiceConfig | undefined): DoctorCheck | null;
 /**
+ * Present-only scheduler inspection for `piren doctor` (0.2.0 S4).
+ *
+ * Returns null when no `scheduler:` block is declared at all, so a normal
+ * doctor run never depends on the scheduler being configured. A valid present
+ * block reports ok with bounded resolved master/class state (never config
+ * content/secrets) and may carry the S1 legacy migration state as read-only
+ * status — doctor never writes or migrates config. A malformed present block
+ * (`scheduler` non-mapping, `enabled` non-boolean, `automation` non-mapping,
+ * or a non-boolean known class value) warns with the E2-S2 Authority/Next
+ * structure, targeting the narrowest relevant key. Resolver semantics are
+ * consumed unchanged (S1); no tick/heartbeat/claim/spawn/service action.
+ */
+export declare function checkSchedulerAutomationConfig(config: LocalPirenConfig): DoctorCheck | null;
+/**
  * Doctor check: group membership (informational, status "ok").
  *
  * Reports which groups exist and which groups the selected agent (or allowed
