@@ -34,6 +34,144 @@ const DEFAULT_MAX_CONCURRENT_AGENTS = 1;
 /** Effective concurrency supported by S5. S4 is one-at-a-time; S5 is honest. */
 export const SCHEDULER_EFFECTIVE_CONCURRENCY = 1 as const;
 
+// ---------------------------------------------------------------------------
+// 0.2.0 S1: master gate + closed automation classes (pure resolver)
+// ---------------------------------------------------------------------------
+// Binding contract (0.2.0 scope amendment §2 + S1 task):
+//   - ~/.config/piren/config.yml is the sole scheduler authority;
+//   - fresh / no scheduler config -> enabled:false and all classes false;
+//   - present-but-malformed booleans fail closed with deterministic
+//     non-secret warnings;
+//   - a legacy established `scheduler:` block lacking the new `enabled` key
+//     resolves effective enabled=true so upgrade intent is preserved, carrying
+//     a PURE, inspectable migration signal; S1 never writes a file (atomic
+//     persistence belongs to a later separately gated writer/wizard tracer);
+//   - missing automation / classes remain false (fail closed).
+
+/**
+ * Closed automation-class model: exactly these three classes exist. No
+ * per-task/per-cron/per-agent allowlists or expressions.
+ */
+export const SCHEDULER_AUTOMATION_CLASSES = [
+  "inbox_tasks",
+  "agent_cron",
+  "script_cron",
+] as const;
+export type SchedulerAutomationClass = (typeof SCHEDULER_AUTOMATION_CLASSES)[number];
+
+/** Resolved closed automation classes. Each is false unless explicitly true. */
+export interface ResolvedSchedulerAutomation {
+  /** Claim + execute pending inbox tasks (most consequential class). */
+  inboxTasks: boolean;
+  /** Claim + execute due agent-mode cron jobs. */
+  agentCron: boolean;
+  /** Execute due script-mode cron jobs directly. */
+  scriptCron: boolean;
+}
+
+/** Result of `resolveAutomationClasses`: resolved classes plus warnings. */
+export interface ResolveAutomationClassesResult {
+  classes: ResolvedSchedulerAutomation;
+  warnings: string[];
+}
+
+/**
+ * Pure, inspectable migration signal (0.2.0 S1). Present on the resolved
+ * config exactly when an established legacy `scheduler:` block lacks the new
+ * `enabled` key: the block resolved effective enabled=true to preserve
+ * established upgrade intent. S1 is resolver-only: nothing writes a file. A
+ * later separately gated writer/wizard tracer may consume this signal to
+ * atomically persist `scheduler.enabled: true`.
+ */
+export interface SchedulerMigrationSignal {
+  /** Always true when present: the migration materializes enabled=true. */
+  readonly materializeEnabled: true;
+  /** Exact value a writer/wizard would persist for `scheduler.enabled`. */
+  readonly value: true;
+  /** Deterministic machine-readable reason code. */
+  readonly reason: "legacy-scheduler-block-without-enabled";
+  /** Deterministic, non-secret operator note. */
+  readonly note: string;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * YAML empty values (`key:` with nothing after it) parse to null with the
+ * `yaml` library (verified against real parser output). Treat null exactly
+ * like absent: fail closed to disabled without a malformed-value warning.
+ */
+function isAbsentLike(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+
+/**
+ * Pure fail-closed resolver for the closed `scheduler.automation` block
+ * (0.2.0 scope amendment §2). Takes the raw `automation` value (which may be
+ * anything the YAML loader produced) and returns the three resolved classes
+ * plus deterministic warnings. No I/O.
+ *
+ * - Absent/null container or class -> that class disabled, no warning.
+ * - Non-mapping container -> all three classes disabled + one warning.
+ * - Non-boolean class value -> that class disabled + a warning naming it.
+ * - Unknown keys are reported-and-ignored (never assigned semantics),
+ *   mirroring the manifest tolerance convention.
+ */
+export function resolveAutomationClasses(automation: unknown): ResolveAutomationClassesResult {
+  const warnings: string[] = [];
+  const allFalse: ResolvedSchedulerAutomation = {
+    inboxTasks: false,
+    agentCron: false,
+    scriptCron: false,
+  };
+  if (isAbsentLike(automation)) {
+    return { classes: allFalse, warnings };
+  }
+  if (!isPlainRecord(automation)) {
+    warnings.push(
+      `scheduler.automation=${JSON.stringify(automation)} is invalid; disabling all automation classes (fail closed).`,
+    );
+    return { classes: allFalse, warnings };
+  }
+
+  const classes: ResolvedSchedulerAutomation = { ...allFalse };
+  const classKeys: Record<SchedulerAutomationClass, keyof ResolvedSchedulerAutomation> = {
+    inbox_tasks: "inboxTasks",
+    agent_cron: "agentCron",
+    script_cron: "scriptCron",
+  };
+  const classLabels: Record<SchedulerAutomationClass, string> = {
+    inbox_tasks: "inbox task",
+    agent_cron: "agent cron",
+    script_cron: "script cron",
+  };
+  for (const key of SCHEDULER_AUTOMATION_CLASSES) {
+    const raw = automation[key];
+    if (isAbsentLike(raw)) continue;
+    if (typeof raw === "boolean") {
+      classes[classKeys[key]] = raw;
+      continue;
+    }
+    warnings.push(
+      `scheduler.automation.${key}=${JSON.stringify(raw)} is invalid; disabling ${classLabels[key]} automation (fail closed).`,
+    );
+  }
+
+  // Unknown keys under `automation` are reported-and-ignored (never assigned
+  // semantics), mirroring the manifest tolerance convention. Sorted so the
+  // warning order is deterministic regardless of YAML insertion order.
+  const knownClasses = SCHEDULER_AUTOMATION_CLASSES as readonly string[];
+  const unknownKeys = Object.keys(automation)
+    .filter((key) => !knownClasses.includes(key))
+    .sort();
+  for (const key of unknownKeys) {
+    warnings.push(`scheduler.automation.${key} is not a recognized automation class; ignoring it.`);
+  }
+  return { classes, warnings };
+}
+
 /**
  * Resolved local scheduler config with conservative defaults and deterministic
  * fallbacks for invalid input. `warnings` records every field that fell back so
@@ -48,8 +186,32 @@ export interface ResolvedSchedulerConfig {
   effectiveConcurrency: typeof SCHEDULER_EFFECTIVE_CONCURRENCY;
   /** Explicit device id override, or undefined to use S4 hostname fallback. */
   deviceId?: string;
+  /**
+   * Master gate (0.2.0 scope amendment §2). Fail-closed default false; a
+   * legacy established block without `enabled` resolves true and carries a
+   * migration signal. S1 resolves only; gating is wired in a later tracer.
+   */
+  enabled: boolean;
+  /** Closed automation classes (inbox_tasks / agent_cron / script_cron). */
+  automation: ResolvedSchedulerAutomation;
+  /**
+   * Present exactly for a legacy established scheduler block lacking
+   * `enabled`: inspectable pure signal for a later writer/wizard tracer.
+   */
+  migration?: SchedulerMigrationSignal;
   warnings: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Legacy scheduler keys that establish upgrade intent when present. Presence is
+// the signal (any value, valid or not): an operator who wrote a scheduler key
+// configured the scheduler, so effective enabled=true preserves that intent.
+const LEGACY_SCHEDULER_KEYS = [
+  "poll_interval_seconds",
+  "stale_after_seconds",
+  "max_concurrent_agents",
+  "device_id",
+] as const;
 
 function resolvePositiveInt(
   value: unknown,
@@ -72,6 +234,11 @@ function resolvePositiveInt(
  * Pure resolver for local scheduler config. Takes a `LocalPirenConfig` and
  * returns the resolved scheduler settings with conservative defaults and
  * deterministic fallbacks for invalid/non-positive values. No I/O.
+ *
+ * 0.2.0 S1 addition: also resolves the `enabled` master gate and the closed
+ * `automation` classes (fail-closed defaults, deterministic warnings, and a
+ * pure migration signal for legacy blocks lacking `enabled`). Existing
+ * interval/stale/concurrency/device behavior is unchanged.
  */
 export function resolveSchedulerConfig(config: LocalPirenConfig): ResolvedSchedulerConfig {
   const warnings: string[] = [];
@@ -94,13 +261,54 @@ export function resolveSchedulerConfig(config: LocalPirenConfig): ResolvedSchedu
     "max_concurrent_agents",
     warnings,
   );
+
+  // 0.2.0 S1: master gate. Fresh / no scheduler config -> false. A legacy
+  // established block (any legacy key present, no usable `enabled` key)
+  // resolves effective true so established upgrade intent is preserved,
+  // carrying a PURE migration signal; S1 never writes a file. An explicit
+  // boolean wins; a present-but-malformed value fails closed to false.
+  const legacyKeysPresent = LEGACY_SCHEDULER_KEYS.filter((key) => sched[key] !== undefined);
+  const enabledRaw = sched.enabled;
+  let enabled: boolean;
+  let migration: SchedulerMigrationSignal | undefined;
+  if (isAbsentLike(enabledRaw)) {
+    if (legacyKeysPresent.length > 0) {
+      enabled = true;
+      migration = {
+        materializeEnabled: true,
+        value: true,
+        reason: "legacy-scheduler-block-without-enabled",
+        note:
+          `scheduler block sets legacy key(s) ${legacyKeysPresent.map((key) => `scheduler.${key}`).join(", ")} ` +
+          `without an 'enabled' key; effective enabled=true preserves established upgrade intent. ` +
+          `Missing automation classes remain disabled (fail closed). ` +
+          `Atomic materialization belongs to a later separately gated writer/wizard tracer.`,
+      };
+    } else {
+      enabled = false;
+    }
+  } else if (typeof enabledRaw === "boolean") {
+    enabled = enabledRaw;
+  } else {
+    warnings.push(
+      `scheduler.enabled=${JSON.stringify(enabledRaw)} is invalid; treating the scheduler as disabled (fail closed).`,
+    );
+    enabled = false;
+  }
+
+  const automationResult = resolveAutomationClasses(sched.automation);
+  for (const warning of automationResult.warnings) warnings.push(warning);
+
   const result: ResolvedSchedulerConfig = {
     pollIntervalSeconds,
     staleAfterSeconds,
     maxConcurrentAgents,
     effectiveConcurrency: SCHEDULER_EFFECTIVE_CONCURRENCY,
+    enabled,
+    automation: automationResult.classes,
     warnings,
   };
+  if (migration !== undefined) result.migration = migration;
   // Pass an explicit device id VERBATIM (no sanitization): S4 uses explicit ids
   // as-is and downstream claim validators reject invalid forms rather than
   // silently transforming them. An empty/whitespace-only value is treated as

@@ -33,10 +33,10 @@ export interface DiscordLocalConfig {
 }
 
 /**
- * Local scheduler runtime configuration (ADR-0029 / O7 S5). Lives in
- * ~/.config/piren/config.yml under `scheduler:`. Controls the opt-in
- * `piren scheduler` loop only; never placed in the vault, agent SOUL.md,
- * Web UI, gateway state, or .env files.
+ * Local scheduler runtime configuration (ADR-0029 / O7 S5, extended by the
+ * 0.2.0 scope amendment §2). Lives in ~/.config/piren/config.yml under
+ * `scheduler:`. Controls the opt-in `piren scheduler` loop only; never placed
+ * in the vault, agent SOUL.md, Web UI, gateway state, or .env files.
  */
 export interface SchedulerLocalConfig {
   /** Seconds between scheduler ticks. Default 30. */
@@ -47,6 +47,34 @@ export interface SchedulerLocalConfig {
   max_concurrent_agents?: number;
   /** Explicit device id override. Absent -> S4 sanitized-hostname fallback. */
   device_id?: string;
+  /**
+   * Master gate for the scheduler loop/service (0.2.0 scope amendment §2).
+   * Fresh/no scheduler config resolves false; a legacy established block
+   * lacking this key resolves effective true with a PURE migration signal
+   * (resolver-only; S1 never writes a file); present-but-malformed -> false
+   * (fail closed).
+   */
+  enabled?: boolean;
+  /**
+   * Closed automation-class switches (0.2.0 scope amendment §2). Absent
+   * automation/classes and present-but-malformed values fail closed to
+   * disabled; exactly inbox_tasks / agent_cron / script_cron.
+   */
+  automation?: SchedulerAutomationLocalConfig;
+}
+
+/**
+ * Closed scheduler automation classes under `scheduler.automation`
+ * (0.2.0 scope amendment §2). Exactly three classes; no per-task/per-cron/
+ * per-agent allowlists or expressions. All default false (fail closed).
+ */
+export interface SchedulerAutomationLocalConfig {
+  /** Claim + execute pending inbox tasks. Default false (fail closed). */
+  inbox_tasks?: boolean;
+  /** Claim + execute due agent-mode cron jobs. Default false (fail closed). */
+  agent_cron?: boolean;
+  /** Execute due script-mode cron jobs directly. Default false (fail closed). */
+  script_cron?: boolean;
 }
 
 /**

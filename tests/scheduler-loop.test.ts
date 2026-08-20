@@ -8,6 +8,7 @@ import type {
 import {
   createSchedulerLoopController,
   createRealSchedulerLoopSleep,
+  resolveAutomationClasses,
   resolveSchedulerConfig,
   runSchedulerLoop,
   type SchedulerLoopController,
@@ -18,6 +19,8 @@ import {
 // ---------------------------------------------------------------------------
 // resolveSchedulerConfig: pure local scheduler config resolver
 // ---------------------------------------------------------------------------
+// (0.2.0 S1: `enabled` + closed `automation` classes are resolved in the
+// describes below; the pre-S1 defaults/fallback behavior is unchanged.)
 
 describe("resolveSchedulerConfig: defaults", () => {
   it("returns conservative defaults when no scheduler block is present", () => {
@@ -101,6 +104,210 @@ describe("resolveSchedulerConfig: invalid values fall back deterministically", (
     // forms; the resolver must not trim/lowercase/transform the value.
     expect(resolveSchedulerConfig({ scheduler: { device_id: "thor" } }).deviceId).toBe("thor");
     expect(resolveSchedulerConfig({ scheduler: { device_id: "Thor-Pi4" } }).deviceId).toBe("Thor-Pi4");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.2.0 S1: enabled master gate + closed automation classes (pure resolver)
+// ---------------------------------------------------------------------------
+// Binding contract (0.2.0 scope amendment §2 + S1 task):
+//   - fresh / no scheduler config -> enabled:false, all classes false;
+//   - present-but-malformed booleans fail closed with deterministic warnings;
+//   - a legacy established scheduler block lacking `enabled` resolves effective
+//     enabled=true (upgrade intent preserved) with a PURE migration signal;
+//   - missing automation / classes remain false (fail closed).
+
+describe("resolveSchedulerConfig: enabled master gate (0.2.0 S1)", () => {
+  it("fresh config with no scheduler block resolves enabled=false and all automation classes false, with no warnings", () => {
+    const resolved = resolveSchedulerConfig({});
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.automation).toEqual({
+      inboxTasks: false,
+      agentCron: false,
+      scriptCron: false,
+    });
+    expect(resolved.migration).toBeUndefined();
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("an empty scheduler block is fresh/no config: enabled=false, no migration, no warnings", () => {
+    const resolved = resolveSchedulerConfig({ scheduler: {} });
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.migration).toBeUndefined();
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("an explicit boolean enabled is honored verbatim", () => {
+    expect(resolveSchedulerConfig({ scheduler: { enabled: true } }).enabled).toBe(true);
+    expect(resolveSchedulerConfig({ scheduler: { enabled: false } }).enabled).toBe(false);
+  });
+
+  it("a legacy scheduler block without enabled resolves enabled=true with a migration signal (upgrade intent preserved)", () => {
+    const resolved = resolveSchedulerConfig({ scheduler: { poll_interval_seconds: 15 } });
+    expect(resolved.enabled).toBe(true);
+    expect(resolved.migration).toBeDefined();
+    expect(resolved.migration?.materializeEnabled).toBe(true);
+    expect(resolved.migration?.value).toBe(true);
+    expect(resolved.migration?.reason).toBe("legacy-scheduler-block-without-enabled");
+    expect(resolved.migration?.note).toContain("poll_interval_seconds");
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("any established legacy key (stale/max_concurrent/device_id) triggers the migration signal", () => {
+    for (const legacy of [
+      { stale_after_seconds: 120 },
+      { max_concurrent_agents: 2 },
+      { device_id: "thor" },
+    ]) {
+      const resolved = resolveSchedulerConfig({ scheduler: legacy });
+      expect(resolved.enabled).toBe(true);
+      expect(resolved.migration?.materializeEnabled).toBe(true);
+    }
+  });
+
+  it("an explicit enabled on a legacy block wins and suppresses the migration signal", () => {
+    const resolved = resolveSchedulerConfig({
+      scheduler: { poll_interval_seconds: 15, enabled: false },
+    });
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.migration).toBeUndefined();
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("a present-but-malformed enabled fails closed to false with a deterministic warning", () => {
+    for (const bad of ["true", 1, ["yes"], { on: true }]) {
+      const resolved = resolveSchedulerConfig({
+        scheduler: { enabled: bad as unknown as boolean },
+      });
+      expect(resolved.enabled).toBe(false);
+      expect(resolved.migration).toBeUndefined();
+      expect(resolved.warnings.some((w) => w.includes("scheduler.enabled"))).toBe(true);
+    }
+  });
+
+  it("an unknown-key-only scheduler block is not established legacy: enabled=false without a migration signal", () => {
+    const resolved = resolveSchedulerConfig({
+      scheduler: { mystery: 1 },
+    } as unknown as LocalPirenConfig);
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.migration).toBeUndefined();
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("enabled: null is absent-like: legacy block still gets the migration signal, fresh block stays false with no warning", () => {
+    // `enabled:` with an empty YAML value parses to null (verified against the
+    // `yaml` library). Absent-like: never a malformed-value warning.
+    const legacyNull = resolveSchedulerConfig({
+      scheduler: { poll_interval_seconds: 30, enabled: null as unknown as boolean },
+    });
+    expect(legacyNull.enabled).toBe(true);
+    expect(legacyNull.migration?.materializeEnabled).toBe(true);
+    expect(legacyNull.warnings).toEqual([]);
+
+    const freshNull = resolveSchedulerConfig({
+      scheduler: { enabled: null as unknown as boolean },
+    });
+    expect(freshNull.enabled).toBe(false);
+    expect(freshNull.migration).toBeUndefined();
+    expect(freshNull.warnings).toEqual([]);
+  });
+});
+
+describe("resolveAutomationClasses: closed class resolution (0.2.0 S1)", () => {
+  it("absent automation resolves all classes false without warnings", () => {
+    const result = resolveAutomationClasses(undefined);
+    expect(result.classes).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("null automation (bare `automation:`) resolves all classes false without warnings", () => {
+    const result = resolveAutomationClasses(null);
+    expect(result.classes).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("a non-mapping automation container fails closed: all classes false with one deterministic warning", () => {
+    for (const bad of ["yes", 1, true, ["inbox_tasks"]]) {
+      const result = resolveAutomationClasses(bad);
+      expect(result.classes).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+      expect(result.warnings.length).toBe(1);
+      expect(result.warnings[0]).toContain("scheduler.automation");
+    }
+  });
+
+  it("explicit boolean class values are honored", () => {
+    const result = resolveAutomationClasses({ inbox_tasks: true, agent_cron: true, script_cron: true });
+    expect(result.classes).toEqual({ inboxTasks: true, agentCron: true, scriptCron: true });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("a partial automation block fails closed for the missing classes", () => {
+    const result = resolveAutomationClasses({ inbox_tasks: true });
+    expect(result.classes).toEqual({ inboxTasks: true, agentCron: false, scriptCron: false });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("a malformed class value disables that class with a deterministic warning naming it", () => {
+    const result = resolveAutomationClasses({ inbox_tasks: "yes", agent_cron: 1, script_cron: true });
+    expect(result.classes).toEqual({ inboxTasks: false, agentCron: false, scriptCron: true });
+    expect(result.warnings.some((w) => w.includes("inbox_tasks"))).toBe(true);
+    expect(result.warnings.some((w) => w.includes("agent_cron"))).toBe(true);
+    expect(result.warnings.some((w) => w.includes("script_cron"))).toBe(false);
+  });
+
+  it("null class values are absent-like (fail closed, no warning)", () => {
+    const result = resolveAutomationClasses({ inbox_tasks: null });
+    expect(result.classes).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("unknown automation keys are reported-and-ignored with a deterministic warning and no semantics", () => {
+    const result = resolveAutomationClasses({ inbox_tasks: true, polling_enabled: true });
+    expect(result.classes).toEqual({ inboxTasks: true, agentCron: false, scriptCron: false });
+    expect(result.warnings.some((w) => w.includes("polling_enabled"))).toBe(true);
+  });
+});
+
+describe("resolveSchedulerConfig: automation integration (0.2.0 S1)", () => {
+  it("automation values flow through the config resolver and its warnings merge into config warnings", () => {
+    const resolved = resolveSchedulerConfig({
+      scheduler: {
+        automation: { inbox_tasks: true, agent_cron: false, script_cron: "yes" as unknown as boolean },
+      },
+    });
+    expect(resolved.enabled).toBe(false);
+    expect(resolved.automation).toEqual({ inboxTasks: true, agentCron: false, scriptCron: false });
+    expect(resolved.warnings.some((w) => w.includes("script_cron"))).toBe(true);
+  });
+
+  it("a legacy block with explicit automation keeps upgrade intent (enabled true via migration) while classes stay opt-in", () => {
+    const resolved = resolveSchedulerConfig({
+      scheduler: { poll_interval_seconds: 30, automation: { inbox_tasks: true } },
+    });
+    expect(resolved.enabled).toBe(true);
+    expect(resolved.migration?.materializeEnabled).toBe(true);
+    expect(resolved.automation).toEqual({ inboxTasks: true, agentCron: false, scriptCron: false });
+  });
+
+  it("existing interval/stale/concurrency/device resolution is unchanged alongside the new gates", () => {
+    const resolved = resolveSchedulerConfig({
+      scheduler: {
+        poll_interval_seconds: 15,
+        stale_after_seconds: 120,
+        max_concurrent_agents: 2,
+        device_id: "thor",
+        enabled: true,
+        automation: { inbox_tasks: true },
+      },
+    });
+    expect(resolved.pollIntervalSeconds).toBe(15);
+    expect(resolved.staleAfterSeconds).toBe(120);
+    expect(resolved.maxConcurrentAgents).toBe(2);
+    expect(resolved.deviceId).toBe("thor");
+    expect(resolved.enabled).toBe(true);
+    expect(resolved.automation.inboxTasks).toBe(true);
+    expect(resolved.automation.agentCron).toBe(false);
+    expect(resolved.automation.scriptCron).toBe(false);
   });
 });
 
