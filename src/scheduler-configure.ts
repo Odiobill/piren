@@ -171,11 +171,11 @@ export type PositiveIntParseResult = { ok: true; value: number } | { ok: false; 
 export function parsePositiveIntInput(raw: string, name: string): PositiveIntParseResult {
   const trimmed = raw.trim();
   if (!/^\d+$/.test(trimmed)) {
-    return { ok: false, error: `scheduler.${name} must be a positive integer (got '${trimmed === "" ? "(blank)" : trimmed}').` };
+    return { ok: false, error: `scheduler.${name} must be a positive integer.` };
   }
   const value = Number(trimmed);
   if (!Number.isSafeInteger(value) || value <= 0) {
-    return { ok: false, error: `scheduler.${name} must be a positive integer (got '${trimmed}').` };
+    return { ok: false, error: `scheduler.${name} must be a positive integer.` };
   }
   return { ok: true, value };
 }
@@ -195,8 +195,8 @@ export function parseDeviceIdInput(raw: string): DeviceIdParseResult {
     return {
       ok: false,
       error:
-        `scheduler.device_id '${trimmed}' is invalid: use lowercase letters, digits, and hyphens, ` +
-        `starting with a letter (for example 'thor' or 'pi-4'). Blank keeps the sanitized-hostname default.`,
+        "scheduler.device_id is invalid: use lowercase letters, digits, and hyphens, " +
+        "starting with a letter (for example 'thor' or 'pi-4'). Blank keeps the sanitized-hostname default.",
     };
   }
   return { ok: true, value: trimmed };

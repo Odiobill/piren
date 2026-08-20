@@ -171,6 +171,13 @@ describe("parsePositiveIntInput", () => {
       if (!result.ok) expect(result.error).toContain("poll_interval_seconds");
     }
   });
+
+  it("never echoes an invalid interval entry in an error", () => {
+    const secret = "scheduler-secret-must-not-appear";
+    const result = parsePositiveIntInput(secret, "poll_interval_seconds");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).not.toContain(secret);
+  });
 });
 
 describe("parseDeviceIdInput", () => {
@@ -189,6 +196,13 @@ describe("parseDeviceIdInput", () => {
       const result = parseDeviceIdInput(raw);
       expect(result.ok).toBe(false);
     }
+  });
+
+  it("never echoes an invalid device-id entry in an error", () => {
+    const secret = "scheduler-secret-must-not-appear";
+    const result = parseDeviceIdInput(`${secret}!`);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).not.toContain(secret);
   });
 });
 
