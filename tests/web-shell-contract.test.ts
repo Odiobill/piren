@@ -45,9 +45,9 @@ describe("nav state model (pure)", () => {
     expect(closeDrawer(closed)).toBe(closed);
   });
 
-  it("exposes exactly the two shell pages", () => {
-    const pages: readonly Page[] = ["dashboard", "conversations"];
-    expect(pages).toEqual(["dashboard", "conversations"]);
+  it("exposes exactly the three shell pages", () => {
+    const pages: readonly Page[] = ["dashboard", "conversations", "settings"];
+    expect(pages).toEqual(["dashboard", "conversations", "settings"]);
   });
 
   it("a nav selection must restore toggle focus exactly when the drawer was open", () => {

@@ -10,6 +10,7 @@ import { SplitWorkspaceShell } from "./SplitWorkspaceShell";
 import { initialSplitWorkspaceState, mobileSelectPane, type SplitWorkspaceState } from "./split-workspace";
 import { getModuleById } from "./registry";
 import { VaultExplorer } from "./VaultExplorer";
+import { SettingsView } from "./SettingsView";
 import { formatConversationHash } from "./hash-route";
 
 /**
@@ -255,6 +256,12 @@ export function AppShell({
               onOpenConversation={handleOpenConversation}
               reloadKey={conversationsReloadKey}
             />
+          </div>
+          {/* W3: the static full-page Settings shell — a plain typed nav
+              page. Read-only inventory only; no fetch, no state, no controls.
+              Hidden-toggling preserves the mounted Conversation surface. */}
+          <div className="workspace-panel" hidden={nav.page !== "settings" || (explorerOpen && !hasSelectedConversation)}>
+            <SettingsView />
           </div>
         </main>
       </div>

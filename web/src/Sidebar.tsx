@@ -5,7 +5,12 @@ import { conversationAudienceSummary, formatConversationCreatedTimestamp, type C
 import type { Page } from "./nav";
 
 /** ADR-0044: the Dashboard is the default surface; the sidebar stays the conversation switcher. */
-const NAV_ITEMS: ReadonlyArray<{ page: Page; label: string }> = [{ page: "dashboard", label: "Dashboard" }];
+const NAV_ITEMS: ReadonlyArray<{ page: Page; label: string }> = [
+  { page: "dashboard", label: "Dashboard" },
+  // W3 (0.2.0 amendment §5): the static full-page Settings shell — a normal
+  // typed nav page (not a companion, not a route/hash change).
+  { page: "settings", label: "Settings" },
+];
 
 /**
  * The sidebar is the conversation switcher. Conversation creation happens

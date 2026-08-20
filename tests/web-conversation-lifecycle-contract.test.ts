@@ -270,6 +270,11 @@ describe("static pins: minimal first-party lifecycle controls (L3)", () => {
         //  - api.ts: the W2 shared transport carries ONLY the existing
         //    bounded read-only vault list/read routes (no graph/inbox).
         if (forbidden === "thinking" && (name === "conversation-telemetry.ts" || name === "conversation-context-cards.ts" || name === "ConversationTelemetryPopup.tsx" || name === "DashboardView.tsx" || name === "conversation-agents.ts")) continue;
+        // W3 (0.2.0 amendment §5): the static Settings inventory DESCRIBES
+        // the thinking-level preference family in non-control wording (the
+        // W3 static contract independently forbids any control/fetch/
+        // storage surface in these two files). Never a control.
+        if (forbidden === "thinking" && (name === "settings-inventory.ts" || name === "SettingsView.tsx")) continue;
         if (forbidden === "/api/vault" && name === "api.ts") continue;
         expect(content, `${name} must not contain ${forbidden}`).not.toContain(forbidden);
       }

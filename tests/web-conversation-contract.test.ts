@@ -50,9 +50,9 @@ function conversationModuleFiles(): string[] {
 }
 
 describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
-  it("the registry is a compile-time const array with the Conversation page module plus the W2 companion", () => {
+  it("the registry is a compile-time const array with the Conversation page module, the W2 companion, and the W3 Settings page", () => {
     expect(Array.isArray(WORKBENCH_MODULES)).toBe(true);
-    expect(WORKBENCH_MODULES).toHaveLength(2);
+    expect(WORKBENCH_MODULES).toHaveLength(3);
     expect(WORKBENCH_MODULES[0]).toEqual({
       id: "conversations",
       label: "Conversations",
@@ -72,6 +72,16 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
       consumes: ["vault-list", "vault-read"],
       emits: [],
     });
+    // W3: the static full-page Settings shell declares zero consumption.
+    expect(WORKBENCH_MODULES[2]).toEqual({
+      id: "settings",
+      label: "Settings",
+      navOrder: 2,
+      page: "settings",
+      placement: "page",
+      consumes: [],
+      emits: [],
+    });
   });
 
   it("lookup helpers resolve the Conversation module by id and page", () => {
@@ -85,11 +95,11 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
 
   it("every registered module page is a real nav page and the nav replaces Rooms", () => {
     for (const module of WORKBENCH_MODULES) {
-      expect(["conversations", "dashboard"]).toContain(module.page);
+      expect(["conversations", "dashboard", "settings"]).toContain(module.page);
       expect(["page", "companion"]).toContain(module.placement);
     }
-    const pages: readonly Page[] = ["dashboard", "conversations"];
-    expect(pages).toEqual(["dashboard", "conversations"]);
+    const pages: readonly Page[] = ["dashboard", "conversations", "settings"];
+    expect(pages).toEqual(["dashboard", "conversations", "settings"]);
     expect(initialNavState().page).toBe("dashboard");
   });
 

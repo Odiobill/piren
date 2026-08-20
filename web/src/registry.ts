@@ -59,6 +59,20 @@ export const WORKBENCH_MODULES: readonly WorkbenchModule[] = [
     consumes: ["vault-list", "vault-read"],
     emits: [],
   },
+  {
+    // W3 (0.2.0 amendment §5; ADR-0046): the static full-page Settings
+    // shell. It is a read-only workflow inventory in W3: it declares NO
+    // endpoint consumption and NO intents — no config reads, no mutation,
+    // no service action. Typed workflows arrive only in the separately
+    // gated W4–W6 slices.
+    id: "settings",
+    label: "Settings",
+    navOrder: 2,
+    page: "settings",
+    placement: "page",
+    consumes: [],
+    emits: [],
+  },
 ];
 
 /** Lookup a module by its stable first-party id. */

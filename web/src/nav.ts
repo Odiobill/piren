@@ -5,7 +5,7 @@
  * ADR-0044: the Dashboard is the default Workbench surface; the retired
  * Agents/About pages are gone.
  */
-export type Page = "dashboard" | "conversations";
+export type Page = "dashboard" | "conversations" | "settings";
 
 export interface NavState {
   page: Page;
