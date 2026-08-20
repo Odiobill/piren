@@ -144,6 +144,24 @@ describe("AppShell Vault Explorer wiring (W2)", () => {
     expect(document.activeElement).toBe(toggle);
   });
 
+  it("normal Settings navigation closes a no-selection full-page Explorer so the Settings page is reachable", async () => {
+    await renderShell();
+    await flush();
+    const explorerToggle = toggleButton();
+    await act(async () => explorerToggle.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector(".vault-explorer-fullpage")).not.toBeNull();
+
+    const settingsButton = Array.from(container.querySelectorAll<HTMLButtonElement>(".sidebar-desktop button"))
+      .find((button) => button.textContent?.trim() === "Settings");
+    expect(settingsButton).toBeDefined();
+    await act(async () => settingsButton?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+
+    expect(container.querySelector(".vault-explorer-fullpage")).toBeNull();
+    expect(container.querySelector(".settings-page h2")?.textContent).toBe("Settings");
+  });
+
   it("returns mobile-drawer Explorer focus to the persistent menu toggle when the drawer unmounts", async () => {
     await renderShell();
     await flush();

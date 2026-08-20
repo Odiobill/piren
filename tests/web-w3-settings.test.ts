@@ -78,6 +78,12 @@ describe("W3 settings inventory model (amendment §5.1)", () => {
     expect(ids).toContain("agent-self-improvement");
   });
 
+  it("describes agent model preference through the existing agent-config parse contract without inventing catalog validation", () => {
+    const modelPreference = familiesForTier("tier-a").find((f: SettingsFamily) => f.id === "agent-model-preference");
+    expect(modelPreference?.description).toMatch(/agent-config parse contract/i);
+    expect(modelPreference?.description).not.toMatch(/Pi's model id forms/i);
+  });
+
   it("labels delivered model.fallback as existing bounded opt-in same-agent/same-session continuation", () => {
     const fallback = familiesForTier("tier-a").find((f: SettingsFamily) => f.id === "agent-model-fallback");
     expect(fallback).toBeDefined();

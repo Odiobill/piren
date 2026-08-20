@@ -61,7 +61,7 @@ export const SETTINGS_INVENTORY: readonly SettingsFamily[] = [
     tier: "tier-a",
     label: "Agent model preference",
     description:
-      "Each agent's preferred model id and thinking level for future launches (vault-owned agent config), validated against Pi's model id forms. Provider credentials stay in Pi's own config and are never shown here.",
+      "Each agent's preferred model id and thinking level for future launches (vault-owned agent config), saved only through the existing agent-config parse contract. Provider credentials stay in Pi's own config and are never shown here.",
     availability: W4_W6,
   },
   {

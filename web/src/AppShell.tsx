@@ -111,6 +111,11 @@ export function AppShell({
   }
 
   function handleSelect(page: Page) {
+    // A normal page selection leaves the companion workspace context, so a
+    // no-selection full-page Explorer cannot obscure Dashboard or Settings.
+    // Selecting Conversations intentionally preserves it: a fresh selection
+    // may turn the Explorer into the W1 split.
+    if (page !== "conversations") setExplorerOpen(false);
     // A selection made from the open mobile drawer closes it and must return
     // focus to the menu toggle; desktop sidebar selections never move focus.
     const restoreFocus = shouldRestoreFocusAfterSelect(nav);
