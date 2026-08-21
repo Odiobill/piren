@@ -42,6 +42,7 @@
     "tests/web-r2-transient-cleanup.test.ts",
     "tests/web-dashboard-view.test.ts",
     "tests/web-dashboard-assign-task.test.ts",
+    "tests/web-api-assign-task.test.ts",
     "tests/web-dashboard-service-observation.test.ts",
     "tests/web-d4-activity-handoff.test.ts",
     "tests/web-conversation-telemetry-ui.test.ts",
