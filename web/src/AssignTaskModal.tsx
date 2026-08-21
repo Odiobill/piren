@@ -138,6 +138,7 @@ export function AssignTaskModal({
             value={subject}
             onChange={(event) => setSubject(event.target.value)}
             disabled={busy}
+            required
           />
           <label htmlFor="assign-task-details">Task details</label>
           <textarea
@@ -146,6 +147,7 @@ export function AssignTaskModal({
             value={details}
             onChange={(event) => setDetails(event.target.value)}
             disabled={busy}
+            required
           />
           <p className="field-help">
             Creates one ordinary pending inbox task for {agent} in the vault. It does not contact, wake, or start

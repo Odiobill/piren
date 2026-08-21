@@ -194,7 +194,15 @@ export function DashboardView({
   async function handleAssign(title: string, details: string): Promise<void> {
     if (selectedAgent === null) throw new Error("No agent is selected.");
     const agent = selectedAgent;
-    await assignInboxTask(agent, title, details, token);
+    try {
+      await assignInboxTask(agent, title, details, token);
+    } catch (cause) {
+      // A 401 follows the Dashboard's established auth handling: surface it
+      // to the shell's recovery callback; the modal still shows its bounded
+      // state (never an automatic retry).
+      if (cause instanceof UnauthorizedError) onUnauthorizedRef.current();
+      throw cause;
+    }
     setAssignModalOpen(false);
     setAssignNotice(`A task was created for ${agent}.`);
   }

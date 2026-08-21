@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { DashboardView } from "../web/src/DashboardView.js";
-import { assignInboxTask, fetchConversationAgents, fetchServiceStatus } from "../web/src/api.js";
+import { UnauthorizedError, assignInboxTask, fetchConversationAgents, fetchServiceStatus } from "../web/src/api.js";
 
 /**
  * T1 — Dashboard Assign-task affordance (jsdom). Exactly-one selected
@@ -70,16 +70,18 @@ async function flush(): Promise<void> {
   });
 }
 
-function renderDashboard(): void {
+function renderDashboard(overrides?: { onUnauthorized?: () => void }): { unauthorized: () => number } {
+  let unauthorizedCalls = 0;
   render(
     createElement(DashboardView, {
       token: "test-token",
-      onUnauthorized: () => {},
+      onUnauthorized: overrides?.onUnauthorized ?? (() => void unauthorizedCalls++),
       onValidated: () => {},
       onOpenConversation: () => {},
       reloadKey: 0,
     }),
   );
+  return { unauthorized: () => unauthorizedCalls };
 }
 
 function agentButton(name: string): HTMLButtonElement {
@@ -178,6 +180,10 @@ describe("DashboardView Assign task (T1)", () => {
     expect(d.getAttribute("aria-labelledby")).toBe("assign-task-heading");
     expect(d.textContent).toContain("dipu");
     expect(document.activeElement).toBe(subjectInput());
+    // Required fields carry native accessible-required semantics; the
+    // trimmed-content submit gating stays in place.
+    expect(subjectInput().required).toBe(true);
+    expect(detailsInput().required).toBe(true);
     // Cancel discards the browser-only draft and closes the modal.
     act(() => {
       typeText(subjectInput(), "draft that must be discarded");
@@ -285,6 +291,24 @@ describe("DashboardView Assign task (T1)", () => {
     expect(text).not.toContain("awake");
     expect(text).not.toContain("is running");
     expect(text).not.toContain("executing");
+  });
+
+  it("routes a 401 to the shell's established auth-recovery callback instead of an ordinary error", async () => {
+    const { unauthorized } = renderDashboard();
+    vi.mocked(assignInboxTask).mockRejectedValueOnce(new UnauthorizedError());
+    await openModalFor("dipu");
+    act(() => {
+      typeText(subjectInput(), "Check the backups");
+      typeText(detailsInput(), "Verify.");
+    });
+    await act(async () => {
+      submitButton().click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(unauthorized()).toBe(1);
+    expect(vi.mocked(assignInboxTask)).toHaveBeenCalledTimes(1);
+    // The modal never auto-retries and stays bounded.
+    expect(vi.mocked(assignInboxTask)).toHaveBeenCalledTimes(1);
   });
 
   it("shows a bounded error with an explicit retry only — no automatic retry", async () => {
