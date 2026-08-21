@@ -271,6 +271,17 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       expect(history.scrollHeight).toBeGreaterThan(history.clientHeight);
       const owners = await innerScrollOwners(page, "#split");
       expect(owners.sort()).toEqual(["#entries", "#history"].sort());
+      // V1: the Explorer scrollbar sits at the upper pane's right edge,
+      // horizontally aligned with the lower chat-history scrollbar.
+      const edges = await page.evaluate(() => {
+        const rightOf = (sel: string) => {
+          const el = document.querySelector<HTMLElement>(sel);
+          if (el === null) throw new Error(`missing ${sel}`);
+          return el.getBoundingClientRect().right;
+        };
+        return { entries: rightOf("#entries"), history: rightOf("#history") };
+      });
+      expect(Math.abs(edges.entries - edges.history)).toBeLessThanOrEqual(2);
       // The browser root does not scroll.
       const root = await rootMetrics(page);
       expect(root.scrollHeight).toBeLessThanOrEqual(root.clientHeight + 1);

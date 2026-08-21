@@ -24,9 +24,10 @@ import {
  *     the declared minimums) and the panes fill the container exactly;
  *   - the CSS minimums clamp deterministically (chat >= 280px, companion
  *     >= 200px) when the inline basis violates them;
- *   - one scroll owner per pane: the companion pane owns its own internal
- *     scroll and the Conversation history owns the chat pane's scroll; the
- *     browser root never scrolls;
+ *   - one scroll owner per pane: inside the NON-SCROLLING companion layout
+ *     host the Explorer region owns the upper pane's scroll at the pane right
+ *     edge (aligned with the chat-history scrollbar), the Conversation
+ *     history owns the chat pane's scroll, and the browser root never scrolls;
  *   - the mobile one-pane toggle is hidden at desktop size.
  */
 
@@ -85,13 +86,17 @@ const FIXTURE = (cssUrl: string, chatBasisPx: number): string => `<!doctype html
       <div class="workspace-panel workspace-panel-conversations">
         <div class="split-workspace" id="split">
           <section class="split-companion-pane" aria-label="Vault Explorer" id="companion">
-            <ol style="list-style:none;margin:0;padding:12px">
-              <li style="height:320px;background:#f4f4f4">file-row-1</li>
-              <li style="height:320px;background:#eef">file-row-2</li>
-              <li style="height:320px;background:#f4f4f4">file-row-3</li>
-              <li style="height:320px;background:#eef">file-row-4</li>
-              <li style="height:320px;background:#f4f4f4">file-row-5</li>
-            </ol>
+            <div class="vault-explorer" style="display:flex;flex-direction:column;height:100%;min-height:0">
+              <div class="vault-explorer-body" style="flex:1;min-height:0;display:flex;flex-direction:column">
+                <ol class="vault-explorer-entries" id="entries" style="list-style:none;margin:0;padding:12px">
+                  <li style="height:320px;background:#f4f4f4">file-row-1</li>
+                  <li style="height:320px;background:#eef">file-row-2</li>
+                  <li style="height:320px;background:#f4f4f4">file-row-3</li>
+                  <li style="height:320px;background:#eef">file-row-4</li>
+                  <li style="height:320px;background:#f4f4f4">file-row-5</li>
+                </ol>
+              </div>
+            </div>
           </section>
           <div class="split-mobile-toggle" role="group" aria-label="Companion view toggle">
             <button type="button" aria-pressed="true">Chat</button>
@@ -267,20 +272,30 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       expect(Math.abs(chat.height + resizer2.height + companion.height - splitHeight)).toBeLessThanOrEqual(2);
     });
 
-    it("one scroll owner per pane: companion owns its scroll, chat history owns the chat scroll, the root never scrolls", async () => {
+    it("one scroll owner per pane: the Explorer region owns the upper-pane scroll at the pane edge (V1 repair), chat history owns the chat scroll, the root never scrolls", async () => {
       const splitHeight = await reloadWith(400);
       expect(splitHeight).toBeGreaterThan(480);
-      // Companion content overflows and scrolls inside its own pane.
-      const companion = await metrics(page, "#companion");
-      expect(companion.scrollHeight).toBeGreaterThan(companion.clientHeight);
+      // The companion PANE is a non-scrolling layout host (V1).
       const companionOverflow = await page.evaluate(() => getComputedStyle(document.getElementById("companion") as HTMLElement).overflowY);
-      expect(companionOverflow).toBe("auto");
+      expect(companionOverflow).toBe("hidden");
+      // The Explorer entries region is the upper pane's sole scroll owner.
+      const entries = await metrics(page, "#entries");
+      expect(entries.scrollHeight).toBeGreaterThan(entries.clientHeight);
+      const entriesOverflow = await page.evaluate(() => getComputedStyle(document.getElementById("entries") as HTMLElement).overflowY);
+      expect(entriesOverflow).toBe("auto");
       // Chat history overflows and scrolls.
       const history = await metrics(page, "#history");
       expect(history.scrollHeight).toBeGreaterThan(history.clientHeight);
-      // Exactly two inner scroll owners inside the split: companion + history.
+      // Exactly two inner scroll owners inside the split: entries + history.
       const owners = await splitScrollOwners(page);
-      expect(owners.sort()).toEqual(["#companion", "#history"].sort());
+      expect(owners.sort()).toEqual(["#entries", "#history"].sort());
+      // The upper scrollbar sits at the pane right edge, aligned with the
+      // lower chat-history scrollbar (V1 geometry).
+      const edges = await page.evaluate(() => {
+        const rightOf = (sel: string) => (document.querySelector<HTMLElement>(sel) as HTMLElement).getBoundingClientRect().right;
+        return { entries: rightOf("#entries"), history: rightOf("#history") };
+      });
+      expect(Math.abs(edges.entries - edges.history)).toBeLessThanOrEqual(2);
       // The browser root document does not scroll.
       const root = await rootMetrics(page);
       expect(root.scrollHeight).toBeLessThanOrEqual(root.clientHeight + 1);

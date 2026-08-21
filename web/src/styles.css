@@ -2125,9 +2125,13 @@ code {
 .split-companion-pane {
   flex: 1 1 0;
   min-height: 200px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 12px;
+  /* V1 repair: NON-SCROLLING layout host with NO inset padding — the
+     Explorer's active entries OR document region is the pane's sole vertical
+     scroll owner, so its scrollbar sits at the pane right edge, aligned with
+     the lower chat-history scrollbar; no nested/competing wheel region. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   border-bottom: 1px solid var(--border);
 }
 
@@ -2232,6 +2236,26 @@ code {
   padding: 0 8px;
 }
 
+/* V1 — the companion row hosts the toggle and its DISTINCT sibling
+   full-page action side by side (never nested). */
+.sidebar-companion-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.sidebar-companion-row .nav-item {
+  flex: 1;
+}
+
+.sidebar-companion-fullpage {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 8px;
+}
+
 .workspace-panel.vault-explorer-fullpage {
   width: 100%;
   max-width: none;
@@ -2245,6 +2269,11 @@ code {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+}
+
+/* V1 — inside the split host the Explorer fills the non-scrolling pane. */
+.split-companion-pane .vault-explorer {
+  flex: 1;
 }
 
 .vault-explorer-breadcrumb {

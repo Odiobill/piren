@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 import { fetchConversations, UnauthorizedError } from "./api";
 import { formatConversationHash, selectedConversationIdFromHash } from "./hash-route";
 import { conversationAudienceSummary, formatConversationCreatedTimestamp, type ConversationRecord } from "./conversations";
+import { ExpandIcon } from "./icons";
 import type { Page } from "./nav";
 
 /** ADR-0044: the Dashboard is the default surface; the sidebar stays the conversation switcher. */
@@ -29,6 +30,7 @@ export function Sidebar({
   explorerOpen,
   onToggleExplorer,
   explorerToggleRef,
+  onOpenExplorerFullPage,
 }: {
   page: Page;
   token: string;
@@ -41,6 +43,12 @@ export function Sidebar({
   onToggleExplorer: () => void;
   /** Desktop toggle for close-returns-focus; drawer instances return to Menu. */
   explorerToggleRef?: RefObject<HTMLButtonElement | null>;
+  /**
+   * V1: the distinct sibling full-page action (never nested inside the
+   * toggle). The shell decides hash/selection behavior; the sidebar only
+   * reports the explicit click.
+   */
+  onOpenExplorerFullPage: () => void;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,7 +116,7 @@ export function Sidebar({
           Conversation context (a shell-level workspace state, not a nav
           page, no URL/hash change). aria-pressed reflects the open state. */}
       <ul className="sidebar-companions">
-        <li>
+        <li className="sidebar-companion-row">
           <button
             type="button"
             ref={explorerToggleRef}
@@ -117,6 +125,18 @@ export function Sidebar({
             onClick={onToggleExplorer}
           >
             Vault Explorer
+          </button>
+          {/* V1: a DISTINCT SIBLING full-page action — never a nested
+              interactive control inside the toggle. Icon-only with its own
+              accessible name (P1 icon primitive pattern). */}
+          <button
+            type="button"
+            className="nav-item sidebar-companion-fullpage"
+            aria-label="Open Vault Explorer full page"
+            title="Open Vault Explorer full page"
+            onClick={onOpenExplorerFullPage}
+          >
+            <ExpandIcon size={14} />
           </button>
         </li>
       </ul>

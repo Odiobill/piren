@@ -231,3 +231,116 @@ describe("AppShell Vault Explorer wiring (W2)", () => {
     expect(container.querySelector<HTMLElement>(".split-chat-pane")?.hidden).toBe(true);
   });
 });
+
+describe("AppShell Vault Explorer full-page action (V1)", () => {
+  beforeEach(() => {
+    window.location.hash = "";
+  });
+
+  function fullPageActionButton(scope: ParentNode = container): HTMLButtonElement {
+    const found = scope.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open Vault Explorer full page"]',
+    );
+    if (found === null) throw new Error("missing Open Vault Explorer full page action");
+    return found;
+  }
+
+  async function click(element: HTMLButtonElement): Promise<void> {
+    await act(async () => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  }
+
+  it("adds a distinct sibling action beside the Explorer toggle (never nested inside it)", async () => {
+    await renderShell();
+    await flush();
+    const toggle = toggleButton();
+    const action = fullPageActionButton();
+    // Siblings in the same row; the action is NOT a descendant of the toggle.
+    expect(action.closest("li")).toBe(toggle.closest("li"));
+    expect(toggle.contains(action)).toBe(false);
+    expect(action.getAttribute("aria-label")).toBe("Open Vault Explorer full page");
+  });
+
+  it("desktop action does not steal focus and makes no unnecessary hash write with no selection", async () => {
+    await renderShell();
+    await flush();
+    const historyLength = window.history.length;
+    const action = fullPageActionButton();
+    action.focus();
+    await click(action);
+    await flush();
+    expect(container.querySelector(".vault-explorer-fullpage")).not.toBeNull();
+    // No-selection: no hash write at all.
+    expect(window.history.length).toBe(historyLength);
+    // Desktop: no programmatic focus move away from the invoked control.
+    expect(document.activeElement).toBe(action);
+  });
+
+  it("selected Conversation: the action writes the existing no-selection hash route once; the mounted navigator's ordinary signal yields the full-page fallback; no lifecycle change", async () => {
+    await renderShell();
+    await flush();
+    navigateToSelection();
+    await flush();
+    // A selected conversation hash like the sidebar writes.
+    await act(async () => {
+      window.location.hash = "#conversation/abc-1";
+    });
+    await flush();
+    const fetchCallsBefore = vi.mocked(fetchConversations).mock.calls.length;
+    const historyLength = window.history.length;
+
+    await click(fullPageActionButton());
+    await flush();
+
+    // Exactly the one explicit no-selection hash write.
+    expect(window.location.hash).toBe("");
+    expect(window.history.length).toBe(historyLength + 1);
+    // The still-mounted navigator remains the selection authority: only its
+    // ordinary no-selection signal produces the full-page fallback.
+    const onSelectionChange = navigatorProps.onSelectionChange as (title: string | null, active: boolean) => void;
+    await act(async () => onSelectionChange(null, false));
+    await flush();
+    expect(container.querySelector(".vault-explorer-fullpage")).not.toBeNull();
+    // The Explorer stays open through the transition.
+    expect(toggleButton().getAttribute("aria-pressed")).toBe("true");
+    // No lifecycle side effects: no conversation-list refresh, no extra reads.
+    expect(vi.mocked(fetchConversations).mock.calls.length).toBe(fetchCallsBefore);
+    // Truthful shell subtitle reset by the navigator's own signal.
+    expect(container.querySelector(".shell-subtitle")?.textContent).toBe("A calm workspace for your local-first agent team");
+  });
+
+  it("from the mobile drawer, the action closes the drawer and returns focus to the persistent Menu control", async () => {
+    await renderShell();
+    await flush();
+    const menuToggle = container.querySelector<HTMLButtonElement>(".nav-toggle");
+    await act(async () => menuToggle?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const drawerAction = fullPageActionButton(container.querySelector("#mobile-drawer") ?? container);
+    drawerAction.focus();
+    await click(drawerAction);
+    await flush();
+    expect(container.querySelector("#mobile-drawer")).toBeNull();
+    expect(container.querySelector(".vault-explorer-fullpage")).not.toBeNull();
+    expect(document.activeElement).toBe(menuToggle);
+  });
+});
+
+describe("Vault Explorer split pane scroll repair (V1 static pins)", () => {
+  it("the split companion pane is a non-scrolling layout host with no inset padding; Explorer regions stay the sole scroll owners", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const styles = await readFile(join(process.cwd(), "web", "src", "styles.css"), "utf8");
+    const start = styles.indexOf(".split-companion-pane {");
+    expect(start).toBeGreaterThan(-1);
+    const rule = styles.slice(start, styles.indexOf("}", start));
+    // Non-scrolling host: no own vertical scroll region.
+    expect(rule).toMatch(/overflow:\s*hidden/);
+    expect(rule).not.toMatch(/overflow-y:\s*(auto|scroll)/);
+    // No inset padding: the inner scrollbar reaches the pane right edge.
+    expect(rule).not.toMatch(/padding:/);
+    // The Explorer entries/document regions remain the sole scroll owners.
+    for (const owner of [".vault-explorer-entries {", ".vault-explorer-document {"]) {
+      const ownerStart = styles.indexOf(owner);
+      const ownerRule = styles.slice(ownerStart, styles.indexOf("}", ownerStart));
+      expect(ownerRule).toMatch(/overflow-y:\s*auto/);
+    }
+  });
+});

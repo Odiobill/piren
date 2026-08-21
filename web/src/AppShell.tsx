@@ -110,6 +110,30 @@ export function AppShell({
     if (nav.drawerOpen) toggleRef.current?.focus();
   }
 
+  /**
+   * V1 — the explicit full-page Explorer action. Ensures the Explorer is
+   * open; with a selected Conversation it writes the EXISTING no-selection
+   * hash route (an empty hash) so the still-mounted navigator's ordinary
+   * hashchange re-gate produces the no-selection signal that yields the
+   * full-page fallback — the browser never fabricates selection/title state.
+   * With no selection there is no hash write at all. It never aborts,
+   * closes, archives, detaches, or otherwise mutates Conversation lifecycle,
+   * session, or broker state. A drawer action closes the drawer and returns
+   * focus to the persistent Menu control; the desktop action does not steal
+   * focus.
+   */
+  function handleOpenExplorerFullPage() {
+    setExplorerOpen(true);
+    setSplitState((previous) => mobileSelectPane(previous, "companion"));
+    if (hasSelectedConversation && window.location.hash !== "") {
+      window.location.hash = "";
+    }
+    if (nav.drawerOpen) {
+      setNav((previous) => closeDrawer(previous));
+      toggleRef.current?.focus();
+    }
+  }
+
   function handleSelect(page: Page) {
     // A normal page selection leaves the companion workspace context, so a
     // no-selection full-page Explorer cannot obscure Dashboard or Settings.
@@ -187,6 +211,7 @@ export function AppShell({
             explorerOpen={explorerOpen}
             onToggleExplorer={handleToggleExplorer}
             explorerToggleRef={explorerButtonRef}
+            onOpenExplorerFullPage={handleOpenExplorerFullPage}
           />
         </div>
 
@@ -200,6 +225,7 @@ export function AppShell({
             conversationsReloadKey={conversationsReloadKey}
             explorerOpen={explorerOpen}
             onToggleExplorer={handleToggleExplorer}
+            onOpenExplorerFullPage={handleOpenExplorerFullPage}
           />
         </MobileDrawer>
 
