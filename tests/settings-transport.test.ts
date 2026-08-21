@@ -278,6 +278,25 @@ describe("W6 agent preferences read parser", () => {
     ).toThrow();
   });
 
+  it("independently rejects an invalid non-null reviewLoopEnabled when every other optional boolean is valid", () => {
+    // The combined projection above short-circuits at the invalid
+    // `autoNudge`, so rejection of invalid non-null `reviewLoopEnabled`
+    // needs its own pin with a otherwise-valid projection.
+    expect(() =>
+      parseAgentPreferencesRead({
+        available: true,
+        model: { id: null, thinking: null },
+        modelFallback: { declared: false, autoSwitch: null, modelCount: 0, models: [] },
+        contextInjection: { mode: null },
+        selfImprovement: {
+          autoNudge: null,
+          reviewLoopEnabled: "true",
+          reviewLoop: { intervalTurns: null, recentMessages: null, timeoutMs: null },
+        },
+      }),
+    ).toThrow();
+  });
+
   it("fails closed on malformed agent projections", () => {
     expect(() => parseAgentPreferencesRead({ available: true })).toThrow();
     expect(() => parseAgentPreferencesRead({ available: true, model: { id: 1 } })).toThrow();
