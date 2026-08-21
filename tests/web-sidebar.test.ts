@@ -73,6 +73,7 @@ describe("Sidebar conversation list created timestamp", () => {
           conversationsReloadKey: 0,
           explorerOpen: false,
           onToggleExplorer: () => {},
+          onOpenExplorerFullPage: () => {},
           explorerToggleRef: { current: null },
         }),
       );
