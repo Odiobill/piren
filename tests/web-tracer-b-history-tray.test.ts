@@ -174,6 +174,19 @@ describe("Tracer B layout styles (static)", () => {
     expect(rule).not.toMatch(/max-height/);
   });
 
+  it("the telemetry details popup foreground uses the defined theme text token (no undefined --fg fallback)", async () => {
+    // P0 defect repair: `--fg` is not a defined theme token (the theme
+    // foreground token is `--text`), so the old `var(--fg, #1a1a1a)` fallback
+    // rendered hardcoded dark ink on the dark-mode popup background. The rule
+    // must use the existing defined token and must not reference `--fg`.
+    const styles = await readFile(join(webSrc, "styles.css"), "utf8");
+    const start = styles.indexOf(".telemetry-popup {");
+    expect(start).toBeGreaterThan(-1);
+    const rule = styles.slice(start, styles.indexOf("}", start));
+    expect(rule).toMatch(/color:\s*var\(--text\)/);
+    expect(styles).not.toContain("--fg");
+  });
+
   it("the active Conversation shell clips to the viewport (no root-document workaround for the active layout)", async () => {
     const styles = await readFile(join(webSrc, "styles.css"), "utf8");
     expect(styles).toMatch(/\.shell\.shell-conversation-active\s*\{[\s\S]*height:\s*100dvh/);

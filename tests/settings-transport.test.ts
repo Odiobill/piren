@@ -222,6 +222,62 @@ describe("W6 agent preferences read parser", () => {
     });
   });
 
+  it("accepts absent optional booleans represented as null in a redacted projection", () => {
+    const read = parseAgentPreferencesRead({
+      available: true,
+      model: { id: null, thinking: null },
+      modelFallback: { declared: false, autoSwitch: null, modelCount: 0, models: [] },
+      contextInjection: { mode: null },
+      selfImprovement: {
+        autoNudge: null,
+        reviewLoopEnabled: null,
+        reviewLoop: { intervalTurns: null, recentMessages: null, timeoutMs: null },
+      },
+    });
+    expect(read).toEqual({
+      available: true,
+      value: {
+        model: { id: null, thinking: null },
+        modelFallback: { declared: false, autoSwitch: null, modelCount: 0, models: [] },
+        contextInjection: { mode: null },
+        selfImprovement: {
+          autoNudge: null,
+          reviewLoopEnabled: null,
+          reviewLoop: { intervalTurns: null, recentMessages: null, timeoutMs: null },
+        },
+      },
+    });
+  });
+
+  it("still rejects invalid non-null boolean types", () => {
+    expect(() =>
+      parseAgentPreferencesRead({
+        available: true,
+        model: { id: null, thinking: null },
+        modelFallback: { declared: false, autoSwitch: "yes", modelCount: 0, models: [] },
+        contextInjection: { mode: null },
+        selfImprovement: {
+          autoNudge: null,
+          reviewLoopEnabled: null,
+          reviewLoop: { intervalTurns: null, recentMessages: null, timeoutMs: null },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseAgentPreferencesRead({
+        available: true,
+        model: { id: null, thinking: null },
+        modelFallback: { declared: false, autoSwitch: null, modelCount: 0, models: [] },
+        contextInjection: { mode: null },
+        selfImprovement: {
+          autoNudge: 1,
+          reviewLoopEnabled: "true",
+          reviewLoop: { intervalTurns: null, recentMessages: null, timeoutMs: null },
+        },
+      }),
+    ).toThrow();
+  });
+
   it("fails closed on malformed agent projections", () => {
     expect(() => parseAgentPreferencesRead({ available: true })).toThrow();
     expect(() => parseAgentPreferencesRead({ available: true, model: { id: 1 } })).toThrow();

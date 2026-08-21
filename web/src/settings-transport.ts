@@ -42,6 +42,12 @@ function asBoolean(value: unknown): boolean | "invalid" {
   return typeof value === "boolean" ? value : "invalid";
 }
 
+/** Absent optional booleans are legitimately represented as null in the redacted read projection; any other non-boolean type is invalid. */
+function asBooleanOrNull(value: unknown): boolean | null | "invalid" {
+  if (value === null) return null;
+  return asBoolean(value);
+}
+
 function asCount(value: unknown): number | "invalid" {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : "invalid";
 }
@@ -334,7 +340,7 @@ function parseAgentPreferencesProjection(json: Record<string, unknown>): AgentPr
   }
   const fallback = json.modelFallback;
   if (!isRecord(fallback)) throw new Error("unexpected agent settings read");
-  if (typeof fallback.declared !== "boolean" || asBoolean(fallback.autoSwitch) === "invalid" || asCount(fallback.modelCount) === "invalid") {
+  if (typeof fallback.declared !== "boolean" || asBooleanOrNull(fallback.autoSwitch) === "invalid" || asCount(fallback.modelCount) === "invalid") {
     throw new Error("unexpected agent settings read");
   }
   if (asStringList(fallback.models) === "invalid") throw new Error("unexpected agent settings read");
@@ -343,7 +349,7 @@ function parseAgentPreferencesProjection(json: Record<string, unknown>): AgentPr
     throw new Error("unexpected agent settings read");
   }
   const selfImprovement = json.selfImprovement;
-  if (!isRecord(selfImprovement) || asBoolean(selfImprovement.autoNudge) === "invalid" || asBoolean(selfImprovement.reviewLoopEnabled) === "invalid") {
+  if (!isRecord(selfImprovement) || asBooleanOrNull(selfImprovement.autoNudge) === "invalid" || asBooleanOrNull(selfImprovement.reviewLoopEnabled) === "invalid") {
     throw new Error("unexpected agent settings read");
   }
   const reviewLoop = selfImprovement.reviewLoop;

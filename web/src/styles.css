@@ -1991,7 +1991,7 @@ code {
   width: min(26rem, calc(100vw - 2rem));
   border-radius: 10px;
   background: var(--bg, #ffffff);
-  color: var(--fg, #1a1a1a);
+  color: var(--text);
   border: 1px solid var(--border, #d0d0d0);
   padding: 14px 16px;
 }
