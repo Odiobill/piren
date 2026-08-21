@@ -102,10 +102,13 @@ describe("web auth shell contract (R3b-1)", () => {
       expect(combined).not.toContain("/api/room-agents");
       expect(combined).not.toContain("/api/rooms/");
       // W2 authorizes the bounded read-only vault list/read routes (api.ts
-      // only); graph, inbox, chat, and completions stay outside the shell.
+      // only); T1 additionally authorizes exactly one typed Assign-task
+      // client call to the existing authenticated inbox-create route. Graph,
+      // chat, and completions stay outside the shell.
       expect(combined).toContain("/api/vault/list?path=");
       expect(combined).toContain("/api/vault/read?path=");
-      for (const forbidden of ["/api/chat", "/api/vault/graph", "/api/vault/inbox", "/api/v1/"]) {
+      expect(combined.match(/\/api\/vault\/inbox/g)?.length ?? 0).toBe(1);
+      for (const forbidden of ["/api/chat", "/api/vault/graph", "/api/v1/"]) {
         expect(combined, `${forbidden} must not be called by the shell`).not.toContain(forbidden);
       }
     });

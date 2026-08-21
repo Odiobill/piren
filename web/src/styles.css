@@ -417,11 +417,50 @@ code {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.dashboard-start {
+.dashboard-actions {
   margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dashboard-start {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+/* T1 — truthful creation notice: reports only that a task file was created
+   for the selected agent; never contact, notification, or execution. */
+.dashboard-assign-notice {
+  margin: 8px 0 0;
+  color: var(--ok);
+  font-size: 0.875rem;
+}
+
+.assign-task-modal form {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.assign-task-modal label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.assign-task-modal input[type="text"],
+.assign-task-modal textarea {
+  width: 100%;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
 }
 
 /* D1: the pending-start line describes the submitted browser/gateway

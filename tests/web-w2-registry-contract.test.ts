@@ -68,12 +68,14 @@ describe("Vault Explorer forbidden surface (W2)", () => {
     }
   });
 
-  it("the shared API transport adds ONLY the existing vault list/read routes (no graph/inbox expansion)", async () => {
+  it("the shared API transport adds ONLY the vault list/read routes plus the single T1 inbox-create reference", async () => {
     const api = await readFile(join(webSrc, "api.ts"), "utf8");
     expect(api).toContain("/api/vault/list?path=${encodeURIComponent(path)}");
     expect(api).toContain("/api/vault/read?path=${encodeURIComponent(path)}");
+    // T1: exactly one typed Assign-task client call to the EXISTING
+    // authenticated inbox-create route; still no graph route anywhere.
     expect(api).not.toContain("/api/vault/graph");
-    expect(api).not.toContain("/api/vault/inbox");
+    expect(api.match(/\/api\/vault\/inbox/g)?.length ?? 0).toBe(1);
   });
 
   it("no W2 file introduces a new gateway route string", async () => {

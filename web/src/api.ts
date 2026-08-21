@@ -39,6 +39,7 @@ import {
 } from "./conversation-controls";
 import { parseConversationTelemetryReadResponse, type ConversationTelemetryReadResult } from "./conversation-telemetry";
 import { parseVaultListResponse, parseVaultReadResponse, type VaultListResponse, type VaultReadResponse } from "./vault-explorer";
+import { buildAssignTaskBody, parseInboxTaskCreated, type InboxTaskCreated } from "./dashboard-task";
 import {
   buildAgentContextInjectionEnvelope,
   buildAgentModelEnvelope,
@@ -377,6 +378,35 @@ export async function fetchVaultRead(path: string, token: string, signal?: Abort
   const res = await authedFetch(`/api/vault/read?path=${encodeURIComponent(path)}`, token, signal === undefined ? undefined : { signal });
   if (!res.ok) throw new Error(`vault read HTTP ${res.status}`);
   return parseVaultReadResponse(await res.json());
+}
+
+/**
+ * T1 — POST to the EXISTING authenticated one-file inbox-create
+ * route behind the existing `createInboxTask` core. The browser sends exactly
+ * `{to, title, body}` (trimmed); the server derives every other field (from:
+ * steward, type Task, normal priority, pending, requires_approval,
+ * id/timestamps/path). One explicit submit, no automatic retry; a 401
+ * surfaces through UnauthorizedError and any other non-200 is a bounded
+ * error carrying the server's redacted reason. Creation evidence only —
+ * never a claim of contact, notification, wakeup, or execution.
+ */
+export async function assignInboxTask(to: string, title: string, details: string, token: string): Promise<InboxTaskCreated> {
+  const res = await authedFetch("/api/vault/inbox", token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(buildAssignTaskBody(to, title, details)),
+  });
+  if (!res.ok) {
+    let reason = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error !== "") reason = body.error;
+    } catch {
+      // keep the HTTP status reason
+    }
+    throw new Error(reason);
+  }
+  return parseInboxTaskCreated(await res.json());
 }
 
 /**

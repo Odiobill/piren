@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import logoUrl from "./assets/piren-logo.png";
-import { fetchConversationAgents, fetchServiceStatus, startConversation, UnauthorizedError } from "./api";
+import { assignInboxTask, fetchConversationAgents, fetchServiceStatus, startConversation, UnauthorizedError } from "./api";
+import { AssignTaskModal } from "./AssignTaskModal";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import { parseConfiguredModelLabel } from "./conversation-agents";
 import {
@@ -82,6 +83,12 @@ export function DashboardView({
   const [retryKey, setRetryKey] = useState(0);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [start, setStart] = useState<StartState>({ phase: "idle" });
+  // T1 — Assign-task affordance state. Browser-only modal draft + a bounded
+  // truthful creation notice; no storage, no polling, no retry.
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignNotice, setAssignNotice] = useState<string | null>(null);
+  // Focus return target for the assign-task modal (U2 dialog pattern).
+  const assignButtonRef = useRef<HTMLButtonElement>(null);
   const [observation, setObservation] = useState<ObservationState>({ phase: "loading" });
   const [observationRetryKey, setObservationRetryKey] = useState(0);
   // This changes only after a successful roster read. It gates the separate
@@ -174,6 +181,22 @@ export function DashboardView({
     if (!agent.online || start.phase === "busy") return;
     setSelectedAgent((previous) => (previous === agent.name ? previous : agent.name));
     setStart({ phase: "idle" });
+    // A selection change invalidates any stale creation notice.
+    setAssignNotice(null);
+  }
+
+  /**
+   * T1 — one explicit authenticated inbox-create submission for the
+   * exactly-one selected agent. Throws a bounded message on failure; on
+   * success reports ONLY that a task was created — never contact,
+   * notification, wakeup, or execution.
+   */
+  async function handleAssign(title: string, details: string): Promise<void> {
+    if (selectedAgent === null) throw new Error("No agent is selected.");
+    const agent = selectedAgent;
+    await assignInboxTask(agent, title, details, token);
+    setAssignModalOpen(false);
+    setAssignNotice(`A task was created for ${agent}.`);
   }
 
   async function handleStart() {
@@ -292,15 +315,37 @@ export function DashboardView({
               ))}
             </ul>
             {onlineAgents.length > 0 && (
-              <button
-                type="button"
-                className="button button-primary dashboard-start"
-                disabled={selectedAgent === null || start.phase === "busy"}
-                onClick={() => void handleStart()}
-              >
-                <MessageIcon size={16} />
-                <span>Start conversation</span>
-              </button>
+              <div className="dashboard-actions">
+                <button
+                  type="button"
+                  className="button button-primary dashboard-start"
+                  disabled={selectedAgent === null || start.phase === "busy"}
+                  onClick={() => void handleStart()}
+                >
+                  <MessageIcon size={16} />
+                  <span>Start conversation</span>
+                </button>
+                {/* T1 — enabled only with the exactly-one selected runnable
+                    agent; later peer-selection contracts keep it disabled for
+                    other cardinalities. No multi-agent selection is added. */}
+                <button
+                  type="button"
+                  ref={assignButtonRef}
+                  className="button dashboard-assign"
+                  disabled={selectedAgent === null || start.phase === "busy"}
+                  onClick={() => {
+                    setAssignNotice(null);
+                    setAssignModalOpen(true);
+                  }}
+                >
+                  Assign task
+                </button>
+              </div>
+            )}
+            {assignNotice !== null && (
+              <p className="dashboard-assign-notice" role="status">
+                {assignNotice}
+              </p>
             )}
             {start.phase === "busy" && selectedAgent !== null && (
               <p className="dashboard-start-busy" role="status">
@@ -370,6 +415,16 @@ export function DashboardView({
           )}
         </div>
       </section>
+      {assignModalOpen && selectedAgent !== null && (
+        <AssignTaskModal
+          agent={selectedAgent}
+          onAssign={handleAssign}
+          onClose={() => {
+            setAssignModalOpen(false);
+            assignButtonRef.current?.focus();
+          }}
+        />
+      )}
     </section>
   );
 }

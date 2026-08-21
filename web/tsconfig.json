@@ -35,6 +35,7 @@
     "../tests/web-r1-root-scroll.test.ts",
     "../tests/web-r2-transient-cleanup.test.ts",
     "../tests/web-dashboard-view.test.ts",
+    "../tests/web-dashboard-assign-task.test.ts",
     "../tests/web-dashboard-service-observation.test.ts",
     "../tests/web-d4-activity-handoff.test.ts",
     "../tests/web-tracer-b-history-tray.test.ts",
