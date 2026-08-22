@@ -2468,6 +2468,11 @@ code {
 .settings-page h3 {
   margin: 0 0 0.25rem;
 }
+/* S1 — user-facing lede for the two authority groups. */
+.settings-lede {
+  font-size: 0.9375rem;
+  max-width: 46rem;
+}
 .settings-family-list {
   list-style: none;
   margin: 0.5rem 0 0;
@@ -2482,9 +2487,6 @@ code {
 }
 .settings-family p {
   margin: 0.25rem 0 0;
-}
-.settings-availability {
-  font-style: italic;
 }
 
 /* ===========================================================================
