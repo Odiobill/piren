@@ -2343,11 +2343,11 @@ code {
   cursor: not-allowed;
 }
 
-.vault-entry-type {
+/* V2 — decorative folder/file glyphs replaced the textual type labels. */
+.vault-entry-icon {
   flex: none;
-  width: 34px;
+  display: inline-flex;
   color: var(--muted);
-  font-size: 0.75rem;
 }
 
 .vault-entry-bytes {
@@ -2372,6 +2372,52 @@ code {
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
   margin-bottom: 8px;
+}
+
+/* V2 — literal bounded text surface for non-Markdown readable files:
+   preformatted, never interpreted as markup. */
+.vault-explorer-literal {
+  margin: 0;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* V2 — presentation-only frontmatter metadata card (scalars and scalar
+   lists). Never an authority; malformed blocks never reach it. */
+.vault-explorer-frontmatter {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.vault-explorer-frontmatter-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8125rem;
+}
+
+.vault-explorer-frontmatter-row dt {
+  color: var(--muted);
+}
+
+.vault-explorer-frontmatter-row dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .vault-explorer-back {

@@ -11,6 +11,8 @@ import {
   type VaultReadResponse,
 } from "./vault-explorer";
 import { SafeMarkdownBody } from "./SafeMarkdown";
+import { isMarkdownFileName, parseFrontmatterCard } from "./vault-explorer";
+import { FileIcon, FolderIcon } from "./icons";
 
 /**
  * W2 (0.2.0 scope amendment §4; accepted companion architecture Phase B) —
@@ -166,15 +168,37 @@ export function VaultExplorer({
               </button>
             </div>
           )}
-          {readPhase.kind === "ready" && (
-            <>
-              <SafeMarkdownBody text={readPhase.response.content} />
-              {readPhase.response.capped && (
-                <p className="vault-explorer-capped" role="status">
-                  {READ_CAP_NOTICE}
-                </p>
-              )}
-            </>
+          {readPhase.kind === "ready" && (() => {
+            // V2 — filename-based rendering gate (case-insensitive). Only
+            // Markdown files render through the safe renderer; every other
+            // readable file renders literal bounded text. A valid initial
+            // YAML frontmatter block becomes a separate presentation-only
+            // metadata card; missing/malformed frontmatter fails quiet to
+            // whole-file safe Markdown. Never written or sent anywhere.
+            if (!isMarkdownFileName(selected.name)) {
+              return <pre className="vault-explorer-literal">{readPhase.response.content}</pre>;
+            }
+            const card = parseFrontmatterCard(readPhase.response.content);
+            return (
+              <>
+                {card !== null && (
+                  <dl className="vault-explorer-frontmatter">
+                    {card.fields.map((field) => (
+                      <div className="vault-explorer-frontmatter-row" key={field.key}>
+                        <dt>{field.key}</dt>
+                        <dd>{Array.isArray(field.value) ? field.value.join(", ") : String(field.value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                <SafeMarkdownBody text={card === null ? readPhase.response.content : card.body} />
+              </>
+            );
+          })()}
+          {readPhase.kind === "ready" && readPhase.response.capped && (
+            <p className="vault-explorer-capped" role="status">
+              {READ_CAP_NOTICE}
+            </p>
           )}
         </div>
       ) : (
@@ -202,8 +226,9 @@ export function VaultExplorer({
                       aria-label={`${entry.type === "directory" ? "Open directory" : "Read file"} ${entry.name}`}
                       onClick={() => selectEntry(entry)}
                     >
-                      <span className="vault-entry-type" aria-hidden="true">
-                        {entry.type === "directory" ? "dir" : entry.type === "file" ? "file" : "other"}
+                      <span className="vault-entry-icon" aria-hidden="true">
+                        {/* V2 — decorative folder/file glyphs replaced the textual dir/file labels; the button's aria-label carries type + name. */}
+                        {entry.type === "directory" ? <FolderIcon size={14} /> : <FileIcon size={14} />}
                       </span>
                       <span>{entry.name}</span>
                       {entry.type === "file" && entry.bytes !== undefined && (

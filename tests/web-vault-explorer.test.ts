@@ -131,3 +131,99 @@ describe("vault navigation helpers", () => {
     expect(sorted.map((e) => e.name)).toEqual(["alpha", "gamma", "beta.md", "zeta.md", "odd"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// V2 — Explorer presentation cores: filename-based Markdown gating and
+// fail-quiet initial-YAML frontmatter presentation (display-only).
+// ---------------------------------------------------------------------------
+
+import { isMarkdownFileName, parseFrontmatterCard } from "../web/src/vault-explorer.js";
+
+describe("isMarkdownFileName", () => {
+  it("accepts case-insensitive .md and .markdown filenames only", () => {
+    expect(isMarkdownFileName("index.md")).toBe(true);
+    expect(isMarkdownFileName("README.MD")).toBe(true);
+    expect(isMarkdownFileName("notes.Markdown")).toBe(true);
+    expect(isMarkdownFileName("a.b.markdown")).toBe(true);
+    expect(isMarkdownFileName(".md")).toBe(false);
+    expect(isMarkdownFileName("md")).toBe(false);
+    expect(isMarkdownFileName("notes.txt")).toBe(false);
+    expect(isMarkdownFileName("archive.md.bak")).toBe(false);
+    expect(isMarkdownFileName("x.markdowny")).toBe(false);
+    expect(isMarkdownFileName("")).toBe(false);
+  });
+});
+
+describe("parseFrontmatterCard", () => {
+  it("parses valid initial frontmatter into safe scalar/scalar-list fields plus the body", () => {
+    const content = [
+      "---",
+      "title: Hello Vault",
+      "status: draft",
+      "count: 3",
+      "flag: true",
+      "tags:",
+      "  - piren",
+      "  - workbench",
+      "---",
+      "# Body",
+      "",
+      "Body text.",
+    ].join("\n");
+    const card = parseFrontmatterCard(content);
+    expect(card).not.toBeNull();
+    expect(card?.fields).toEqual([
+      { key: "title", value: "Hello Vault" },
+      { key: "status", value: "draft" },
+      { key: "count", value: 3 },
+      { key: "flag", value: true },
+      { key: "tags", value: ["piren", "workbench"] },
+    ]);
+    expect(card?.body.startsWith("# Body")).toBe(true);
+  });
+
+  it("strips matched quotes and keeps quoted scalars literal", () => {
+    const card = parseFrontmatterCard('---\ntitle: "A: #b"\nok: \'single\'\n---\nbody');
+    expect(card?.fields).toEqual([
+      { key: "title", value: "A: #b" },
+      { key: "ok", value: "single" },
+    ]);
+  });
+
+  it("omits nested/object/flow values instead of stringifying them", () => {
+    const content = [
+      "---",
+      "keep: yes-string",
+      "nested:",
+      "  deep: 1",
+      "flowList: [a, b]",
+      "flowMap: {x: 1}",
+      "after: still-here",
+      "---",
+      "body",
+    ].join("\n");
+    const card = parseFrontmatterCard(content);
+    expect(card?.fields.map((f) => f.key)).toEqual(["keep", "after"]);
+  });
+
+  it("fails quiet (null) on missing frontmatter, an unterminated block, a non-object block, malformed lines, or no supported fields", () => {
+    expect(parseFrontmatterCard("# Just markdown")).toBeNull();
+    expect(parseFrontmatterCard("---\ntitle: x\n# no closing")).toBeNull();
+    // Unterminated because the closer is not at line start.
+    expect(parseFrontmatterCard("---\ntitle: x\n  ---\nbody")).toBeNull();
+    // Malformed top-level line.
+    expect(parseFrontmatterCard("---\nno colon here\n---\nbody")).toBeNull();
+    // Valid syntax but zero supported fields -> whole-file fallback.
+    expect(parseFrontmatterCard("---\nnested:\n  deep: 1\n---\nbody")).toBeNull();
+  });
+
+  it("keeps the first occurrence of a duplicate key and never exposes later rewrites", () => {
+    const card = parseFrontmatterCard("---\ntitle: first\ntitle: second\n---\nbody");
+    expect(card?.fields).toEqual([{ key: "title", value: "first" }]);
+  });
+
+  it("returns the body after the closing delimiter with one leading newline stripped", () => {
+    const card = parseFrontmatterCard("---\ntitle: x\n---\n\nbody line");
+    expect(card?.body).toBe("body line");
+  });
+});

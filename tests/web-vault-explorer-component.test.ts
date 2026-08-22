@@ -87,7 +87,12 @@ describe("VaultExplorer: load / render / navigate", () => {
     const rows = Array.from(container.querySelectorAll(".vault-explorer-entry"));
     const names = rows.map((r) => r.querySelectorAll("span")[1]?.textContent);
     expect(names).toEqual(["team", "index.md", "zeta.md"]);
-    expect(rows[0]?.querySelector(".vault-entry-type")?.textContent).toBe("dir");
+    // V2: decorative icons replaced the textual dir/file type labels.
+    expect(rows[0]?.querySelector(".vault-entry-icon svg")).not.toBeNull();
+    expect(container.querySelector(".vault-entry-type")).toBeNull();
+    // Accessible action/name labels are retained.
+    expect(rows[0]?.getAttribute("aria-label")).toBe("Open directory team");
+    expect(rows[1]?.getAttribute("aria-label")).toBe("Read file index.md");
   });
 
   it("navigates into a directory via an explicit click (fresh server listing)", async () => {
@@ -203,5 +208,136 @@ describe("VaultExplorer: safe render and no fetch on display-only transitions", 
     });
     await flush();
     expect(mockedList).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V2 — document and listing presentation polish.
+// ---------------------------------------------------------------------------
+
+describe("VaultExplorer presentation polish (V2)", () => {
+  it("keeps other entries disabled with an icon and an accessible label", async () => {
+    const list: VaultListResponse = {
+      path: ".",
+      entries: [
+        { name: "socket.sock", path: "socket.sock", type: "other", mtimeMs: 2 },
+        { name: "team", path: "team", type: "directory", mtimeMs: 5 },
+      ],
+      capped: false,
+    };
+    mockedList.mockResolvedValue(list);
+    await renderExplorer();
+    await flush();
+    const rows = Array.from(container.querySelectorAll<HTMLButtonElement>(".vault-explorer-entry"));
+    const otherRow = rows.find((r) => r.getAttribute("aria-label") === "Read file socket.sock");
+    expect(otherRow).toBeDefined();
+    expect(otherRow?.disabled).toBe(true);
+    expect(otherRow?.querySelector(".vault-entry-icon svg")).not.toBeNull();
+  });
+
+  it("renders non-Markdown files as literal bounded text — never as markup", async () => {
+    mockedList.mockResolvedValue({
+      path: ".",
+      entries: [{ name: "notes.txt", path: "notes.txt", type: "file", bytes: 40, mtimeMs: 1 }],
+      capped: false,
+    });
+    mockedRead.mockResolvedValue({
+      path: "notes.txt",
+      content: "# Not a heading\n\n**this is not bold** <b>nor html</b>\n---\ndashes stay literal",
+      bytes: 90,
+      mtimeMs: 1,
+      capped: false,
+    });
+    await renderExplorer();
+    await flush();
+    const entry = button("notes.txt");
+    await act(async () => entry?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    const literal = container.querySelector(".vault-explorer-literal");
+    expect(literal).not.toBeNull();
+    expect(literal?.textContent).toContain("# Not a heading");
+    expect(literal?.textContent).toContain("**this is not bold**");
+    expect(literal?.textContent).toContain("<b>nor html</b>");
+    expect(literal?.textContent).toContain("---");
+    expect(container.querySelector(".markdown-body")).toBeNull();
+    expect(container.querySelector(".vault-explorer-frontmatter")).toBeNull();
+  });
+
+  it("renders valid Markdown frontmatter as a separate metadata card with only the body passed to the renderer", async () => {
+    mockedList.mockResolvedValue({
+      path: ".",
+      entries: [{ name: "meta.md", path: "meta.md", type: "file", bytes: 80, mtimeMs: 1 }],
+      capped: false,
+    });
+    mockedRead.mockResolvedValue({
+      path: "meta.md",
+      content: "---\ntitle: Hello Vault\ntags:\n  - piren\n  - workbench\n---\n# Body heading\n\nBody text.",
+      bytes: 120,
+      mtimeMs: 1,
+      capped: false,
+    });
+    await renderExplorer();
+    await flush();
+    const entry = button("meta.md");
+    await act(async () => entry?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    const card = container.querySelector(".vault-explorer-frontmatter");
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toContain("title");
+    expect(card?.textContent).toContain("Hello Vault");
+    expect(card?.textContent).toContain("piren, workbench");
+    const body = container.querySelector(".markdown-body");
+    expect(body).not.toBeNull();
+    expect(body?.textContent).toContain("Body heading");
+    // The frontmatter block itself is not part of the rendered body.
+    expect(body?.textContent).not.toContain("Hello Vault");
+    // The card is outside the markdown body element.
+    expect(card?.contains(body ?? null)).toBe(false);
+  });
+
+  it("fails quiet to whole-file safe Markdown on malformed frontmatter", async () => {
+    mockedList.mockResolvedValue({
+      path: ".",
+      entries: [{ name: "broken.md", path: "broken.md", type: "file", bytes: 60, mtimeMs: 1 }],
+      capped: false,
+    });
+    mockedRead.mockResolvedValue({
+      path: "broken.md",
+      content: "---\ntitle: x\nno colon line\n---\n# Still rendered",
+      bytes: 80,
+      mtimeMs: 1,
+      capped: false,
+    });
+    await renderExplorer();
+    await flush();
+    const entry = button("broken.md");
+    await act(async () => entry?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector(".vault-explorer-frontmatter")).toBeNull();
+    const body = container.querySelector(".markdown-body");
+    expect(body).not.toBeNull();
+    expect(body?.textContent).toContain("Still rendered");
+  });
+
+  it("gates Markdown rendering case-insensitively on the filename", async () => {
+    mockedList.mockResolvedValue({
+      path: ".",
+      entries: [{ name: "README.MD", path: "README.MD", type: "file", bytes: 20, mtimeMs: 1 }],
+      capped: false,
+    });
+    mockedRead.mockResolvedValue({
+      path: "README.MD",
+      content: "# Uppercase",
+      bytes: 12,
+      mtimeMs: 1,
+      capped: false,
+    });
+    await renderExplorer();
+    await flush();
+    const entry = button("README.MD");
+    await act(async () => entry?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector(".vault-explorer-literal")).toBeNull();
+    expect(container.querySelector(".markdown-body")?.textContent).toContain("Uppercase");
   });
 });
