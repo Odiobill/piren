@@ -56,14 +56,33 @@ describe("startPeerConversation client", () => {
     await expect(startPeerConversation(["dipu", "kimi"], "stale")).rejects.toBeInstanceOf(UnauthorizedError);
   });
 
-  it("surfaces a bounded definitive server error on non-201 responses", async () => {
+  it("surfaces a bounded definitive server error on 4xx (NOT ambiguous — fresh retry stays allowed)", async () => {
     stubFetch(400, { error: "1 requested peer(s) are not in the local runnable set." });
-    await expect(startPeerConversation(["dipu", "zora"], "token")).rejects.toThrow("not in the local runnable set");
+    try {
+      await startPeerConversation(["dipu", "zora"], "token");
+      throw new Error("expected rejection");
+    } catch (cause) {
+      expect(cause).not.toBeInstanceOf(PeerStartAmbiguousError);
+      expect(cause instanceof Error ? cause.message : "").toContain("not in the local runnable set");
+    }
   });
 
-  it("rejects a non-201 ok response even when the payload looks valid (P3.3 correction)", async () => {
-    stubFetch(200, CREATED);
-    await expect(startPeerConversation(["dipu", "kimi"], "token")).rejects.toThrow();
+  it("rejects a non-201 2xx as ambiguous — creation may have landed even without a 201 (P3.3 final correction)", async () => {
+    const fake = stubFetch(200, CREATED);
+    await expect(startPeerConversation(["dipu", "kimi"], "token")).rejects.toBeInstanceOf(PeerStartAmbiguousError);
+    expect(fake).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a 5xx result as ambiguous with no raw response detail (P3.3 final correction)", async () => {
+    const fake = stubFetch(500, { error: "internal detail that must not leak" });
+    try {
+      await startPeerConversation(["dipu", "kimi"], "token");
+      throw new Error("expected rejection");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(PeerStartAmbiguousError);
+      expect(cause instanceof Error ? cause.message : "").not.toContain("internal detail");
+    }
+    expect(fake).toHaveBeenCalledTimes(1);
   });
 
   it("classifies a malformed 201 success result as ambiguous — the request may have landed (P3.3 correction)", async () => {

@@ -211,16 +211,23 @@ export async function startPeerConversation(peers: readonly string[], token: str
     if (cause instanceof UnauthorizedError) throw cause;
     throw new PeerStartAmbiguousError();
   }
-  // Exactly 201 is success; any other status is the server's bounded error.
+  // Result classification: exactly 201 is success. Definitive authenticated
+  // 4xx (401 already surfaced) keeps the bounded server reason and permits an
+  // explicit fresh retry. EVERY other status — non-201 2xx/3xx and 5xx — is
+  // ambiguous: the POST may have landed, so it must never enable a fresh
+  // retry that could duplicate durable evidence.
   if (res.status !== 201) {
-    let reason = `HTTP ${res.status}`;
-    try {
-      const body = (await res.json()) as { error?: unknown };
-      if (typeof body.error === "string" && body.error !== "") reason = body.error;
-    } catch {
-      // keep the HTTP status reason
+    if (res.status >= 400 && res.status <= 499) {
+      let reason = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        if (typeof body.error === "string" && body.error !== "") reason = body.error;
+      } catch {
+        // keep the HTTP status reason
+      }
+      throw new Error(reason);
     }
-    throw new Error(reason);
+    throw new PeerStartAmbiguousError();
   }
   try {
     // A 201 whose body cannot be read or fails the safe parser is an
