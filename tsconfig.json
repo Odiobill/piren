@@ -63,6 +63,9 @@
     "tests/web-conversation-composer-interlock.test.ts",
     "tests/web-u2-interlock-navigator.test.ts",
     "tests/settings-api.test.ts",
-    "tests/settings-transport-form.test.ts"
+    "tests/settings-transport-form.test.ts",
+    "tests/web-dashboard-peer-start.test.ts",
+    "tests/web-appshell-peer-refresh.test.ts",
+    "tests/web-api-peer-start.test.ts"
   ]
 }

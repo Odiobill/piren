@@ -285,6 +285,7 @@ export function AppShell({
               onValidated={onValidated}
               onUnauthorized={onUnauthorized}
               onOpenConversation={handleOpenConversation}
+              onRefreshConversations={handleConversationsChanged}
               reloadKey={conversationsReloadKey}
             />
           </div>

@@ -76,3 +76,50 @@ export function parseConversationStartResponse(json: unknown): ConversationStart
   }
   return parsed;
 }
+
+// ---------------------------------------------------------------------------
+// P3.3 — typed peer-audience start request core (accepted P2/P3.2). The only
+// request body is the exact P2 {peers} shape; the only accepted response is
+// the 201 safe {conversation, event} projection with dispatch ABSENT (peer
+// creation contacts no broker).
+// ---------------------------------------------------------------------------
+
+/** The only request body shape the Dashboard peer start action ever builds. */
+export interface PeerStartRequest {
+  peers: string[];
+}
+
+/** Build the exact peer start request body (one field, never anything else). */
+export function toPeerStartRequest(peers: readonly string[]): PeerStartRequest {
+  return { peers: [...peers] };
+}
+
+export interface PeerStartResponse {
+  conversation: ConversationRecord;
+  event: ConversationStartEvent;
+}
+
+/** Fail-closed validation of POST /api/conversations/start-peer: a present dispatch field is a defect. */
+export function parsePeerStartResponse(json: unknown): PeerStartResponse {
+  if (!isRecord(json)) throw new Error("unexpected /api/conversations/start-peer response");
+  if ("dispatch" in json) throw new Error("unexpected /api/conversations/start-peer response (dispatch must be absent)");
+  const event = json.event;
+  if (
+    !isRecord(event) ||
+    typeof event.id !== "string" ||
+    event.id === "" ||
+    typeof event.kind !== "string" ||
+    typeof event.created !== "string"
+  ) {
+    throw new Error("unexpected /api/conversations/start-peer response (event)");
+  }
+  return {
+    conversation: parseConversationRecord(json.conversation),
+    event: {
+      id: event.id,
+      conversationId: typeof event.conversationId === "string" ? event.conversationId : "",
+      kind: event.kind,
+      created: event.created,
+    },
+  };
+}

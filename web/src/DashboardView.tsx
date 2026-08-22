@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import logoUrl from "./assets/piren-logo.png";
-import { assignInboxTask, fetchConversationAgents, fetchServiceStatus, startConversation, UnauthorizedError } from "./api";
+import { assignInboxTask, fetchConversationAgents, fetchServiceStatus, PeerStartAmbiguousError, startConversation, startPeerConversation, UnauthorizedError } from "./api";
 import { AssignTaskModal } from "./AssignTaskModal";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import { parseConfiguredModelLabel } from "./conversation-agents";
@@ -70,6 +70,7 @@ export function DashboardView({
   onValidated,
   onOpenConversation,
   reloadKey,
+  onRefreshConversations,
 }: {
   token: string;
   onUnauthorized: () => void;
@@ -78,11 +79,28 @@ export function DashboardView({
   onOpenConversation: (id: string) => void;
   /** Bumped by the shell when conversations change (start/rename/lifecycle). */
   reloadKey: number;
+  /**
+   * P3.3: the narrow shell callback for the peer-start ambiguous-failure
+   * recovery — an explicit durable-list refresh only. Never an automatic
+   * retry, resubmission, or background read.
+   */
+  onRefreshConversations?: () => void;
 }) {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [retryKey, setRetryKey] = useState(0);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [start, setStart] = useState<StartState>({ phase: "idle" });
+  // P3.3 — peer-audience start state: component-local only, never persisted.
+  // Peer mode hides the single-agent Start/T1 Assign-task controls; leaving
+  // it restores today's single-agent behavior exactly.
+  const [peerMode, setPeerMode] = useState(false);
+  const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
+  const [peerStart, setPeerStart] = useState<
+    | { phase: "idle" }
+    | { phase: "busy" }
+    | { phase: "error"; message: string }
+    | { phase: "ambiguous" }
+  >({ phase: "idle" });
   // T1 — Assign-task affordance state. Browser-only modal draft + a bounded
   // truthful creation notice; no storage, no polling, no retry.
   const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -178,11 +196,63 @@ export function DashboardView({
   }
 
   function handleSelect(agent: ConversationAgentEntry) {
-    if (!agent.online || start.phase === "busy") return;
+    if (!agent.online || start.phase === "busy" || peerStart.phase === "busy") return;
+    if (peerMode) {
+      // P3.3 peer mode: cards are membership toggles (aria-pressed).
+      setSelectedPeers((previous) =>
+        previous.includes(agent.name) ? previous.filter((name) => name !== agent.name) : [...previous, agent.name],
+      );
+      setPeerStart({ phase: "idle" });
+      return;
+    }
     setSelectedAgent((previous) => (previous === agent.name ? previous : agent.name));
     setStart({ phase: "idle" });
     // A selection change invalidates any stale creation notice.
     setAssignNotice(null);
+  }
+
+  function handleTogglePeerMode() {
+    setPeerMode((previous) => !previous);
+    setSelectedPeers([]);
+    setPeerStart({ phase: "idle" });
+  }
+
+  /**
+   * P3.3 — one explicit authenticated peer start for 2-8 distinct selected
+   * locally-runnable agents. Success reports creation evidence only (the
+   * durable hash-route open does the rest); a definitive 4xx keeps its
+   * bounded message with explicit fresh retry; an ambiguous network/result
+   * failure makes no retry or success claim and offers only an explicit
+   * durable-list refresh.
+   */
+  async function handlePeerStart() {
+    if (selectedPeers.length < 2 || selectedPeers.length > 8 || peerStart.phase === "busy") return;
+    const peers = [...selectedPeers].sort();
+    setPeerStart({ phase: "busy" });
+    try {
+      const result = await startPeerConversation(peers, token);
+      setPeerStart({ phase: "idle" });
+      setSelectedPeers([]);
+      setPeerMode(false);
+      onOpenConversation(result.conversation.id);
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        onUnauthorized();
+        return;
+      }
+      if (error instanceof PeerStartAmbiguousError) {
+        setPeerStart({ phase: "ambiguous" });
+        return;
+      }
+      setPeerStart({ phase: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  function handlePeerRefresh() {
+    // Explicit refresh-only recovery: clear the ambiguous state and refresh
+    // the durable sidebar list through the narrow shell callback. No resubmit.
+    setPeerStart({ phase: "idle" });
+    onRefreshConversations?.();
   }
 
   /**
@@ -285,9 +355,13 @@ export function DashboardView({
                   <button
                     type="button"
                     data-agent={agent.name}
-                    className={selectedAgent === agent.name ? "agent-select agent-selected" : "agent-select"}
-                    aria-pressed={selectedAgent === agent.name}
-                    disabled={!agent.online || start.phase === "busy"}
+                    className={
+                      (peerMode ? selectedPeers.includes(agent.name) : selectedAgent === agent.name)
+                        ? "agent-select agent-selected"
+                        : "agent-select"
+                    }
+                    aria-pressed={peerMode ? selectedPeers.includes(agent.name) : selectedAgent === agent.name}
+                    disabled={!agent.online || start.phase === "busy" || peerStart.phase === "busy"}
                     title={agent.online ? `Select ${agent.name}` : `${agent.name} is not runnable on this installation`}
                     onClick={() => handleSelect(agent)}
                   >
@@ -324,29 +398,72 @@ export function DashboardView({
             </ul>
             {onlineAgents.length > 0 && (
               <div className="dashboard-actions">
+                {/* P3.3: explicitly labelled, component-local peer mode.
+                    Off = today's single-agent behavior byte-for-byte. */}
                 <button
                   type="button"
-                  className="button button-primary dashboard-start"
-                  disabled={selectedAgent === null || start.phase === "busy"}
-                  onClick={() => void handleStart()}
+                  className="button dashboard-peer-mode-toggle"
+                  aria-pressed={peerMode}
+                  onClick={handleTogglePeerMode}
                 >
-                  <MessageIcon size={16} />
-                  <span>Start conversation</span>
+                  Start with multiple agents
                 </button>
-                {/* T1 — enabled only with the exactly-one selected runnable
-                    agent; later peer-selection contracts keep it disabled for
-                    other cardinalities. No multi-agent selection is added. */}
-                <button
-                  type="button"
-                  ref={assignButtonRef}
-                  className="button dashboard-assign"
-                  disabled={selectedAgent === null || start.phase === "busy"}
-                  onClick={() => {
-                    setAssignNotice(null);
-                    setAssignModalOpen(true);
-                  }}
-                >
-                  Assign task
+                {!peerMode && (
+                  <>
+                    <button
+                      type="button"
+                      className="button button-primary dashboard-start"
+                      disabled={selectedAgent === null || start.phase === "busy"}
+                      onClick={() => void handleStart()}
+                    >
+                      <MessageIcon size={16} />
+                      <span>Start conversation</span>
+                    </button>
+                    {/* T1 — enabled only with the exactly-one selected runnable
+                        agent; hidden while peer mode is active (never
+                        broadened to multi-agent). */}
+                    <button
+                      type="button"
+                      ref={assignButtonRef}
+                      className="button dashboard-assign"
+                      disabled={selectedAgent === null || start.phase === "busy"}
+                      onClick={() => {
+                        setAssignNotice(null);
+                        setAssignModalOpen(true);
+                      }}
+                    >
+                      Assign task
+                    </button>
+                  </>
+                )}
+                {peerMode && (
+                  <button
+                    type="button"
+                    className="button button-primary dashboard-peer-start"
+                    disabled={selectedPeers.length < 2 || selectedPeers.length > 8 || peerStart.phase === "busy"}
+                    onClick={() => void handlePeerStart()}
+                  >
+                    <MessageIcon size={16} />
+                    <span>Start peer conversation</span>
+                  </button>
+                )}
+              </div>
+            )}
+            {peerStart.phase === "busy" && (
+              <p className="dashboard-start-busy" role="status">
+                Creating your peer conversation…
+              </p>
+            )}
+            {peerStart.phase === "error" && (
+              <p className="error-message" role="alert">
+                {peerStart.message}
+              </p>
+            )}
+            {peerStart.phase === "ambiguous" && (
+              <div className="error-message" role="alert">
+                <p>The peer conversation may or may not have been created. Check your conversations list.</p>
+                <button type="button" className="button button-small dashboard-peer-refresh" onClick={handlePeerRefresh}>
+                  Refresh conversations list
                 </button>
               </div>
             )}

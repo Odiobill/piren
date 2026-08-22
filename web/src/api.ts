@@ -8,7 +8,14 @@ import {
   parseConversationMessageResponse,
   type ConversationMessageResponse,
 } from "./conversation-composer";
-import { parseConversationStartResponse, toConversationStartRequest, type ConversationStartResponse } from "./conversation-start";
+import {
+  parseConversationStartResponse,
+  parsePeerStartResponse,
+  toConversationStartRequest,
+  toPeerStartRequest,
+  type ConversationStartResponse,
+  type PeerStartResponse,
+} from "./conversation-start";
 import {
   parseConversationEnvelope,
   parseConversationEvents,
@@ -170,6 +177,51 @@ export async function startConversation(token: string, agent: string): Promise<C
     throw new Error(reason);
   }
   return parseConversationStartResponse(await res.json());
+}
+
+/**
+ * P3.3 — a network-level peer start failure is AMBIGUOUS: the request may
+ * have landed. The Dashboard offers only an explicit durable-list refresh
+ * through its narrow shell callback; there is no automatic retry and no
+ * success claim.
+ */
+export class PeerStartAmbiguousError extends Error {
+  constructor() {
+    super("the peer conversation may or may not have been created");
+    this.name = "PeerStartAmbiguousError";
+  }
+}
+
+/**
+ * P3.3 — POST /api/conversations/start-peer (P2 accepted route): exactly the
+ * `{peers}` body; 201 safe `{conversation, event}` parsing with dispatch
+ * absence pinned by the fail-closed parser. A 401 surfaces through
+ * UnauthorizedError; a definitive non-201 response carries the server's
+ * bounded reason; a network-level failure is PeerStartAmbiguousError.
+ */
+export async function startPeerConversation(peers: readonly string[], token: string): Promise<PeerStartResponse> {
+  let res: Response;
+  try {
+    res = await authedFetch("/api/conversations/start-peer", token, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(toPeerStartRequest(peers)),
+    });
+  } catch (cause) {
+    if (cause instanceof UnauthorizedError) throw cause;
+    throw new PeerStartAmbiguousError();
+  }
+  if (!res.ok) {
+    let reason = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error !== "") reason = body.error;
+    } catch {
+      // keep the HTTP status reason
+    }
+    throw new Error(reason);
+  }
+  return parsePeerStartResponse(await res.json());
 }
 
 /**
