@@ -1887,9 +1887,11 @@ export class GatewayServer {
         }
         const runnability = validatePeerRunnability(result.audience, this.runnableAgents);
         if (!runnability.ok) {
-            // Bounded and redacted: positions only, never the submitted names.
-            const positions = runnability.notRunnable.map((member) => member.index).join(", ");
-            this.writeJson(res, 400, { error: `Peer members at entries ${positions} are not in the local runnable set.` });
+            // Bounded and redacted: a generic count only. The helper's indexes are
+            // positions in the canonically sorted audience, not submitted request
+            // entries — names and indexes are never exposed.
+            const count = runnability.notRunnable.length;
+            this.writeJson(res, 400, { error: `${count} requested peer(s) are not in the local runnable set.` });
             return;
         }
         let conversation;

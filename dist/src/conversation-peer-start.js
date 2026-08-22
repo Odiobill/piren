@@ -98,9 +98,11 @@ export function peerStartOriginBody(audience) {
 /**
  * Optional pure runnable-set validation against an INJECTED set (the gateway's
  * resolved local runnable set in production). Never reads configuration; whole-
- * set semantics: any non-runnable member fails with its name AND input
- * position so callers can choose bounded position-based reporting instead of
- * echoing untrusted values.
+ * set semantics: any non-runnable member fails with its name AND position.
+ * NOTE: a returned index is the position in the audience array passed to THIS
+ * helper — after creation-side canonical sorting that is NOT necessarily the
+ * raw submitted request position. Callers must not report these indexes as
+ * request entries.
  */
 export function validatePeerRunnability(audience, runnableAgents) {
     const runnable = new Set(runnableAgents);

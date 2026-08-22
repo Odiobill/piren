@@ -156,6 +156,20 @@ describe("POST /api/conversations/start-peer (P3.2)", () => {
     expect(await persistedConversationCount()).toBe(0);
   });
 
+  it("reports a bounded generic runnable-set error — never post-sort indexes or submitted names (P3.2 correction)", async () => {
+    await startServer({ runnableAgents: ["zora"], vaultAgents: ["zora", "adam"] });
+    // Order-inverting falsifier: sorting moves "adam" to index 0, so any
+    // index reported here is a sorted-audience position, not a request entry.
+    const response = await post(url("/api/conversations/start-peer"), { peers: ["zora", "adam"] }, token);
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error: string };
+    expect(payload.error).not.toContain("adam");
+    expect(payload.error).not.toContain("zora");
+    expect(payload.error).not.toMatch(/entr(y|ies)\s+\d/);
+    expect(payload.error).toMatch(/1 requested peer\(s\) are not in the local runnable set/);
+    expect(await persistedConversationCount()).toBe(0);
+  });
+
   it("bounds and redacts validation errors: raw long/secret-looking values never appear in responses (P3.2 correction)", async () => {
     await startServer();
     const longInvalid = "x".repeat(5000) + "-secret-looking-token-abcdef0123456789";
