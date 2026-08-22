@@ -1,3 +1,4 @@
+import { parse as parseYaml } from "yaml";
 /**
  * W2 (0.2.0 scope amendment §4; accepted companion split architecture
  * Phase B) — pure Vault Explorer cores: strict fail-closed parsers for the
@@ -158,7 +159,9 @@ export function isMarkdownFileName(name: string): boolean {
   return lower.endsWith(".md") && lower.length > ".md".length;
 }
 
-/** Safe deterministic frontmatter field values: scalars and scalar lists only. */
+/**
+ * Safe deterministic frontmatter field values: scalars and scalar lists only.
+ */
 export type FrontmatterFieldValue = string | number | boolean | readonly (string | number | boolean)[];
 
 export interface FrontmatterField {
@@ -171,114 +174,61 @@ export interface FrontmatterCard {
   body: string;
 }
 
-const FRONTMATTER_NUMBER_PATTERN = /^-?\d+(\.\d+)?$/;
+function isFrontmatterScalar(value: unknown): value is string | number | boolean {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
 
-function parseFrontmatterScalar(raw: string): string | number | boolean | null {
-  const text = raw.trim();
-  if (text === "") return null;
-  // Fully quoted values stay literal strings (no comment stripping inside).
-  if (
-    (text.startsWith('"') && text.endsWith('"') && text.length >= 2) ||
-    (text.startsWith("'") && text.endsWith("'") && text.length >= 2)
-  ) {
-    return text.slice(1, -1);
-  }
-  // Unquoted: strip a trailing " #comment".
-  const hashIndex = text.indexOf(" #");
-  const bare = hashIndex === -1 ? text : text.slice(0, hashIndex).trim();
-  if (bare === "true" || bare === "false") return bare === "true";
-  if (FRONTMATTER_NUMBER_PATTERN.test(bare)) return Number(bare);
-  return bare;
+function presentScalar(value: string): string {
+  // Presentation trim only: a multiline block/folded scalar keeps its real
+  // content without the trailing newline the block form appends.
+  return value.replace(/\n+$/, "");
 }
 
 /**
- * Parse a valid INITIAL YAML frontmatter block into a bounded presentation
- * card: safe top-level scalar fields and scalar lists in document order
- * (first occurrence of a duplicate key wins). Nested/object/flow values are
- * omitted rather than stringified. Returns null — the caller's signal to
- * render the existing whole-file safe Markdown — for a missing block, an
- * unterminated block, malformed top-level lines, or a block with zero
- * supported fields. Never throws.
+ * Parse standards-valid INITIAL YAML frontmatter into a bounded presentation
+ * card, using the already-declared production `yaml` parser (no handwritten
+ * YAML subset, no misrepresentation of valid YAML). The presentation filter
+ * keeps ONLY top-level scalar values and arrays entirely made of those
+ * scalars, in parsed document order; nested/object/null/unsupported values
+ * are omitted rather than stringified.
+ *
+ * Returns null — the caller's signal to render the existing whole-file safe
+ * Markdown — for a missing initial fence, an unterminated block, a parser
+ * error, a non-mapping document, or zero supported fields. Never throws.
+ * The body after the closing fence keeps one leading newline stripped,
+ * matching the established presentation contract.
  */
 export function parseFrontmatterCard(content: string): FrontmatterCard | null {
-  if (!content.startsWith("---\n")) return null;
-  const lines = content.split("\n");
-  let closeIndex = -1;
-  for (let i = 1; i < lines.length; i += 1) {
-    if (lines[i] === "---") {
-      closeIndex = i;
-      break;
-    }
+  const openMatch = /^---\r?\n/.exec(content);
+  if (openMatch === null) return null;
+  const rest = content.slice(openMatch[0].length);
+  const closeMatch = /\n---\r?(?:\n|$)/.exec(rest);
+  if (closeMatch === null) return null;
+  // Normalize CRLF inside the frontmatter text only — the YAML scalar values
+  // must not retain a stray carriage return, and the body is left untouched.
+  const frontmatterText = rest.slice(0, closeMatch.index).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(frontmatterText);
+  } catch {
+    return null;
   }
-  if (closeIndex === -1) return null;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
 
   const fields: FrontmatterField[] = [];
-  const seenKeys = new Set<string>();
-  // Index of the field currently accumulating a scalar list, or -1.
-  let listFieldIndex = -1;
-  let supported = false;
-
-  for (let i = 1; i < closeIndex; i += 1) {
-    const line = lines[i] ?? "";
-    if (line.trim() === "" || line.trimStart().startsWith("#")) continue;
-
-    if (line.startsWith(" ") || line.startsWith("\t")) {
-      const itemMatch = /^[\t ]+-\s+(.*)$/.exec(line);
-      if (itemMatch !== null && listFieldIndex !== -1) {
-        // A scalar list item under the pending `key:` field.
-        const value = parseFrontmatterScalar(itemMatch[1] ?? "");
-        if (value === null) return null;
-        const field = fields[listFieldIndex];
-        if (field !== undefined && Array.isArray(field.value)) {
-          fields[listFieldIndex] = { key: field.key, value: [...field.value, value] };
-        }
-        continue;
-      }
-      // Any other indented content makes the pending key unsupported
-      // (nested/object) — omit it rather than stringifying or failing.
-      if (listFieldIndex !== -1) {
-        fields.splice(listFieldIndex, 1);
-        listFieldIndex = -1;
-      }
-      continue;
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) continue;
+    if (isFrontmatterScalar(value)) {
+      fields.push({ key, value: typeof value === "string" ? presentScalar(value) : value });
+    } else if (Array.isArray(value) && value.every((entry) => isFrontmatterScalar(entry))) {
+      fields.push({ key, value: value.map((entry) => (typeof entry === "string" ? presentScalar(entry) : entry)) });
     }
-
-    const separator = line.indexOf(":");
-    if (separator <= 0) return null; // malformed top-level line -> fail quiet
-    const key = line.slice(0, separator).trim();
-    if (!/^[A-Za-z0-9_-]+$/.test(key)) return null;
-    listFieldIndex = -1;
-    if (seenKeys.has(key)) continue; // first occurrence wins
-
-    const rawValue = line.slice(separator + 1);
-    if (rawValue.trim() === "") {
-      // Pending: either a scalar list follows or the key is unsupported.
-      seenKeys.add(key);
-      fields.push({ key, value: [] });
-      listFieldIndex = fields.length - 1;
-      continue;
-    }
-    const trimmedValue = rawValue.trim();
-    if (trimmedValue.startsWith("[") || trimmedValue.startsWith("{")) {
-      // Flow collections are unsupported -> omit.
-      continue;
-    }
-    const value = parseFrontmatterScalar(rawValue);
-    if (value === null) continue; // empty-ish unsupported value -> omit
-    seenKeys.add(key);
-    fields.push({ key, value });
-    supported = true;
+    // Nested/object/null/unsupported values: omitted, never stringified.
   }
 
-  // A trailing pending list that never received items is unsupported -> omit.
-  if (listFieldIndex !== -1 && Array.isArray(fields[listFieldIndex]?.value) && (fields[listFieldIndex]?.value as readonly unknown[]).length === 0) {
-    fields.splice(listFieldIndex, 1);
-  } else if (fields.some((f) => Array.isArray(f.value) && f.value.length > 0)) {
-    supported = true;
-  }
-
-  if (!supported || fields.length === 0) return null;
-  const bodyLines = lines.slice(closeIndex + 1);
-  while (bodyLines[0] === "") bodyLines.shift();
-  return { fields, body: bodyLines.join("\n") };
+  if (fields.length === 0) return null;
+  let body = rest.slice(closeMatch.index + closeMatch[0].length);
+  while (body.startsWith("\n")) body = body.slice(1);
+  return { fields, body };
 }

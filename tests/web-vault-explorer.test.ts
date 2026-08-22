@@ -203,7 +203,10 @@ describe("parseFrontmatterCard", () => {
       "body",
     ].join("\n");
     const card = parseFrontmatterCard(content);
-    expect(card?.fields.map((f) => f.key)).toEqual(["keep", "after"]);
+    // A flow list entirely made of scalars is rendered per the corrected
+    // contract; the flow mapping stays omitted.
+    expect(card?.fields.map((f) => f.key)).toEqual(["keep", "flowList", "after"]);
+    expect(card?.fields.find((f) => f.key === "flowList")?.value).toEqual(["a", "b"]);
   });
 
   it("fails quiet (null) on missing frontmatter, an unterminated block, a non-object block, malformed lines, or no supported fields", () => {
@@ -217,13 +220,26 @@ describe("parseFrontmatterCard", () => {
     expect(parseFrontmatterCard("---\nnested:\n  deep: 1\n---\nbody")).toBeNull();
   });
 
-  it("keeps the first occurrence of a duplicate key and never exposes later rewrites", () => {
+  it("fails quiet on duplicate keys (invalid YAML: mapping keys must be unique)", () => {
     const card = parseFrontmatterCard("---\ntitle: first\ntitle: second\n---\nbody");
-    expect(card?.fields).toEqual([{ key: "title", value: "first" }]);
+    expect(card).toBeNull();
   });
 
   it("returns the body after the closing delimiter with one leading newline stripped", () => {
     const card = parseFrontmatterCard("---\ntitle: x\n---\n\nbody line");
     expect(card?.body).toBe("body line");
+  });
+
+  it("accurately presents a literal multiline YAML scalar instead of its block indicator (V2 correction)", () => {
+    const card = parseFrontmatterCard("---\ndescription: |\n  line one\n  line two\n---\n# Body");
+    expect(card?.fields).toEqual([{ key: "description", value: "line one\nline two" }]);
+    const cardFolded = parseFrontmatterCard("---\nsummary: >\n  folded one\n  folded two\n---\n# Body");
+    expect(cardFolded?.fields).toEqual([{ key: "summary", value: "folded one folded two" }]);
+  });
+
+  it("parses CRLF-delimited initial fences and separates the body (V2 correction)", () => {
+    const card = parseFrontmatterCard("---\r\ntitle: CRLF doc\r\n---\r\n# Body");
+    expect(card?.fields).toEqual([{ key: "title", value: "CRLF doc" }]);
+    expect(card?.body).toBe("# Body");
   });
 });
