@@ -61,6 +61,20 @@ describe("startPeerConversation client", () => {
     await expect(startPeerConversation(["dipu", "zora"], "token")).rejects.toThrow("not in the local runnable set");
   });
 
+  it("rejects a non-201 ok response even when the payload looks valid (P3.3 correction)", async () => {
+    stubFetch(200, CREATED);
+    await expect(startPeerConversation(["dipu", "kimi"], "token")).rejects.toThrow();
+  });
+
+  it("classifies a malformed 201 success result as ambiguous — the request may have landed (P3.3 correction)", async () => {
+    const fake = stubFetch(201, { ...CREATED, dispatch: [] });
+    await expect(startPeerConversation(["dipu", "kimi"], "token")).rejects.toBeInstanceOf(PeerStartAmbiguousError);
+    expect(fake).toHaveBeenCalledTimes(1);
+    const fake2 = stubFetch(201, { conversation: { broken: true } });
+    await expect(startPeerConversation(["dipu", "kimi"], "token")).rejects.toBeInstanceOf(PeerStartAmbiguousError);
+    expect(fake2).toHaveBeenCalledTimes(1);
+  });
+
   it("classifies network-level failure as ambiguous (no automatic retry evidence)", async () => {
     const fake = vi.fn(async () => {
       throw new TypeError("fetch failed");

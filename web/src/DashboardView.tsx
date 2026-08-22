@@ -440,7 +440,12 @@ export function DashboardView({
                   <button
                     type="button"
                     className="button button-primary dashboard-peer-start"
-                    disabled={selectedPeers.length < 2 || selectedPeers.length > 8 || peerStart.phase === "busy"}
+                    disabled={
+                      selectedPeers.length < 2 ||
+                      selectedPeers.length > 8 ||
+                      peerStart.phase === "busy" ||
+                      peerStart.phase === "ambiguous"
+                    }
                     onClick={() => void handlePeerStart()}
                   >
                     <MessageIcon size={16} />

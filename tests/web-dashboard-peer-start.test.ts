@@ -279,6 +279,8 @@ describe("DashboardView peer mode (P3.3)", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(vi.mocked(startPeerConversation)).toHaveBeenCalledTimes(1);
+    // While ambiguous, resubmission is unavailable: refresh is the only path.
+    expect(peerStartButton().disabled).toBe(true);
     const refresh = container.querySelector<HTMLButtonElement>(".dashboard-peer-refresh");
     expect(refresh).not.toBeNull();
     expect(refresh?.textContent).toMatch(/refresh/i);
@@ -288,6 +290,8 @@ describe("DashboardView peer mode (P3.3)", () => {
     await flush();
     expect(refreshed()).toBe(1);
     expect(vi.mocked(startPeerConversation)).toHaveBeenCalledTimes(1);
+    // After the explicit refresh the control is usable again with the draft intact.
+    expect(peerStartButton().disabled).toBe(false);
   });
 
   it("routes a 401 to the shell auth-recovery callback", async () => {

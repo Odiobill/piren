@@ -211,7 +211,8 @@ export async function startPeerConversation(peers: readonly string[], token: str
     if (cause instanceof UnauthorizedError) throw cause;
     throw new PeerStartAmbiguousError();
   }
-  if (!res.ok) {
+  // Exactly 201 is success; any other status is the server's bounded error.
+  if (res.status !== 201) {
     let reason = `HTTP ${res.status}`;
     try {
       const body = (await res.json()) as { error?: unknown };
@@ -221,7 +222,13 @@ export async function startPeerConversation(peers: readonly string[], token: str
     }
     throw new Error(reason);
   }
-  return parsePeerStartResponse(await res.json());
+  try {
+    // A 201 whose body cannot be read or fails the safe parser is an
+    // AMBIGUOUS result: creation may have landed. Never a definitive error.
+    return parsePeerStartResponse(await res.json());
+  } catch {
+    throw new PeerStartAmbiguousError();
+  }
 }
 
 /**
