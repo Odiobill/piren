@@ -86,6 +86,25 @@ describe("SettingsView (S1 authority-first page)", () => {
     expect(agents?.querySelector(".settings-scheduler-enabled")).toBeNull();
   });
 
+  it("keeps each authority list flat: form cards are direct list children with no nested .settings-family", async () => {
+    vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "kimi", online: true }] });
+    await renderSettings();
+    const lists = container.querySelectorAll("section ul.settings-family-list");
+    expect(lists.length).toBe(2);
+    const installation = lists[0] as HTMLUListElement;
+    const agents = lists[1] as HTMLUListElement;
+    // Direct children only, one card per existing form.
+    expect(installation.children.length).toBe(3);
+    expect(agents.children.length).toBe(1);
+    for (const list of [installation, agents]) {
+      for (const child of Array.from(list.children)) {
+        expect(child.classList.contains("settings-family")).toBe(true);
+        expect(child.querySelector(".settings-family")).toBeNull();
+      }
+    }
+    expect(container.querySelectorAll(".settings-family .settings-family").length).toBe(0);
+  });
+
   it("removes the internal tier/roadmap/process copy and the never-do section from the rendered page", async () => {
     await renderSettings();
     const text = container.textContent ?? "";

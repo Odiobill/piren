@@ -48,15 +48,10 @@ export function SettingsView({
           anything, and never displays a saved bot token.
         </p>
         <ul className="settings-family-list">
-          <li className="settings-family">
-            <TelegramSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
-          </li>
-          <li className="settings-family">
-            <DiscordSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
-          </li>
-          <li className="settings-family">
-            <SchedulerSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
-          </li>
+          {/* The form components are themselves the <li className="settings-family"> cards. */}
+          <TelegramSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
+          <DiscordSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
+          <SchedulerSettingsForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
         </ul>
       </section>
 
@@ -67,9 +62,8 @@ export function SettingsView({
           the vault. Saving never alters a conversation that is already running.
         </p>
         <ul className="settings-family-list">
-          <li className="settings-family">
-            <AgentPreferencesForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
-          </li>
+          {/* The form component is itself the <li className="settings-family"> card. */}
+          <AgentPreferencesForm token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
         </ul>
       </section>
     </div>
