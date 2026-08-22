@@ -39,7 +39,7 @@ describe("parsePeerAudienceStartRequest", () => {
       expect(result.failure.members).toContainEqual({ peer: "   ", reason: "blank" });
       expect(result.failure.members).toContainEqual({ peer: "Bad_Name", reason: "invalid-name" });
       // Non-failing members are never listed.
-      expect(result.failure.members.some((m) => m.peer === "dipu")).toBe(false);
+      expect(result.failure.members.some((m) => "peer" in m && m.peer === "dipu")).toBe(false);
     } else {
       throw new Error("expected invalid-members failure");
     }
@@ -103,5 +103,35 @@ describe("validatePeerRunnability", () => {
     const { validatePeerRunnability } = await import("../src/conversation-peer-start.js");
     const result = validatePeerRunnability(["dipu", "zora"], ["dipu"]);
     expect(result).toEqual({ ok: false, notRunnable: ["zora"] });
+  });
+});
+
+describe("peerStartOriginBody canonicalization (P3.1 correction)", () => {
+  it("renders canonical ascending names even when the caller passes an unsorted valid set, never mutating caller input", () => {
+    const input = ["kimi", "dipu"];
+    expect(peerStartOriginBody(input)).toBe(
+      "The steward requested starting this peer conversation with: dipu, kimi.",
+    );
+    // The caller's array is never reordered.
+    expect(input).toEqual(["kimi", "dipu"]);
+  });
+});
+
+describe("parsePeerAudienceStartRequest totality on unknown input (P3.1 correction)", () => {
+  it("never coerces non-string entries: a throwing toString object fails safely and deterministically", () => {
+    const hostile = {
+      toString() {
+        throw new Error("hostile coercion must never run");
+      },
+    };
+    const result = parsePeerAudienceStartRequest({ peers: [hostile, "dipu"] });
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.failure.kind === "invalid-members") {
+      expect(result.failure.members).toContainEqual({ reason: "non-string", index: 0 });
+      // Arbitrary object data is never echoed into the failure.
+      expect(JSON.stringify(result.failure)).not.toContain("hostile");
+    } else {
+      throw new Error("expected invalid-members failure");
+    }
   });
 });

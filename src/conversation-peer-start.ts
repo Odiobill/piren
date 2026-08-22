@@ -22,11 +22,12 @@ import { AGENT_NAME_PATTERN } from "./conversations.js";
 export const PEER_AUDIENCE_MIN = 2;
 export const PEER_AUDIENCE_MAX = 8;
 
-/** One rejected peer with its stable reason class. */
-export interface PeerStartInvalidMember {
-  peer: string;
-  reason: "blank" | "invalid-name" | "duplicate";
-}
+/** One rejected peer: string entries echo only the name with its reason;
+ * non-string entries are identified by array index only (never coerced,
+ * never echoed). */
+export type PeerStartInvalidMember =
+  | { peer: string; reason: "blank" | "invalid-name" | "duplicate" }
+  | { reason: "non-string"; index: number };
 
 export type ParsePeerAudienceStartResult =
   | { ok: true; /** Canonically sorted (byte-wise ascending) initial audience. */ audience: string[] }
@@ -65,26 +66,28 @@ export function parsePeerAudienceStartRequest(input: unknown): ParsePeerAudience
   const members: PeerStartInvalidMember[] = [];
   const seen = new Set<string>();
   const valid: string[] = [];
-  for (const entry of peers) {
+  peers.forEach((entry, index) => {
     if (typeof entry !== "string") {
-      members.push({ peer: String(entry), reason: "invalid-name" });
-      continue;
+      // Total on unknown input: never call String()/toString() on untrusted
+      // values; report the index only.
+      members.push({ reason: "non-string", index });
+      return;
     }
     if (entry.trim() === "") {
       members.push({ peer: entry, reason: "blank" });
-      continue;
+      return;
     }
     if (!AGENT_NAME_PATTERN.test(entry)) {
       members.push({ peer: entry, reason: "invalid-name" });
-      continue;
+      return;
     }
     if (seen.has(entry)) {
       members.push({ peer: entry, reason: "duplicate" });
-      continue;
+      return;
     }
     seen.add(entry);
     valid.push(entry);
-  }
+  });
   if (members.length > 0) return { ok: false, failure: { kind: "invalid-members", members } };
   return { ok: true, audience: [...valid].sort() };
 }
@@ -108,7 +111,11 @@ export function peerConversationTitle(memberCount: number): string {
  * any run state.
  */
 export function peerStartOriginBody(audience: readonly string[]): string {
-  return `The steward requested starting this peer conversation with: ${audience.join(", ")}.`;
+  // Deterministic canonical rendering: sort a COPY so caller order (or a
+  // later non-parse caller) can never leak into the durable origin evidence,
+  // and caller input is never mutated.
+  const canonical = [...audience].sort();
+  return `The steward requested starting this peer conversation with: ${canonical.join(", ")}.`;
 }
 
 export type PeerRunnableValidationResult =
