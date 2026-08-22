@@ -481,6 +481,45 @@ export interface CreateConversationForAgentStartOptions {
 }
 
 /**
+ * P3.2 — narrow durable peer-audience start creation path. Creates an open
+ * Conversation whose audience is the validated, canonically sorted initial
+ * peer set and whose title is the immutable generic cardinal
+ * `Conversation with N agents` (rendered by the pure P3.1 core). No steward
+ * text exists on this path; the durable origin is the additive
+ * system-authored `conversation_start_requested` event appended by the
+ * caller AFTER the manifest. This helper never dispatches, never appends
+ * events, and does not weaken the text-first `createConversation` API.
+ */
+export interface CreateConversationForPeerStartOptions {
+  vaultRoot: string;
+  /** The validated, canonically sorted initial audience (2-8 unique members). */
+  audience: readonly string[];
+  now?: () => Date;
+  nonce?: () => string;
+  /** P2 deterministic suffix seam for tests ONLY (see CreateConversationOptions). */
+  suffix?: () => string;
+  io?: ConversationWriteIo;
+}
+
+export async function createConversationForPeerStart(
+  options: CreateConversationForPeerStartOptions,
+): Promise<CreateConversationResult> {
+  // Lazily required here to keep this module import-cycle-free; the pure
+  // core has no fs/gateway deps.
+  const { peerConversationTitle } = await import("./conversation-peer-start.js");
+  const title = peerConversationTitle(options.audience.length);
+  return createConversationRecord({
+    vaultRoot: options.vaultRoot,
+    deriveTitle: () => title,
+    audience: options.audience,
+    ...(options.now !== undefined ? { now: options.now } : {}),
+    ...(options.nonce !== undefined ? { nonce: options.nonce } : {}),
+    ...(options.suffix !== undefined ? { suffix: options.suffix } : {}),
+    ...(options.io !== undefined ? { io: options.io } : {}),
+  });
+}
+
+/**
  * ADR-0044 — narrow durable agent-first start creation path. Creates an open
  * Conversation with `audience: [agent]` and the deterministic title
  * `Conversation with <agent>` (the validated agent name, never LLM- or

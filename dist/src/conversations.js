@@ -353,6 +353,21 @@ export async function createConversation(options) {
         ...(options.io !== undefined ? { io: options.io } : {}),
     });
 }
+export async function createConversationForPeerStart(options) {
+    // Lazily required here to keep this module import-cycle-free; the pure
+    // core has no fs/gateway deps.
+    const { peerConversationTitle } = await import("./conversation-peer-start.js");
+    const title = peerConversationTitle(options.audience.length);
+    return createConversationRecord({
+        vaultRoot: options.vaultRoot,
+        deriveTitle: () => title,
+        audience: options.audience,
+        ...(options.now !== undefined ? { now: options.now } : {}),
+        ...(options.nonce !== undefined ? { nonce: options.nonce } : {}),
+        ...(options.suffix !== undefined ? { suffix: options.suffix } : {}),
+        ...(options.io !== undefined ? { io: options.io } : {}),
+    });
+}
 /**
  * ADR-0044 — narrow durable agent-first start creation path. Creates an open
  * Conversation with `audience: [agent]` and the deterministic title

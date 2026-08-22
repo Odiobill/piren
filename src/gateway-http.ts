@@ -35,6 +35,7 @@ import {
   appendConversationEvent,
   createConversation,
   createConversationForAgentStart,
+  createConversationForPeerStart,
   listConversations,
   readConversation,
   readConversationEvents,
@@ -48,6 +49,11 @@ import {
   type ConversationManifest,
   type RenameConversationResult,
 } from "./conversations.js";
+import {
+  parsePeerAudienceStartRequest,
+  peerStartOriginBody,
+  validatePeerRunnability,
+} from "./conversation-peer-start.js";
 import type { VaultDirReader } from "./okf.js";
 import { classifyRunOutcome, isFallbackEligibleOutcome, type RunOutcome } from "./model-fallback-outcome.js";
 import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
@@ -1899,6 +1905,10 @@ export class GatewayServer {
       // ADR-0044: the agent-first start route is an exact path, never a
       // conversation id (P2 neutral ids can never be "start").
       await this.handleConversationStart(req, res);
+    } else if (segments.length === 3 && segments[2] === "start-peer" && req.method === "POST") {
+      // P3.2: the additive peer-audience start route is an exact path, never
+      // a conversation id (P2 neutral ids can never be "start-peer").
+      await this.handleConversationStartPeer(req, res);
     } else if (segments.length === 2 && req.method === "POST") {
       await this.handleConversationCreate(req, res);
     } else if (segments.length === 2 && req.method === "GET") {
@@ -2022,6 +2032,88 @@ export class GatewayServer {
       conversation: this.safeConversation(conversation),
       event: this.safeConversationEvent(event),
       dispatch: [{ agent, status: outcome.status }],
+    });
+  }
+
+  /**
+   * P3.2 (accepted P2 contract): authenticated POST /api/conversations/start-peer
+   * — the additive peer-audience Conversation start. Strictly parses the
+   * exact `{peers}` envelope via the pure P3.1 core; validates the WHOLE
+   * audience against the gateway-resolved local runnable set BEFORE any vault
+   * persistence (duplicates rejected, never collapsed; cardinality 2-8);
+   * creates exactly one manifest with the canonically sorted initial audience
+   * and the immutable cardinal title via the existing atomic machinery;
+   * appends exactly one canonical system-authored `conversation_start_requested`
+   * origin AFTER the manifest; publishes that exact committed record to the
+   * scoped SSE stream; returns 201 `{conversation, event}` in the existing
+   * safe projections with NO `dispatch` field. Zero broker contact: no
+   * greeting, queue activity, or run evidence is ever produced here.
+   */
+  private async handleConversationStartPeer(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    const result = parsePeerAudienceStartRequest(parsed.value);
+    if (!result.ok) {
+      let message: string;
+      if (result.failure.kind === "malformed-envelope") {
+        message = "peer conversation start requires exactly one peers array";
+      } else if (result.failure.kind === "cardinality") {
+        message = "peer conversation start requires 2 to 8 distinct agent names";
+      } else {
+        const details = result.failure.members.map((member) => {
+          if ("peer" in member) return `${member.peer} (${member.reason})`;
+          return `entry ${member.index} (${member.reason})`;
+        });
+        message = `invalid peer members: ${details.join(", ")}`;
+      }
+      this.writeJson(res, 400, { error: message });
+      return;
+    }
+    const runnability = validatePeerRunnability(result.audience, this.runnableAgents);
+    if (!runnability.ok) {
+      this.writeJson(res, 400, { error: `Peer members not in the local runnable set: ${runnability.notRunnable.join(", ")}.` });
+      return;
+    }
+
+    let conversation: ConversationManifest;
+    try {
+      conversation = await createConversationForPeerStart({ vaultRoot: this.vaultRoot as string, audience: result.audience });
+    } catch (error) {
+      this.conversationError(res, error);
+      return;
+    }
+    const originBody = peerStartOriginBody(result.audience);
+    const event = await appendConversationEvent({
+      vaultRoot: this.vaultRoot as string,
+      conversationId: conversation.id,
+      kind: "conversation_start_requested",
+      authorKind: "system",
+      author: "system",
+      body: originBody,
+      nonce: () => randomUUID().slice(0, 8),
+    });
+    // Durable live-event parity (same P5 pattern as the single-agent start):
+    // publish the exact just-committed record to scoped live subscribers.
+    // Contained observability only: it can never affect persistence,
+    // membership, or any run state (there is no dispatch on this path).
+    (this.conversationBroker as ConversationBroker).publishConversationEvent(conversation.id, {
+      id: event.id,
+      conversationId: conversation.id,
+      kind: "conversation_start_requested",
+      authorKind: "system",
+      author: "system",
+      created: event.created,
+      sequence: event.sequence,
+      mentions: [],
+      body: originBody,
+      path: event.path,
+    });
+    this.writeJson(res, 201, {
+      conversation: this.safeConversation(conversation),
+      event: this.safeConversationEvent(event),
     });
   }
 

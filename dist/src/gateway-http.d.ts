@@ -306,6 +306,21 @@ export declare class GatewayServer {
      * steward text and never weakens the text-first create route.
      */
     private handleConversationStart;
+    /**
+     * P3.2 (accepted P2 contract): authenticated POST /api/conversations/start-peer
+     * — the additive peer-audience Conversation start. Strictly parses the
+     * exact `{peers}` envelope via the pure P3.1 core; validates the WHOLE
+     * audience against the gateway-resolved local runnable set BEFORE any vault
+     * persistence (duplicates rejected, never collapsed; cardinality 2-8);
+     * creates exactly one manifest with the canonically sorted initial audience
+     * and the immutable cardinal title via the existing atomic machinery;
+     * appends exactly one canonical system-authored `conversation_start_requested`
+     * origin AFTER the manifest; publishes that exact committed record to the
+     * scoped SSE stream; returns 201 `{conversation, event}` in the existing
+     * safe projections with NO `dispatch` field. Zero broker contact: no
+     * greeting, queue activity, or run evidence is ever produced here.
+     */
+    private handleConversationStartPeer;
     private handleConversationCreate;
     private handleConversationList;
     private handleConversationRead;
