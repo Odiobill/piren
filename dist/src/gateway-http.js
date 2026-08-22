@@ -1874,10 +1874,11 @@ export class GatewayServer {
                 message = "peer conversation start requires 2 to 8 distinct agent names";
             }
             else {
+                // Bounded and redacted (P3.2 correction): identify positions and
+                // reason classes only — never echo raw client-supplied values.
                 const details = result.failure.members.map((member) => {
-                    if ("peer" in member)
-                        return `${member.peer} (${member.reason})`;
-                    return `entry ${member.index} (${member.reason})`;
+                    const reason = member.reason;
+                    return `entry ${member.index} (${reason})`;
                 });
                 message = `invalid peer members: ${details.join(", ")}`;
             }
@@ -1886,7 +1887,9 @@ export class GatewayServer {
         }
         const runnability = validatePeerRunnability(result.audience, this.runnableAgents);
         if (!runnability.ok) {
-            this.writeJson(res, 400, { error: `Peer members not in the local runnable set: ${runnability.notRunnable.join(", ")}.` });
+            // Bounded and redacted: positions only, never the submitted names.
+            const positions = runnability.notRunnable.map((member) => member.index).join(", ");
+            this.writeJson(res, 400, { error: `Peer members at entries ${positions} are not in the local runnable set.` });
             return;
         }
         let conversation;

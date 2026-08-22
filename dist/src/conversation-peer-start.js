@@ -53,15 +53,15 @@ export function parsePeerAudienceStartRequest(input) {
             return;
         }
         if (entry.trim() === "") {
-            members.push({ peer: entry, reason: "blank" });
+            members.push({ peer: entry, reason: "blank", index });
             return;
         }
         if (!AGENT_NAME_PATTERN.test(entry)) {
-            members.push({ peer: entry, reason: "invalid-name" });
+            members.push({ peer: entry, reason: "invalid-name", index });
             return;
         }
         if (seen.has(entry)) {
-            members.push({ peer: entry, reason: "duplicate" });
+            members.push({ peer: entry, reason: "duplicate", index });
             return;
         }
         seen.add(entry);
@@ -98,11 +98,17 @@ export function peerStartOriginBody(audience) {
 /**
  * Optional pure runnable-set validation against an INJECTED set (the gateway's
  * resolved local runnable set in production). Never reads configuration; whole-
- * set semantics: any non-runnable member fails with all failing names listed.
+ * set semantics: any non-runnable member fails with its name AND input
+ * position so callers can choose bounded position-based reporting instead of
+ * echoing untrusted values.
  */
 export function validatePeerRunnability(audience, runnableAgents) {
     const runnable = new Set(runnableAgents);
-    const notRunnable = audience.filter((name) => !runnable.has(name));
+    const notRunnable = [];
+    audience.forEach((name, index) => {
+        if (!runnable.has(name))
+            notRunnable.push({ peer: name, index });
+    });
     return notRunnable.length === 0 ? { ok: true } : { ok: false, notRunnable };
 }
 //# sourceMappingURL=conversation-peer-start.js.map

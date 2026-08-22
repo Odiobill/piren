@@ -24,6 +24,7 @@ export declare const PEER_AUDIENCE_MAX = 8;
 export type PeerStartInvalidMember = {
     peer: string;
     reason: "blank" | "invalid-name" | "duplicate";
+    index: number;
 } | {
     reason: "non-string";
     index: number;
@@ -68,11 +69,16 @@ export type PeerRunnableValidationResult = {
     ok: true;
 } | {
     ok: false;
-    notRunnable: string[];
+    notRunnable: Array<{
+        peer: string;
+        index: number;
+    }>;
 };
 /**
  * Optional pure runnable-set validation against an INJECTED set (the gateway's
  * resolved local runnable set in production). Never reads configuration; whole-
- * set semantics: any non-runnable member fails with all failing names listed.
+ * set semantics: any non-runnable member fails with its name AND input
+ * position so callers can choose bounded position-based reporting instead of
+ * echoing untrusted values.
  */
 export declare function validatePeerRunnability(audience: readonly string[], runnableAgents: readonly string[]): PeerRunnableValidationResult;

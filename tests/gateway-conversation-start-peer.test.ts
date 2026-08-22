@@ -156,6 +156,27 @@ describe("POST /api/conversations/start-peer (P3.2)", () => {
     expect(await persistedConversationCount()).toBe(0);
   });
 
+  it("bounds and redacts validation errors: raw long/secret-looking values never appear in responses (P3.2 correction)", async () => {
+    await startServer();
+    const longInvalid = "x".repeat(5000) + "-secret-looking-token-abcdef0123456789";
+    const longValidNonRunnable = ("zora-".repeat(1000) + "end").toLowerCase();
+    const cases: unknown[] = [
+      { peers: ["dipu", longInvalid] },
+      { peers: ["dipu", longValidNonRunnable] },
+    ];
+    for (const body of cases) {
+      const response = await post(url("/api/conversations/start-peer"), body, token);
+      expect(response.status).toBe(400);
+      const payload = (await response.json()) as { error: string };
+      expect(payload.error).not.toContain(longInvalid);
+      expect(payload.error).not.toContain(longValidNonRunnable);
+      expect(payload.error).not.toContain("secret-looking-token");
+      // Bounded: a bounded class summary, never an unbounded client echo.
+      expect(payload.error.length).toBeLessThan(400);
+    }
+    expect(await persistedConversationCount()).toBe(0);
+  });
+
   it("creates exactly one peer conversation: canonical audience, cardinal title, single system origin, 201 without dispatch, zero broker contact", async () => {
     // A missing-binary target builder proves zero broker contact: any dispatch
     // attempt would fail (launch_failure) or throw here.

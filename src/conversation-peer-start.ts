@@ -26,7 +26,7 @@ export const PEER_AUDIENCE_MAX = 8;
  * non-string entries are identified by array index only (never coerced,
  * never echoed). */
 export type PeerStartInvalidMember =
-  | { peer: string; reason: "blank" | "invalid-name" | "duplicate" }
+  | { peer: string; reason: "blank" | "invalid-name" | "duplicate"; index: number }
   | { reason: "non-string"; index: number };
 
 export type ParsePeerAudienceStartResult =
@@ -74,15 +74,15 @@ export function parsePeerAudienceStartRequest(input: unknown): ParsePeerAudience
       return;
     }
     if (entry.trim() === "") {
-      members.push({ peer: entry, reason: "blank" });
+      members.push({ peer: entry, reason: "blank", index });
       return;
     }
     if (!AGENT_NAME_PATTERN.test(entry)) {
-      members.push({ peer: entry, reason: "invalid-name" });
+      members.push({ peer: entry, reason: "invalid-name", index });
       return;
     }
     if (seen.has(entry)) {
-      members.push({ peer: entry, reason: "duplicate" });
+      members.push({ peer: entry, reason: "duplicate", index });
       return;
     }
     seen.add(entry);
@@ -120,18 +120,23 @@ export function peerStartOriginBody(audience: readonly string[]): string {
 
 export type PeerRunnableValidationResult =
   | { ok: true }
-  | { ok: false; notRunnable: string[] };
+  | { ok: false; notRunnable: Array<{ peer: string; index: number }> };
 
 /**
  * Optional pure runnable-set validation against an INJECTED set (the gateway's
  * resolved local runnable set in production). Never reads configuration; whole-
- * set semantics: any non-runnable member fails with all failing names listed.
+ * set semantics: any non-runnable member fails with its name AND input
+ * position so callers can choose bounded position-based reporting instead of
+ * echoing untrusted values.
  */
 export function validatePeerRunnability(
   audience: readonly string[],
   runnableAgents: readonly string[],
 ): PeerRunnableValidationResult {
   const runnable = new Set(runnableAgents);
-  const notRunnable = audience.filter((name) => !runnable.has(name));
+  const notRunnable: Array<{ peer: string; index: number }> = [];
+  audience.forEach((name, index) => {
+    if (!runnable.has(name)) notRunnable.push({ peer: name, index });
+  });
   return notRunnable.length === 0 ? { ok: true } : { ok: false, notRunnable };
 }

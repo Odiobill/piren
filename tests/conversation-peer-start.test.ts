@@ -36,8 +36,8 @@ describe("parsePeerAudienceStartRequest", () => {
     const result = parsePeerAudienceStartRequest({ peers: ["dipu", "   ", "Bad_Name"] });
     expect(result.ok).toBe(false);
     if (!result.ok && result.failure.kind === "invalid-members") {
-      expect(result.failure.members).toContainEqual({ peer: "   ", reason: "blank" });
-      expect(result.failure.members).toContainEqual({ peer: "Bad_Name", reason: "invalid-name" });
+      expect(result.failure.members).toContainEqual({ peer: "   ", reason: "blank", index: 1 });
+      expect(result.failure.members).toContainEqual({ peer: "Bad_Name", reason: "invalid-name", index: 2 });
       // Non-failing members are never listed.
       expect(result.failure.members.some((m) => "peer" in m && m.peer === "dipu")).toBe(false);
     } else {
@@ -49,7 +49,7 @@ describe("parsePeerAudienceStartRequest", () => {
     const result = parsePeerAudienceStartRequest({ peers: ["dipu", "kimi", "dipu"] });
     expect(result.ok).toBe(false);
     if (!result.ok && result.failure.kind === "invalid-members") {
-      expect(result.failure.members).toContainEqual({ peer: "dipu", reason: "duplicate" });
+      expect(result.failure.members).toContainEqual({ peer: "dipu", reason: "duplicate", index: 2 });
     } else {
       throw new Error("expected invalid-members failure");
     }
@@ -102,7 +102,7 @@ describe("validatePeerRunnability", () => {
   it("fails with all non-runnable members listed (whole-set semantics)", async () => {
     const { validatePeerRunnability } = await import("../src/conversation-peer-start.js");
     const result = validatePeerRunnability(["dipu", "zora"], ["dipu"]);
-    expect(result).toEqual({ ok: false, notRunnable: ["zora"] });
+    expect(result).toEqual({ ok: false, notRunnable: [{ peer: "zora", index: 1 }] });
   });
 });
 
