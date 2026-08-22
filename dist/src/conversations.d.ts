@@ -28,6 +28,8 @@ export declare const CONVERSATION_RUN_STATUSES: readonly ["running", "completed"
 export type ConversationRunStatus = (typeof CONVERSATION_RUN_STATUSES)[number];
 export declare const CONVERSATION_RUN_FAILURE_KINDS: readonly ["launch_failure", "ambiguous", "provider_error"];
 export type ConversationRunFailureKind = (typeof CONVERSATION_RUN_FAILURE_KINDS)[number];
+/** Exported for the pure peer-audience contract core (P3.1); grammar unchanged. */
+export declare const AGENT_NAME_PATTERN: RegExp;
 /** U2: bounded rename title length in UTF-16 code units (contract §Rename input). */
 export declare const CONVERSATION_TITLE_MAX = 120;
 /** P2: the neutral Conversation id suffix is exactly 12 lowercase hex characters. */

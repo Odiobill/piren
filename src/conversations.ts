@@ -63,7 +63,8 @@ export const CONVERSATION_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous", "p
 export type ConversationRunFailureKind = (typeof CONVERSATION_RUN_FAILURE_KINDS)[number];
 
 const CONVERSATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/i;
-const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+/** Exported for the pure peer-audience contract core (P3.1); grammar unchanged. */
+export const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 const CONVERSATION_TITLE_PREFIX_MAX = 48;
 const CONVERSATION_SLUG_MAX = 48;
 /** U2: bounded rename title length in UTF-16 code units (contract §Rename input). */

@@ -51,7 +51,8 @@ export const CONVERSATION_AUTHOR_KINDS = ["steward", "agent", "system"];
 export const CONVERSATION_RUN_STATUSES = ["running", "completed", "failed", "timed_out", "cancelled"];
 export const CONVERSATION_RUN_FAILURE_KINDS = ["launch_failure", "ambiguous", "provider_error"];
 const CONVERSATION_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/i;
-const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+/** Exported for the pure peer-audience contract core (P3.1); grammar unchanged. */
+export const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 const CONVERSATION_TITLE_PREFIX_MAX = 48;
 const CONVERSATION_SLUG_MAX = 48;
 /** U2: bounded rename title length in UTF-16 code units (contract §Rename input). */
