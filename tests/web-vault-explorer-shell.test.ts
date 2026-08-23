@@ -401,6 +401,36 @@ describe("AppShell Vault Explorer continuity across presentations (WUX-B)", () =
     const companion = container.querySelector<HTMLElement>(".split-companion-pane");
     expect(companion?.textContent).toContain("notes.md");
   });
+
+  it("split-to-full-page retains the in-memory Recent ordering", async () => {
+    await renderShell();
+    await flush();
+    navigateToSelection();
+    await flush();
+    await act(async () => toggleButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+
+    const order = container.querySelector<HTMLButtonElement>(".vault-explorer-order-toggle");
+    expect(order).not.toBeNull();
+    await act(async () => order?.click());
+    await flush();
+    expect(order?.getAttribute("aria-pressed")).toBe("true");
+
+    const callsBefore = vi.mocked(fetchVaultList).mock.calls.length;
+    const fullPage = container.querySelector<HTMLButtonElement>('[aria-label="Open Vault Explorer full page"]');
+    expect(fullPage).not.toBeNull();
+    await act(async () => fullPage?.click());
+    const onSelectionChange = navigatorProps.onSelectionChange as (title: string | null, active: boolean) => void;
+    await act(async () => onSelectionChange(null, false));
+    await flush();
+
+    const remountCalls = vi.mocked(fetchVaultList).mock.calls.slice(callsBefore);
+    expect(remountCalls.length).toBeGreaterThanOrEqual(1);
+    expect(remountCalls[0]).toEqual([".", "T", expect.anything(), "recent"]);
+    const fullPageOrder = container.querySelector<HTMLButtonElement>(".vault-explorer-order-toggle");
+    expect(fullPageOrder?.getAttribute("aria-pressed")).toBe("true");
+    expect(fullPageOrder?.textContent).toContain("Recent");
+  });
 });
 
 describe("WUX-B full-page Explorer single scroll owner", () => {

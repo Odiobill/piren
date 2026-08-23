@@ -10,7 +10,7 @@ import { SplitWorkspaceShell } from "./SplitWorkspaceShell";
 import { initialSplitWorkspaceState, mobileSelectPane, type SplitWorkspaceState } from "./split-workspace";
 import { getModuleById } from "./registry";
 import { VaultExplorer } from "./VaultExplorer";
-import { VAULT_ROOT_PATH, type VaultExplorerLocation } from "./vault-explorer";
+import { VAULT_ROOT_PATH, type VaultExplorerLocation, type VaultOrdering } from "./vault-explorer";
 import { SettingsView } from "./SettingsView";
 import { formatConversationHash } from "./hash-route";
 
@@ -88,6 +88,10 @@ export function AppShell({
     path: VAULT_ROOT_PATH,
     document: null,
   });
+  // The explicit list order is session-only Explorer presentation state too:
+  // a split/full-page remount keeps the steward's current order without
+  // browser persistence or a new request authority.
+  const [explorerOrdering, setExplorerOrdering] = useState<VaultOrdering>("name");
   /**
    * W2: the smallest existing typed selection signal at the shell boundary.
    * The navigator reports the gateway-authoritative title (or null) via
@@ -273,6 +277,8 @@ export function AppShell({
                 onValidated={onValidated}
                 initialLocation={explorerLocation}
                 onLocationChange={setExplorerLocation}
+                ordering={explorerOrdering}
+                onOrderingChange={setExplorerOrdering}
               />
             </div>
           )}
@@ -301,6 +307,8 @@ export function AppShell({
                     onValidated={onValidated}
                     initialLocation={explorerLocation}
                     onLocationChange={setExplorerLocation}
+                    ordering={explorerOrdering}
+                    onOrderingChange={setExplorerOrdering}
                   />
                 ) : undefined
               }
