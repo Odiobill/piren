@@ -12,7 +12,7 @@ import {
 } from "./vault-explorer";
 import { SafeMarkdownBody } from "./SafeMarkdown";
 import { isMarkdownFileName, parseFrontmatterCard } from "./vault-explorer";
-import { FileIcon, FolderIcon } from "./icons";
+import { ArrowLeftIcon, FileIcon, FolderIcon, RetryIcon } from "./icons";
 
 /**
  * W2 (0.2.0 scope amendment §4; accepted companion architecture Phase B) —
@@ -139,12 +139,14 @@ export function VaultExplorer({
     <section className="vault-explorer" aria-label="Vault Explorer">
       <nav className="vault-explorer-breadcrumb" aria-label="Vault path">
         <button type="button" onClick={() => loadList(VAULT_ROOT_PATH)}>
+          <FolderIcon size={13} />
           Vault
         </button>
         {crumbs.map((crumb) => (
           <span key={crumb.path} className="vault-explorer-crumb">
             <span aria-hidden="true">/</span>
             <button type="button" onClick={() => loadList(crumb.path)}>
+              <FolderIcon size={13} />
               {crumb.name}
             </button>
           </span>
@@ -155,7 +157,8 @@ export function VaultExplorer({
         <div className="vault-explorer-document" role="region" aria-label={`Document: ${selected.name}`}>
           <div className="vault-explorer-document-header">
             <button type="button" className="vault-explorer-back" onClick={() => loadList(path)}>
-              ← Back to listing
+              <ArrowLeftIcon size={13} />
+              Back to listing
             </button>
             <span className="vault-explorer-document-name">{selected.name}</span>
           </div>
@@ -164,6 +167,7 @@ export function VaultExplorer({
             <div className="vault-explorer-error" role="alert">
               <p>{readPhase.bounded}</p>
               <button type="button" onClick={() => loadRead(selected.path)}>
+                <RetryIcon size={13} />
                 Retry
               </button>
             </div>
@@ -208,6 +212,7 @@ export function VaultExplorer({
             <div className="vault-explorer-error" role="alert">
               <p>{listPhase.bounded}</p>
               <button type="button" onClick={() => loadList(path)}>
+                <RetryIcon size={13} />
                 Retry
               </button>
             </div>

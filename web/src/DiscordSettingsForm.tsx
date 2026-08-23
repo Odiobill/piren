@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchDiscordSettings, saveDiscordSettings, SettingsHttpError, UnauthorizedError } from "./api";
 import { parseDiscordSnowflakesInput, type DiscordSettingsProjection } from "./settings-transport";
+import { SaveIcon } from "./icons";
 
 /**
  * W5 (0.2.0 amendment §5/§5.1; ADR-0046): the typed Discord transport
@@ -151,8 +152,8 @@ export function DiscordSettingsForm({
         <div className="settings-form">
           <p className="muted">
             {read.projection.configured ? "Bot token configured" : "Bot token not configured"} ·{" "}
-            {read.projection.allowedGuildIds} guild(s) and {read.projection.allowedChannelIds} channel(s) allowlisted —
-            enter lists to replace them. Thread and DM access stays fail-closed.
+            {read.projection.allowedGuildIds} guild(s) and {read.projection.allowedChannelIds} channel(s) allowlisted.
+            Enter lists to replace them. Thread and DM access stays fail-closed.
           </p>
           <label className="settings-field">
             Bot token (write-only, never displayed)
@@ -167,7 +168,7 @@ export function DiscordSettingsForm({
             />
           </label>
           <label className="settings-field">
-            Allowed server (guild) IDs — comma-separated snowflakes
+            Allowed server (guild) IDs (comma-separated snowflakes)
             <input
               className="settings-form-guild-ids"
               type="text"
@@ -232,6 +233,7 @@ export function DiscordSettingsForm({
           {saveError !== null && <p className="settings-form-save-error" role="alert">{saveError}</p>}
           {saved && <p className="settings-form-saved" role="status">Saved.</p>}
           <button type="button" className="settings-form-save button" disabled={saving} onClick={handleSave}>
+            <SaveIcon size={13} />
             {saving ? "Saving…" : "Save"}
           </button>
         </div>

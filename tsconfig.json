@@ -66,6 +66,9 @@
     "tests/settings-transport-form.test.ts",
     "tests/web-dashboard-peer-start.test.ts",
     "tests/web-appshell-peer-refresh.test.ts",
-    "tests/web-api-peer-start.test.ts"
+    "tests/web-api-peer-start.test.ts",
+    "tests/web-dashboard-multiselect.test.ts",
+    "tests/web-visible-ui-icons.test.ts",
+    "tests/web-wux-sidebar-row-browser.test.ts"
   ]
 }

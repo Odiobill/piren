@@ -15,13 +15,14 @@ import {
 } from "../web/src/api.js";
 
 /**
- * P3.3 (workbench-ux-follow-up-design §1.5; accepted P2) — Dashboard peer-mode
- * integration: component-local labelled toggle; aria-pressed membership
- * cards; Start peer conversation gated to 2–8 distinct selections with one
- * in-flight request; truthful busy/error/success (no attention/run claims);
- * definitive 4xx = explicit fresh retry only; ambiguous failure = refresh-
- * only recovery through the narrow shell callback; single-agent + T1 controls
- * hidden in peer mode and restored exactly when it is off.
+ * WUX-A (workbench-ux-follow-up correction from the first 0.2.0 pilot) —
+ * Dashboard peer-audience start over the ONE default multi-selection model:
+ * aria-pressed membership cards with no separate mode toggle; one visible
+ * Start conversation control routed by cardinality so two-to-eight distinct
+ * selections use the existing peer start with one in-flight request;
+ * truthful busy/error/success (no attention/run claims); definitive 4xx =
+ * explicit fresh retry only; ambiguous failure = refresh-only recovery
+ * through the narrow shell callback; T1 assignment stays exact-one gated.
  */
 
 vi.mock("../web/src/api.js", async (importOriginal) => {
@@ -106,22 +107,15 @@ function agentButton(name: string): HTMLButtonElement {
   return el;
 }
 
-function peerToggle(): HTMLButtonElement {
-  const el = container.querySelector<HTMLButtonElement>(".dashboard-peer-mode-toggle");
-  if (el === null) throw new Error("peer mode toggle missing");
+function startButton(): HTMLButtonElement {
+  const el = container.querySelector<HTMLButtonElement>(".dashboard-start");
+  if (el === null) throw new Error("start button missing");
   return el;
 }
 
-function peerStartButton(): HTMLButtonElement {
-  const el = container.querySelector<HTMLButtonElement>(".dashboard-peer-start");
-  if (el === null) throw new Error("peer start button missing");
-  return el;
-}
-
-async function enterPeerMode(): Promise<void> {
-  await flush();
+function clickAgent(...names: string[]): void {
   act(() => {
-    peerToggle().click();
+    for (const name of names) agentButton(name).click();
   });
 }
 
@@ -142,75 +136,68 @@ afterEach(() => {
   container?.remove();
 });
 
-describe("DashboardView peer mode (P3.3)", () => {
-  it("toggles an explicitly labelled peer mode that hides single-agent and T1 controls and restores them when off", async () => {
+describe("DashboardView peer start over the default multi-selection model (WUX-A)", () => {
+  it("keeps single-agent and Assign task controls visible alongside multi-selection with no mode toggle", async () => {
     renderDashboard();
     await flush();
-    // Default: single-agent controls present, peer toggle present and off.
-    expect(container.querySelector(".dashboard-start")).not.toBeNull();
-    expect(container.querySelector(".dashboard-assign")).not.toBeNull();
-    expect(peerToggle().getAttribute("aria-pressed")).toBe("false");
+    expect(container.querySelector(".dashboard-peer-mode-toggle")).toBeNull();
     expect(container.querySelector(".dashboard-peer-start")).toBeNull();
-
-    await enterPeerMode();
-    expect(peerToggle().getAttribute("aria-pressed")).toBe("true");
-    expect(container.querySelector(".dashboard-start")).toBeNull();
-    expect(container.querySelector(".dashboard-assign")).toBeNull();
-    expect(container.querySelector(".dashboard-peer-start")).not.toBeNull();
-
-    act(() => {
-      peerToggle().click();
-    });
-    expect(peerToggle().getAttribute("aria-pressed")).toBe("false");
-    expect(container.querySelector(".dashboard-start")).not.toBeNull();
+    expect(startButton()).not.toBeNull();
     expect(container.querySelector(".dashboard-assign")).not.toBeNull();
-    expect(container.querySelector(".dashboard-peer-start")).toBeNull();
+    // Multi-selection is available immediately without entering any mode.
+    clickAgent("dipu");
+    expect(agentButton("dipu").getAttribute("aria-pressed")).toBe("true");
+    clickAgent("kimi");
+    expect(agentButton("dipu").getAttribute("aria-pressed")).toBe("true");
+    expect(agentButton("kimi").getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("gates Start peer conversation to 2-8 distinct selections with accessible aria-pressed membership", async () => {
+  it("gates the shared Start control to 2-8 distinct selections for the peer path with accessible aria-pressed membership", async () => {
     renderDashboard();
-    await enterPeerMode();
-    expect(peerStartButton().disabled).toBe(true);
+    await flush();
+    expect(startButton().disabled).toBe(true);
+    clickAgent("dipu");
+    // Exactly one selection is the single-agent path, not the peer path.
+    expect(startButton().disabled).toBe(false);
     act(() => {
       agentButton("dipu").click();
     });
-    expect(peerStartButton().disabled).toBe(true);
+    expect(startButton().disabled).toBe(true);
+    clickAgent("dipu", "kimi");
+    expect(startButton().disabled).toBe(false);
     expect(agentButton("dipu").getAttribute("aria-pressed")).toBe("true");
     act(() => {
       agentButton("kimi").click();
     });
-    expect(peerStartButton().disabled).toBe(false);
-    act(() => {
-      agentButton("kimi").click();
-    });
     expect(agentButton("kimi").getAttribute("aria-pressed")).toBe("false");
-    expect(peerStartButton().disabled).toBe(true);
+    // Back to exactly one selection: Start stays enabled (single-agent path)
+    // and Assign task re-enables.
+    expect(startButton().disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>(".dashboard-assign")?.disabled).toBe(false);
     // Offline agents remain unselectable.
     expect(agentButton("offline-agent").disabled).toBe(true);
   });
 
-  it("submits exactly {peers} once per request and opens the created Conversation with truthful success", async () => {
+  it("submits exactly sorted {peers} once per request and opens the created Conversation with truthful success", async () => {
     const { opened } = renderDashboard();
     vi.mocked(startPeerConversation).mockResolvedValue(PEER_CREATED);
-    await enterPeerMode();
-    act(() => {
-      agentButton("kimi").click();
-      agentButton("dipu").click();
-    });
+    await flush();
+    clickAgent("kimi", "dipu");
     await act(async () => {
-      peerStartButton().click();
+      startButton().click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(vi.mocked(startPeerConversation)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(startPeerConversation)).toHaveBeenCalledWith(["dipu", "kimi"], "test-token");
     expect(opened).toEqual(["c9"]);
-    // Success claims nothing about attention/runs; mode resets to single.
+    // Success claims nothing about attention/runs; the selection is cleared.
     const text = container.textContent ?? "";
     expect(text).not.toContain("contacted");
     expect(text).not.toContain("notified");
     expect(text).not.toContain("is running");
-    expect(container.querySelector(".dashboard-start")).not.toBeNull();
-    expect(container.querySelector(".dashboard-peer-start")).toBeNull();
+    expect(startButton().disabled).toBe(true);
+    expect(agentButton("dipu").getAttribute("aria-pressed")).toBe("false");
+    expect(agentButton("kimi").getAttribute("aria-pressed")).toBe("false");
   });
 
   it("allows only one in-flight peer start request", async () => {
@@ -222,17 +209,14 @@ describe("DashboardView peer mode (P3.3)", () => {
         }),
     );
     renderDashboard();
-    await enterPeerMode();
-    act(() => {
-      agentButton("dipu").click();
-      agentButton("kimi").click();
-    });
+    await flush();
+    clickAgent("dipu", "kimi");
     await act(async () => {
-      peerStartButton().click();
+      startButton().click();
     });
-    expect(peerStartButton().disabled).toBe(true);
+    expect(startButton().disabled).toBe(true);
     act(() => {
-      peerStartButton().click();
+      startButton().click();
     });
     expect(vi.mocked(startPeerConversation)).toHaveBeenCalledTimes(1);
     await act(async () => {
@@ -245,13 +229,10 @@ describe("DashboardView peer mode (P3.3)", () => {
   it("shows a definitive 4xx as a bounded error with explicit fresh retry only", async () => {
     vi.mocked(startPeerConversation).mockRejectedValueOnce(new Error("1 requested peer(s) are not in the local runnable set."));
     renderDashboard();
-    await enterPeerMode();
-    act(() => {
-      agentButton("dipu").click();
-      agentButton("kimi").click();
-    });
+    await flush();
+    clickAgent("dipu", "kimi");
     await act(async () => {
-      peerStartButton().click();
+      startButton().click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(container.textContent).toContain("not in the local runnable set");
@@ -260,7 +241,7 @@ describe("DashboardView peer mode (P3.3)", () => {
     // A fresh explicit click retries with the same selection.
     vi.mocked(startPeerConversation).mockResolvedValueOnce(PEER_CREATED);
     await act(async () => {
-      peerStartButton().click();
+      startButton().click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(vi.mocked(startPeerConversation)).toHaveBeenCalledTimes(2);
@@ -269,18 +250,15 @@ describe("DashboardView peer mode (P3.3)", () => {
   it("treats an ambiguous failure as refresh-only recovery through the narrow shell callback (no retry, no success claim)", async () => {
     const { refreshed } = renderDashboard();
     vi.mocked(startPeerConversation).mockRejectedValueOnce(new PeerStartAmbiguousError());
-    await enterPeerMode();
-    act(() => {
-      agentButton("dipu").click();
-      agentButton("kimi").click();
-    });
+    await flush();
+    clickAgent("dipu", "kimi");
     await act(async () => {
-      peerStartButton().click();
+      startButton().click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(vi.mocked(startPeerConversation)).toHaveBeenCalledTimes(1);
     // While ambiguous, resubmission is unavailable: refresh is the only path.
-    expect(peerStartButton().disabled).toBe(true);
+    expect(startButton().disabled).toBe(true);
     const refresh = container.querySelector<HTMLButtonElement>(".dashboard-peer-refresh");
     expect(refresh).not.toBeNull();
     expect(refresh?.textContent).toMatch(/refresh/i);
@@ -291,21 +269,35 @@ describe("DashboardView peer mode (P3.3)", () => {
     expect(refreshed()).toBe(1);
     expect(vi.mocked(startPeerConversation)).toHaveBeenCalledTimes(1);
     // After the explicit refresh the control is usable again with the draft intact.
-    expect(peerStartButton().disabled).toBe(false);
+    expect(startButton().disabled).toBe(false);
   });
 
   it("routes a 401 to the shell auth-recovery callback", async () => {
     const { unauthorized } = renderDashboard();
     vi.mocked(startPeerConversation).mockRejectedValueOnce(new UnauthorizedError());
-    await enterPeerMode();
-    act(() => {
-      agentButton("dipu").click();
-      agentButton("kimi").click();
-    });
+    await flush();
+    clickAgent("dipu", "kimi");
     await act(async () => {
-      peerStartButton().click();
+      startButton().click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(unauthorized()).toBe(1);
+  });
+
+  it("keeps Assign task exact-one gated while multiple agents are selected", async () => {
+    renderDashboard();
+    await flush();
+    const assign = (): HTMLButtonElement => {
+      const el = container.querySelector<HTMLButtonElement>(".dashboard-assign");
+      if (el === null) throw new Error("assign button missing");
+      return el;
+    };
+    expect(assign().disabled).toBe(true);
+    clickAgent("dipu", "kimi");
+    expect(assign().disabled).toBe(true);
+    act(() => {
+      agentButton("kimi").click();
+    });
+    expect(assign().disabled).toBe(false);
   });
 });

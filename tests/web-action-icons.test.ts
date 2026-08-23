@@ -178,8 +178,8 @@ describe("workbench action icons (decorative only)", () => {
       vi.mocked(fetchServiceStatus).mockRejectedValue(new Error("boom"));
       await mountDashboard();
       const button = container.querySelector<HTMLButtonElement>('button:not(.button-primary)');
-      const observationRetry = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.includes("Retry service observation"));
-      expect(observationRetry?.textContent).toContain("Retry service observation");
+      const observationRetry = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.includes("Retry service status"));
+      expect(observationRetry?.textContent).toContain("Retry service status");
       expect(observationRetry?.querySelector("svg[aria-hidden='true']")).not.toBeNull();
     });
 

@@ -2,15 +2,15 @@ import { useEffect, useState, type RefObject } from "react";
 import { fetchConversations, UnauthorizedError } from "./api";
 import { formatConversationHash, selectedConversationIdFromHash } from "./hash-route";
 import { conversationAudienceSummary, formatConversationCreatedTimestamp, type ConversationRecord } from "./conversations";
-import { ExpandIcon } from "./icons";
+import { ExpandIcon, FolderIcon, GearIcon, HomeIcon, MessageIcon } from "./icons";
 import type { Page } from "./nav";
 
 /** ADR-0044: the Dashboard is the default surface; the sidebar stays the conversation switcher. */
-const NAV_ITEMS: ReadonlyArray<{ page: Page; label: string }> = [
-  { page: "dashboard", label: "Dashboard" },
+const NAV_ITEMS: ReadonlyArray<{ page: Page; label: string; Icon: typeof HomeIcon }> = [
+  { page: "dashboard", label: "Dashboard", Icon: HomeIcon },
   // W3 (0.2.0 amendment §5): the static full-page Settings shell — a normal
   // typed nav page (not a companion, not a route/hash change).
-  { page: "settings", label: "Settings" },
+  { page: "settings", label: "Settings", Icon: GearIcon },
 ];
 
 /**
@@ -31,6 +31,7 @@ export function Sidebar({
   onToggleExplorer,
   explorerToggleRef,
   onOpenExplorerFullPage,
+  explorerFullPage = false,
 }: {
   page: Page;
   token: string;
@@ -49,6 +50,13 @@ export function Sidebar({
    * reports the explicit click.
    */
   onOpenExplorerFullPage: () => void;
+  /**
+   * WUX-A: true while the Explorer owns the whole workspace (no selected
+   * Conversation). The Explorer is then the SOLE highlighted sidebar module:
+   * Dashboard/Settings lose their visible highlight until it closes, even
+   * though the underlying page stays mounted underneath.
+   */
+  explorerFullPage?: boolean;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,11 +111,14 @@ export function Sidebar({
           <li key={item.page}>
             <button
               type="button"
-              className={page === item.page ? "nav-item active" : "nav-item"}
-              aria-current={page === item.page ? "page" : undefined}
+              className={
+                !explorerFullPage && page === item.page ? "nav-item active" : "nav-item"
+              }
+              aria-current={!explorerFullPage && page === item.page ? "page" : undefined}
               onClick={() => onSelect(item.page)}
             >
-              {item.label}
+              <item.Icon size={14} />
+              <span>{item.label}</span>
             </button>
           </li>
         ))}
@@ -124,7 +135,8 @@ export function Sidebar({
             aria-pressed={explorerOpen}
             onClick={onToggleExplorer}
           >
-            Vault Explorer
+            <FolderIcon size={14} />
+            <span>Vault Explorer</span>
           </button>
           {/* V1: a DISTINCT SIBLING full-page action — never a nested
               interactive control inside the toggle. Icon-only with its own
@@ -157,6 +169,8 @@ export function Sidebar({
                     aria-current={selected ? "true" : undefined}
                     onClick={() => openConversation(conversation.id)}
                   >
+                    {/* WUX-A: decorative conversation glyph on each entry. */}
+                    <MessageIcon size={13} />
                     {/* Origin-fact timestamp: the durable created value renders
                         above the title with a machine-readable time value;
                         malformed/unavailable values fail quiet (no fabricated

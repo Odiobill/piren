@@ -4,7 +4,7 @@ import { resolveShellAuth } from "./auth";
 import { fetchAuthInfo } from "./api";
 import { StatusBadge, type ShellPhase } from "./StatusBadge";
 import { AppShell } from "./AppShell";
-import { RetryIcon } from "./icons";
+import { PlugIcon, RetryIcon } from "./icons";
 
 /**
  * Workbench entry (ADR-0041 R3b-1/R3b-2/R3b-2.5; C3-A, C5, R1/R2). The
@@ -169,6 +169,7 @@ export default function App() {
                   aria-describedby={tokenHint ? "token-hint" : undefined}
                 />
                 <button type="submit" className="button button-primary">
+                  <PlugIcon size={14} />
                   Connect
                 </button>
               </div>

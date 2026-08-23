@@ -16,6 +16,7 @@ import {
   isValidThinkingLevel,
   type AgentPreferencesProjection,
 } from "./settings-transport";
+import { SaveIcon } from "./icons";
 
 /**
  * W6 (0.2.0 amendment §5/§5.1): the typed vault-owned agent-preference
@@ -290,6 +291,7 @@ export function AgentPreferencesForm({
                 </select>
               </label>
               <button type="button" className="settings-form-save button" disabled={saving} onClick={saveModel}>
+                <SaveIcon size={13} />
                 Save model
               </button>
             </section>
@@ -298,7 +300,7 @@ export function AgentPreferencesForm({
               <strong>Model fallback declaration</strong>
               <p className="muted">
                 Already delivered: with an enabled declaration, the same agent continues on its declared fallback
-                models within the same live session after a fully settled, zero-side-effect provider error — ordered,
+                models within the same live session after a fully settled, zero-side-effect provider error: ordered,
                 at-most-once, terminal on exhaustion. Explicit steward model selection disables it for the session.
               </p>
               <label className="settings-field settings-field-checkbox">
@@ -321,6 +323,7 @@ export function AgentPreferencesForm({
                 </label>
               )}
               <button type="button" className="settings-form-save button" disabled={saving} onClick={saveFallback}>
+                <SaveIcon size={13} />
                 Save fallback
               </button>
             </section>
@@ -336,6 +339,7 @@ export function AgentPreferencesForm({
                 </select>
               </label>
               <button type="button" className="settings-form-save button" disabled={saving} onClick={saveContext}>
+                <SaveIcon size={13} />
                 Save context injection
               </button>
             </section>
@@ -363,6 +367,7 @@ export function AgentPreferencesForm({
                 <input className="settings-agent-review-timeout" type="text" value={timeoutMs} onChange={(e) => setTimeoutMs(e.target.value)} />
               </label>
               <button type="button" className="settings-form-save button" disabled={saving} onClick={saveSelfImprovement}>
+                <SaveIcon size={13} />
                 Save self-improvement
               </button>
             </section>

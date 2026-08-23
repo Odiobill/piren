@@ -34,6 +34,7 @@ import {
   type ConversationTranscriptRow,
 } from "./conversation-transcript";
 import { SafeMarkdownBody } from "./SafeMarkdown";
+import { RetryIcon } from "./icons";
 import type { ConversationEventRecord } from "./conversations";
 
 /**
@@ -162,7 +163,7 @@ export function ConversationTimeline({
             phase: "ready",
             items: replaceConversationHistoric(events),
             stream: "inspection",
-            message: "Read-only inspection — no live stream.",
+            message: "Read-only inspection: no live stream.",
           });
           onHistoryLoaded?.();
           return;
@@ -325,6 +326,7 @@ export function ConversationTimeline({
             Timeline unavailable: <code>{phase.message}</code>
           </p>
           <button type="button" className="button" onClick={handleReconnect}>
+            <RetryIcon size={14} />
             Retry
           </button>
         </div>
@@ -334,12 +336,13 @@ export function ConversationTimeline({
           {/* P1: the healthy live/connecting states render no routine status
               label; only truthful non-routine states stay visible. */}
           {phase.stream === "inspection" && (
-            <p className="timeline-status timeline-status-inspection">Read-only inspection — history only</p>
+            <p className="timeline-status timeline-status-inspection">Read-only inspection: history only</p>
           )}
           {phase.stream === "disconnected" && (
             <p className="timeline-status timeline-status-disconnected">
-              Disconnected — showing last known history.{" "}
+              Disconnected. Showing last known history.{" "}
               <button type="button" className="button button-small" onClick={handleReconnect}>
+                <RetryIcon size={12} />
                 Reconnect
               </button>
             </p>

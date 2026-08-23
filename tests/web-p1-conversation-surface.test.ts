@@ -155,7 +155,7 @@ describe("P1 full-width uncarded conversation surface (static)", () => {
 
   it("truthful non-routine states stay: disconnected, inspection, error, and loading", async () => {
     const timeline = await readFile(join(webSrc, "ConversationTimeline.tsx"), "utf8");
-    expect(timeline).toContain("Disconnected — showing last known history");
+    expect(timeline).toContain("Disconnected. Showing last known history");
     expect(timeline).toContain("Reconnect");
     expect(timeline).toContain("Read-only inspection");
     expect(timeline).toContain("no live stream");

@@ -23,7 +23,7 @@ import {
   findMentionTrigger,
   nextCompletionIndex,
 } from "./conversation-autocomplete";
-import { ReturnKeyIcon } from "./icons";
+import { PlusIcon, ReturnKeyIcon } from "./icons";
 import type { ConversationAgentEntry } from "./conversation-agents";
 
 /**
@@ -348,7 +348,7 @@ export function ConversationComposer({
           aria-label="Upload is not available"
           title="Upload is not available"
         >
-          +
+          <PlusIcon size={14} />
         </button>
         <div className="composer-input-wrap">
           <label className="sr-only" htmlFor={inputId}>

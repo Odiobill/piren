@@ -5,23 +5,25 @@ import { AssignTaskModal } from "./AssignTaskModal";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import { parseConfiguredModelLabel } from "./conversation-agents";
 import {
-  SERVICE_MANAGER_LABELS,
   SERVICE_STATE_LABELS,
   SERVICE_TARGET_LABELS,
   serviceStateStatusClass,
   type ServiceStatusSnapshot,
 } from "./service-observation";
-import { MessageIcon, RetryIcon } from "./icons";
+import { ClipboardIcon, MessageIcon, RefreshIcon, RetryIcon } from "./icons";
 
 /**
  * ADR-0044 + D1 — the Dashboard: the default Workbench surface. Presentation
  * over existing authoritative reads ONLY: the local-policy roster from
- * GET /api/conversation-agents. The steward explicitly selects one runnable
- * agent and submits exactly one `{agent}` start request; a successful start
- * opens the new Conversation through the existing authoritative route/attach
- * flow (handled by the caller via the durable hash route). D1 removed the
- * duplicate Dashboard Conversation list: the sidebar is the sole Conversation
- * navigator, so the Dashboard no longer issues a conversation-list read.
+ * GET /api/conversation-agents. WUX-A: ONE multi-selection model by default.
+ * Agent cards are membership toggles; the single visible Start control routes
+ * by cardinality: exactly one selected runnable agent submits the exact
+ * existing `{agent}` start request, and 2-8 selected peers submit the exact
+ * existing peer-audience start. A successful start opens the new Conversation
+ * through the existing authoritative route/attach flow (handled by the caller
+ * via the durable hash route). D1 removed the duplicate Dashboard Conversation
+ * list: the sidebar is the sole Conversation navigator, so the Dashboard no
+ * longer issues a conversation-list read.
  *
  * Truthfulness rules: "online" means locally runnable on this gateway
  * (local installation policy, never presence/provider health); start
@@ -88,13 +90,12 @@ export function DashboardView({
 }) {
   const [load, setLoad] = useState<LoadState>({ phase: "loading" });
   const [retryKey, setRetryKey] = useState(0);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  // WUX-A: ONE selection model. Agent cards are always membership toggles;
+  // cardinality routes the visible Start control (exactly one -> the existing
+  // single-agent start path, 2-8 -> the existing peer-start path).
+  const [selection, setSelection] = useState<string[]>([]);
   const [start, setStart] = useState<StartState>({ phase: "idle" });
-  // P3.3 — peer-audience start state: component-local only, never persisted.
-  // Peer mode hides the single-agent Start/T1 Assign-task controls; leaving
-  // it restores today's single-agent behavior exactly.
-  const [peerMode, setPeerMode] = useState(false);
-  const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
+  // Peer-audience start state: component-local only, never persisted.
   const [peerStart, setPeerStart] = useState<
     | { phase: "idle" }
     | { phase: "busy" }
@@ -197,24 +198,14 @@ export function DashboardView({
 
   function handleSelect(agent: ConversationAgentEntry) {
     if (!agent.online || start.phase === "busy" || peerStart.phase === "busy") return;
-    if (peerMode) {
-      // P3.3 peer mode: cards are membership toggles (aria-pressed).
-      setSelectedPeers((previous) =>
-        previous.includes(agent.name) ? previous.filter((name) => name !== agent.name) : [...previous, agent.name],
-      );
-      setPeerStart({ phase: "idle" });
-      return;
-    }
-    setSelectedAgent((previous) => (previous === agent.name ? previous : agent.name));
+    // Cards are membership toggles (aria-pressed) in the one default model.
+    setSelection((previous) =>
+      previous.includes(agent.name) ? previous.filter((name) => name !== agent.name) : [...previous, agent.name],
+    );
     setStart({ phase: "idle" });
+    setPeerStart({ phase: "idle" });
     // A selection change invalidates any stale creation notice.
     setAssignNotice(null);
-  }
-
-  function handleTogglePeerMode() {
-    setPeerMode((previous) => !previous);
-    setSelectedPeers([]);
-    setPeerStart({ phase: "idle" });
   }
 
   /**
@@ -226,14 +217,13 @@ export function DashboardView({
    * durable-list refresh.
    */
   async function handlePeerStart() {
-    if (selectedPeers.length < 2 || selectedPeers.length > 8 || peerStart.phase === "busy") return;
-    const peers = [...selectedPeers].sort();
+    if (selection.length < 2 || selection.length > 8 || peerStart.phase === "busy") return;
+    const peers = [...selection].sort();
     setPeerStart({ phase: "busy" });
     try {
       const result = await startPeerConversation(peers, token);
       setPeerStart({ phase: "idle" });
-      setSelectedPeers([]);
-      setPeerMode(false);
+      setSelection([]);
       onOpenConversation(result.conversation.id);
     } catch (error) {
       if (error instanceof UnauthorizedError) {
@@ -262,8 +252,9 @@ export function DashboardView({
    * notification, wakeup, or execution.
    */
   async function handleAssign(title: string, details: string): Promise<void> {
-    if (selectedAgent === null) throw new Error("No agent is selected.");
-    const agent = selectedAgent;
+    // Exact-one gating: the modal only opens with exactly one selected agent.
+    if (selection.length !== 1) throw new Error("Exactly one agent must be selected.");
+    const agent = selection[0] ?? "";
     try {
       await assignInboxTask(agent, title, details, token);
     } catch (cause) {
@@ -278,8 +269,9 @@ export function DashboardView({
   }
 
   async function handleStart() {
-    if (selectedAgent === null || start.phase === "busy") return;
-    const agent = selectedAgent;
+    if (selection.length !== 1 || start.phase === "busy") return;
+    const agent = selection[0];
+    if (agent === undefined) return;
     setStart({ phase: "busy" });
     try {
       // Exactly one {agent} start request; the response is never used to
@@ -287,7 +279,7 @@ export function DashboardView({
       // existing authoritative route/attach flow.
       const result = await startConversation(token, agent);
       setStart({ phase: "idle" });
-      setSelectedAgent(null);
+      setSelection([]);
       onOpenConversation(result.conversation.id);
     } catch (error) {
       if (error instanceof UnauthorizedError) {
@@ -325,6 +317,8 @@ export function DashboardView({
   }
 
   const onlineAgents = load.agents.filter((agent) => agent.online);
+  // Exact-one Assign-task target (noUncheckedIndexedAccess-safe narrowing).
+  const assignTarget = selection.length === 1 ? (selection[0] ?? null) : null;
 
   return (
     <section className="dashboard" aria-label="Dashboard">
@@ -335,8 +329,8 @@ export function DashboardView({
         <div className="dashboard-welcome-text">
           <h2>Dashboard</h2>
           <p className="muted">
-            Welcome to your Piren Workbench. Choose one local agent below to start a conversation — your
-            conversations always live in the sidebar.
+            Start a Conversation with one agent or several peers, or assign a task to exactly one agent.
+            Your conversations always live in the sidebar.
           </p>
         </div>
       </header>
@@ -346,9 +340,6 @@ export function DashboardView({
           <p className="muted">No agents are defined in this vault.</p>
         ) : (
           <>
-            <p className="muted">
-              Online means runnable on this installation — local policy, never a live presence or provider probe.
-            </p>
             <ul className="agent-card-grid">
               {load.agents.map((agent) => (
                 <li key={agent.name} className={agent.online ? "agent-card" : "agent-card agent-offline"}>
@@ -356,11 +347,9 @@ export function DashboardView({
                     type="button"
                     data-agent={agent.name}
                     className={
-                      (peerMode ? selectedPeers.includes(agent.name) : selectedAgent === agent.name)
-                        ? "agent-select agent-selected"
-                        : "agent-select"
+                      selection.includes(agent.name) ? "agent-select agent-selected" : "agent-select"
                     }
-                    aria-pressed={peerMode ? selectedPeers.includes(agent.name) : selectedAgent === agent.name}
+                    aria-pressed={selection.includes(agent.name)}
                     disabled={!agent.online || start.phase === "busy" || peerStart.phase === "busy"}
                     title={agent.online ? `Select ${agent.name}` : `${agent.name} is not runnable on this installation`}
                     onClick={() => handleSelect(agent)}
@@ -398,60 +387,40 @@ export function DashboardView({
             </ul>
             {onlineAgents.length > 0 && (
               <div className="dashboard-actions">
-                {/* P3.3: explicitly labelled, component-local peer mode.
-                    Off = today's single-agent behavior byte-for-byte. */}
+                {/* WUX-A: one visible Start control routes by cardinality:
+                    exactly one -> the single-agent start path; 2-8 -> the
+                    existing peer-start path. */}
                 <button
                   type="button"
-                  className="button dashboard-peer-mode-toggle"
-                  aria-pressed={peerMode}
-                  onClick={handleTogglePeerMode}
+                  className="button button-primary dashboard-start"
+                  disabled={
+                    selection.length === 0 ||
+                    selection.length > 8 ||
+                    start.phase === "busy" ||
+                    peerStart.phase === "busy" ||
+                    peerStart.phase === "ambiguous"
+                  }
+                  onClick={() => void (selection.length === 1 ? handleStart() : handlePeerStart())}
                 >
-                  Start with multiple agents
+                  <MessageIcon size={16} />
+                  <span>Start conversation</span>
                 </button>
-                {!peerMode && (
-                  <>
-                    <button
-                      type="button"
-                      className="button button-primary dashboard-start"
-                      disabled={selectedAgent === null || start.phase === "busy"}
-                      onClick={() => void handleStart()}
-                    >
-                      <MessageIcon size={16} />
-                      <span>Start conversation</span>
-                    </button>
-                    {/* T1 — enabled only with the exactly-one selected runnable
-                        agent; hidden while peer mode is active (never
-                        broadened to multi-agent). */}
-                    <button
-                      type="button"
-                      ref={assignButtonRef}
-                      className="button dashboard-assign"
-                      disabled={selectedAgent === null || start.phase === "busy"}
-                      onClick={() => {
-                        setAssignNotice(null);
-                        setAssignModalOpen(true);
-                      }}
-                    >
-                      Assign task
-                    </button>
-                  </>
-                )}
-                {peerMode && (
-                  <button
-                    type="button"
-                    className="button button-primary dashboard-peer-start"
-                    disabled={
-                      selectedPeers.length < 2 ||
-                      selectedPeers.length > 8 ||
-                      peerStart.phase === "busy" ||
-                      peerStart.phase === "ambiguous"
-                    }
-                    onClick={() => void handlePeerStart()}
-                  >
-                    <MessageIcon size={16} />
-                    <span>Start peer conversation</span>
-                  </button>
-                )}
+                {/* T1 — enabled only with the exactly-one selected runnable
+                    agent; visible but otherwise disabled (never broadened to
+                    multi-agent). */}
+                <button
+                  type="button"
+                  ref={assignButtonRef}
+                  className="button dashboard-assign"
+                  disabled={selection.length !== 1 || start.phase === "busy"}
+                  onClick={() => {
+                    setAssignNotice(null);
+                    setAssignModalOpen(true);
+                  }}
+                >
+                  <ClipboardIcon size={14} />
+                  Assign task
+                </button>
               </div>
             )}
             {peerStart.phase === "busy" && (
@@ -468,6 +437,7 @@ export function DashboardView({
               <div className="error-message" role="alert">
                 <p>The peer conversation may or may not have been created. Check your conversations list.</p>
                 <button type="button" className="button button-small dashboard-peer-refresh" onClick={handlePeerRefresh}>
+                  <RefreshIcon size={12} />
                   Refresh conversations list
                 </button>
               </div>
@@ -477,9 +447,9 @@ export function DashboardView({
                 {assignNotice}
               </p>
             )}
-            {start.phase === "busy" && selectedAgent !== null && (
+            {start.phase === "busy" && selection.length === 1 && (
               <p className="dashboard-start-busy" role="status">
-                Preparing your conversation with {selectedAgent}. Please wait
+                Preparing your conversation with {selection[0]}. Please wait
                 <span className="dashboard-busy-dots" aria-hidden="true">
                   <span>.</span>
                   <span>.</span>
@@ -496,58 +466,48 @@ export function DashboardView({
         )}
       </section>
       <section className="card dashboard-services" aria-labelledby="dashboard-services-heading">
-        <h3 id="dashboard-services-heading">Service information</h3>
+        <h3 id="dashboard-services-heading">Services</h3>
+        {/* WUX-A: ONE concise service list. Gateway Connected is the
+            authenticated Dashboard-load fact; the three targets keep their
+            truthful gateway-observed states. Manager/probe/timestamp
+            implementation details are not rendered. */}
         <ul className="dashboard-service-list">
           <li>
             <span className="dashboard-service-name">Gateway</span>
             <span className="agent-status status-ok">Connected</span>
           </li>
+          {observation.phase === "loading" &&
+            (['telegram', 'discord', 'scheduler'] as const).map((target) => (
+              <li key={target}>
+                <span className="dashboard-service-name">{SERVICE_TARGET_LABELS[target]}</span>
+                <span className="agent-status status-muted">Checking…</span>
+              </li>
+            ))}
+          {observation.phase === "ready" &&
+            observation.snapshot.targets.map((entry) => (
+              <li key={entry.target}>
+                <span className="dashboard-service-name">{SERVICE_TARGET_LABELS[entry.target]}</span>
+                <span className={`agent-status ${serviceStateStatusClass(entry.state)}`}>
+                  {SERVICE_STATE_LABELS[entry.state]}
+                </span>
+              </li>
+            ))}
         </ul>
-        <p className="muted">
-          Connected means this Dashboard's authenticated read just succeeded. It is a separate fact from the
-          gateway-sampled service observation below.
-        </p>
-        <div className="dashboard-service-observation" aria-labelledby="dashboard-service-observation-heading">
-          <h4 id="dashboard-service-observation-heading">Managed service observation</h4>
-          {observation.phase === "loading" && (
-            <p className="muted" role="status">
-              Sampling local service status…
+        {observation.phase === "error" && (
+          <>
+            <p className="error-message" role="alert">
+              Service status unavailable.
             </p>
-          )}
-          {observation.phase === "error" && (
-            <>
-              <p className="error-message" role="alert">
-                Service observation unavailable.
-              </p>
-              <button type="button" className="button" onClick={handleObservationRetry}>
-                <RetryIcon size={14} />
-                Retry service observation
-              </button>
-            </>
-          )}
-          {observation.phase === "ready" && (
-            <>
-              <p className="muted">
-                Sampled by this gateway through {SERVICE_MANAGER_LABELS[observation.snapshot.manager]} at{" "}
-                <time dateTime={observation.snapshot.observedAt}>{observation.snapshot.observedAt}</time>.
-              </p>
-              <ul className="dashboard-service-list dashboard-service-observation-list">
-                {observation.snapshot.targets.map((entry) => (
-                  <li key={entry.target}>
-                    <span className="dashboard-service-name">{SERVICE_TARGET_LABELS[entry.target]}</span>
-                    <span className={`agent-status ${serviceStateStatusClass(entry.state)}`}>
-                      {SERVICE_STATE_LABELS[entry.state]}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
+            <button type="button" className="button" onClick={handleObservationRetry}>
+              <RetryIcon size={14} />
+              Retry service status
+            </button>
+          </>
+        )}
       </section>
-      {assignModalOpen && selectedAgent !== null && (
+      {assignModalOpen && assignTarget !== null && (
         <AssignTaskModal
-          agent={selectedAgent}
+          agent={assignTarget}
           onAssign={handleAssign}
           onClose={() => {
             setAssignModalOpen(false);

@@ -84,7 +84,8 @@ describe("web auth shell contract (R3b-1)", () => {
       const combined = `${app}\n${shell}`;
       expect(combined).toContain("Token ready");
       expect(combined).not.toContain("Gateway reachable");
-      expect(combined).toMatch(/not been validated/i);
+      // WUX-A copy correction: same honesty, conventional punctuation.
+      expect(combined).toMatch(/not validated/i);
     });
 
     it("the shell calls only its authorized endpoints (auth-info + conversation-agents + conversations + vault list/read)", async () => {

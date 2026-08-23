@@ -9,6 +9,7 @@ import {
   type SplitWorkspaceState,
 } from "./split-workspace.js";
 import { SplitResizer } from "./SplitResizer.js";
+import { FolderIcon, MessageIcon } from "./icons.js";
 
 /**
  * W1 (0.2.0 scope amendment §3; accepted companion split architecture §2/§4/
@@ -114,6 +115,7 @@ export function SplitWorkspaceShell({
           aria-pressed={state.mobilePane === "chat"}
           onClick={() => onStateChange(mobileSelectPane(state, "chat"))}
         >
+          <MessageIcon size={14} />
           {chatLabel}
         </button>
         <button
@@ -121,6 +123,7 @@ export function SplitWorkspaceShell({
           aria-pressed={state.mobilePane === "companion"}
           onClick={() => onStateChange(mobileSelectPane(state, "companion"))}
         >
+          <FolderIcon size={14} />
           {companionLabel}
         </button>
       </div>

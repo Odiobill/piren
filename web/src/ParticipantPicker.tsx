@@ -57,7 +57,7 @@ export function ParticipantPicker({
               </label>
               {!agent.online && (
                 <p className="agent-offline-note" id={`${checkboxId}-offline-note`}>
-                  Not runnable on this installation — local policy, not a live probe.
+                  Not runnable on this installation (local policy, not a live probe).
                 </p>
               )}
             </li>

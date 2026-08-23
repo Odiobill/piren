@@ -232,10 +232,10 @@ describe("DashboardView (ADR-0044)", () => {
     // zora has no usable configured model: the card says so truthfully.
     const zora = agentButton("zora");
     expect(zora.querySelector(".agent-card-description")?.textContent).toBe("Configured model unavailable");
-    // The section-level explanation that runnable status is local policy
-    // (never live presence or a provider probe) is retained.
-    expect(container.textContent).toContain(
-      "Online means runnable on this installation — local policy, never a live presence or provider probe.",
+    // WUX-A: the section-level local-policy/probe explanation is gone from
+    // the rendered Dashboard; only the truthful per-card facts remain.
+    expect(container.textContent).not.toContain(
+      "Online means runnable on this installation",
     );
   });
 

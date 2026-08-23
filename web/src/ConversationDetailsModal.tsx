@@ -179,7 +179,7 @@ export function ConversationDetailsModal({
           />
           <p className="field-help">
             The title is durable manifest metadata for the steward. Saving changes only the
-            current display title — never the conversation id, members, status, or history.
+            current display title, never the conversation id, members, status, or history.
           </p>
           <div className="details-rename-actions">
             <button type="submit" className="button button-primary" disabled={saveDisabled}>
@@ -258,7 +258,7 @@ const CONVERSATION_TITLE_MAX_DISPLAY = 120;
 function AudienceMembers({ audience, agents }: { audience: string[]; agents: ConversationAgentEntry[] }) {
   const members = classifyAudienceMembers(audience, agents);
   if (members.length === 0) {
-    return <p className="muted">No members yet — mention a locally runnable agent to add one.</p>;
+    return <p className="muted">No members yet. Mention a locally runnable agent to add one.</p>;
   }
   return (
     <div className="audience-members">

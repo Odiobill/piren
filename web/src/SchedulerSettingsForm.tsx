@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchSchedulerSettings, saveSchedulerSettings, SettingsHttpError, UnauthorizedError } from "./api";
 import { parseOptionalPositiveInt, type SchedulerSettingsProjection } from "./settings-transport";
+import { SaveIcon } from "./icons";
 
 /**
  * W6 (0.2.0 amendment §2/§5/§5.1): the typed scheduler Settings workflow.
@@ -157,7 +158,7 @@ export function SchedulerSettingsForm({
       {read.phase === "ready" && (
         <div className="settings-form">
           <p className="muted">
-            These settings affect future scheduler execution only — saving never starts, installs, stops, or reloads
+            These settings affect future scheduler execution only; saving never starts, installs, stops, or reloads
             the scheduler. Fresh installs resolve everything off; the interactive conversation workflow still requires
             the inbox-task class to stay off.
           </p>
@@ -197,6 +198,7 @@ export function SchedulerSettingsForm({
           {saveError !== null && <p className="settings-form-save-error" role="alert">{saveError}</p>}
           {saved && <p className="settings-form-saved" role="status">Saved.</p>}
           <button type="button" className="settings-form-save button" disabled={saving} onClick={handleSave}>
+            <SaveIcon size={13} />
             {saving ? "Saving…" : "Save"}
           </button>
         </div>

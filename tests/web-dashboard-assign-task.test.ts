@@ -104,9 +104,14 @@ function dialog(): HTMLElement {
 
 async function openModalFor(name: string): Promise<void> {
   await flush();
-  act(() => {
-    agentButton(name).click();
-  });
+  // WUX-A: cards are membership toggles, so select only when not already
+  // selected.
+  const button = agentButton(name);
+  if (button.getAttribute("aria-pressed") !== "true") {
+    act(() => {
+      button.click();
+    });
+  }
   act(() => {
     assignButton().click();
   });

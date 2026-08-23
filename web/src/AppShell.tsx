@@ -84,6 +84,9 @@ export function AppShell({
    * Explorer falls back to a full-page module surface (no split/resizer).
    */
   const hasSelectedConversation = contextualTitle !== null;
+  // WUX-A: the open Explorer with NO selected Conversation is a full-page
+  // module surface; it is then the sole highlighted sidebar module.
+  const explorerFullPage = explorerOpen && !hasSelectedConversation;
   const vaultExplorerLabel = getModuleById("vault-explorer")?.label ?? "Vault Explorer";
 
   function handleToggleExplorer() {
@@ -212,6 +215,7 @@ export function AppShell({
             onToggleExplorer={handleToggleExplorer}
             explorerToggleRef={explorerButtonRef}
             onOpenExplorerFullPage={handleOpenExplorerFullPage}
+            explorerFullPage={explorerFullPage}
           />
         </div>
 
@@ -226,6 +230,7 @@ export function AppShell({
             explorerOpen={explorerOpen}
             onToggleExplorer={handleToggleExplorer}
             onOpenExplorerFullPage={handleOpenExplorerFullPage}
+            explorerFullPage={explorerFullPage}
           />
         </MobileDrawer>
 
@@ -233,7 +238,7 @@ export function AppShell({
           {phase === "token-ready" && (
             <section className="card">
               <p className="muted">
-                Token ready — held in memory for this page only and has <strong>not been validated</strong>: your
+                Token ready, held in memory for this page only and <strong>not validated</strong>: your
                 first protected request below checks it. A rejected token returns you to the token
                 entry without persisting anything.
               </p>
@@ -242,8 +247,7 @@ export function AppShell({
           {phase === "token-accepted" && (
             <section className="card">
               <p className="muted">
-                Token accepted — the gateway accepted it on a protected request. It stays in memory
-                only.
+                Token accepted: the gateway accepted it on a protected request. It stays in memory only.
               </p>
             </section>
           )}

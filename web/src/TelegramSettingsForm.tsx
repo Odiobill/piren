@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchTelegramSettings, saveTelegramSettings, SettingsHttpError, UnauthorizedError } from "./api";
 import { parseTelegramChatIdsInput, type TelegramSettingsProjection } from "./settings-transport";
+import { SaveIcon } from "./icons";
 
 /**
  * W5 (0.2.0 amendment §5/§5.1; ADR-0046): the typed Telegram transport
@@ -123,7 +124,7 @@ export function TelegramSettingsForm({
         <div className="settings-form">
           <p className="muted">
             {read.projection.configured ? "Bot token configured" : "Bot token not configured"} ·{" "}
-            {read.projection.allowedChatIds} chat ID(s) configured — enter a list to replace them.
+            {read.projection.allowedChatIds} chat ID(s) configured. Enter a list to replace them.
           </p>
           <label className="settings-field">
             Bot token (write-only, never displayed)
@@ -173,6 +174,7 @@ export function TelegramSettingsForm({
           {saveError !== null && <p className="settings-form-save-error" role="alert">{saveError}</p>}
           {saved && <p className="settings-form-saved" role="status">Saved.</p>}
           <button type="button" className="settings-form-save button" disabled={saving} onClick={handleSave}>
+            <SaveIcon size={13} />
             {saving ? "Saving…" : "Save"}
           </button>
         </div>

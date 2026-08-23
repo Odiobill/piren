@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { XIcon } from "./icons";
+import { ClipboardIcon, RetryIcon, XIcon } from "./icons";
 
 /**
  * T1 — Dashboard Assign-task modal over the EXISTING authenticated
@@ -155,9 +155,11 @@ export function AssignTaskModal({
           </p>
           <div className="details-rename-actions">
             <button type="submit" className="button button-primary assign-task-submit" disabled={submitDisabled}>
+              <ClipboardIcon size={14} />
               Create task
             </button>
             <button type="button" className="button" onClick={onClose} disabled={busy}>
+              <XIcon size={14} />
               Cancel
             </button>
           </div>
@@ -165,6 +167,7 @@ export function AssignTaskModal({
             <div className="details-rename-error" role="alert">
               <p className="error-message">{error}</p>
               <button type="button" className="button button-small" onClick={handleRetry} disabled={busy}>
+                <RetryIcon size={12} />
                 Retry
               </button>
             </div>

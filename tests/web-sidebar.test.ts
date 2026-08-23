@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 // React 19 requires the act environment flag for component-test state flushing.
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,8 +58,7 @@ describe("formatConversationCreatedTimestamp (pure)", () => {
   });
 });
 
-describe("Sidebar conversation list created timestamp", () => {
-  let container: HTMLDivElement;
+describe("Sidebar conversation list created timestamp", () => {  let container: HTMLDivElement;
   let root: Root;
 
   function renderSidebar(): void {
@@ -117,8 +118,13 @@ describe("Sidebar conversation list created timestamp", () => {
       // Machine-readable value is present and the localized text is non-empty.
       expect(time?.getAttribute("dateTime")?.length ?? 0).toBeGreaterThan(0);
       expect((time?.textContent?.length ?? 0)).toBeGreaterThan(0);
-      // The timestamp renders ABOVE the title (the first child of the entry).
-      expect(entry.firstElementChild?.classList.contains("sidebar-conversation-created")).toBe(true);
+      // The timestamp renders ABOVE the title: after the leading decorative
+      // icon (WUX-A) and before the title span.
+      const children = Array.from(entry.children);
+      expect(children.findIndex((c) => c.tagName === "TIME")).toBeGreaterThanOrEqual(0);
+      expect(children.findIndex((c) => c.tagName === "TIME")).toBeLessThan(
+        children.findIndex((c) => c.tagName === "SPAN"),
+      );
       // Title and audience summary remain intact.
       expect(entry.textContent).toContain("Conversation");
       expect(entry.textContent).toContain("Dipu");
@@ -138,5 +144,93 @@ describe("Sidebar conversation list created timestamp", () => {
     expect(entry?.querySelector("time.sidebar-conversation-created")).toBeNull();
     // The entry still renders its title truthfully.
     expect(entry?.textContent).toContain("Conversation with dipu");
+  });
+});
+
+describe("Sidebar WUX-A: icons, exclusive active state, and 80/20 Explorer row", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  function renderSidebar(overrides: { page?: "dashboard" | "settings" | "conversations"; explorerOpen?: boolean; explorerFullPage?: boolean } = {}): void {
+    root = createRoot(container);
+    act(() => {
+      root.render(
+        createElement(Sidebar, {
+          page: overrides.page ?? "dashboard",
+          token: "test-token",
+          onSelect: () => {},
+          onValidated: () => {},
+          onUnauthorized: () => {},
+          conversationsReloadKey: 0,
+          explorerOpen: overrides.explorerOpen ?? false,
+          onToggleExplorer: () => {},
+          onOpenExplorerFullPage: () => {},
+          ...(overrides.explorerFullPage !== undefined ? { explorerFullPage: overrides.explorerFullPage } : {}),
+        }),
+      );
+    });
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    vi.mocked(fetchConversations).mockReset();
+    vi.mocked(fetchConversations).mockResolvedValue({ conversations: [] });
+  });
+
+  async function flush(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  afterEach(() => {
+    act(() => {
+      root?.unmount();
+    });
+    container?.remove();
+  });
+
+  it("decorates the Dashboard and Settings navigation labels with icons", async () => {
+    renderSidebar();
+    const dashboard = container.querySelector<HTMLButtonElement>('.sidebar-pages .nav-item');
+    expect(dashboard?.textContent).toContain("Dashboard");
+    expect(dashboard?.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+    const items = container.querySelectorAll(".sidebar-pages .nav-item");
+    expect(items.length).toBe(2);
+    for (const item of items) {
+      expect(item.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+    }
+  });
+
+  it("keeps the full-page Explorer as the SOLE highlighted module (no Dashboard/Settings highlight alongside it)", async () => {
+    renderSidebar({ page: "dashboard", explorerOpen: true, explorerFullPage: true });
+    await flush();
+    for (const item of Array.from(container.querySelectorAll(".sidebar-pages .nav-item"))) {
+      expect(item.classList.contains("active")).toBe(false);
+      expect(item.getAttribute("aria-current")).toBeNull();
+    }
+    // The open companion remains visibly highlighted.
+    const toggle = container.querySelector<HTMLButtonElement>(".sidebar-companion-row .nav-item");
+    expect(toggle?.classList.contains("active")).toBe(true);
+  });
+
+  it("restores the underlying page highlight when the full-page Explorer closes", async () => {
+    renderSidebar({ page: "settings", explorerOpen: false, explorerFullPage: false });
+    await flush();
+    const settings = Array.from(container.querySelectorAll(".sidebar-pages .nav-item"))[1] as HTMLButtonElement;
+    expect(settings.textContent).toContain("Settings");
+    expect(settings.classList.contains("active")).toBe(true);
+    expect(settings.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("grows the Explorer name control to about 80% and the full-page action to about 20% of the row", async () => {
+    renderSidebar();
+    await flush();
+    const css = await readFile(join(process.cwd(), "web", "src", "styles.css"), "utf8");
+    const rowBlock = css.slice(css.indexOf(".sidebar-companion-row .nav-item"));
+    expect(rowBlock).toMatch(/\.sidebar-companion-row \.nav-item \{[^}]*flex:\s*4\b/s);
+    const fullBlock = css.slice(css.indexOf(".sidebar-companion-row .sidebar-companion-fullpage"));
+    expect(fullBlock).toMatch(/\.sidebar-companion-row \.sidebar-companion-fullpage \{[^}]*flex:\s*1\b/s);
   });
 });

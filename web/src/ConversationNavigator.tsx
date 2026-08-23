@@ -35,7 +35,7 @@ import {
 } from "./conversation-lifecycle";
 import { parseHashRoute, routeToIntent } from "./hash-route";
 import { renameAnnouncement, type RenameError } from "./conversation-details";
-import { CheckIcon, InfoIcon, RetryIcon, StopIcon, XIcon } from "./icons";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, InfoIcon, RetryIcon, StopIcon, XIcon } from "./icons";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import { ConversationDetailsModal, ConversationLifecycleControls } from "./ConversationDetailsModal";
 import { ConversationTimeline } from "./ConversationTimeline";
@@ -593,7 +593,7 @@ export function ConversationNavigator({
         cancelPendingOpen();
         resetLifecycleControls();
         setSelection({ phase: "none" });
-        setNotice("Unknown route — no conversation selected.");
+        setNotice("Unknown route: no conversation selected.");
         setAnnouncement("");
         onSelectionChange?.(null, false);
         surfaceRef.current?.focus();
@@ -1057,7 +1057,7 @@ export function ConversationNavigator({
         ) : (
           <div className="attach-banner" role="status">
             <p>
-              <strong>Read-only inspection</strong> — this conversation cannot be attached as active:{" "}
+              <strong>Read-only inspection.</strong> This conversation cannot be attached as active:{" "}
               {selection.message}. History is shown without a composer or live stream; reopening as
               active is gated until every durable member is locally runnable.
             </p>
@@ -1229,7 +1229,7 @@ function ConversationApprovalCards({
             disabled={effectiveIndex === 0}
             onClick={() => goTo(effectiveIndex - 1)}
           >
-            ‹
+            <ChevronLeftIcon size={14} />
           </button>
           <span className="approval-pager-status">
             Approval {effectiveIndex + 1} of {approvals.length}
@@ -1241,7 +1241,7 @@ function ConversationApprovalCards({
             disabled={effectiveIndex >= approvals.length - 1}
             onClick={() => goTo(effectiveIndex + 1)}
           >
-            ›
+            <ChevronRightIcon size={14} />
           </button>
         </div>
       )}

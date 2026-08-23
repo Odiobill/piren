@@ -15,17 +15,17 @@ import {
 import type { ServiceStatusSnapshot } from "../web/src/service-observation.js";
 
 /**
- * D2.3 — Dashboard managed service observation rendering (accepted contract:
- * Projects/Piren/workbench-dashboard-service-observability-contract.md).
- * The Dashboard performs the existing authenticated roster read first; only
- * after it succeeds (the sole "Gateway connection — Connected" fact) it makes
- * ONE fresh service-observation read. The observation group is visually and
- * semantically separate, names the source and sampled time, renders the three
- * fixed targets in contract order with truthful labels, styles unknown /
- * unavailable as caution (never success), and on failure preserves the
- * Gateway fact with a bounded unavailable message plus one explicit manual
- * retry that fetches only a fresh observation. No polling, storage, SSE,
- * WebSocket, automatic retry, or stale snapshot reuse.
+ * WUX-A — Dashboard service list rendering (supersedes the D2.3 nested
+ * observation presentation). The Dashboard performs the existing
+ * authenticated roster read first; only after it succeeds (the sole
+ * "Gateway connection — Connected" fact) it makes ONE fresh service-status
+ * read. The rendered surface is ONE concise list: Gateway plus the three
+ * fixed targets telegram/discord/scheduler in contract order with truthful
+ * labels; unknown / unavailable stay caution-styled (never success). No
+ * manager/probe/timestamp implementation details are rendered. On failure
+ * the Gateway fact is preserved with a bounded unavailable message plus one
+ * explicit manual retry that fetches only a fresh status read. No polling,
+ * storage, SSE, WebSocket, automatic retry, or stale snapshot reuse.
  */
 
 vi.mock("../web/src/api.js", async (importOriginal) => {
@@ -108,14 +108,14 @@ function rerenderDashboard(reloadKey: number): void {
   });
 }
 
-function observationGroup(): HTMLElement {
-  const el = container.querySelector<HTMLElement>(".dashboard-service-observation");
-  if (el === null) throw new Error("observation group missing");
+function serviceList(): HTMLElement {
+  const el = container.querySelector<HTMLElement>(".dashboard-service-list");
+  if (el === null) throw new Error("service list missing");
   return el;
 }
 
-function observationEntries(): Array<{ name: string; label: string; className: string }> {
-  return Array.from(observationGroup().querySelectorAll(".dashboard-service-observation-list li")).map((li) => {
+function serviceEntries(): Array<{ name: string; label: string; className: string }> {
+  return Array.from(serviceList().querySelectorAll("li")).map((li) => {
     const name = li.querySelector(".dashboard-service-name")?.textContent ?? "";
     const chip = li.querySelector(".agent-status");
     return { name, label: chip?.textContent ?? "", className: chip?.className ?? "" };
@@ -202,41 +202,58 @@ describe("DashboardView service observation (D2.3)", () => {
     const services = container.querySelector(".dashboard-services");
     expect(services?.textContent).toContain("Gateway");
     expect(services?.textContent).toContain("Connected");
-    const group = observationGroup();
-    // Accessible, clearly separate group heading.
-    const heading = group.querySelector("h4");
-    expect(heading?.textContent).toBe("Managed service observation");
-    expect(group.getAttribute("aria-labelledby")).toBe(heading?.id ?? "");
-    // Source (gateway-sampled manager) and sampled time are named.
-    expect(group.textContent).toContain("systemd (user)");
-    const time = group.querySelector("time");
-    expect(time?.getAttribute("dateTime")).toBe("2026-08-16T12:00:00.000Z");
-    expect(time?.textContent).toContain("2026-08-16T12:00:00.000Z");
+    // WUX-A: ONE concise service list. No nested observation group, no
+    // manager/probe/timestamp implementation details on the page.
+    expect(container.querySelector(".dashboard-service-observation")).toBeNull();
+    expect(services?.querySelector("h4")).toBeNull();
+    expect(container.textContent).not.toContain("Managed service observation");
+    expect(container.textContent).not.toContain("systemd (user)");
+    expect(container.textContent).not.toContain("Sampled by this gateway through");
+    expect(services?.querySelector("time")).toBeNull();
   });
 
-  it("renders the three fixed targets in contract order with truthful labels", async () => {
+  it("renders the three fixed targets in contract order into the same concise list with truthful labels", async () => {
     renderDashboard();
     await flush();
-    const entries = observationEntries();
-    expect(entries.map((e) => e.name)).toEqual(["Telegram", "Discord", "Scheduler"]);
-    expect(entries.map((e) => e.label)).toEqual(["Active", "Inactive", "Not installed"]);
+    const entries = serviceEntries();
+    expect(entries.map((e) => e.name)).toEqual(["Gateway", "Telegram", "Discord", "Scheduler"]);
+    expect(entries.map((e) => e.label)).toEqual(["Connected", "Active", "Inactive", "Not installed"]);
     expect(entries[0]?.className).toContain("status-ok");
-    // No gateway target, no success vocabulary beyond Active.
-    const text = observationGroup().textContent?.toLowerCase() ?? "";
+    // No success vocabulary beyond the two truthful facts.
+    const text = serviceList().textContent.toLowerCase();
     expect(text).not.toMatch(/healthy|online|running/);
+  });
+
+  it("shows truthful Checking placeholders while the status read is in flight", async () => {
+    let resolveStatus!: (value: typeof SNAPSHOT) => void;
+    vi.mocked(fetchServiceStatus).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve;
+        }),
+    );
+    renderDashboard();
+    await flush();
+    expect(serviceEntries().map((e) => e.name)).toEqual(["Gateway", "Telegram", "Discord", "Scheduler"]);
+    expect(serviceEntries().slice(1).map((e) => e.label)).toEqual(["Checking…", "Checking…", "Checking…"]);
+    await act(async () => {
+      resolveStatus(SNAPSHOT);
+    });
+    await flush();
+    expect(serviceEntries().map((e) => e.label)).toEqual(["Connected", "Active", "Inactive", "Not installed"]);
   });
 
   it("renders unknown and unavailable as visible caution states, never success-styled", async () => {
     vi.mocked(fetchServiceStatus).mockResolvedValue(CAUTION_SNAPSHOT);
     renderDashboard();
     await flush();
-    const entries = observationEntries();
-    expect(entries.map((e) => e.label)).toEqual(["Unknown", "Manager unavailable", "Active"]);
-    expect(entries[0]?.className).toContain("status-warn");
+    const entries = serviceEntries();
+    expect(entries.slice(1).map((e) => e.label)).toEqual(["Unknown", "Manager unavailable", "Active"]);
     expect(entries[1]?.className).toContain("status-warn");
-    expect(entries[0]?.className).not.toContain("status-ok");
+    expect(entries[2]?.className).toContain("status-warn");
     expect(entries[1]?.className).not.toContain("status-ok");
-    expect(entries[2]?.className).toContain("status-ok");
+    expect(entries[2]?.className).not.toContain("status-ok");
+    expect(entries[3]?.className).toContain("status-ok");
   });
 
   it("observation failure preserves Gateway Connected and shows the bounded unavailable UI with one manual retry", async () => {
@@ -248,17 +265,16 @@ describe("DashboardView service observation (D2.3)", () => {
     expect(services?.textContent).toContain("Gateway");
     expect(services?.textContent).toContain("Connected");
     // Bounded failure presentation: no target labels, no invented state.
-    const group = observationGroup();
-    expect(group.textContent).toContain("Service observation unavailable");
-    expect(group.querySelector(".dashboard-service-observation-list")).toBeNull();
-    expect(group.textContent).not.toContain("Telegram");
-    expect(group.textContent?.toLowerCase() ?? "").not.toMatch(/healthy|online|running/);
+    expect(services?.textContent).toContain("Service status unavailable");
+    expect(serviceEntries().map((e) => e.name)).toEqual(["Gateway"]);
+    expect(services?.textContent).not.toContain("Telegram");
+    expect(services?.textContent?.toLowerCase() ?? "").not.toMatch(/healthy|online|running/);
     // No automatic retry.
     expect(vi.mocked(fetchServiceStatus)).toHaveBeenCalledTimes(1);
 
-    // One explicit manual retry fetches ONLY a fresh observation.
+    // One explicit manual retry fetches ONLY a fresh status read.
     vi.mocked(fetchServiceStatus).mockResolvedValue(SNAPSHOT);
-    const retry = Array.from(group.querySelectorAll("button")).find((b) => b.textContent === "Retry service observation");
+    const retry = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Retry service status");
     expect(retry).toBeDefined();
     await act(async () => {
       retry?.click();
@@ -266,23 +282,21 @@ describe("DashboardView service observation (D2.3)", () => {
     await flush();
     expect(vi.mocked(fetchServiceStatus)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(fetchConversationAgents)).toHaveBeenCalledTimes(1);
-    expect(observationEntries().map((e) => e.name)).toEqual(["Telegram", "Discord", "Scheduler"]);
+    expect(serviceEntries().map((e) => e.name)).toEqual(["Gateway", "Telegram", "Discord", "Scheduler"]);
   });
 
   it("a failed refresh never shows stale target values from an earlier snapshot", async () => {
     renderDashboard();
     await flush();
-    expect(observationEntries().map((e) => e.label)).toEqual(["Active", "Inactive", "Not installed"]);
+    expect(serviceEntries().map((e) => e.label)).toEqual(["Connected", "Active", "Inactive", "Not installed"]);
 
     // A shell-triggered reload re-reads the roster, then the observation
     // fails: the old snapshot's labels must disappear, not linger.
     vi.mocked(fetchServiceStatus).mockRejectedValue(new Error("service status HTTP 503"));
     rerenderDashboard(1);
     await flush();
-    const group = observationGroup();
-    expect(group.textContent).toContain("Service observation unavailable");
-    expect(group.querySelector(".dashboard-service-observation-list")).toBeNull();
-    expect(group.textContent).not.toContain("Not installed");
+    expect(container.querySelector(".dashboard-services")?.textContent).toContain("Service status unavailable");
+    expect(serviceEntries().map((e) => e.name)).toEqual(["Gateway"]);
     // Gateway connection fact still stands (the roster re-read succeeded).
     expect(container.querySelector(".dashboard-services")?.textContent).toContain("Connected");
   });
@@ -297,11 +311,11 @@ describe("DashboardView service observation (D2.3)", () => {
     expect(container.textContent).not.toContain("Active");
   });
 
-  it("keeps D1 selection/start behavior intact alongside the observation group", async () => {
+  it("keeps D1 selection/start behavior intact alongside the concise service list", async () => {
     renderDashboard();
     await flush();
-    // Observation rendered…
-    expect(observationEntries().length).toBe(3);
+    // Service list rendered with all four rows…
+    expect(serviceEntries().length).toBe(4);
     // …and the D1 agent cards + start flow are unchanged.
     const dipu = container.querySelector<HTMLButtonElement>('[data-agent="dipu"]');
     expect(dipu).not.toBeNull();
