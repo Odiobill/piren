@@ -225,5 +225,12 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
         expect(edges.leftColor).not.toMatch(/rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)/);
       }
     });
+
+    // Deterministic cleanup (P8 convention): never rely on process exit to
+    // kill Chrome. Optional chaining makes this safe even when setup partially
+    // failed and `browser` was never assigned.
+    it("teardown: close the browser", async () => {
+      await browser?.close();
+    }, 30_000);
   },
 );
