@@ -1,6 +1,7 @@
 import { createElement, type ReactElement, type ReactNode } from "react";
 import {
   parseSafeMarkdown,
+  parseSafeMarkdownWithVaultLinks,
   SAFE_MARKDOWN_OVERFLOW_NOTICE,
   type SafeMarkdownBlock,
   type SafeMarkdownInlineNode,
@@ -16,9 +17,21 @@ import {
  * `rel="noopener noreferrer"`, and a visually-hidden external-link suffix.
  * A body over the parser bounds renders ENTIRELY as literal pre-wrapped text
  * with the exact visible/screen-reader notice.
+ *
+ * WUX-C — the optional `onNavigateVaultPath` prop is the ONLY way Vault-page
+ * links are rendered/navigated: when provided, the body parses through the
+ * explicit Vault mode and closed vault-page links become in-place Explorer
+ * navigation controls. Without it (ordinary Conversation rendering) the
+ * default parser runs unchanged and vault-link nodes can never occur.
  */
-export function SafeMarkdownBody({ text }: { text: string }): ReactElement {
-  const result = parseSafeMarkdown(text);
+export function SafeMarkdownBody({
+  text,
+  onNavigateVaultPath,
+}: {
+  text: string;
+  onNavigateVaultPath?: (path: string) => void;
+}): ReactElement {
+  const result = onNavigateVaultPath === undefined ? parseSafeMarkdown(text) : parseSafeMarkdownWithVaultLinks(text);
   if (!result.ok) {
     return (
       <>
@@ -29,15 +42,17 @@ export function SafeMarkdownBody({ text }: { text: string }): ReactElement {
       </>
     );
   }
-  return <div className="markdown-body">{result.blocks.map((block, index) => renderBlock(block, index))}</div>;
+  return (
+    <div className="markdown-body">{result.blocks.map((block, index) => renderBlock(block, index, onNavigateVaultPath))}</div>
+  );
 }
 
-function renderBlock(block: SafeMarkdownBlock, key: number): ReactElement {
+function renderBlock(block: SafeMarkdownBlock, key: number, vault: RenderVaultContext): ReactElement {
   switch (block.type) {
     case "paragraph":
       return (
         <p className="markdown-paragraph" key={key}>
-          {renderInline(block.children)}
+          {renderInline(block.children, vault)}
         </p>
       );
     case "heading":
@@ -46,12 +61,12 @@ function renderBlock(block: SafeMarkdownBlock, key: number): ReactElement {
       return createElement(
         (`h${block.level + 3}` as "h4") || "h4",
         { className: `markdown-heading markdown-h${block.level}`, key },
-        renderInline(block.children),
+        renderInline(block.children, vault),
       );
     case "blockquote":
       return (
         <blockquote className="markdown-blockquote" key={key}>
-          {renderInline(block.children)}
+          {renderInline(block.children, vault)}
         </blockquote>
       );
     case "code-block":
@@ -65,28 +80,31 @@ function renderBlock(block: SafeMarkdownBlock, key: number): ReactElement {
       if (block.ordered) {
         return (
           <ol className="markdown-list" key={key}>
-            {block.items.map((item, index) => renderListItem(item, index))}
+            {block.items.map((item, index) => renderListItem(item, index, vault))}
           </ol>
         );
       }
       return (
         <ul className="markdown-list" key={key}>
-          {block.items.map((item, index) => renderListItem(item, index))}
+          {block.items.map((item, index) => renderListItem(item, index, vault))}
         </ul>
       );
   }
 }
 
-function renderListItem(item: SafeMarkdownListItem, key: number): ReactElement {
+/** WUX-C — the narrowly scoped vault-navigation context for one render. */
+type RenderVaultContext = ((path: string) => void) | undefined;
+
+function renderListItem(item: SafeMarkdownListItem, key: number, vault: RenderVaultContext): ReactElement {
   return (
     <li className="markdown-list-item" key={key}>
-      {renderInline(item.children)}
-      {item.nested.map((list, index) => renderBlock(list, index))}
+      {renderInline(item.children, vault)}
+      {item.nested.map((list, index) => renderBlock(list, index, vault))}
     </li>
   );
 }
 
-function renderInline(nodes: readonly SafeMarkdownInlineNode[]): ReactNode[] {
+function renderInline(nodes: readonly SafeMarkdownInlineNode[], vault: RenderVaultContext): ReactNode[] {
   return nodes.map((node, index) => {
     switch (node.type) {
       case "text":
@@ -98,15 +116,32 @@ function renderInline(nodes: readonly SafeMarkdownInlineNode[]): ReactNode[] {
           </code>
         );
       case "strong":
-        return <strong key={index}>{renderInline(node.children)}</strong>;
+        return <strong key={index}>{renderInline(node.children, vault)}</strong>;
       case "emphasis":
-        return <em key={index}>{renderInline(node.children)}</em>;
+        return <em key={index}>{renderInline(node.children, vault)}</em>;
       case "link":
         return (
           <a key={index} href={node.url} target="_blank" rel="noopener noreferrer" className="markdown-link">
-            {renderInline(node.children)}
+            {renderInline(node.children, vault)}
             <span className="sr-only"> (opens in a new tab)</span>
           </a>
+        );
+      case "vault-link":
+        // WUX-C — only with an explicit in-place navigation handler does a
+        // closed vault-page link become interactive; without one it renders
+        // as its label text (never an anchor, never browser navigation).
+        if (vault === undefined) {
+          return <span key={index}>{renderInline(node.children, vault)}</span>;
+        }
+        return (
+          <button
+            type="button"
+            key={index}
+            className="markdown-link markdown-vault-link"
+            onClick={() => vault(node.path)}
+          >
+            {renderInline(node.children, vault)}
+          </button>
         );
     }
   });

@@ -169,14 +169,18 @@ export function Sidebar({
                     aria-current={selected ? "true" : undefined}
                     onClick={() => openConversation(conversation.id)}
                   >
-                    {/* WUX-A: decorative conversation glyph on each entry. */}
-                    <MessageIcon size={13} />
-                    {/* Origin-fact timestamp: the durable created value renders
-                        above the title with a machine-readable time value;
-                        malformed/unavailable values fail quiet (no fabricated
-                        date, no fetch, no state). */}
-                    <ConversationCreatedTimestamp created={conversation.created} />
-                    <span>{conversation.title}</span>
+                    {/* WUX-A: decorative conversation glyph on each entry.
+                        WUX-C: the glyph and the durable created date share
+                        ONE compact meta line above the title. */}
+                    <span className="sidebar-conversation-meta">
+                      <MessageIcon size={13} />
+                      {/* Origin-fact timestamp: the durable created value renders
+                          above the title with a machine-readable time value;
+                          malformed/unavailable values fail quiet (no fabricated
+                          date, no fetch, no state). */}
+                      <ConversationCreatedTimestamp created={conversation.created} />
+                    </span>
+                    <span className="sidebar-conversation-title">{conversation.title}</span>
                     <small>{conversationAudienceSummary(conversation.audience)}</small>
                   </button>
                 </li>

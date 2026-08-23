@@ -731,12 +731,22 @@ code {
   border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
 }
 
-.sidebar-conversation-entry span {
+.sidebar-conversation-entry .sidebar-conversation-title {
   overflow: hidden;
   font-size: 0.9rem;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* WUX-C — one compact line for the decorative conversation glyph and the
+   durable created date; the entry grid keeps the title and audience on their
+   own rows below it. */
+.sidebar-conversation-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .sidebar-conversation-entry small {
@@ -773,6 +783,11 @@ code {
   font-weight: 600;
   font-size: 0.9375rem;
   cursor: pointer;
+  /* WUX-C: labeled nav items keep their icon and text on one line with a
+     small consistent gap; icon-only controls override this compactly. */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .nav-item:hover {
@@ -1882,6 +1897,20 @@ code {
   outline-offset: 2px;
 }
 
+/* WUX-C — in-place vault-page links render as native buttons styled like
+   safe Markdown links (no fake hrefs, no browser navigation; activation is
+   handled by the Explorer host). */
+.markdown-vault-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 .markdown-overflow-literal {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1905,7 +1934,11 @@ code {
   flex-wrap: wrap;
   align-items: stretch;
   gap: 6px;
-  padding-top: 8px;
+  /* WUX-C: compact separation above (the composer action row already pads
+     below its controls) plus bottom breathing room comparable to the
+     composer controls, so the final card row never touches the page edge. */
+  padding-top: 4px;
+  padding-bottom: 12px;
   min-width: 0;
 }
 

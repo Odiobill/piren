@@ -123,6 +123,26 @@ export function VaultExplorer({
     fetchList(target, activeOrdering);
   }
 
+  /**
+   * WUX-C — open one vault-relative document path (from an entry click or a
+   * closed in-page vault link). The listing location moves to the document's
+   * parent directory so the breadcrumb/back behavior stay consistent, and
+   * the retained in-memory location is reported. The server stays the path
+   * authority; a bad read surfaces through the existing bounded error UI.
+   */
+  function openDocumentAt(filePath: string): void {
+    const cut = filePath.lastIndexOf("/");
+    const parent = cut === -1 ? VAULT_ROOT_PATH : filePath.slice(0, cut);
+    const name = cut === -1 ? filePath : filePath.slice(cut + 1);
+    if (name === "") return;
+    const document = { path: filePath, name };
+    setPath(parent);
+    setDocumentEntry(document);
+    setReadPhase({ kind: "loading" });
+    onLocationChange?.({ path: parent, document });
+    void loadRead(filePath);
+  }
+
   /** WUX-B — explicit order toggle over the current directory, in-memory only. */
   function toggleOrdering(): void {
     const next: VaultOrdering = activeOrdering === "recent" ? "name" : "recent";
@@ -179,11 +199,7 @@ export function VaultExplorer({
       return;
     }
     if (entry.type === "file") {
-      const document = { path: entry.path, name: entry.name };
-      setDocumentEntry(document);
-      setReadPhase({ kind: "loading" });
-      onLocationChange?.({ path, document });
-      void loadRead(entry.path);
+      openDocumentAt(entry.path);
     }
     // "other" entries are never selectable (disabled in the render).
   }
@@ -262,7 +278,10 @@ export function VaultExplorer({
                     ))}
                   </dl>
                 )}
-                <SafeMarkdownBody text={card === null ? readPhase.response.content : card.body} />
+                <SafeMarkdownBody
+                  text={card === null ? readPhase.response.content : card.body}
+                  onNavigateVaultPath={openDocumentAt}
+                />
               </>
             );
           })()}

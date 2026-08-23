@@ -75,6 +75,40 @@ const FIXTURE = (cssUrl: string): string => `<!doctype html>
 </body>
 </html>`;
 
+const ROW_FIXTURE = (cssUrl: string): string => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>WUX-C sidebar conversation meta row probe</title>
+<link rel="stylesheet" href="${cssUrl}" />
+<style>html, body { margin: 0; }</style>
+</head>
+<body>
+<div class="shell">
+  <div class="shell-body">
+    <div class="sidebar-desktop" style="width: 280px;">
+      <nav class="sidebar-nav" aria-label="Main">
+        <section class="sidebar-conversations">
+          <ul class="sidebar-conversation-list">
+            <li>
+              <button type="button" class="sidebar-conversation-entry active">
+                <span class="sidebar-conversation-meta">
+                  <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <time class="sidebar-conversation-created" dateTime="2026-08-15T13:00:00.000Z">Aug 15</time>
+                </span>
+                <span class="sidebar-conversation-title">Conversation with dipu</span>
+                <small>dipu</small>
+              </button>
+            </li>
+          </ul>
+        </section>
+      </nav>
+    </div>
+  </div>
+</div>
+</body>
+</html>`;
+
 const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
   "WUX-A real-browser sidebar Explorer row geometry probe (system Chrome)",
   () => {
@@ -117,6 +151,28 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       expect(toggleShare).toBeLessThan(0.9);
       expect(actionShare).toBeGreaterThan(0.1);
       expect(actionShare).toBeLessThan(0.3);
+    });
+
+    it("WUX-C: the conversation glyph and created date share one compact line above the title", async () => {
+      const metaFixturePath = join(mkdtempSync(join(tmpdir(), "piren-wux-c-sidebar-")), "probe.html");
+      writeFileSync(metaFixturePath, ROW_FIXTURE(`file://${builtCssPath()}`));
+      await page.goto(`file://${metaFixturePath}`);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const metrics = await page.evaluate(() => {
+        const icon = document.querySelector<SVGGraphicsElement>(".sidebar-conversation-meta svg");
+        const time = document.querySelector<HTMLElement>(".sidebar-conversation-meta time");
+        const title = document.querySelector<HTMLElement>(".sidebar-conversation-title");
+        if (icon === null || time === null || title === null) throw new Error("meta row nodes missing");
+        const iconRect = icon.getBoundingClientRect();
+        const timeRect = time.getBoundingClientRect();
+        const titleRect = title.getBoundingClientRect();
+        return {
+          sameLineCenter: Math.abs(iconRect.top + iconRect.height / 2 - (timeRect.top + timeRect.height / 2)) < 2,
+          metaAboveTitle: timeRect.bottom <= titleRect.top + 2,
+        };
+      });
+      expect(metrics.sameLineCenter).toBe(true);
+      expect(metrics.metaAboveTitle).toBe(true);
     });
 
     it("teardown: close the browser", async () => {

@@ -18,6 +18,7 @@
  * The parser builds a deterministic element model only — it never constructs
  * HTML strings, touches the DOM, fetches, stores, or reads authority.
  */
+import { parseVaultMarkdownHref, parseVaultWikiLink } from "./vault-links.js";
 
 export const SAFE_MARKDOWN_MAX_INPUT_UTF16 = 32768;
 export const SAFE_MARKDOWN_MAX_BLOCKS = 2048;
@@ -49,7 +50,19 @@ export interface SafeMarkdownLinkNode {
   url: string;
   children: SafeMarkdownInlineNode[];
 }
-export type SafeMarkdownInlineNode = SafeMarkdownTextNode | SafeMarkdownCodeNode | SafeMarkdownStrongNode | SafeMarkdownEmphasisNode | SafeMarkdownLinkNode;
+/**
+ * WUX-C — a closed in-place vault-page link, produced ONLY by the explicit
+ * Vault mode (`parseSafeMarkdownWithVaultLinks`); the default ordinary
+ * conversation parser never emits it. `path` is a validated closed
+ * vault-relative page target from `vault-links.ts`; navigation stays a
+ * renderer/host concern.
+ */
+export interface SafeMarkdownVaultLinkNode {
+  type: "vault-link";
+  path: string;
+  children: SafeMarkdownInlineNode[];
+}
+export type SafeMarkdownInlineNode = SafeMarkdownTextNode | SafeMarkdownCodeNode | SafeMarkdownStrongNode | SafeMarkdownEmphasisNode | SafeMarkdownLinkNode | SafeMarkdownVaultLinkNode;
 
 export interface SafeMarkdownListItem {
   children: SafeMarkdownInlineNode[];
@@ -143,7 +156,11 @@ class SafeMarkdownParser {
   /** Cached position: no fence closer exists anywhere after this index. */
   private noFenceCloserAfter = Number.POSITIVE_INFINITY;
 
-  constructor(private readonly lines: string[]) {}
+  constructor(
+    private readonly lines: string[],
+    /** WUX-C — explicit Vault-only link recognition mode (default off). */
+    private readonly vaultLinks: boolean = false,
+  ) {}
 
   parse(): SafeMarkdownParseResult {
     const blocks = this.parseBlocks();
@@ -357,6 +374,15 @@ class SafeMarkdownParser {
         continue;
       }
       if (char === "[" && options.allowLinks && text[cursor - 1] !== "!") {
+        if (this.vaultLinks && text.startsWith("[[", cursor)) {
+          const wiki = this.tryParseWikiLink(text, cursor);
+          if (wiki !== null) {
+            this.bumpInline();
+            nodes.push(wiki.node);
+            cursor = wiki.end;
+            continue;
+          }
+        }
         const link = this.tryParseLink(text, cursor);
         if (link !== null) {
           this.bumpInline();
@@ -381,7 +407,10 @@ class SafeMarkdownParser {
     return nodes;
   }
 
-  private tryParseLink(text: string, start: number): { node: SafeMarkdownLinkNode; end: number } | null {
+  private tryParseLink(
+    text: string,
+    start: number,
+  ): { node: SafeMarkdownLinkNode | SafeMarkdownVaultLinkNode; end: number } | null {
     const labelEnd = text.indexOf("]", start + 1);
     if (labelEnd === -1 || labelEnd - start > SAFE_MARKDOWN_LINK_WINDOW) return null;
     if (text[labelEnd + 1] !== "(") return null;
@@ -389,7 +418,21 @@ class SafeMarkdownParser {
     const urlEnd = text.indexOf(")", urlStart);
     if (urlEnd === -1 || urlEnd - urlStart > SAFE_MARKDOWN_LINK_WINDOW) return null;
     const rawUrl = text.slice(urlStart, urlEnd);
-    if (!isSafeMarkdownLinkUrl(rawUrl)) return null;
+    if (!isSafeMarkdownLinkUrl(rawUrl)) {
+      // WUX-C — Vault mode only: a safe ROOT-RELATIVE form becomes an
+      // in-place vault-page link; everything else stays literal text.
+      if (!this.vaultLinks) return null;
+      const target = parseVaultMarkdownHref(rawUrl);
+      if (!target.ok) return null;
+      return {
+        node: {
+          type: "vault-link",
+          path: target.path,
+          children: this.parseInline(text.slice(start + 1, labelEnd), { allowLinks: false }),
+        },
+        end: urlEnd + 1,
+      };
+    }
     return {
       node: {
         type: "link",
@@ -399,10 +442,42 @@ class SafeMarkdownParser {
       end: urlEnd + 1,
     };
   }
+
+  /** WUX-C — attempt one `[[target]]` / `[[target|label]]` vault link. */
+  private tryParseWikiLink(text: string, start: number): { node: SafeMarkdownVaultLinkNode; end: number } | null {
+    const close = text.indexOf("]]", start + 2);
+    if (close === -1 || close - start > SAFE_MARKDOWN_LINK_WINDOW) return null;
+    const inner = text.slice(start + 2, close);
+    const wiki = parseVaultWikiLink(inner);
+    if (!wiki.ok) return null;
+    // The displayed label is the piped label when present, else the raw
+    // target text exactly as written (never fabricated).
+    const display = wiki.label ?? inner.trim();
+    return {
+      node: {
+        type: "vault-link",
+        path: wiki.path,
+        children: this.parseInline(display, { allowLinks: false }),
+      },
+      end: close + 2,
+    };
+  }
 }
 
 /** Parse one ordinary agent-message body into the deterministic element model. */
 export function parseSafeMarkdown(body: string): SafeMarkdownParseResult {
   if (body.length > SAFE_MARKDOWN_MAX_INPUT_UTF16) return { ok: false, reason: "over-limit" };
   return new SafeMarkdownParser(body.split("\n")).parse();
+}
+
+/**
+ * WUX-C — explicit Vault Explorer mode: identical parser and bounds, plus
+ * narrowly parameterized recognition of the two closed vault-page link
+ * forms (root-relative `[label](/path)` links and `[[target]]` /
+ * `[[target|label]]` wikilinks). Ordinary Conversation rendering never uses
+ * this mode and its output is unchanged byte-for-byte.
+ */
+export function parseSafeMarkdownWithVaultLinks(body: string): SafeMarkdownParseResult {
+  if (body.length > SAFE_MARKDOWN_MAX_INPUT_UTF16) return { ok: false, reason: "over-limit" };
+  return new SafeMarkdownParser(body.split("\n"), true).parse();
 }

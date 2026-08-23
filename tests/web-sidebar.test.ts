@@ -113,18 +113,22 @@ describe("Sidebar conversation list created timestamp", () => {  let container: 
     const entries = container.querySelectorAll<HTMLButtonElement>(".sidebar-conversation-entry");
     expect(entries.length).toBe(2);
     for (const entry of entries) {
-      const time = entry.querySelector<HTMLElement>("time.sidebar-conversation-created");
+      // WUX-C — the decorative message glyph and the durable created date
+      // share ONE compact meta line above the title.
+      const meta = entry.querySelector<HTMLElement>("span.sidebar-conversation-meta");
+      expect(meta).not.toBeNull();
+      // The decorative icon is inside the same compact meta line.
+      expect(meta?.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+      const time = meta?.querySelector<HTMLElement>("time.sidebar-conversation-created");
       expect(time).not.toBeNull();
       // Machine-readable value is present and the localized text is non-empty.
       expect(time?.getAttribute("dateTime")?.length ?? 0).toBeGreaterThan(0);
       expect((time?.textContent?.length ?? 0)).toBeGreaterThan(0);
-      // The timestamp renders ABOVE the title: after the leading decorative
-      // icon (WUX-A) and before the title span.
+      // The meta line renders FIRST (above the title span), then the title,
+      // then the audience summary.
       const children = Array.from(entry.children);
-      expect(children.findIndex((c) => c.tagName === "TIME")).toBeGreaterThanOrEqual(0);
-      expect(children.findIndex((c) => c.tagName === "TIME")).toBeLessThan(
-        children.findIndex((c) => c.tagName === "SPAN"),
-      );
+      expect(children.findIndex((c) => c.classList.contains("sidebar-conversation-meta"))).toBe(0);
+      expect(children.findIndex((c) => c.classList.contains("sidebar-conversation-title"))).toBeGreaterThan(0);
       // Title and audience summary remain intact.
       expect(entry.textContent).toContain("Conversation");
       expect(entry.textContent).toContain("Dipu");
@@ -222,6 +226,24 @@ describe("Sidebar WUX-A: icons, exclusive active state, and 80/20 Explorer row",
     expect(settings.textContent).toContain("Settings");
     expect(settings.classList.contains("active")).toBe(true);
     expect(settings.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("pins the WUX-C compact icon+date meta line and labeled-nav icon/text gap in CSS", async () => {
+    renderSidebar({ page: "dashboard" });
+    await flush();
+    const css = await readFile(join(process.cwd(), "web", "src", "styles.css"), "utf8");
+    // The conversation meta line is one compact inline-flex row.
+    const metaBlock = css.slice(css.indexOf(".sidebar-conversation-meta"));
+    expect(css).toContain(".sidebar-conversation-meta");
+    expect(metaBlock).toMatch(/display:\s*inline-flex/s);
+    expect(metaBlock).toMatch(/align-items:\s*center/s);
+    // Labeled nav items keep their WUX-A icons with a small consistent gap.
+    const navItemStart = css.indexOf(".nav-item {");
+    expect(navItemStart).toBeGreaterThanOrEqual(0);
+    const navItemBlock = css.slice(navItemStart, css.indexOf("}", navItemStart));
+    expect(navItemBlock).toMatch(/display:\s*inline-flex/s);
+    expect(navItemBlock).toMatch(/align-items:\s*center/s);
+    expect(navItemBlock).toMatch(/gap:\s*8px/s);
   });
 
   it("grows the Explorer name control to about 80% and the full-page action to about 20% of the row", async () => {

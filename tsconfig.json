@@ -70,6 +70,9 @@
     "tests/web-dashboard-multiselect.test.ts",
     "tests/web-visible-ui-icons.test.ts",
     "tests/web-wux-sidebar-row-browser.test.ts",
-    "tests/web-wux-explorer-fullpage-browser.test.ts"
+    "tests/web-wux-explorer-fullpage-browser.test.ts",
+    "tests/web-wux-c-explorer-links.test.ts",
+    "tests/web-wux-c-safe-markdown-vault-mode.test.ts",
+    "tests/web-wux-c-context-spacing.test.ts"
   ]
 }
