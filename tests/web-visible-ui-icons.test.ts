@@ -379,4 +379,3 @@ function explorerElement(): ReactElement {
     onValidated: () => {},
   });
 }
-

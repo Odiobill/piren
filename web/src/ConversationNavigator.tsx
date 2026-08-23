@@ -1342,9 +1342,7 @@ function ApprovalCard({
       )}
       <div className="confirmation-actions">
         <button type="button" ref={confirmButtonRef} className="button button-primary" disabled={submitting} onClick={primary}>
-          {/* D4: decorative leading icons only on the recognized handoff
-              card's text-labelled actions; generic approvals are unchanged. */}
-          {gate !== null && <CheckIcon size={16} />}
+          <CheckIcon size={16} />
           {needsInput ? "Submit" : "Confirm"}
         </button>
         <button
@@ -1353,7 +1351,7 @@ function ApprovalCard({
           disabled={submitting}
           onClick={() => onRespond(approval, { cancelled: true })}
         >
-          {gate !== null && <XIcon size={16} />}
+          <XIcon size={16} />
           Cancel
         </button>
       </div>

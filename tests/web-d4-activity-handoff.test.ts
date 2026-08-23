@@ -291,7 +291,7 @@ describe("D4 recognized handoff approval presentation", () => {
     expect(document.activeElement).toBe(confirm);
   });
 
-  it("generic approvals keep their exact current presentation (no handoff class, no icons)", async () => {
+  it("generic approvals retain generic semantics and carry decorative action icons", async () => {
     await mountNavigator();
     await act(async () => deliverApproval({ requestId: "req-g" }));
     await flush();
@@ -299,18 +299,18 @@ describe("D4 recognized handoff approval presentation", () => {
     expect(card?.classList.contains("approval-card-handoff")).toBe(false);
     expect(card?.getAttribute("aria-label")).toBe("Approval requested by dipu");
     const confirm = confirmButton();
-    expect(confirm.querySelector("svg")).toBeNull();
+    expect(confirm.querySelector("svg[aria-hidden='true']")).not.toBeNull();
     expect(confirm.textContent).toBe("Confirm");
-    expect(cancelButton().querySelector("svg")).toBeNull();
+    expect(cancelButton().querySelector("svg[aria-hidden='true']")).not.toBeNull();
   });
 
-  it("an unrecognized/malformed frame keeps the generic card (no handoff presentation)", async () => {
+  it("an unrecognized/malformed frame keeps the generic card with decorative actions", async () => {
     await mountNavigator();
     await act(async () => deliverApproval({ requestId: "req-m", payload: { title: "Proceed?" } }));
     await flush();
     const card = container.querySelector<HTMLElement>(".approval-card");
     expect(card?.classList.contains("approval-card-handoff")).toBe(false);
-    expect(confirmButton().querySelector("svg")).toBeNull();
+    expect(confirmButton().querySelector("svg[aria-hidden='true']")).not.toBeNull();
   });
 
   it("handoff Confirm/Cancel authority and route bodies are unchanged", async () => {
