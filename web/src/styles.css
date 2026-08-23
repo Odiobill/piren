@@ -1667,7 +1667,11 @@ code {
 
 .transcript-message {
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  /* WUX-D: durable message cards carry SYMMETRIC side accents — the colored
+     left accent is mirrored on the right edge with the same per-role color,
+     so steward and agent cards read as framed on both sides. */
   border-left-width: 3px;
+  border-right-width: 3px;
   border-radius: 12px;
   padding: 10px 14px;
   background: var(--surface);
@@ -1675,10 +1679,12 @@ code {
 
 .transcript-steward {
   border-left-color: var(--accent);
+  border-right-color: var(--accent);
 }
 
 .transcript-agent {
   border-left-color: var(--ok);
+  border-right-color: var(--ok);
 }
 
 .transcript-message-header {
@@ -2169,10 +2175,18 @@ code {
   border-radius: 3px;
   cursor: row-resize;
   touch-action: none;
+  /* WUX-D: visibly discoverable at rest — a quiet theme-aware paint so the
+     accessible separator reads as draggable without stealing attention.
+     Hover/drag and focus-visible stay strictly stronger. */
+  background: color-mix(in srgb, var(--accent, #4a6cf7) 26%, var(--border));
 }
 
 .split-resizer:hover {
   background: var(--accent, #4a6cf7);
+}
+
+.split-resizer:active {
+  background: var(--accent-strong, #1158c7);
 }
 
 .split-resizer:focus-visible {
