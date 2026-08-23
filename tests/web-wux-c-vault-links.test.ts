@@ -28,8 +28,8 @@ describe("parseVaultMarkdownHref — safe standard root-relative form", () => {
       "Projects/Piren/implementation-plan.md",
     );
     expect(okPath(parseVaultMarkdownHref("/index.md"))).toBe("index.md");
-    // Verbatim: NO wiki-style extension mapping for the standard form.
-    expect(okPath(parseVaultMarkdownHref("/team/dipu/notes.txt"))).toBe("team/dipu/notes.txt");
+    // Standard Markdown targets keep their explicit Markdown extension.
+    expect(okPath(parseVaultMarkdownHref("/team/dipu/notes.MARKDOWN"))).toBe("team/dipu/notes.MARKDOWN");
   });
 
   it("rejects browser-relative links (never converted)", () => {
@@ -51,6 +51,14 @@ describe("parseVaultMarkdownHref — safe standard root-relative form", () => {
     expect(parseVaultMarkdownHref("https://example.com/x.md").ok).toBe(false);
     expect(parseVaultMarkdownHref("//example.com/x.md").ok).toBe(false);
     expect(parseVaultMarkdownHref("mailto:a@example.com").ok).toBe(false);
+  });
+
+  it("rejects non-Markdown and hidden targets so links stay vault pages, not a hidden-file browser", () => {
+    expect(parseVaultMarkdownHref("/team/dipu/notes.txt").ok).toBe(false);
+    expect(parseVaultMarkdownHref("/.piren-vault").ok).toBe(false);
+    expect(parseVaultMarkdownHref("/team/.config.md").ok).toBe(false);
+    expect(parseVaultWikiLink("team/dipu/notes.txt").ok).toBe(false);
+    expect(parseVaultWikiLink(".piren-vault").ok).toBe(false);
   });
 
   it("rejects backslashes, controls, query/fragment, and empty/double-slash paths", () => {
@@ -90,9 +98,7 @@ describe("parseVaultWikiLink — closed vault wikilink form", () => {
     const markdown = parseVaultWikiLink("guides/a.MARKDOWN");
     expect(markdown.ok).toBe(true);
     if (markdown.ok) expect(markdown.path).toBe("guides/a.MARKDOWN");
-    const other = parseVaultWikiLink("data/notes.txt");
-    expect(other.ok).toBe(true);
-    if (other.ok) expect(other.path).toBe("data/notes.txt");
+
   });
 
   it("appends .md exactly once for an extensionless bare name", () => {

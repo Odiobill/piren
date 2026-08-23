@@ -37,6 +37,13 @@ function hasExplicitExtension(name: string): boolean {
   return dot > 0 && dot < name.length - 1;
 }
 
+/** Only Markdown documents are vault pages eligible for in-place navigation. */
+function isMarkdownPageName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (lower.endsWith(".markdown") && lower.length > ".markdown".length) ||
+    (lower.endsWith(".md") && lower.length > ".md".length);
+}
+
 /**
  * Shared segment validation for one vault-relative path (no leading slash).
  * Rejects backslashes, control/space characters, query/fragment markers, and
@@ -53,6 +60,7 @@ function validateVaultSegments(path: string): string | null {
   for (const segment of path.split("/")) {
     if (segment === "") return "has an empty path segment";
     if (segment === "." || segment === "..") return "contains a dot traversal segment";
+    if (segment.startsWith(".")) return "contains a hidden path segment";
   }
   return null;
 }
@@ -68,6 +76,8 @@ export function parseVaultMarkdownHref(raw: string): VaultMarkdownLinkTarget {
   const path = raw.slice(1);
   const invalid = validateVaultSegments(path);
   if (invalid !== null) return { ok: false, reason: invalid };
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (!isMarkdownPageName(name)) return { ok: false, reason: "does not target a Markdown page" };
   return { ok: true, path };
 }
 
@@ -91,6 +101,7 @@ export function parseVaultWikiLink(inner: string): VaultWikiLinkTarget {
   const segments = rawTarget.split("/");
   const name = segments[segments.length - 1] as string;
   const resolvedName = hasExplicitExtension(name) ? name : `${name}.md`;
+  if (!isMarkdownPageName(resolvedName)) return { ok: false, reason: "does not target a Markdown page" };
   const path = [...segments.slice(0, -1), resolvedName].join("/");
   return { ok: true, path, label: rawLabel };
 }
