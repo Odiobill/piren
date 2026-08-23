@@ -1,14 +1,18 @@
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveVaultPath } from "./vault-tools.js";
-const MAX_LIST_ENTRIES = 100;
+const MAX_LIST_ENTRIES = 500;
 const MAX_READ_BYTES = 500_000; // 500 KB
 /**
  * List directory contents under a vault root path.
- * Dirs first, alpha-sorted, capped entries, dotfiles hidden.
- * Reuses resolveVaultPath for path-boundary enforcement.
+ * Default ordering: dirs first, alpha-sorted. The optional WUX-B "recent"
+ * ordering sorts ALL entries by server-derived mtimeMs descending with a
+ * deterministic name tie-break BEFORE the bounded entry trim, so it can
+ * expose recent items beyond the default alphabetical window.
+ * Dotfiles hidden; capped entries; reuses resolveVaultPath for path-boundary
+ * enforcement.
  */
-export async function vaultBrowserList(vaultRoot, inputPath) {
+export async function vaultBrowserList(vaultRoot, inputPath, ordering = "name") {
     const resolved = resolveVaultPath(vaultRoot, inputPath);
     const dirents = await readdir(resolved.absolutePath, {
         withFileTypes: true,
@@ -39,14 +43,17 @@ export async function vaultBrowserList(vaultRoot, inputPath) {
         }
         entries.push(listEntry);
     }
-    // Sort: dirs first (alpha), then files (alpha).
-    const sorted = [...entries].sort((a, b) => {
-        if (a.type === "directory" && b.type !== "directory")
-            return -1;
-        if (a.type !== "directory" && b.type === "directory")
-            return 1;
-        return a.name.localeCompare(b.name);
-    });
+    // Ordering happens BEFORE the bounded trim so "recent" exposes the newest
+    // entries even beyond the alphabetical window of the default ordering.
+    const sorted = ordering === "recent"
+        ? [...entries].sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name))
+        : [...entries].sort((a, b) => {
+            if (a.type === "directory" && b.type !== "directory")
+                return -1;
+            if (a.type !== "directory" && b.type === "directory")
+                return 1;
+            return a.name.localeCompare(b.name);
+        });
     const capped = sorted.length > MAX_LIST_ENTRIES;
     const trimmed = capped ? sorted.slice(0, MAX_LIST_ENTRIES) : sorted;
     return {

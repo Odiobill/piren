@@ -2247,6 +2247,15 @@ code {
   padding-inline: 8px;
 }
 
+/* WUX-B — full-page Explorer: the workspace pane stops being an inset
+   scrolling card host. The shell-main region clips to the viewport and the
+   Explorer's own entries/document region is the sole vertical scroll owner;
+   no second outer shell scrollbar appears. */
+.shell.shell-explorer-fullpage .shell-main {
+  overflow: hidden;
+  padding: 0;
+}
+
 .workspace-panel.vault-explorer-fullpage {
   width: 100%;
   max-width: none;
@@ -2292,6 +2301,26 @@ code {
   align-items: center;
   gap: 8px;
   color: var(--muted);
+}
+
+.vault-explorer-order-toggle {
+  /* WUX-B — sits at the row's right edge after the crumbs. */
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.vault-explorer-order-toggle:hover {
+  background: var(--surface);
 }
 
 .vault-explorer-body {

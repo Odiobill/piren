@@ -344,3 +344,91 @@ describe("Vault Explorer split pane scroll repair (V1 static pins)", () => {
     }
   });
 });
+
+describe("AppShell Vault Explorer continuity across presentations (WUX-B)", () => {
+  it("a nested directory and open document survive split-to-full-page transitions without resetting to the root", async () => {
+    // Root listing offers one directory; that directory offers one document.
+    vi.mocked(fetchVaultList).mockImplementation(async (path: string) => {
+      if (path === "team") {
+        return {
+          path: "team",
+          entries: [{ name: "notes.md", path: "team/notes.md", type: "file", bytes: 9, mtimeMs: 4 }],
+          capped: false,
+        };
+      }
+      return {
+        path: ".",
+        entries: [{ name: "team", path: "team", type: "directory", mtimeMs: 5 }],
+        capped: false,
+      };
+    });
+    vi.mocked(fetchVaultRead).mockResolvedValue({ ...READ, path: "team/notes.md" });
+
+    await renderShell();
+    await flush();
+
+    // Full-page presentation: navigate into team, then open notes.md.
+    await act(async () => toggleButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    const dirEntry = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.getAttribute("aria-label") === "Open directory team",
+    );
+    expect(dirEntry).toBeDefined();
+    await act(async () => dirEntry?.click());
+    await flush();
+    const docEntry = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.getAttribute("aria-label") === "Read file notes.md",
+    );
+    expect(docEntry).toBeDefined();
+    await act(async () => docEntry?.click());
+    await flush();
+    expect(container.querySelector('[aria-label="Document: notes.md"]')).not.toBeNull();
+    expect(container.textContent).toContain("Hi");
+
+    // Switch to a selected Conversation: the Explorer re-presents as the W1
+    // split. A fresh bounded reread of the SAME location is allowed; the
+    // root must NOT replace the retained directory/document.
+    const listCallsBefore = vi.mocked(fetchVaultList).mock.calls.length;
+    navigateToSelection();
+    await flush();
+    const calls = vi.mocked(fetchVaultList).mock.calls.slice(listCallsBefore);
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    for (const call of calls) {
+      expect(call[0]).toBe("team");
+    }
+    expect(vi.mocked(fetchVaultRead)).toHaveBeenCalledWith("team/notes.md", "T", expect.anything());
+    // The document is visible in the split companion pane.
+    const companion = container.querySelector<HTMLElement>(".split-companion-pane");
+    expect(companion?.textContent).toContain("notes.md");
+  });
+});
+
+describe("WUX-B full-page Explorer single scroll owner", () => {
+  it("the shell marks the full-page Explorer presentation and stops being an inset scrolling host", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const appShellSource = await readFile(join(process.cwd(), "web", "src", "AppShell.tsx"), "utf8");
+    expect(appShellSource).toContain("shell-explorer-fullpage");
+
+    const css = await readFile(join(process.cwd(), "web", "src", "styles.css"), "utf8");
+    const block = css.slice(css.indexOf(".shell.shell-explorer-fullpage .shell-main"));
+    expect(block.startsWith(".shell.shell-explorer-fullpage .shell-main")).toBe(true);
+    expect(block.slice(0, block.indexOf("}"))).toMatch(/overflow:\s*hidden/);
+    expect(block.slice(0, block.indexOf("}"))).toMatch(/padding:\s*0/);
+  });
+
+  it("applies the full-page presentation class only while the no-selection Explorer is open", async () => {
+    await renderShell();
+    await flush();
+    expect(container.querySelector(".shell")?.className).not.toContain("shell-explorer-fullpage");
+
+    await act(async () => toggleButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector(".shell")?.className).toContain("shell-explorer-fullpage");
+
+    // Closing restores the normal presentation class state.
+    await act(async () => toggleButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector(".shell")?.className).not.toContain("shell-explorer-fullpage");
+  });
+});

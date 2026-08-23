@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseVaultListResponse,
   parseVaultReadResponse,
+  presentVaultEntries,
   sortVaultEntries,
   vaultBreadcrumb,
   isVaultDirectoryEntry,
@@ -241,5 +242,32 @@ describe("parseFrontmatterCard", () => {
     const card = parseFrontmatterCard("---\r\ntitle: CRLF doc\r\n---\r\n# Body");
     expect(card?.fields).toEqual([{ key: "title", value: "CRLF doc" }]);
     expect(card?.body).toBe("# Body");
+  });
+});
+
+describe("presentVaultEntries (WUX-B ordering)", () => {
+  const entries: VaultEntry[] = [
+    { name: "b.md", path: "b.md", type: "file", bytes: 1, mtimeMs: 10 },
+    { name: "team", path: "team", type: "directory", mtimeMs: 1 },
+    { name: "a.md", path: "a.md", type: "file", bytes: 2, mtimeMs: 99 },
+    { name: "a.md", path: "other/a.md", type: "file", bytes: 3, mtimeMs: 99 },
+  ];
+
+  it("name ordering keeps dirs-first alphabetical regardless of server order", () => {
+    const presented = presentVaultEntries(entries, "name");
+    // Sorted by NAME: the identically named a.md entries tie (stable), and
+    // both precede b.md.
+    expect(presented.map((entry) => entry.path)).toEqual(["team", "a.md", "other/a.md", "b.md"]);
+  });
+
+  it("recent ordering sorts by mtimeMs descending with a deterministic name tie-break", () => {
+    const presented = presentVaultEntries([...entries], "recent");
+    expect(presented.map((entry) => entry.path)).toEqual(["a.md", "other/a.md", "b.md", "team"]);
+  });
+
+  it("never mutates the caller's array", () => {
+    const copy = [...entries];
+    presentVaultEntries(entries, "recent");
+    expect(entries).toEqual(copy);
   });
 });

@@ -341,3 +341,141 @@ describe("VaultExplorer presentation polish (V2)", () => {
     expect(container.querySelector(".markdown-body")?.textContent).toContain("Uppercase");
   });
 });
+
+describe("VaultExplorer presentation continuity (WUX-B)", () => {
+  async function renderWithLocation(
+    location: import("../web/src/vault-explorer.js").VaultExplorerLocation | undefined,
+    onLocationChange?: (l: import("../web/src/vault-explorer.js").VaultExplorerLocation) => void,
+  ): Promise<void> {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(VaultExplorer, {
+          token: "T",
+          onUnauthorized: vi.fn(),
+          onValidated: vi.fn(),
+          ...(location !== undefined ? { initialLocation: location } : {}),
+          ...(onLocationChange !== undefined ? { onLocationChange } : {}),
+        }),
+      );
+    });
+    await flush();
+  }
+
+  it("a lifted nested directory/document location survives a remount: fresh reread of the SAME paths, never the root", async () => {
+    mockedList.mockResolvedValue(TEAM_LIST);
+    mockedRead.mockResolvedValue({ ...READ, path: "team/dipu/notes.md" });
+    await renderWithLocation({
+      path: "team/dipu",
+      document: { path: "team/dipu/notes.md", name: "notes.md" },
+    });
+    // The fresh bounded rereads target the retained location, not the root.
+    expect(mockedList).toHaveBeenCalledWith("team/dipu", "T", expect.anything());
+    expect(mockedList).not.toHaveBeenCalledWith(".", "T", expect.anything());
+    expect(mockedRead).toHaveBeenCalledWith("team/dipu/notes.md", "T", expect.anything());
+    // The retained document renders.
+    expect(container.textContent).toContain("notes.md");
+  });
+
+  it("navigation reports the new location through onLocationChange (directory, then document)", async () => {
+    mockedList.mockResolvedValue(LIST);
+    const reported: Array<{ path: string; document: { path: string; name: string } | null }> = [];
+    await renderWithLocation(undefined, (l) => reported.push(l as { path: string; document: { path: string; name: string } | null }));
+    expect(reported.length).toBe(0);
+
+    // Open a directory.
+    const teamEntry = button("Open directory team");
+    expect(teamEntry).not.toBeNull();
+    mockedList.mockResolvedValue({
+      path: "team",
+      entries: [{ name: "notes.md", path: "team/notes.md", type: "file", bytes: 9, mtimeMs: 4 }],
+      capped: false,
+    });
+    await act(async () => teamEntry?.click());
+    await flush();
+    expect(reported.at(-1)).toEqual({ path: "team", document: null });
+
+    // Select a document within it.
+    mockedRead.mockResolvedValue({ ...READ, path: "team/notes.md" });
+    const notesEntry = button("Read file notes.md");
+    expect(notesEntry).not.toBeNull();
+    await act(async () => notesEntry?.click());
+    await flush();
+    expect(mockedRead).toHaveBeenCalledWith("team/notes.md", "T", expect.anything());
+    expect(reported.at(-1)).toEqual({ path: "team", document: { path: "team/notes.md", name: "notes.md" } });
+
+    // Returning to the listing clears the retained document.
+    const back = container.querySelector<HTMLButtonElement>(".vault-explorer-back");
+    await act(async () => back?.click());
+    await flush();
+    expect(reported.at(-1)).toEqual({ path: "team", document: null });
+  });
+});
+
+describe("VaultExplorer ordering control (WUX-B)", () => {
+  async function renderWithOrdering(ordering?: "name" | "recent", onOrderingChange?: (o: "name" | "recent") => void): Promise<void> {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(VaultExplorer, {
+          token: "T",
+          onUnauthorized: vi.fn(),
+          onValidated: vi.fn(),
+          ...(ordering !== undefined ? { ordering } : {}),
+          ...(onOrderingChange !== undefined ? { onOrderingChange } : {}),
+        }),
+      );
+    });
+    await flush();
+  }
+
+  function orderToggle(): HTMLButtonElement {
+    const el = container.querySelector<HTMLButtonElement>(".vault-explorer-order-toggle");
+    if (el === null) throw new Error("order toggle missing");
+    return el;
+  }
+
+  it("renders one concise icon-bearing header toggle with a current-order indication, default Name", async () => {
+    mockedList.mockResolvedValue(LIST);
+    await renderWithOrdering();
+    const toggle = orderToggle();
+    expect(toggle.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.textContent).toContain("Name");
+    // The initial request carries no ordering parameter (default compatible).
+    expect(mockedList).toHaveBeenCalledWith(".", "T", expect.anything());
+  });
+
+  it("toggling to Recent reports the closed value, requests the SAME directory with recent ordering, and re-asserts recency rendering", async () => {
+    mockedList.mockResolvedValue(LIST);
+    const orders: Array<"name" | "recent"> = [];
+    await renderWithOrdering(undefined, (o) => orders.push(o));
+
+    // The server response arrives in an arbitrary order; the explorer
+    // re-asserts mtime-descending presentation for Recent.
+    mockedList.mockResolvedValue(LIST);
+    await act(async () => orderToggle().click());
+    await flush();
+    expect(orders).toEqual(["recent"]);
+    expect(mockedList).toHaveBeenLastCalledWith(".", "T", expect.anything(), "recent");
+    expect(orderToggle().getAttribute("aria-pressed")).toBe("true");
+    expect(orderToggle().textContent).toContain("Recent");
+    const presentedNames = Array.from(
+      container.querySelectorAll<HTMLSpanElement>(".vault-explorer-entries li > button > span:nth-child(2)"),
+    ).map((el) => el.textContent);
+    // LIST fixture mtimes: team=5, zeta.md=3, index.md=1 -> recency order.
+    expect(presentedNames).toEqual(["team", "zeta.md", "index.md"]);
+    // No document/listing reset happened: still the same directory.
+    expect(container.textContent).not.toContain("Back to listing");
+  });
+
+  it("lifted ordering survives a remount and is sent on the fresh reread", async () => {
+    mockedList.mockResolvedValue(LIST);
+    await renderWithOrdering("recent");
+    expect(mockedList).toHaveBeenCalledWith(".", "T", expect.anything(), "recent");
+  });
+});

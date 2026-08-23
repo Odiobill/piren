@@ -1220,8 +1220,20 @@ export class GatewayServer {
             return;
         }
         const path = url.searchParams.get("path") || ".";
+        // WUX-B: closed bounded ordering value. Absent and "name" are the
+        // default; "recent" is mtime-descending before the trim; anything else
+        // is rejected fail-closed without altering default/path behavior.
+        const orderParam = url.searchParams.get("order");
+        let ordering = "name";
+        if (orderParam === "recent") {
+            ordering = "recent";
+        }
+        else if (orderParam !== null && orderParam !== "name") {
+            this.writeJson(res, 400, { error: "invalid order parameter" });
+            return;
+        }
         try {
-            const result = await vaultBrowserList(this.vaultRoot, path);
+            const result = await vaultBrowserList(this.vaultRoot, path, ordering);
             this.writeJson(res, 200, result);
         }
         catch (err) {

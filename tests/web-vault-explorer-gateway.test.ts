@@ -103,3 +103,36 @@ describe("existing vault list/read routes serve the Explorer (W2)", () => {
     }
   });
 });
+
+describe("WUX-B bounded ordering on the existing vault-list route", () => {
+  it("order=recent returns mtime-descending entries on the SAME authenticated route", async () => {
+    const server = new GatewayServer({ target: fakePiTarget(), vaultRoot: root });
+    try {
+      const handle = await server.start();
+      const res = await fetch(`http://${handle.hostname}:${handle.port}/api/vault/list?path=.&order=recent`);
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as VaultListJson;
+      expect(json.path).toBe("");
+      let previous = Number.MAX_SAFE_INTEGER;
+      for (const entry of json.entries) {
+        expect(entry.mtimeMs).toBeLessThanOrEqual(previous);
+        previous = entry.mtimeMs;
+      }
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("an unknown order value is a bounded 400 and introduces no new route", async () => {
+    const server = new GatewayServer({ target: fakePiTarget(), vaultRoot: root });
+    try {
+      const handle = await server.start();
+      const bad = await fetch(`http://${handle.hostname}:${handle.port}/api/vault/list?path=.&order=nonsense`);
+      expect(bad.status).toBe(400);
+      const body = (await bad.json()) as { error: string };
+      expect(body.error.toLowerCase()).toContain("order");
+    } finally {
+      await server.close();
+    }
+  });
+});

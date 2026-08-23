@@ -10,6 +10,7 @@ import { SplitWorkspaceShell } from "./SplitWorkspaceShell";
 import { initialSplitWorkspaceState, mobileSelectPane, type SplitWorkspaceState } from "./split-workspace";
 import { getModuleById } from "./registry";
 import { VaultExplorer } from "./VaultExplorer";
+import { VAULT_ROOT_PATH, type VaultExplorerLocation } from "./vault-explorer";
 import { SettingsView } from "./SettingsView";
 import { formatConversationHash } from "./hash-route";
 
@@ -77,6 +78,16 @@ export function AppShell({
    */
   const [explorerOpen, setExplorerOpen] = useState(false);
   const explorerButtonRef = useRef<HTMLButtonElement>(null);
+  /**
+   * WUX-B — the explorer's retained in-memory location, lifted here so a
+   * split <-> full-page presentation switch remounts into the SAME
+   * directory/document (fresh bounded rereads; never a root reset).
+   * In-memory only; never persisted.
+   */
+  const [explorerLocation, setExplorerLocation] = useState<VaultExplorerLocation>({
+    path: VAULT_ROOT_PATH,
+    document: null,
+  });
   /**
    * W2: the smallest existing typed selection signal at the shell boundary.
    * The navigator reports the gateway-authoritative title (or null) via
@@ -176,7 +187,7 @@ export function AppShell({
     <div
       className={`shell${nav.page === "conversations" ? " shell-conversation" : ""}${
         conversationActive && nav.page === "conversations" ? " shell-conversation-active" : ""
-      }`}
+      }${explorerFullPage ? " shell-explorer-fullpage" : ""}`}
     >
       <header className="shell-header">
         <img src={logoUrl} alt="Piren logo" className="shell-logo" width={48} height={48} />
@@ -256,7 +267,13 @@ export function AppShell({
               stays mounted/unchanged behind the view. */}
           {explorerOpen && !hasSelectedConversation && (
             <div className="workspace-panel vault-explorer-fullpage">
-              <VaultExplorer token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
+              <VaultExplorer
+                token={token}
+                onUnauthorized={onUnauthorized}
+                onValidated={onValidated}
+                initialLocation={explorerLocation}
+                onLocationChange={setExplorerLocation}
+              />
             </div>
           )}
           <div
@@ -276,7 +293,17 @@ export function AppShell({
                   reAnchorKey={reAnchorKey}
                 />
               }
-              companion={explorerOpen ? <VaultExplorer token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} /> : undefined}
+              companion={
+                explorerOpen ? (
+                  <VaultExplorer
+                    token={token}
+                    onUnauthorized={onUnauthorized}
+                    onValidated={onValidated}
+                    initialLocation={explorerLocation}
+                    onLocationChange={setExplorerLocation}
+                  />
+                ) : undefined
+              }
               resizerLabel="Resize chat pane"
               chatLabel="Chat"
               companionLabel={vaultExplorerLabel}

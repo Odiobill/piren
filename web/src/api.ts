@@ -45,7 +45,7 @@ import {
   type ConversationAbortOutcome,
 } from "./conversation-controls";
 import { parseConversationTelemetryReadResponse, type ConversationTelemetryReadResult } from "./conversation-telemetry";
-import { parseVaultListResponse, parseVaultReadResponse, type VaultListResponse, type VaultReadResponse } from "./vault-explorer";
+import { parseVaultListResponse, parseVaultReadResponse, type VaultListResponse, type VaultOrdering, type VaultReadResponse } from "./vault-explorer";
 import { buildAssignTaskBody, parseInboxTaskCreated, type InboxTaskCreated } from "./dashboard-task";
 import {
   buildAgentContextInjectionEnvelope,
@@ -430,8 +430,16 @@ export async function fetchConversationTelemetry(id: string, agent: string, toke
  * root; the query path is encoded. A 401 surfaces through UnauthorizedError;
  * any other non-200 or a payload failing the strict parser is a failure.
  */
-export async function fetchVaultList(path: string, token: string, signal?: AbortSignal): Promise<VaultListResponse> {
-  const res = await authedFetch(`/api/vault/list?path=${encodeURIComponent(path)}`, token, signal === undefined ? undefined : { signal });
+export async function fetchVaultList(
+  path: string,
+  token: string,
+  signal?: AbortSignal,
+  ordering?: VaultOrdering,
+): Promise<VaultListResponse> {
+  // WUX-B: additive closed ordering value on the SAME route. "name" is the
+  // server default, so it is never sent explicitly.
+  const suffix = ordering === "recent" ? "&order=recent" : "";
+  const res = await authedFetch(`/api/vault/list?path=${encodeURIComponent(path)}${suffix}`, token, signal === undefined ? undefined : { signal });
   if (!res.ok) throw new Error(`vault list HTTP ${res.status}`);
   return parseVaultListResponse(await res.json());
 }

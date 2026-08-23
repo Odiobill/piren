@@ -11,6 +11,26 @@ import { parse as parseYaml } from "yaml";
 /** The bounded explorer root path (the vault root). */
 export const VAULT_ROOT_PATH = ".";
 
+/**
+ * WUX-B — the explorer's retained in-memory location. It survives
+ * presentation changes (split <-> full-page remounts) so navigation is never
+ * reset to the root; each new presentation makes a fresh bounded reread of
+ * exactly this location. Never persisted; server-derived paths only.
+ */
+export interface VaultExplorerLocation {
+  /** Current listing directory (the bounded root or a server-derived dir). */
+  path: string;
+  /** The currently open document (server-derived path + name), or null. */
+  document: { path: string; name: string } | null;
+}
+
+/**
+ * WUX-B — closed typed list ordering. "name" is the default dirs-first
+ * alphabetical ordering; "recent" is server-derived mtimeMs descending with
+ * a deterministic name tie-break, applied before the bounded entry trim.
+ */
+export type VaultOrdering = "name" | "recent";
+
 export type VaultEntryType = "file" | "directory" | "other";
 
 export interface VaultEntry {
@@ -117,6 +137,19 @@ export function sortVaultEntries(entries: readonly VaultEntry[]): VaultEntry[] {
   const order = (entry: VaultEntry): number =>
     entry.type === "directory" ? 0 : entry.type === "file" ? 1 : 2;
   return [...entries].sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name));
+}
+
+/**
+ * WUX-B — deterministic rendering for one ordering value. "name" keeps the
+ * dirs-first alphabetical assertion; "recent" re-asserts the server's
+ * mtimeMs-descending order with a name tie-break so rendering never depends
+ * on server ordering in either mode.
+ */
+export function presentVaultEntries(entries: readonly VaultEntry[], ordering: VaultOrdering): VaultEntry[] {
+  if (ordering === "recent") {
+    return [...entries].sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name));
+  }
+  return sortVaultEntries(entries);
 }
 
 export interface VaultCrumb {

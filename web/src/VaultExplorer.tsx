@@ -3,16 +3,18 @@ import { fetchVaultList, fetchVaultRead, UnauthorizedError } from "./api";
 import {
   isVaultDirectoryEntry,
   parseVaultReadResponse,
-  sortVaultEntries,
+  presentVaultEntries,
   vaultBreadcrumb,
   VAULT_ROOT_PATH,
   type VaultEntry,
+  type VaultExplorerLocation,
   type VaultListResponse,
+  type VaultOrdering,
   type VaultReadResponse,
 } from "./vault-explorer";
 import { SafeMarkdownBody } from "./SafeMarkdown";
 import { isMarkdownFileName, parseFrontmatterCard } from "./vault-explorer";
-import { ArrowLeftIcon, FileIcon, FolderIcon, RetryIcon } from "./icons";
+import { ArrowLeftIcon, ClockIcon, FileIcon, FolderIcon, RetryIcon } from "./icons";
 
 /**
  * W2 (0.2.0 scope amendment §4; accepted companion architecture Phase B) —
@@ -27,7 +29,7 @@ import { ArrowLeftIcon, FileIcon, FolderIcon, RetryIcon } from "./icons";
  * onUnauthorized; other failures are bounded, non-secret UI errors.
  */
 
-const LIST_CAP_NOTICE = "List capped at 100 entries.";
+const LIST_CAP_NOTICE = "List capped at 500 entries.";
 const READ_CAP_NOTICE = "File truncated at 500 KB.";
 
 type ListPhase =
@@ -51,27 +53,51 @@ export function VaultExplorer({
   token,
   onUnauthorized,
   onValidated,
+  initialLocation,
+  onLocationChange,
+  ordering,
+  onOrderingChange,
 }: {
   token: string;
   onUnauthorized: () => void;
   onValidated: () => void;
+  /**
+   * WUX-B — the retained in-memory location to restore on mount (a
+   * presentation switch remounts the component; a fresh bounded reread of
+   * exactly this location happens, never a reset to the root).
+   */
+  initialLocation?: VaultExplorerLocation;
+  /** WUX-B — reports each navigation so the host can retain the location. */
+  onLocationChange?: (location: VaultExplorerLocation) => void;
+  /**
+   * WUX-B — lifted list ordering so it survives presentation remounts.
+   * Absent props fall back to component-local in-memory state ("name").
+   */
+  ordering?: VaultOrdering;
+  onOrderingChange?: (ordering: VaultOrdering) => void;
 }) {
-  const [path, setPath] = useState(VAULT_ROOT_PATH);
+  const [path, setPath] = useState(initialLocation?.path ?? VAULT_ROOT_PATH);
   const [listPhase, setListPhase] = useState<ListPhase>({ kind: "loading" });
-  const [selected, setSelected] = useState<VaultEntry | null>(null);
-  const [readPhase, setReadPhase] = useState<ReadPhase>({ kind: "idle" });
+  const [documentEntry, setDocumentEntry] = useState<{ path: string; name: string } | null>(
+    initialLocation?.document ?? null,
+  );
+  const [readPhase, setReadPhase] = useState<ReadPhase>(initialLocation?.document ? { kind: "loading" } : { kind: "idle" });
+  const [internalOrdering, setInternalOrdering] = useState<VaultOrdering>("name");
+  const activeOrdering: VaultOrdering = ordering ?? internalOrdering;
   const listControllerRef = useRef<AbortController | null>(null);
   const readControllerRef = useRef<AbortController | null>(null);
 
-  function loadList(target: string): void {
+  /** One bounded listing fetch; no selection/location side effects. */
+  function fetchList(target: string, order: VaultOrdering): void {
     listControllerRef.current?.abort();
     const controller = new AbortController();
     listControllerRef.current = controller;
-    setPath(target);
-    setSelected(null);
-    setReadPhase({ kind: "idle" });
     setListPhase({ kind: "loading" });
-    void fetchVaultList(target, token, controller.signal)
+    const request =
+      order === "recent"
+        ? fetchVaultList(target, token, controller.signal, "recent")
+        : fetchVaultList(target, token, controller.signal);
+    void request
       .then((response) => {
         if (controller.signal.aborted) return;
         setListPhase({ kind: "ready", response });
@@ -86,6 +112,25 @@ export function VaultExplorer({
         if (cause instanceof DOMException && cause.name === "AbortError") return;
         setListPhase({ kind: "error", bounded: boundedFailure("The vault listing failed", cause) });
       });
+  }
+
+  /** Explicit navigation: clears any open document and reports the location. */
+  function loadList(target: string): void {
+    setPath(target);
+    setDocumentEntry(null);
+    setReadPhase({ kind: "idle" });
+    onLocationChange?.({ path: target, document: null });
+    fetchList(target, activeOrdering);
+  }
+
+  /** WUX-B — explicit order toggle over the current directory, in-memory only. */
+  function toggleOrdering(): void {
+    const next: VaultOrdering = activeOrdering === "recent" ? "name" : "recent";
+    onOrderingChange?.(next);
+    setInternalOrdering(next);
+    // Re-request the SAME directory with the new ordering; an open document
+    // stays open (the listing is not visible while a document is shown).
+    fetchList(path, next);
   }
 
   function loadRead(filePath: string): void {
@@ -112,13 +157,20 @@ export function VaultExplorer({
       });
   }
 
-  // Fresh root listing on mount (reread when the closed explorer reopens).
+  // Fresh listing on mount. WUX-B: the mounted location is the retained
+  // in-memory location (never a forced root reset), so a presentation switch
+  // re-reads exactly where the steward was; the closed explorer still
+  // re-reads on reopen. No location is reported on mount.
   useEffect(() => {
-    loadList(VAULT_ROOT_PATH);
+    fetchList(path, activeOrdering);
+    if (initialLocation?.document) {
+      void loadRead(initialLocation.document.path);
+    }
     return () => {
       listControllerRef.current?.abort();
       readControllerRef.current?.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, onUnauthorized, onValidated]);
 
   function selectEntry(entry: VaultEntry): void {
@@ -127,8 +179,11 @@ export function VaultExplorer({
       return;
     }
     if (entry.type === "file") {
-      setSelected(entry);
-      loadRead(entry.path);
+      const document = { path: entry.path, name: entry.name };
+      setDocumentEntry(document);
+      setReadPhase({ kind: "loading" });
+      onLocationChange?.({ path, document });
+      void loadRead(entry.path);
     }
     // "other" entries are never selectable (disabled in the render).
   }
@@ -151,22 +206,34 @@ export function VaultExplorer({
             </button>
           </span>
         ))}
+        {/* WUX-B: one concise icon-bearing order control with a visible
+            current-order indication (aria-pressed). In-memory only. */}
+        <button
+          type="button"
+          className="vault-explorer-order-toggle"
+          aria-pressed={activeOrdering === "recent"}
+          title={activeOrdering === "recent" ? "Ordered by most recently modified" : "Ordered by name"}
+          onClick={toggleOrdering}
+        >
+          <ClockIcon size={13} />
+          <span>{activeOrdering === "recent" ? "Recent" : "Name"}</span>
+        </button>
       </nav>
 
-      {selected !== null && readPhase.kind !== "idle" ? (
-        <div className="vault-explorer-document" role="region" aria-label={`Document: ${selected.name}`}>
+      {documentEntry !== null && readPhase.kind !== "idle" ? (
+        <div className="vault-explorer-document" role="region" aria-label={`Document: ${documentEntry.name}`}>
           <div className="vault-explorer-document-header">
             <button type="button" className="vault-explorer-back" onClick={() => loadList(path)}>
               <ArrowLeftIcon size={13} />
               Back to listing
             </button>
-            <span className="vault-explorer-document-name">{selected.name}</span>
+            <span className="vault-explorer-document-name">{documentEntry.name}</span>
           </div>
           {readPhase.kind === "loading" && <p className="muted">Loading document…</p>}
           {readPhase.kind === "error" && (
             <div className="vault-explorer-error" role="alert">
               <p>{readPhase.bounded}</p>
-              <button type="button" onClick={() => loadRead(selected.path)}>
+              <button type="button" onClick={() => void loadRead(documentEntry.path)}>
                 <RetryIcon size={13} />
                 Retry
               </button>
@@ -179,7 +246,7 @@ export function VaultExplorer({
             // YAML frontmatter block becomes a separate presentation-only
             // metadata card; missing/malformed frontmatter fails quiet to
             // whole-file safe Markdown. Never written or sent anywhere.
-            if (!isMarkdownFileName(selected.name)) {
+            if (!isMarkdownFileName(documentEntry.name)) {
               return <pre className="vault-explorer-literal">{readPhase.response.content}</pre>;
             }
             const card = parseFrontmatterCard(readPhase.response.content);
@@ -222,7 +289,7 @@ export function VaultExplorer({
               <p className="muted">Empty directory.</p>
             ) : (
               <ul className="vault-explorer-entries">
-                {sortVaultEntries(listPhase.response.entries).map((entry) => (
+                {presentVaultEntries(listPhase.response.entries, activeOrdering).map((entry) => (
                   <li key={entry.path}>
                     <button
                       type="button"
