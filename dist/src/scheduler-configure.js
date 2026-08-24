@@ -4,18 +4,22 @@
  *
  * An interactive, guided, explicit local-config writer for
  * ~/.config/piren/config.yml. It displays the current effective scheduler
- * state resolved through the S1 fail-closed resolver (fresh installs
- * resolve disabled; a legacy established block resolves enabled=true with
- * its migration signal), prompts for exactly the closed scheduler
- * inventory (master gate, the three automation classes, poll/stale/
- * concurrency intervals, optional device id), shows a bounded non-secret
- * preview of the exact scheduler block, requires explicit confirmation,
- * and writes atomically.
+ * state resolved through the S1 fail-closed resolver (the three automation
+ * classes are the sole execution gates), prompts for exactly the closed
+ * scheduler inventory (the three automation classes, poll/stale/concurrency
+ * intervals, optional device id), shows a bounded non-secret preview of the
+ * exact scheduler block, requires explicit confirmation, and writes
+ * atomically.
  *
- * Confirming the flow after a legacy migration signal materializes
- * explicit `scheduler.enabled: true`; nothing writes before confirmation.
- * Cancellation, a parse/validation failure, or a write failure leaves the
- * old config byte-for-byte intact.
+ * SGC-3 (0.2 Settings contract §4.3): the retired `scheduler.enabled`
+ * master gate is gone from the inventory entirely. Configure owns the
+ * operator-confirmed legacy migration: for a gated retired key (`enabled:
+ * false` or a malformed value) every class resolves disabled until an
+ * operator-confirmed write removes the stale key; class defaults consume
+ * that fail-closed resolution, so migration never silently turns a class
+ * on. An inert `enabled: true` is removed as explicit cleanup by a
+ * confirmed write and never gains execution authority. Declining the write
+ * leaves the source bytes unchanged.
  *
  * The flow never starts/installs/stops/restarts a service, never runs or
  * ticks the scheduler, never refreshes a heartbeat, never claims or spawns
@@ -40,7 +44,6 @@ const DEVICE_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
  */
 export function buildSchedulerConfigBlock(input) {
     const block = {
-        enabled: input.enabled,
         automation: {
             inbox_tasks: input.inboxTasks,
             agent_cron: input.agentCron,
@@ -73,16 +76,19 @@ const MANAGED_AUTOMATION_KEYS = ["inbox_tasks", "agent_cron", "script_cron"];
 /**
  * Merge a managed scheduler block over an existing parsed block. Unknown
  * scheduler keys (outside the declared inventory) and unknown automation
- * keys survive; managed keys are replaced. A managed `device_id` of
- * `undefined` is an explicit deletion marker, never a YAML null.
+ * keys survive; managed keys are replaced. A managed `device_id` or the
+ * retired `enabled` key being ABSENT from the managed block is an explicit
+ * deletion marker (never a YAML null): configure never writes the retired
+ * master gate, so any stale `scheduler.enabled` in the source is removed
+ * by a confirmed write.
  */
 export function mergeSchedulerBlock(existingBlock, managedBlock) {
     const merged = { ...existingBlock };
     for (const key of MANAGED_SCHEDULER_KEYS) {
         if (key === "automation")
             continue;
-        if (key === "device_id" && !(key in managedBlock)) {
-            delete merged.device_id;
+        if ((key === "device_id" || key === "enabled") && !(key in managedBlock)) {
+            delete merged[key];
             continue;
         }
         if (key in managedBlock)
@@ -216,7 +222,6 @@ export async function runSchedulerConfigure(prompt, deps) {
     // Current effective state through the S1 fail-closed resolver.
     const resolved = resolveSchedulerConfig(existingRoot);
     log("Current effective scheduler state (resolved):");
-    log(`  scheduler enabled: ${resolved.enabled ? "yes" : "no"}`);
     log(`  automation: inbox_tasks=${onOff(resolved.automation.inboxTasks)} ` +
         `agent_cron=${onOff(resolved.automation.agentCron)} ` +
         `script_cron=${onOff(resolved.automation.scriptCron)}`);
@@ -224,14 +229,18 @@ export async function runSchedulerConfigure(prompt, deps) {
     log(`  stale after: ${resolved.staleAfterSeconds}s`);
     log(`  max concurrent agents: ${resolved.maxConcurrentAgents}`);
     log(`  device id: ${resolved.deviceId ?? "auto (sanitized hostname)"}`);
-    if (resolved.migration !== undefined) {
-        log("  migration: legacy scheduler block without 'enabled'; effective enabled=true (materialized only if you confirm a write below)");
+    if (resolved.legacyMasterGate === "gated") {
+        log("  legacy gate: the retired scheduler.enabled key is present; ALL automation classes resolve disabled until an operator-confirmed write below removes the retired key.");
+        log("  legacy gate: class defaults are resolved disabled; a class turns on only if you explicitly choose it. The preview shows the retired key being removed.");
+    }
+    else if (resolved.legacyMasterGate === "ignored") {
+        log("  legacy notice: retired scheduler.enabled=true is inert-to-ignore; a confirmed write removes it as explicit cleanup (it never adds execution).");
     }
     for (const warning of resolved.warnings)
         log(`  warning: ${warning}`);
     log("");
-    // --- Master gate + closed classes (defaults consume the resolver) ---
-    const enabled = await prompt.confirm("Enable the scheduler (scheduler.enabled)?", resolved.enabled);
+    // --- Closed classes (defaults consume the resolver; under a gated legacy
+    // key every default is disabled, so migration never enables a class) ---
     const inboxTasks = await prompt.confirm("Claim and execute pending inbox tasks (automation.inbox_tasks)?", resolved.automation.inboxTasks);
     const agentCron = await prompt.confirm("Claim and execute due agent-mode cron jobs (automation.agent_cron)?", resolved.automation.agentCron);
     const scriptCron = await prompt.confirm("Execute due script-mode cron jobs directly (automation.script_cron)?", resolved.automation.scriptCron);
@@ -242,7 +251,6 @@ export async function runSchedulerConfigure(prompt, deps) {
     const deviceId = await promptDeviceId(prompt, log, resolved.deviceId);
     // --- Build, merge, preview, confirm ---
     const input = {
-        enabled,
         inboxTasks,
         agentCron,
         scriptCron,
@@ -267,14 +275,13 @@ export async function runSchedulerConfigure(prompt, deps) {
     const confirmWrite = await prompt.confirm("Write this configuration?", true);
     if (!confirmWrite) {
         log("Cancelled. No changes were written.");
-        return { configPath, wrote: false, cancelled: true, materializedMigration: false };
+        return { configPath, wrote: false, cancelled: true, removedLegacyMasterKey: false };
     }
     await io.writeConfigAtomic(configPath, mergedYaml);
     log(`Wrote ${configPath}.`);
     // Validate the written document by re-resolving it (round-trip proof).
     const writtenResolved = resolveSchedulerConfig(parseYaml(mergedYaml));
-    log(`Validation: resolves scheduler enabled: ${writtenResolved.enabled ? "yes" : "no"}, ` +
-        `inbox_tasks=${onOff(writtenResolved.automation.inboxTasks)} ` +
+    log(`Validation: resolves inbox_tasks=${onOff(writtenResolved.automation.inboxTasks)} ` +
         `agent_cron=${onOff(writtenResolved.automation.agentCron)} ` +
         `script_cron=${onOff(writtenResolved.automation.scriptCron)}`);
     log("");
@@ -286,7 +293,7 @@ export async function runSchedulerConfigure(prompt, deps) {
         configPath,
         wrote: true,
         cancelled: false,
-        materializedMigration: resolved.migration !== undefined,
+        removedLegacyMasterKey: resolved.legacyMasterGate !== "absent",
     };
 }
 //# sourceMappingURL=scheduler-configure.js.map

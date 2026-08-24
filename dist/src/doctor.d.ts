@@ -96,10 +96,12 @@ export declare function checkServiceConfig(config: ServiceConfig | undefined): D
  * block reports ok with bounded resolved master/class state (never config
  * content/secrets) and may carry the S1 legacy migration state as read-only
  * status — doctor never writes or migrates config. A malformed present block
- * (`scheduler` non-mapping, `enabled` non-boolean, `automation` non-mapping,
- * or a non-boolean known class value) warns with the E2-S2 Authority/Next
- * structure, targeting the narrowest relevant key. Resolver semantics are
- * consumed unchanged (S1); no tick/heartbeat/claim/spawn/service action.
+ * (`scheduler` non-mapping, `automation` non-mapping, or a non-boolean known
+ * class value) warns with the E2-S2 Authority/Next structure, targeting the
+ * narrowest relevant key. A legacy-gated retired `scheduler.enabled` key
+ * (false or malformed; SGC-3 contract §4.3 shapes D/E) also warns, naming the
+ * sole operator-confirmed migration writer. Resolver semantics are consumed
+ * unchanged; no tick/heartbeat/claim/spawn/service action.
  */
 export declare function checkSchedulerAutomationConfig(config: LocalPirenConfig): DoctorCheck | null;
 /**

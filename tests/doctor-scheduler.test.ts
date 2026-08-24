@@ -9,6 +9,23 @@ import { initVault } from "../src/init.js";
 const SCHEDULER_AUTHORITY =
   "Authority: scheduler automation is machine-local local-config authority and doctor is read-only; Piren will not infer intent.";
 
+// SGC-3 (contract §4.3): exact legacy-gate guidance pins.
+const GATED_WARN =
+  "scheduler.enabled is present as a retired legacy gate; all automation classes resolve disabled (fail closed) " +
+  "until an operator-confirmed piren scheduler configure migration removes the retired key. " +
+  `${SCHEDULER_AUTHORITY} Next: inspect scheduler.enabled in ~/.config/piren/config.yml.`;
+
+function gatedOk(inbox: boolean, agent: boolean, script: boolean): string {
+  return `scheduler: inbox_tasks: ${inbox}; agent_cron: ${agent}; script_cron: ${script}.`;
+}
+
+function ignoredOk(inbox: boolean, agent: boolean, script: boolean): string {
+  return (
+    gatedOk(inbox, agent, script) +
+    " Retired key scheduler.enabled is present with an inert true value; automation classes are the sole gates."
+  );
+}
+
 function expectWarn(check: DoctorCheck | null, expected: string): string {
   expect(check).not.toBeNull();
   expect(check?.status).toBe("warn");
@@ -37,54 +54,38 @@ describe("checkSchedulerAutomationConfig: present-only omission", () => {
 // ---------------------------------------------------------------------------
 
 describe("checkSchedulerAutomationConfig: valid present blocks (ok)", () => {
-  it("reports ok with bounded resolved master/class state for an explicit valid block", () => {
+  it("reports ok with bounded class state; an explicit enabled:true is inert-to-ignore", () => {
     const check = checkSchedulerAutomationConfig({
       scheduler: {
         enabled: true,
         automation: { inbox_tasks: true, agent_cron: true, script_cron: true },
       },
     });
-    expect(check).not.toBeNull();
     expect(check?.status).toBe("ok");
     expect(check?.id).toBe("scheduler");
-    expect(check?.message).toContain("enabled: true");
-    expect(check?.message).toContain("inbox_tasks: true");
-    expect(check?.message).toContain("agent_cron: true");
-    expect(check?.message).toContain("script_cron: true");
+    expect(check?.message).toBe(ignoredOk(true, true, true));
   });
 
-  it("reports fresh/empty present block as enabled false with all classes false", () => {
+  it("reports a fresh/empty present block with all classes false and no master-gate language", () => {
     const check = checkSchedulerAutomationConfig({ scheduler: {} });
     expect(check?.status).toBe("ok");
-    expect(check?.message).toBe(
-      "scheduler: enabled: false; inbox_tasks: false; agent_cron: false; script_cron: false.",
-    );
+    expect(check?.message).toBe(gatedOk(false, false, false));
   });
 
-  it("reports a legacy established block with enabled true and read-only migration status", () => {
+  it("reports an established legacy block (shape B) from its automation declaration alone", () => {
     const check = checkSchedulerAutomationConfig({ scheduler: { poll_interval_seconds: 15 } });
     expect(check?.status).toBe("ok");
-    expect(check?.message).toContain("enabled: true");
-    expect(check?.message).toMatch(/[Ll]egacy/);
-    expect(check?.message).toContain("read-only");
-    // Never claims a write happened or instructs one.
-    expect(check?.message).not.toMatch(/wrote|persist(ed|s)? now|run piren|piren scheduler/i);
-  });
-
-  it("reports an explicit enabled: false as ok (declared intent, inspectable)", () => {
-    const check = checkSchedulerAutomationConfig({ scheduler: { enabled: false } });
-    expect(check?.status).toBe("ok");
-    expect(check?.message).toContain("enabled: false");
+    expect(check?.message).toBe(gatedOk(false, false, false));
+    // Shape B needs no migration action.
+    expect(check?.message).not.toMatch(/[Ll]egacy|migration|configure/i);
   });
 
   it("reports a partial automation block with the missing classes false", () => {
     const check = checkSchedulerAutomationConfig({
-      scheduler: { enabled: true, automation: { inbox_tasks: true } },
+      scheduler: { automation: { inbox_tasks: true } },
     });
     expect(check?.status).toBe("ok");
-    expect(check?.message).toContain("inbox_tasks: true");
-    expect(check?.message).toContain("agent_cron: false");
-    expect(check?.message).toContain("script_cron: false");
+    expect(check?.message).toBe(gatedOk(true, false, false));
   });
 
   it("treats null values as absent-like (fail closed, still ok)", () => {
@@ -95,8 +96,7 @@ describe("checkSchedulerAutomationConfig: valid present blocks (ok)", () => {
       },
     });
     expect(check?.status).toBe("ok");
-    expect(check?.message).toContain("enabled: false");
-    expect(check?.message).toContain("inbox_tasks: false");
+    expect(check?.message).toBe(gatedOk(false, false, false));
   });
 
   it("does not warn for unknown automation keys and never echoes their names", () => {
@@ -118,29 +118,38 @@ describe("checkSchedulerAutomationConfig: malformed WARN with exact E2-S2 guidan
   it("warns on a non-mapping scheduler block, targeting the scheduler block itself", () => {
     expectWarn(
       checkSchedulerAutomationConfig({ scheduler: "yes" } as unknown as LocalPirenConfig),
-      "scheduler config is present but is not a mapping; the scheduler and all automation classes resolve disabled (fail closed). " +
+      "scheduler config is present but is not a mapping; all automation classes resolve disabled (fail closed). " +
         `${SCHEDULER_AUTHORITY} Next: inspect scheduler in ~/.config/piren/config.yml.`,
     );
     expectWarn(
       checkSchedulerAutomationConfig({ scheduler: ["enabled"] } as unknown as LocalPirenConfig),
-      "scheduler config is present but is not a mapping; the scheduler and all automation classes resolve disabled (fail closed). " +
+      "scheduler config is present but is not a mapping; all automation classes resolve disabled (fail closed). " +
         `${SCHEDULER_AUTHORITY} Next: inspect scheduler in ~/.config/piren/config.yml.`,
     );
   });
 
-  it("warns on a non-boolean enabled, targeting scheduler.enabled, without echoing the value", () => {
+  it("warns on a non-boolean enabled (gated legacy shape E) without echoing the value", () => {
     const message = expectWarn(
       checkSchedulerAutomationConfig({ scheduler: { enabled: "yes" } } as unknown as LocalPirenConfig),
-      "scheduler.enabled is present but is not a boolean; the scheduler resolves disabled (fail closed). " +
-        `${SCHEDULER_AUTHORITY} Next: inspect scheduler.enabled in ~/.config/piren/config.yml.`,
+      GATED_WARN,
     );
     expect(message).not.toContain("yes");
 
     expectWarn(
       checkSchedulerAutomationConfig({ scheduler: { enabled: 1 } } as unknown as LocalPirenConfig),
-      "scheduler.enabled is present but is not a boolean; the scheduler resolves disabled (fail closed). " +
-        `${SCHEDULER_AUTHORITY} Next: inspect scheduler.enabled in ~/.config/piren/config.yml.`,
+      GATED_WARN,
     );
+  });
+
+  it("warns on an explicit enabled:false legacy gate (shape D) with the exact SGC-3 guidance", () => {
+    expectWarn(
+      checkSchedulerAutomationConfig({
+        scheduler: { enabled: false, automation: { inbox_tasks: true, agent_cron: true } },
+      }),
+      GATED_WARN,
+    );
+    // Even a vacuous gate stays consistent fail-closed (shape F).
+    expectWarn(checkSchedulerAutomationConfig({ scheduler: { enabled: false } }), GATED_WARN);
   });
 
   it("warns on a non-mapping automation container, targeting scheduler.automation", () => {
@@ -176,7 +185,7 @@ describe("checkSchedulerAutomationConfig: malformed WARN with exact E2-S2 guidan
   });
 
   it("selects the narrowest relevant target when multiple categories are malformed", () => {
-    // Known class beats enabled.
+    // Known class beats the retired gate.
     expectWarn(
       checkSchedulerAutomationConfig({
         scheduler: { enabled: "yes", automation: { inbox_tasks: 1 } },
@@ -184,7 +193,7 @@ describe("checkSchedulerAutomationConfig: malformed WARN with exact E2-S2 guidan
       "scheduler.automation.inbox_tasks is present but is not a boolean; inbox task automation resolves disabled (fail closed). " +
         `${SCHEDULER_AUTHORITY} Next: inspect scheduler.automation.inbox_tasks in ~/.config/piren/config.yml.`,
     );
-    // Automation container beats enabled (deterministic ordering).
+    // Automation container beats the retired gate (deterministic ordering).
     expectWarn(
       checkSchedulerAutomationConfig({
         scheduler: { enabled: "yes", automation: "on" },
@@ -194,11 +203,9 @@ describe("checkSchedulerAutomationConfig: malformed WARN with exact E2-S2 guidan
     );
   });
 
-  it("never emits raw values, tokens, or service/mutation instructions in any warn", () => {
+  it("never emits raw values, tokens, or service/mutation instructions in malformed-value warns", () => {
     const cases: LocalPirenConfig[] = [
       { scheduler: "yes" } as unknown as LocalPirenConfig,
-      { scheduler: { enabled: "yes" } } as unknown as LocalPirenConfig,
-      { scheduler: { enabled: 1 } } as unknown as LocalPirenConfig,
       { scheduler: { automation: "on" } } as unknown as LocalPirenConfig,
       { scheduler: { automation: { inbox_tasks: "yes" } } } as unknown as LocalPirenConfig,
       { scheduler: { automation: { script_cron: 42 } } } as unknown as LocalPirenConfig,
@@ -211,6 +218,21 @@ describe("checkSchedulerAutomationConfig: malformed WARN with exact E2-S2 guidan
       expect(message).not.toMatch(/["']/);
       expect(message).not.toMatch(/\b(yes|on|42)\b/);
       expect(message).not.toMatch(/run piren|piren scheduler|install|start service|configure|write|persist/i);
+    }
+  });
+
+  it("the gated-legacy warn names the sole migration writer but never echoes values or quotes", () => {
+    for (const config of [
+      { scheduler: { enabled: false } },
+      { scheduler: { enabled: "junk" } } as unknown as LocalPirenConfig,
+    ]) {
+      const check = checkSchedulerAutomationConfig(config as unknown as LocalPirenConfig);
+      expect(check?.status).toBe("warn");
+      const message = check?.message ?? "";
+      expect(message).toBe(GATED_WARN);
+      expect(message).toContain("piren scheduler configure");
+      expect(message).not.toMatch(/["']/);
+      expect(message).not.toContain("junk");
     }
   });
 });
@@ -244,7 +266,7 @@ describe("doctorPiren: scheduler check wiring", () => {
       expect.objectContaining({
         id: "scheduler",
         status: "ok",
-        message: "scheduler: enabled: true; inbox_tasks: true; agent_cron: false; script_cron: false.",
+        message: ignoredOk(true, false, false),
       }),
     ]));
   });
@@ -261,7 +283,7 @@ describe("doctorPiren: scheduler check wiring", () => {
     const report = await doctorPiren({ env: {}, configPath, piRuntimeChecker: localPiRuntime });
 
     expect(report.checks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "scheduler", status: "ok", message: expect.stringContaining("enabled: false") }),
+      expect.objectContaining({ id: "scheduler", status: "warn", message: GATED_WARN }),
     ]));
   });
 
@@ -287,10 +309,7 @@ describe("doctorPiren: scheduler check wiring", () => {
     const schedulerCheck = report.checks.find((check) => check.id === "scheduler");
     expect(schedulerCheck).toBeDefined();
     expect(schedulerCheck?.status).toBe("warn");
-    expect(schedulerCheck?.message).toBe(
-      "scheduler.enabled is present but is not a boolean; the scheduler resolves disabled (fail closed). " +
-        `${SCHEDULER_AUTHORITY} Next: inspect scheduler.enabled in ~/.config/piren/config.yml.`,
-    );
+    expect(schedulerCheck?.message).toBe(GATED_WARN);
     // Read-only: the exact config text is unchanged (no migration/write).
     expect(await readFile(configPath, "utf8")).toBe(configText);
   });

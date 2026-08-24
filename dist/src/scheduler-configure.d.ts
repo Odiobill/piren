@@ -4,18 +4,22 @@
  *
  * An interactive, guided, explicit local-config writer for
  * ~/.config/piren/config.yml. It displays the current effective scheduler
- * state resolved through the S1 fail-closed resolver (fresh installs
- * resolve disabled; a legacy established block resolves enabled=true with
- * its migration signal), prompts for exactly the closed scheduler
- * inventory (master gate, the three automation classes, poll/stale/
- * concurrency intervals, optional device id), shows a bounded non-secret
- * preview of the exact scheduler block, requires explicit confirmation,
- * and writes atomically.
+ * state resolved through the S1 fail-closed resolver (the three automation
+ * classes are the sole execution gates), prompts for exactly the closed
+ * scheduler inventory (the three automation classes, poll/stale/concurrency
+ * intervals, optional device id), shows a bounded non-secret preview of the
+ * exact scheduler block, requires explicit confirmation, and writes
+ * atomically.
  *
- * Confirming the flow after a legacy migration signal materializes
- * explicit `scheduler.enabled: true`; nothing writes before confirmation.
- * Cancellation, a parse/validation failure, or a write failure leaves the
- * old config byte-for-byte intact.
+ * SGC-3 (0.2 Settings contract §4.3): the retired `scheduler.enabled`
+ * master gate is gone from the inventory entirely. Configure owns the
+ * operator-confirmed legacy migration: for a gated retired key (`enabled:
+ * false` or a malformed value) every class resolves disabled until an
+ * operator-confirmed write removes the stale key; class defaults consume
+ * that fail-closed resolution, so migration never silently turns a class
+ * on. An inert `enabled: true` is removed as explicit cleanup by a
+ * confirmed write and never gains execution authority. Declining the write
+ * leaves the source bytes unchanged.
  *
  * The flow never starts/installs/stops/restarts a service, never runs or
  * ticks the scheduler, never refreshes a heartbeat, never claims or spawns
@@ -30,7 +34,6 @@ import type { WizardPrompt } from "./prompt.js";
 import type { TransportConfigureIo } from "./transport-configure.js";
 /** The closed scheduler inventory collected by the guided flow. */
 export interface SchedulerConfigureInput {
-    enabled: boolean;
     inboxTasks: boolean;
     agentCron: boolean;
     scriptCron: boolean;
@@ -48,8 +51,11 @@ export declare function buildSchedulerConfigBlock(input: SchedulerConfigureInput
 /**
  * Merge a managed scheduler block over an existing parsed block. Unknown
  * scheduler keys (outside the declared inventory) and unknown automation
- * keys survive; managed keys are replaced. A managed `device_id` of
- * `undefined` is an explicit deletion marker, never a YAML null.
+ * keys survive; managed keys are replaced. A managed `device_id` or the
+ * retired `enabled` key being ABSENT from the managed block is an explicit
+ * deletion marker (never a YAML null): configure never writes the retired
+ * master gate, so any stale `scheduler.enabled` in the source is removed
+ * by a confirmed write.
  */
 export declare function mergeSchedulerBlock(existingBlock: Record<string, unknown>, managedBlock: Record<string, unknown>): Record<string, unknown>;
 /**
@@ -100,9 +106,9 @@ export interface SchedulerConfigureResult {
     configPath: string;
     wrote: boolean;
     cancelled: boolean;
-    /** True when a legacy migration signal was materialized into an explicit
-     * `scheduler.enabled: true` by this confirmed write. */
-    materializedMigration: boolean;
+    /** True when a confirmed write removed a retired `scheduler.enabled` key
+     * present in the source (gated-legacy migration or inert-key cleanup). */
+    removedLegacyMasterKey: boolean;
 }
 /**
  * Run the guided scheduler configure flow. See the module docstring for the

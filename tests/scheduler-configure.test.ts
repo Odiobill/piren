@@ -13,7 +13,6 @@ import type { LocalPirenConfig } from "../src/bootstrap.js";
 describe("buildSchedulerConfigBlock", () => {
   it("serializes the closed typed scheduler inventory", () => {
     const block = buildSchedulerConfigBlock({
-      enabled: true,
       inboxTasks: true,
       agentCron: false,
       scriptCron: true,
@@ -23,7 +22,6 @@ describe("buildSchedulerConfigBlock", () => {
       deviceId: "thor",
     });
     expect(block).toEqual({
-      enabled: true,
       automation: {
         inbox_tasks: true,
         agent_cron: false,
@@ -38,7 +36,6 @@ describe("buildSchedulerConfigBlock", () => {
 
   it("omits device_id when blank (sanitized-hostname fallback)", () => {
     const block = buildSchedulerConfigBlock({
-      enabled: false,
       inboxTasks: false,
       agentCron: false,
       scriptCron: false,
@@ -52,7 +49,6 @@ describe("buildSchedulerConfigBlock", () => {
 
 describe("mergeSchedulerIntoConfig", () => {
   const managed = buildSchedulerConfigBlock({
-    enabled: true,
     inboxTasks: true,
     agentCron: true,
     scriptCron: false,
@@ -81,7 +77,7 @@ describe("mergeSchedulerIntoConfig", () => {
     expect(parsed.allowed_agents).toEqual(["dipu"]);
     expect(parsed.telegram).toEqual({ bot_token: "123:secret", allowed_chat_ids: [42] });
     expect(parsed.packages).toEqual(["@piren/web-search"]);
-    expect(parsed.scheduler).toMatchObject({ enabled: true, poll_interval_seconds: 45 });
+    expect(parsed.scheduler).toMatchObject({ poll_interval_seconds: 45 });
   });
 
   it("preserves scheduler fields outside the declared inventory", () => {
@@ -97,7 +93,8 @@ describe("mergeSchedulerIntoConfig", () => {
     const merged = mergeSchedulerIntoConfig(existing, managed);
     const parsed = parseYaml(merged) as { scheduler: Record<string, unknown> };
     expect(parsed.scheduler.future_unknown_key).toBe("keep-me");
-    expect(parsed.scheduler.enabled).toBe(true);
+    // The retired master key is never preserved by a managed write.
+    expect(parsed.scheduler).not.toHaveProperty("enabled");
     expect(parsed.scheduler.automation).toMatchObject({
       inbox_tasks: true,
       agent_cron: true,
@@ -109,7 +106,6 @@ describe("mergeSchedulerIntoConfig", () => {
   it("clears device_id with an explicit deletion marker and never serializes null", () => {
     const existing = "scheduler:\n  enabled: true\n  device_id: thor\n";
     const withoutDevice = buildSchedulerConfigBlock({
-      enabled: true,
       inboxTasks: true,
       agentCron: true,
       scriptCron: true,
@@ -125,21 +121,19 @@ describe("mergeSchedulerIntoConfig", () => {
   it("round-trips through resolveSchedulerConfig with the intended effective state", () => {
     const merged = mergeSchedulerIntoConfig("", managed);
     const resolved = resolveSchedulerConfig(parseYaml(merged) as LocalPirenConfig);
-    expect(resolved.enabled).toBe(true);
+    // The retired master gate is gone: classes are the sole gates.
+    expect(resolved.legacyMasterGate).toBe("absent");
     expect(resolved.automation).toEqual({ inboxTasks: true, agentCron: true, scriptCron: false });
     expect(resolved.pollIntervalSeconds).toBe(45);
     expect(resolved.staleAfterSeconds).toBe(600);
     expect(resolved.maxConcurrentAgents).toBe(2);
     expect(resolved.deviceId).toBe("thor");
-    // An explicit enabled key means no migration signal remains.
-    expect(resolved.migration).toBeUndefined();
   });
 });
 
 describe("renderSchedulerPreview", () => {
   it("renders only the bounded scheduler block as exact YAML", () => {
     const block = buildSchedulerConfigBlock({
-      enabled: true,
       inboxTasks: false,
       agentCron: true,
       scriptCron: true,
@@ -150,7 +144,8 @@ describe("renderSchedulerPreview", () => {
     });
     const preview = renderSchedulerPreview(block);
     expect(preview).toContain("scheduler:");
-    expect(preview).toContain("enabled: true");
+    // The retired master key is never part of the managed preview.
+    expect(preview).not.toContain("enabled");
     expect(preview).toContain("inbox_tasks: false");
     expect(preview).toContain("device_id: thor");
     // Bounded: never the whole config document.
@@ -207,6 +202,51 @@ describe("parseDeviceIdInput", () => {
 });
 
 // ---------------------------------------------------------------------------
+// SGC-3: the retired scheduler.enabled master gate leaves configure entirely
+// ---------------------------------------------------------------------------
+
+describe("SGC-3: retired master gate removal (pure helpers)", () => {
+  it("buildSchedulerConfigBlock never emits an enabled key", () => {
+    const block = buildSchedulerConfigBlock({
+      inboxTasks: true,
+      agentCron: false,
+      scriptCron: true,
+      pollIntervalSeconds: 30,
+      staleAfterSeconds: 300,
+      maxConcurrentAgents: 1,
+    });
+    expect(block).not.toHaveProperty("enabled");
+  });
+
+  it("mergeSchedulerIntoConfig removes a stale retired enabled key from the existing block", () => {
+    const existing = [
+      "vault_root: /v",
+      "scheduler:",
+      "  enabled: false",
+      "  future_unknown_key: keep-me",
+      "  automation:",
+      "    inbox_tasks: true",
+      "",
+    ].join("\n");
+    const managed = buildSchedulerConfigBlock({
+      inboxTasks: false,
+      agentCron: false,
+      scriptCron: false,
+      pollIntervalSeconds: 30,
+      staleAfterSeconds: 300,
+      maxConcurrentAgents: 1,
+    });
+    const parsed = parseYaml(mergeSchedulerIntoConfig(existing, managed)) as {
+      vault_root: string;
+      scheduler: Record<string, unknown>;
+    };
+    expect(parsed.scheduler).not.toHaveProperty("enabled");
+    expect(parsed.scheduler.future_unknown_key).toBe("keep-me");
+    expect(parsed.vault_root).toBe("/v");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Runner (injected prompt + fake IO)
 // ---------------------------------------------------------------------------
 
@@ -221,7 +261,7 @@ interface FakePromptCalls {
 
 function fakePrompt(script: {
   textAnswers?: Array<string | undefined>;
-  confirmAnswers?: boolean[];
+  confirmAnswers?: Array<boolean | undefined>;
 }): { prompt: WizardPrompt; calls: FakePromptCalls } {
   const textQ = [...(script.textAnswers ?? [])];
   const confirmQ = [...(script.confirmAnswers ?? [])];
@@ -294,20 +334,19 @@ describe("runSchedulerConfigure", () => {
 
     // Current-state display shows the fail-closed fresh resolution.
     const shown = logs.join("\n");
-    expect(shown).toContain("scheduler enabled: no");
     expect(shown).toContain("inbox_tasks=off");
-    // Defaults offered consume the resolver: every gate defaults to false.
-    const gatePrompts = calls.confirm.filter((c) => c.message.includes("scheduler.enabled") || c.message.includes("automation."));
-    expect(gatePrompts.length).toBe(4);
+    // Defaults offered consume the resolver: every class defaults to false.
+    const gatePrompts = calls.confirm.filter((c) => c.message.includes("automation."));
+    expect(gatePrompts.length).toBe(3);
     for (const gate of gatePrompts) expect(gate.defaultValue).toBe(false);
     // Preview was shown before the write confirmation, and is bounded.
     expect(shown).toContain("scheduler:");
     expect(shown).not.toContain("vault_root");
-    // Written exactly once with the chosen values.
+    // Written exactly once with the chosen values; never a master gate.
     expect(writes).toHaveLength(1);
     const written = parseYaml(writes[0]!.content) as { scheduler: Record<string, unknown> };
+    expect(written.scheduler).not.toHaveProperty("enabled");
     expect(written.scheduler).toMatchObject({
-      enabled: true,
       automation: { inbox_tasks: true, agent_cron: true, script_cron: true },
       poll_interval_seconds: 30,
       stale_after_seconds: 300,
@@ -340,32 +379,31 @@ describe("runSchedulerConfigure", () => {
     expect(written.allowed_agents).toEqual(["dipu"]);
   });
 
-  it("legacy block: shows effective enabled=true with migration notice and materializes enabled:true only on confirmation", async () => {
-    const existing = "vault_root: /v\nscheduler:\n  poll_interval_seconds: 45\n";
+  it("established legacy block without enabled (shape B): classes resolve from automation; no migration action; confirmed write keeps intent", async () => {
+    const existing = "vault_root: /v\nscheduler:\n  poll_interval_seconds: 45\n  automation:\n    inbox_tasks: true\n";
     const logs: string[] = [];
-    const { prompt } = fakePrompt({ confirmAnswers: CONFIRM_ALL_YES });
+    // Accept resolver defaults (inbox on, others off) plus the write confirm.
+    const { prompt } = fakePrompt({ confirmAnswers: [undefined, undefined, undefined, true] });
     const { io, writes } = fakeIo(existing);
 
     const result = await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: (m) => logs.push(m) });
 
-    const shown = logs.join("\n");
-    expect(shown).toContain("scheduler enabled: yes");
-    expect(shown).toMatch(/migration/i);
+    // Shape B needs no migration: no gated/inert legacy notice appears.
+    expect(logs.join("\n")).not.toMatch(/legacy gate|inert/i);
     expect(writes).toHaveLength(1);
     const written = parseYaml(writes[0]!.content) as { scheduler: Record<string, unknown> };
-    expect(written.scheduler.enabled).toBe(true);
+    expect(written.scheduler).not.toHaveProperty("enabled");
+    expect((written.scheduler.automation as Record<string, unknown>).inbox_tasks).toBe(true);
     expect(written.scheduler.poll_interval_seconds).toBe(45);
-    expect(result.materializedMigration).toBe(true);
-    // Round-trip: no migration signal remains after the explicit write.
-    const resolved = resolveSchedulerConfig(parseYaml(writes[0]!.content) as LocalPirenConfig);
-    expect(resolved.migration).toBeUndefined();
+    expect(result.wrote).toBe(true);
+    expect(result.removedLegacyMasterKey).toBe(false);
   });
 
-  it("legacy block + decline: no write, no materialization", async () => {
+  it("legacy block + decline: no write", async () => {
     const existing = "vault_root: /v\nscheduler:\n  poll_interval_seconds: 45\n";
     const { prompt } = fakePrompt({
-      // Accept all gate defaults but decline the final write confirmation.
-      confirmAnswers: [true, true, true, true, false],
+      // Accept all class defaults but decline the final write confirmation.
+      confirmAnswers: [undefined, undefined, undefined, false],
     });
     const { io, writes } = fakeIo(existing);
 
@@ -374,11 +412,11 @@ describe("runSchedulerConfigure", () => {
     expect(writes).toHaveLength(0);
     expect(result.wrote).toBe(false);
     expect(result.cancelled).toBe(true);
-    expect(result.materializedMigration).toBe(false);
+    expect(result.removedLegacyMasterKey).toBe(false);
   });
 
   it("decline at the write confirmation leaves a fresh config unwritten", async () => {
-    const { prompt } = fakePrompt({ confirmAnswers: [false, false, false, false, false] });
+    const { prompt } = fakePrompt({ confirmAnswers: [false, false, false, false] });
     const { io, writes } = fakeIo(undefined);
 
     const result = await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: () => {} });
@@ -473,10 +511,10 @@ describe("runSchedulerConfigure", () => {
     expect(calls.text).toHaveLength(0);
   });
 
-  it("writes custom gate/class/interval/device values end to end", async () => {
+  it("writes custom class/interval/device values end to end", async () => {
     const { prompt } = fakePrompt({
-      // enabled no; inbox no; agent yes; script no; intervals; device id.
-      confirmAnswers: [false, false, true, false, true],
+      // inbox no; agent yes; script no; write yes; intervals; device id.
+      confirmAnswers: [false, true, false, true],
       textAnswers: ["10", "120", "3", "pi-4"],
     });
     const { io, writes } = fakeIo(undefined);
@@ -485,7 +523,6 @@ describe("runSchedulerConfigure", () => {
 
     const written = parseYaml(writes[0]!.content) as { scheduler: Record<string, unknown> };
     expect(written.scheduler).toEqual({
-      enabled: false,
       automation: { inbox_tasks: false, agent_cron: true, script_cron: false },
       poll_interval_seconds: 10,
       stale_after_seconds: 120,
@@ -545,5 +582,111 @@ describe("runSchedulerConfigure", () => {
     await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: () => {} });
 
     expect(ioCalls).toEqual(["read", "write"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SGC-3 runner: gated-legacy migration owned by configure (contract §4.3)
+// ---------------------------------------------------------------------------
+
+describe("SGC-3 runSchedulerConfigure: operator-confirmed legacy-gate migration", () => {
+  it("gated legacy block: bounded migration guidance, all class defaults resolved disabled, and a confirmed write removes the retired key WITHOUT enabling any class", async () => {
+    const existing = [
+      "vault_root: /v",
+      "scheduler:",
+      "  enabled: false",
+      "  automation:",
+      "    inbox_tasks: true",
+      "    agent_cron: true",
+      "",
+    ].join("\n");
+    // Accept every OFFERED DEFAULT (all classes resolve DISABLED under the
+    // gate) plus the final write confirmation.
+    const { prompt, calls } = fakePrompt({ confirmAnswers: [undefined, undefined, undefined, true] });
+    const { io, writes } = fakeIo(existing);
+    const logs: string[] = [];
+
+    const result = await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: (m) => logs.push(m) });
+
+    const shown = logs.join("\n");
+    expect(shown).toMatch(/legacy gate/i);
+    expect(shown).toContain("removes the retired key");
+    // The master gate is never prompted; exactly the three closed classes.
+    const gatePrompts = calls.confirm.filter((c) => c.message.includes("Enable the scheduler") || c.message.includes("scheduler.enabled"));
+    expect(gatePrompts).toHaveLength(0);
+    const classPrompts = calls.confirm.filter((c) => c.message.includes("automation."));
+    expect(classPrompts).toHaveLength(3);
+    // Migration never silently turns a class on: defaults are resolved disabled.
+    for (const gate of classPrompts) expect(gate.defaultValue).toBe(false);
+    // The confirmed write removes the stale key and writes the explicit choices.
+    expect(writes).toHaveLength(1);
+    const written = parseYaml(writes[0]!.content) as { scheduler: Record<string, unknown> };
+    expect(written.scheduler).not.toHaveProperty("enabled");
+    expect(written.scheduler.automation).toEqual({ inbox_tasks: false, agent_cron: false, script_cron: false });
+    expect(result.wrote).toBe(true);
+    expect(result.removedLegacyMasterKey).toBe(true);
+    // Round-trip: the retired key is gone; no gating remains.
+    const resolved = resolveSchedulerConfig(parseYaml(writes[0]!.content) as LocalPirenConfig);
+    expect(resolved.legacyMasterGate).toBe("absent");
+  });
+
+  it("gated legacy block + decline at the write confirmation: source bytes unchanged, nothing removed", async () => {
+    const existing = "vault_root: /v\nscheduler:\n  enabled: false\n  automation:\n    inbox_tasks: true\n";
+    const { prompt } = fakePrompt({ confirmAnswers: [true, true, true, false] });
+    const { io, writes } = fakeIo(existing);
+
+    const result = await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: () => {} });
+
+    expect(writes).toHaveLength(0);
+    expect(result.cancelled).toBe(true);
+    expect(result.removedLegacyMasterKey).toBe(false);
+  });
+
+  it("a malformed retired enabled value is gated with guidance and never echoed", async () => {
+    const secretValue = "junk-value-must-not-appear";
+    const existing = `vault_root: /v\nscheduler:\n  enabled: "${secretValue}"\n  automation:\n    script_cron: true\n`;
+    const { prompt, calls } = fakePrompt({ confirmAnswers: [undefined, undefined, undefined, true] });
+    const { io, writes } = fakeIo(existing);
+    const logs: string[] = [];
+
+    await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: (m) => logs.push(m) });
+
+    expect(logs.join("\n")).not.toContain(secretValue);
+    expect(calls.confirm.filter((c) => c.message.includes("Enable the scheduler"))).toHaveLength(0);
+    const written = parseYaml(writes[0]!.content) as { scheduler: Record<string, unknown> };
+    expect(written.scheduler).not.toHaveProperty("enabled");
+    // The declared-but-gated class is NOT silently enabled by the migration.
+    expect((written.scheduler.automation as Record<string, unknown>).script_cron).toBe(false);
+  });
+
+  it("ignored enabled:true is inert: a confirmed write removes it as cleanup while classes keep their resolver defaults", async () => {
+    const existing = "vault_root: /v\nscheduler:\n  enabled: true\n  automation:\n    agent_cron: true\n";
+    const { prompt, calls } = fakePrompt({ confirmAnswers: [true, true, true, true] });
+    const { io, writes } = fakeIo(existing);
+    const logs: string[] = [];
+
+    const result = await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: (m) => logs.push(m) });
+
+    // Inert notice, never an execution claim.
+    expect(logs.join("\n")).toMatch(/inert/i);
+    // Not gated: class defaults consume the normal resolver (agent_cron on).
+    const agentPrompt = calls.confirm.find((c) => c.message.includes("agent_cron"));
+    expect(agentPrompt?.defaultValue).toBe(true);
+    const written = parseYaml(writes[0]!.content) as { scheduler: Record<string, unknown> };
+    expect(written.scheduler).not.toHaveProperty("enabled");
+    expect((written.scheduler.automation as Record<string, unknown>).agent_cron).toBe(true);
+    expect(result.removedLegacyMasterKey).toBe(true);
+  });
+
+  it("fresh config: the managed block and validation output never mention enabled", async () => {
+    const { prompt, calls } = fakePrompt({ confirmAnswers: [true, true, true, true] });
+    const { io, writes } = fakeIo(undefined);
+    const logs: string[] = [];
+
+    await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: (m) => logs.push(m) });
+
+    expect(calls.confirm.filter((c) => c.message.includes("Enable the scheduler"))).toHaveLength(0);
+    expect(writes[0]!.content).not.toContain("enabled");
+    expect(logs.join("\n")).not.toMatch(/scheduler enabled|validation.*enabled/i);
   });
 });

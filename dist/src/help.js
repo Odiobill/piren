@@ -112,7 +112,7 @@ export const HELP_TOPICS = [
     },
     {
         command: "scheduler",
-        short: "Device-local scheduler. Disabled by default (fail-closed scheduler.enabled); bare runs the opt-in loop; --once runs one bounded tick; --once --force overrides only the master and inbox gates for one non-persistent tick; --dry-run previews planned claims; --report prints a read-only operator report (LLM-free); configure runs the guided interactive local-config writer (preview + confirmation, atomic write, never starts anything).",
+        short: "Device-local scheduler. The automation classes are the sole execution gates (fail-closed: absent or legacy-gated resolves disabled); bare runs the opt-in loop; --once runs one bounded tick; --once --force overrides only a disabled automation.inbox_tasks for one non-persistent tick and never bypasses a legacy gate; --dry-run previews planned claims read-only; --report prints a read-only operator report (LLM-free); configure runs the guided interactive local-config writer (preview + confirmation, atomic write, removes a retired legacy gate key only on your confirmation, never starts anything).",
         flags: ["--once", "--force", "--dry-run", "--report", "configure"],
         example: "piren scheduler  # opt-in loop until SIGINT/SIGTERM (configure under scheduler: in config.yml)",
     },

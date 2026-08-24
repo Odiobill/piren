@@ -315,17 +315,18 @@ describe("piren scheduler configure (CLI dispatch, 0.2.0 S3)", () => {
   it("guided flow: piped answers produce a preview, confirmation, and an atomic write", async () => {
     const { home, configPath } = await makeHome("vault_root: /v\nallowed_agents:\n  - codex\n");
     try {
-      // enabled yes, inbox yes, agent no, script no, intervals default,
+      // inbox yes, agent no, script no, intervals default,
       // device blank, write yes.
-      const answers = "y\ny\nn\nn\n\n\n\n\ny\n";
+      const answers = "y\nn\nn\n\n\n\n\ny\n";
       const result = runScheduler(["configure"], { HOME: home }, answers);
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("scheduler enabled: no");
+      expect(result.stdout).toContain("Validation: resolves inbox_tasks=on agent_cron=off script_cron=off");
+      expect(result.stdout).not.toMatch(/scheduler enabled|Enable the scheduler/);
       expect(result.stdout).toContain("scheduler:");
       expect(result.stdout).toContain("Wrote");
       const { readFile } = await import("node:fs/promises");
       const written = await readFile(configPath, "utf8");
-      expect(written).toContain("enabled: true");
+      expect(written).not.toContain("enabled");
       expect(written).toContain("inbox_tasks: true");
       expect(written).toContain("agent_cron: false");
       expect(written).toContain("script_cron: false");
@@ -340,8 +341,8 @@ describe("piren scheduler configure (CLI dispatch, 0.2.0 S3)", () => {
     const original = "vault_root: /v\nallowed_agents:\n  - codex\nscheduler:\n  poll_interval_seconds: 45\n";
     const { home, configPath } = await makeHome(original);
     try {
-      // defaults accepted (legacy resolves enabled=true), write declined.
-      const answers = "\n\n\n\n\n\n\n\nn\n";
+      // defaults accepted (classes resolve from automation; none declared), write declined.
+      const answers = "\n\n\n\n\n\n\nn\n";
       const result = runScheduler(["configure"], { HOME: home }, answers);
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("Cancelled");

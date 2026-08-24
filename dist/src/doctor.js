@@ -442,10 +442,12 @@ const SCHEDULER_CLASS_LABELS = {
  * block reports ok with bounded resolved master/class state (never config
  * content/secrets) and may carry the S1 legacy migration state as read-only
  * status — doctor never writes or migrates config. A malformed present block
- * (`scheduler` non-mapping, `enabled` non-boolean, `automation` non-mapping,
- * or a non-boolean known class value) warns with the E2-S2 Authority/Next
- * structure, targeting the narrowest relevant key. Resolver semantics are
- * consumed unchanged (S1); no tick/heartbeat/claim/spawn/service action.
+ * (`scheduler` non-mapping, `automation` non-mapping, or a non-boolean known
+ * class value) warns with the E2-S2 Authority/Next structure, targeting the
+ * narrowest relevant key. A legacy-gated retired `scheduler.enabled` key
+ * (false or malformed; SGC-3 contract §4.3 shapes D/E) also warns, naming the
+ * sole operator-confirmed migration writer. Resolver semantics are consumed
+ * unchanged; no tick/heartbeat/claim/spawn/service action.
  */
 export function checkSchedulerAutomationConfig(config) {
     const block = config.scheduler;
@@ -457,10 +459,10 @@ export function checkSchedulerAutomationConfig(config) {
         message: withWarnGuidance(condition, AUTHORITY_SCHEDULER, `inspect ${target} in ${LOCAL_CONFIG_PATH}.`),
     });
     if (!isPlainRecord(block)) {
-        return warn("scheduler", "scheduler config is present but is not a mapping; the scheduler and all automation classes resolve disabled (fail closed).");
+        return warn("scheduler", "scheduler config is present but is not a mapping; all automation classes resolve disabled (fail closed).");
     }
     // Narrowest relevant malformed target wins: a known class, then the
-    // automation container, then scheduler.enabled (deterministic ordering).
+    // automation container, then the retired scheduler.enabled gate.
     const automation = block.automation;
     if (isPlainRecord(automation)) {
         for (const key of SCHEDULER_AUTOMATION_CLASSES) {
@@ -473,17 +475,18 @@ export function checkSchedulerAutomationConfig(config) {
     else if (automation !== undefined && automation !== null) {
         return warn("scheduler.automation", "scheduler.automation is present but is not a mapping; all automation classes resolve disabled (fail closed).");
     }
-    if (block.enabled !== undefined && block.enabled !== null && typeof block.enabled !== "boolean") {
-        return warn("scheduler.enabled", "scheduler.enabled is present but is not a boolean; the scheduler resolves disabled (fail closed).");
-    }
     const resolved = resolveSchedulerConfig(config);
-    let message = `scheduler: enabled: ${resolved.enabled}; ` +
-        `inbox_tasks: ${resolved.automation.inboxTasks}; ` +
+    // SGC-3 (contract §4.3): a gated retired master key (enabled:false or a
+    // malformed value) resolves every class disabled until an operator-confirmed
+    // configure migration removes it — bounded, non-secret, read-only WARN.
+    if (resolved.legacyMasterGate === "gated") {
+        return warn("scheduler.enabled", "scheduler.enabled is present as a retired legacy gate; all automation classes resolve disabled (fail closed) until an operator-confirmed piren scheduler configure migration removes the retired key");
+    }
+    let message = `scheduler: inbox_tasks: ${resolved.automation.inboxTasks}; ` +
         `agent_cron: ${resolved.automation.agentCron}; ` +
         `script_cron: ${resolved.automation.scriptCron}.`;
-    if (resolved.migration !== undefined) {
-        // Read-only status only: S4 never writes or migrates config.
-        message += " Legacy scheduler block: scheduler.enabled materializes true (read-only status; never written by doctor).";
+    if (resolved.legacyMasterGate === "ignored") {
+        message += " Retired key scheduler.enabled is present with an inert true value; automation classes are the sole gates.";
     }
     return { id: "scheduler", status: "ok", message };
 }
