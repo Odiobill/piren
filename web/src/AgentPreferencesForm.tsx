@@ -342,6 +342,10 @@ export function AgentPreferencesForm({
             <div className="settings-agent-cards" role="radiogroup" aria-label="Locally runnable agents">
               {runnable.map((name) => (
                 <label key={name} className={agent === name ? "settings-agent-card settings-agent-card-active" : "settings-agent-card"}>
+                  {/* SR-1: the native radio stays for real accessible radio
+                      semantics (group, arrows, checked state); it is only
+                      visually hidden — focus/checked indication is carried
+                      by the card itself. */}
                   <input
                     type="radio"
                     name="settings-agent-roster"
@@ -349,7 +353,12 @@ export function AgentPreferencesForm({
                     checked={agent === name}
                     onChange={() => loadAgent(name)}
                   />
-                  <span>{name}</span>
+                  {/* Dashboard-style decorative circular initial; the name
+                      remains available text. */}
+                  <span className="settings-agent-initial" aria-hidden="true">
+                    {name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="settings-agent-card-name">{name}</span>
                 </label>
               ))}
             </div>
@@ -481,15 +490,35 @@ export function AgentPreferencesForm({
               </label>
               <label className="settings-field">
                 Review interval (turns)
-                <input className="settings-agent-review-interval" type="text" value={reviewIntervalTurns} onChange={(e) => setReviewIntervalTurns(e.target.value)} />
+                <input
+                  className="settings-agent-review-interval"
+                  type="text"
+                  value={reviewIntervalTurns}
+                  /* SR-1: display-only effective default; an untouched field
+                     is never materialized by an unrelated save. */
+                  placeholder={read.phase === "ready" && read.projection.selfImprovement.reviewLoop.intervalTurns === null ? "Default: 10" : ""}
+                  onChange={(e) => setReviewIntervalTurns(e.target.value)}
+                />
               </label>
               <label className="settings-field">
                 Recent messages
-                <input className="settings-agent-review-recent" type="text" value={recentMessages} onChange={(e) => setRecentMessages(e.target.value)} />
+                <input
+                  className="settings-agent-review-recent"
+                  type="text"
+                  value={recentMessages}
+                  placeholder={read.phase === "ready" && read.projection.selfImprovement.reviewLoop.recentMessages === null ? "Default: 20" : ""}
+                  onChange={(e) => setRecentMessages(e.target.value)}
+                />
               </label>
               <label className="settings-field">
                 Review timeout (ms)
-                <input className="settings-agent-review-timeout" type="text" value={timeoutMs} onChange={(e) => setTimeoutMs(e.target.value)} />
+                <input
+                  className="settings-agent-review-timeout"
+                  type="text"
+                  value={timeoutMs}
+                  placeholder={read.phase === "ready" && read.projection.selfImprovement.reviewLoop.timeoutMs === null ? "Default: 120000" : ""}
+                  onChange={(e) => setTimeoutMs(e.target.value)}
+                />
               </label>
               <button type="button" className="settings-form-save button" disabled={saving} onClick={saveSelfImprovement}>
                 <SaveIcon size={13} />

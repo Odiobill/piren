@@ -66,8 +66,8 @@ const FIXTURE = (cssUrl: string): string => `<!doctype html>
         <div class="settings-form">
           <fieldset class="settings-agent-roster">
             <div class="settings-agent-cards" role="radiogroup" aria-label="Locally runnable agents">
-              <label class="settings-agent-card settings-agent-card-active"><input type="radio" name="settings-agent-roster" value="kimi" checked /><span>kimi</span></label>
-              <label class="settings-agent-card"><input type="radio" name="settings-agent-roster" value="dipu" /><span>dipu</span></label>
+              <label class="settings-agent-card settings-agent-card-active"><input type="radio" name="settings-agent-roster" value="kimi" checked /><span class="settings-agent-initial" aria-hidden="true">K</span><span class="settings-agent-card-name">kimi</span></label>
+              <label class="settings-agent-card"><input type="radio" name="settings-agent-roster" value="dipu" /><span class="settings-agent-initial" aria-hidden="true">D</span><span class="settings-agent-card-name">dipu</span></label>
             </div>
           </fieldset>
           <section class="settings-agent-family" aria-label="Model fallback declaration">
@@ -111,6 +111,9 @@ interface Report {
   rowCount: number;
   rowOrder: string[];
   rowControlsReachable: boolean;
+  initials: Array<{ visible: boolean; circular: boolean }>;
+  nativeRadiosHidden: boolean;
+  radioReceivesFocus: boolean;
 }
 
 async function measure(page: Page): Promise<Report> {
@@ -144,6 +147,27 @@ async function measure(page: Page): Promise<Report> {
         if (brect.width <= 0 || brect.height <= 0) controlsReachable = false;
       }
     }
+    // SR-1: decorative initials render as circles; the native radios are
+    // visually hidden (zero-area) while staying focusable for keyboard use.
+    const initials = Array.from(document.querySelectorAll<HTMLElement>(".settings-agent-initial")).map((el) => {
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return {
+        visible: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden",
+        circular: Math.abs(rect.width - rect.height) <= 1 && parseFloat(style.borderRadius) >= rect.width / 2,
+      };
+    });
+    let nativeRadiosHidden = true;
+    let radioReceivesFocus = false;
+    for (const radio of Array.from(document.querySelectorAll<HTMLInputElement>('.settings-agent-card input[type="radio"]'))) {
+      const rect = radio.getBoundingClientRect();
+      if (rect.width > 2 || rect.height > 2) nativeRadiosHidden = false;
+    }
+    const firstRadio = document.querySelector<HTMLInputElement>('.settings-agent-card input[type="radio"]');
+    if (firstRadio !== null) {
+      firstRadio.focus();
+      radioReceivesFocus = document.activeElement === firstRadio;
+    }
     return {
       documentOverflowX: scrollingElement.scrollWidth > scrollingElement.clientWidth + 1,
       innerScrollOwners: owners,
@@ -151,6 +175,9 @@ async function measure(page: Page): Promise<Report> {
       rowCount: models.length,
       rowOrder: models,
       rowControlsReachable: controlsReachable,
+      initials,
+      nativeRadiosHidden,
+      radioReceivesFocus,
     };
   });
 }
@@ -185,6 +212,15 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       expect(report.rowCount).toBe(3);
       expect(report.rowOrder[2]).toContain("claude-opus-4-1");
       expect(report.rowControlsReachable).toBe(true);
+      // SR-1: decorative initials are visible circles; the native radio dots
+      // are visually gone but still receive focus for keyboard operation.
+      expect(report.initials).toHaveLength(2);
+      for (const initial of report.initials) {
+        expect(initial.visible).toBe(true);
+        expect(initial.circular).toBe(true);
+      }
+      expect(report.nativeRadiosHidden).toBe(true);
+      expect(report.radioReceivesFocus).toBe(true);
 
       // The confirmation dialog is reachable: unhide it and check placement.
       await page.evaluate(() => {

@@ -2633,6 +2633,10 @@ code {
   padding: 8px 16px;
   font: inherit;
   cursor: pointer;
+  /* SR-1: a small consistent gap between the decorative icon and label. */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .settings-tab:hover {
@@ -2652,13 +2656,28 @@ code {
   border-color: var(--border);
 }
 
-/* Installation cards: warm, bordered, rounded family surfaces. */
+/* Installation cards: warm, bordered, rounded family surfaces. SR-1: the
+   colored left edge is mirrored on the right with the same per-card color,
+   matching the durable chat-message symmetric accent discipline. */
 .settings-family-list .settings-family {
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-right: 3px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   border-radius: 12px;
   padding: 14px 16px;
   background: var(--surface);
+}
+
+/* SR-1: card header row carrying the truthful uppercase status badge. */
+.settings-family-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-family-header .agent-status {
+  flex: none;
 }
 
 .settings-help-row {
@@ -2784,6 +2803,46 @@ code {
   border-radius: 999px;
   padding: 5px 14px;
   cursor: pointer;
+  position: relative;
+  min-width: 0;
+}
+
+/* SR-1: the native radio dot is replaced VISUALLY by the decorative initial;
+   the input stays in the accessibility tree for genuine radio semantics. */
+.settings-agent-card input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Dashboard-style decorative circular uppercase initial (aria-hidden; the
+   agent name remains available text). */
+.settings-agent-initial {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.settings-agent-card-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-agent-card-active {

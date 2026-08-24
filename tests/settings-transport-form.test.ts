@@ -19,6 +19,7 @@ import {
   saveSchedulerSettings,
   fetchAgentPreferences,
   saveAgentModelFallback,
+  saveAgentSelfImprovement,
   SettingsHttpError,
   UnauthorizedError,
 } from "../web/src/api.js";
@@ -36,6 +37,7 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
     saveSchedulerSettings: vi.fn(),
     fetchAgentPreferences: vi.fn(),
     saveAgentModelFallback: vi.fn(),
+    saveAgentSelfImprovement: vi.fn(),
   };
 });
 
@@ -799,12 +801,251 @@ describe("AgentPreferencesForm: roster + fallback confirmation (W6)", () => {
     expect(document.activeElement).toBe(fallbackSave);
   });
 
+  it("SR-1: roster cards show a decorative uppercase initial beside the name while retaining genuine radio semantics", async () => {
+    vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "kimi", online: true }] });
+    renderPrefs();
+    await flush();
+    const card = container.querySelector(".settings-agent-card");
+    expect(card).not.toBeNull();
+    // The genuine radio stays in the accessible tree with its group.
+    const radio = card!.querySelector('input[type="radio"]');
+    expect(radio).not.toBeNull();
+    expect((radio as HTMLInputElement).value).toBe("kimi");
+    // The initial is decorative and derived from the agent name...
+    const initial = card!.querySelector(".settings-agent-initial");
+    expect(initial).not.toBeNull();
+    expect(initial!.getAttribute("aria-hidden")).toBe("true");
+    expect(initial!.textContent).toBe("K");
+    // ...and the name itself remains available text.
+    expect(card!.querySelector(".settings-agent-card-name")?.textContent).toBe("kimi");
+  });
+
   it("ST-3 context: the Default option label names the core default exactly", async () => {
     renderPrefs();
     await flush();
     await chooseAgent("kimi");
     const modeSelect = container.querySelector(".settings-agent-context-mode") as HTMLSelectElement;
     expect(modeSelect.options[0]?.textContent).toBe("Default (session_start_only)");
+  });
+
+  it("SR-1: review-loop fields visibly show effective defaults when absent and never materialize them on an unrelated save", async () => {
+    vi.mocked(fetchAgentPreferences).mockResolvedValue({
+      available: true as const,
+      value: {
+        model: { id: null, thinking: null },
+        modelFallback: { declared: false, autoSwitch: null, modelCount: 0, models: [] },
+        contextInjection: { mode: null },
+        selfImprovement: {
+          autoNudge: false,
+          reviewLoopEnabled: false,
+          reviewLoop: { intervalTurns: null, recentMessages: null, timeoutMs: null },
+        },
+      },
+    });
+    renderPrefs();
+    await flush();
+    await chooseAgent("kimi");
+
+    // Effective defaults are VISIBLE for absent declarations.
+    expect((inputByClass("settings-agent-review-interval") as HTMLInputElement).placeholder).toContain("10");
+    expect((inputByClass("settings-agent-review-recent") as HTMLInputElement).placeholder).toContain("20");
+    expect((inputByClass("settings-agent-review-timeout") as HTMLInputElement).placeholder).toContain("120000");
+
+    // Saving an unrelated toggle never writes the absent numeric declarations.
+    vi.mocked(saveAgentSelfImprovement).mockResolvedValue();
+    setChecked(inputByClass("settings-agent-autonudge"), true);
+    await act(async () => saveSelfImprovementButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveAgentSelfImprovement).toHaveBeenCalledWith("kimi", { autoNudge: true }, "T");
+
+    // An explicitly touched field persists its chosen value — including the
+    // exact effective default.
+    setInput(inputByClass("settings-agent-review-interval"), "10");
+    await act(async () => saveSelfImprovementButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveAgentSelfImprovement).toHaveBeenLastCalledWith(
+      "kimi",
+      { autoNudge: true, reviewLoopIntervalTurns: 10 },
+      "T",
+    );
+  });
+});
+
+describe("SR-1: truthful service status badges", () => {
+  function renderForm(component: typeof TelegramSettingsForm): Promise<void> {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    return act(async () => {
+      root.render(createElement(component, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it("telegram ready: green CONFIGURED when configured, muted NOT CONFIGURED otherwise; no badge while loading or unavailable", async () => {
+    mockedTelegramFetch.mockResolvedValue({
+      available: true as const,
+      value: {
+        configured: true,
+        allowedChatIds: 2,
+        allowedChatIdValues: [1, 2],
+        defaultAgent: null,
+        feedbackEnabled: null,
+      },
+    });
+    await renderForm(TelegramSettingsForm);
+    let badge = container.querySelector(".settings-family-header .agent-status");
+    expect(badge?.className).toContain("status-ok");
+    expect(badge?.textContent).toMatch(/^configured$/i);
+
+    mockedTelegramFetch.mockResolvedValue({
+      available: true as const,
+      value: {
+        configured: false,
+        allowedChatIds: 0,
+        allowedChatIdValues: [],
+        defaultAgent: null,
+        feedbackEnabled: null,
+      },
+    });
+    await renderForm(TelegramSettingsForm);
+    badge = container.querySelector(".settings-family-header .agent-status");
+    expect(badge?.className).toContain("status-muted");
+    expect(badge?.textContent).toMatch(/not configured/i);
+
+    // Loading truthfully shows NO badge (never a fabricated status).
+    vi.mocked(fetchTelegramSettings).mockReturnValue(new Promise(() => {}));
+    await renderForm(TelegramSettingsForm);
+    expect(container.querySelector(".settings-family-header .agent-status")).toBeNull();
+
+    // Unavailable likewise shows no badge.
+    mockedTelegramFetch.mockResolvedValue({ available: false as const, reason: "Local config is not present." });
+    await renderForm(TelegramSettingsForm);
+    expect(container.querySelector(".settings-family-header .agent-status")).toBeNull();
+  });
+
+  it("discord ready carries the same truthful badge vocabulary", async () => {
+    mockedDiscordFetch.mockResolvedValue({
+      available: true as const,
+      value: {
+        configured: false,
+        allowedGuildIds: 0,
+        allowedGuildIdValues: [],
+        allowedChannelIds: 0,
+        allowedChannelIdValues: [],
+        allowedThreadIds: null,
+        allowedThreadIdValues: null,
+        allowedDmUserIds: null,
+        allowedDmUserIdValues: null,
+        defaultAgent: null,
+        feedbackEnabled: null,
+      },
+    });
+    await renderForm(DiscordSettingsForm);
+    const badge = container.querySelector(".settings-family-header .agent-status");
+    expect(badge?.className).toContain("status-muted");
+    expect(badge?.textContent).toMatch(/not configured/i);
+  });
+
+  it("scheduler badge reflects only whether a scheduler block is actually declared (present), in both directions", async () => {
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue({
+      available: true as const,
+      value: {
+        present: false,
+        legacyMasterGate: "absent" as const,
+        automation: { inboxTasks: false, agentCron: false, scriptCron: false },
+        deviceIdConfigured: false,
+        pollIntervalSeconds: null,
+        staleAfterSeconds: null,
+        maxConcurrentAgents: null,
+        deviceId: null,
+      },
+    });
+    await renderForm(SchedulerSettingsForm);
+    let badge = container.querySelector(".settings-family-header .agent-status");
+    expect(badge?.className).toContain("status-muted");
+    expect(badge?.textContent).toMatch(/not configured/i);
+
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue({
+      available: true as const,
+      value: {
+        present: true,
+        legacyMasterGate: "absent" as const,
+        automation: { inboxTasks: false, agentCron: false, scriptCron: false },
+        deviceIdConfigured: false,
+        pollIntervalSeconds: null,
+        staleAfterSeconds: null,
+        maxConcurrentAgents: null,
+        deviceId: null,
+      },
+    });
+    await renderForm(SchedulerSettingsForm);
+    badge = container.querySelector(".settings-family-header .agent-status");
+    expect(badge?.className).toContain("status-ok");
+    expect(badge?.textContent).toMatch(/^configured$/i);
+  });
+});
+
+describe("SR-1: display-only scheduler effective defaults", () => {
+  const SCHED_NULLS = {
+    available: true as const,
+    value: {
+      present: true,
+      legacyMasterGate: "absent" as const,
+      automation: { inboxTasks: false, agentCron: false, scriptCron: false },
+      deviceIdConfigured: false,
+      pollIntervalSeconds: null,
+      staleAfterSeconds: null,
+      maxConcurrentAgents: null,
+      deviceId: null,
+    },
+  };
+
+  async function renderScheduler(): Promise<void> {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(SchedulerSettingsForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+  }
+
+  beforeEach(() => {
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue(SCHED_NULLS);
+    vi.mocked(saveSchedulerSettings).mockResolvedValue();
+  });
+
+  it("absent declarations visibly show the effective defaults 30/300/1 without holding them as values", async () => {
+    await renderScheduler();
+    const poll = inputByClass("settings-scheduler-poll") as HTMLInputElement;
+    const stale = inputByClass("settings-scheduler-stale") as HTMLInputElement;
+    const concurrency = inputByClass("settings-scheduler-concurrency") as HTMLInputElement;
+    expect(poll.value).toBe("");
+    expect(stale.value).toBe("");
+    expect(concurrency.value).toBe("");
+    expect(poll.placeholder).toContain("30");
+    expect(stale.placeholder).toContain("300");
+    expect(concurrency.placeholder).toContain("1");
+  });
+
+  it("loading then saving an unrelated field never materializes the absent numeric declarations", async () => {
+    await renderScheduler();
+    setChecked(inputByClass("settings-scheduler-inbox"), true);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).toHaveBeenCalledWith({ automation: { inbox_tasks: true } }, "T");
+  });
+
+  it("an explicitly touched field saves its chosen value — including the exact effective default", async () => {
+    await renderScheduler();
+    setInput(inputByClass("settings-scheduler-poll"), "30");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).toHaveBeenCalledWith(
+      { pollIntervalSeconds: 30 },
+      "T",
+    );
   });
 });
 
@@ -813,4 +1054,10 @@ function setChecked(input: HTMLInputElement, checked: boolean): void {
     // React's checkbox onChange is driven by the native click toggle.
     if (input.checked !== checked) input.click();
   });
+}
+
+function saveSelfImprovementButton(): HTMLButtonElement {
+  const el = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save self-improvement");
+  if (el === undefined) throw new Error("missing Save self-improvement button");
+  return el as HTMLButtonElement;
 }

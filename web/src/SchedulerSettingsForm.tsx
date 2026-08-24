@@ -151,7 +151,20 @@ export function SchedulerSettingsForm({
 
   return (
     <li className="settings-family">
-      <strong>Scheduler automation</strong>
+      <div className="settings-family-header">
+        <strong>Scheduler automation</strong>
+        {/* SR-1: truthful uppercase status badge over the existing bounded
+            `present` signal — whether a scheduler block is actually declared,
+            never whether a process runs. Rendered only in the ready phase. */}
+        {read.phase === "ready" && (
+          <span
+            className={`agent-status ${read.projection.present ? "status-ok" : "status-muted"}`}
+            role="status"
+          >
+            {read.projection.present ? "Configured" : "Not configured"}
+          </span>
+        )}
+      </div>
       {read.phase === "loading" && <p className="muted">Loading…</p>}
       {read.phase === "error" && <p className="muted" role="alert">{read.bounded}</p>}
       {read.phase === "unavailable" && <p className="muted">{read.reason}</p>}
@@ -210,6 +223,7 @@ export function SchedulerSettingsForm({
               className="settings-scheduler-poll"
               type="text"
               value={pollText}
+              placeholder={read.projection.pollIntervalSeconds === null ? "Default: 30" : ""}
               disabled={read.projection.legacyMasterGate === "gated"}
               onChange={(e) => setPollText(e.target.value)}
             />
@@ -220,6 +234,7 @@ export function SchedulerSettingsForm({
               className="settings-scheduler-stale"
               type="text"
               value={staleText}
+              placeholder={read.projection.staleAfterSeconds === null ? "Default: 300" : ""}
               disabled={read.projection.legacyMasterGate === "gated"}
               onChange={(e) => setStaleText(e.target.value)}
             />
@@ -230,6 +245,7 @@ export function SchedulerSettingsForm({
               className="settings-scheduler-concurrency"
               type="text"
               value={concurrencyText}
+              placeholder={read.projection.maxConcurrentAgents === null ? "Default: 1" : ""}
               disabled={read.projection.legacyMasterGate === "gated"}
               onChange={(e) => setConcurrencyText(e.target.value)}
             />

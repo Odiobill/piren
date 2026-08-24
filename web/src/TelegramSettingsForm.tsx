@@ -147,7 +147,20 @@ export function TelegramSettingsForm({
 
   return (
     <li className="settings-family">
-      <strong>Telegram transport</strong>
+      <div className="settings-family-header">
+        <strong>Telegram transport</strong>
+        {/* SR-1: truthful uppercase status badge, rendered only once the
+            read projection is actually available — never while loading,
+            erroring, or unavailable. */}
+        {read.phase === "ready" && (
+          <span
+            className={`agent-status ${read.projection.configured ? "status-ok" : "status-muted"}`}
+            role="status"
+          >
+            {read.projection.configured ? "Configured" : "Not configured"}
+          </span>
+        )}
+      </div>
       {read.phase === "loading" && <p className="muted">Loading…</p>}
       {read.phase === "error" && <p className="muted" role="alert">{read.bounded}</p>}
       {read.phase === "unavailable" && <p className="muted">{read.reason}</p>}

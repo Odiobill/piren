@@ -15,6 +15,13 @@ import puppeteer, { type Browser, type Page } from "puppeteer-core";
  *   - inactive panels do not create a second scroll owner (only the browser
  *     root document may scroll);
  *   - the installation cards are visible in the default active panel.
+ *
+ * SR-1 additionally proves against the BUILT stylesheet:
+ *   - each tab has a real rendered gap between its decorative icon and its
+ *     label;
+ *   - family cards carry SYMMETRIC colored side accents (right mirrors left)
+ *     while keeping their radius;
+ *   - a truthful uppercase status badge is visible inside the card header.
  */
 
 const CHROME_CANDIDATES = [
@@ -65,15 +72,17 @@ const FIXTURE = (cssUrl: string): string => `<!doctype html>
       <header class="settings-header"><h2>Settings</h2></header>
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
         <button type="button" role="tab" id="settings-tab-installation" aria-selected="true"
-                aria-controls="settings-panel-installation" class="settings-tab settings-tab-active">This installation</button>
+                aria-controls="settings-panel-installation" class="settings-tab settings-tab-active"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8l7-7 7 7v7h-5v-4h-4v4H1z"/></svg>This installation</button>
         <button type="button" role="tab" id="settings-tab-agents" aria-selected="false"
-                aria-controls="settings-panel-agents" class="settings-tab">Agent settings</button>
+                aria-controls="settings-panel-agents" class="settings-tab"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/></svg>Agent settings</button>
         <button type="button" role="tab" id="settings-tab-groups" aria-selected="false"
-                aria-controls="settings-panel-groups" class="settings-tab">Agent groups</button>
+                aria-controls="settings-panel-groups" class="settings-tab"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 3h5l2 2h7v8H1z"/></svg>Agent groups</button>
       </div>
       <section role="tabpanel" id="settings-panel-installation" aria-labelledby="settings-tab-installation">
         <ul class="settings-family-list">
-          <li class="settings-family" id="card-telegram"><strong>Telegram transport</strong></li>
+          <li class="settings-family" id="card-telegram">
+            <div class="settings-family-header"><strong>Telegram transport</strong><span class="agent-status status-ok">Configured</span></div>
+          </li>
           <li class="settings-family" id="card-discord"><strong>Discord transport</strong></li>
           <li class="settings-family" id="card-scheduler"><strong>Scheduler automation</strong></li>
         </ul>
@@ -96,6 +105,10 @@ interface OverflowReport {
   tabRects: Array<{ label: string; visible: boolean; insideViewport: boolean }>;
   activeCardVisible: boolean;
   inactivePanelDisplay: string;
+  tabIconLabelGaps: number[];
+  cardSideEdges: { leftWidth: number; rightWidth: number; sameColor: boolean; radius: number } | null;
+  statusBadgeVisible: boolean;
+  statusBadgeUppercase: boolean;
 }
 
 const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
@@ -141,12 +154,49 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
           (cardRect?.height ?? 0) > 0 &&
           (cardRect?.width ?? 0) > 0;
         const inactivePanel = document.getElementById("settings-panel-agents");
+        // SR-1: rendered gap between each tab's decorative icon and label.
+        const tabIconLabelGaps: number[] = [];
+        for (const tab of Array.from(document.querySelectorAll<HTMLButtonElement>('[role="tab"]'))) {
+          const svg = tab.querySelector("svg");
+          const textNode = Array.from(tab.childNodes).find(
+            (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== "",
+          );
+          if (svg === null || textNode === undefined) continue;
+          const range = document.createRange();
+          range.selectNodeContents(textNode);
+          const textRect = range.getBoundingClientRect();
+          tabIconLabelGaps.push(textRect.left - svg.getBoundingClientRect().right);
+        }
+        // SR-1: symmetric colored side accents on family cards.
+        let cardSideEdges: OverflowReport["cardSideEdges"] = null;
+        if (cardStyle !== null) {
+          cardSideEdges = {
+            leftWidth: parseFloat(cardStyle.borderLeftWidth),
+            rightWidth: parseFloat(cardStyle.borderRightWidth),
+            sameColor: cardStyle.borderLeftColor === cardStyle.borderRightColor,
+            radius: parseFloat(cardStyle.borderTopLeftRadius),
+          };
+        }
+        // SR-1: the truthful uppercase status badge.
+        const badge = document.querySelector("#card-telegram .agent-status");
+        let statusBadgeVisible = false;
+        let statusBadgeUppercase = false;
+        if (badge !== null) {
+          const rect = badge.getBoundingClientRect();
+          const style = getComputedStyle(badge);
+          statusBadgeVisible = rect.width > 0 && rect.height > 0 && style.visibility !== "hidden";
+          statusBadgeUppercase = style.textTransform === "uppercase";
+        }
         return {
           documentOverflowX,
           innerScrollOwners: owners,
           tabRects,
           activeCardVisible,
           inactivePanelDisplay: inactivePanel === null ? "missing" : getComputedStyle(inactivePanel).display,
+          tabIconLabelGaps,
+          cardSideEdges,
+          statusBadgeVisible,
+          statusBadgeUppercase,
         };
       });
     }
@@ -176,6 +226,18 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       }
       expect(report.activeCardVisible).toBe(true);
       expect(report.inactivePanelDisplay).toBe("none");
+      // SR-1: every tab renders a real icon-to-label gap.
+      expect(report.tabIconLabelGaps).toHaveLength(3);
+      for (const gap of report.tabIconLabelGaps) expect(gap).toBeGreaterThanOrEqual(4);
+      // SR-1: symmetric side accents, radius preserved.
+      expect(report.cardSideEdges).not.toBeNull();
+      expect(report.cardSideEdges!.leftWidth).toBe(3);
+      expect(report.cardSideEdges!.rightWidth).toBe(3);
+      expect(report.cardSideEdges!.sameColor).toBe(true);
+      expect(report.cardSideEdges!.radius).toBeGreaterThan(0);
+      // SR-1: truthful uppercase status badge visible in the ready card.
+      expect(report.statusBadgeVisible).toBe(true);
+      expect(report.statusBadgeUppercase).toBe(true);
     });
 
     it("narrow portrait: tabs remain stacked and reachable without horizontal overflow or scroll traps", async () => {
@@ -188,6 +250,11 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
         expect(`${tab.label}: ${tab.visible} ${tab.insideViewport}`).toBe(`${tab.label}: true true`);
       }
       expect(report.activeCardVisible).toBe(true);
+      // SR-1: gaps/symmetric edges/badge survive the narrow geometry too.
+      expect(report.tabIconLabelGaps.every((gap) => gap >= 4)).toBe(true);
+      expect(report.cardSideEdges!.rightWidth).toBe(3);
+      expect(report.cardSideEdges!.sameColor).toBe(true);
+      expect(report.statusBadgeVisible).toBe(true);
       await browser.close();
     });
   },
