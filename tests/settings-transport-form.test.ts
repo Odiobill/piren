@@ -743,6 +743,62 @@ describe("AgentPreferencesForm: roster + fallback confirmation (W6)", () => {
     expect(saveAgentModelFallback).toHaveBeenCalledWith("kimi", { models: ["openai/gpt-4o"], autoSwitch: false }, false, "T");
   });
 
+  it("ST-3 correction: an INVALID current declaration never opens confirmation; bounded error, no pending save", async () => {
+    vi.mocked(saveAgentModelFallback).mockResolvedValue();
+    renderPrefs();
+    await flush();
+    await chooseAgent("kimi");
+    // Empty the ordered list entirely while auto-switch stays enabled.
+    act(() => container.querySelector(".settings-agent-fallback-remove")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const fallbackSave = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save fallback") as HTMLButtonElement;
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.textContent).toMatch(/provider\/modelId/i);
+    expect(saveAgentModelFallback).not.toHaveBeenCalled();
+
+    // An invalid entry is also rejected before any dialog.
+    setInput(inputByClass("settings-agent-fallback-add"), "not-a-model");
+    act(() => container.querySelector(".settings-agent-fallback-add-button")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(saveAgentModelFallback).not.toHaveBeenCalled();
+  });
+
+  it("ST-3 correction: the confirmation dialog TRAPS focus (Tab/Shift+Tab cycle inside) and Escape works from within", async () => {
+    renderPrefs();
+    await flush();
+    await chooseAgent("kimi");
+    const fallbackSave = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save fallback") as HTMLButtonElement;
+    fallbackSave.focus();
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    const dialog = container.querySelector('[role="dialog"]')!;
+    expect(dialog).not.toBeNull();
+    // Focus moved inside on open.
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    // Tab on the LAST control wraps to the first; Shift+Tab on the first wraps to the last.
+    const controls = Array.from(dialog.querySelectorAll<HTMLElement>("button"));
+    expect(controls.length).toBeGreaterThanOrEqual(3);
+    controls[controls.length - 1]!.focus();
+    act(() => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })));
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(controls[0]);
+    controls[0]!.focus();
+    act(() => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true })));
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(controls[controls.length - 1]);
+
+    // Escape works wherever focus is inside; focus returns to the Save button.
+    act(() => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await flush();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(saveAgentModelFallback).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(fallbackSave);
+  });
+
   it("ST-3 context: the Default option label names the core default exactly", async () => {
     renderPrefs();
     await flush();

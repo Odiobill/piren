@@ -2811,14 +2811,23 @@ code {
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   border-radius: 8px;
   padding: 5px 8px;
+  /* ST-3 correction: rows never push controls out of reach; the label
+     shrinks instead of growing the document. */
+  min-width: 0;
 }
 
 .settings-agent-fallback-model {
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings-agent-fallback-row button {
+  flex: none;
 }
 
 .settings-agent-fallback-row button {

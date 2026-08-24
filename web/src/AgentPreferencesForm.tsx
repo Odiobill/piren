@@ -71,7 +71,42 @@ export function AgentPreferencesForm({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const pendingSaveRef = useRef<(() => void) | null>(null);
   const confirmCancelRef = useRef<HTMLButtonElement>(null);
+  const confirmDialogRef = useRef<HTMLDivElement>(null);
   const fallbackSaveRef = useRef<HTMLButtonElement>(null);
+
+  // ST-3 correction: full modal discipline - focus moves inside on open,
+  // Tab/Shift+Tab cycle within the dialog's actionable controls, and Escape
+  // works wherever focus is inside. Dismissal returns focus to the fallback
+  // Save button (handled by the cancel/confirm paths).
+  useEffect(() => {
+    if (!confirmOpen) return;
+    confirmCancelRef.current?.focus();
+    const dialog = confirmDialogRef.current;
+    if (dialog === null) return;
+    const focusables = (): HTMLElement[] =>
+      Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input, select, textarea'));
+    const onKeydown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelPendingFallbackSave();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const list = focusables();
+      if (list.length === 0) return;
+      const index = list.indexOf(document.activeElement as HTMLElement);
+      if (event.shiftKey && (index <= 0 || index === -1)) {
+        event.preventDefault();
+        list[list.length - 1]?.focus();
+      } else if (!event.shiftKey && (index === -1 || index === list.length - 1)) {
+        event.preventDefault();
+        list[0]?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmOpen]);
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -173,7 +208,14 @@ export function AgentPreferencesForm({
   }
 
   function requestSaveFallback(): void {
-    // ST-3: nothing writes until the explicit confirmation for an enabled
+    // ST-3 correction: validate the WHOLE current declaration BEFORE any
+    // confirmation opens. An empty/invalid list cannot leave auto-switch
+    // enabled, so it shows the bounded error and never creates a pending save.
+    if (models.length === 0 || models.some((m) => !isValidFallbackModelId(m))) {
+      setFieldError("Each fallback model must be an exact provider/modelId string (for example openai/gpt-4o).");
+      return;
+    }
+    // Nothing writes until the explicit confirmation for an enabled
     // auto-switch declaration.
     if (autoSwitch) {
       pendingSaveRef.current = performSaveFallback;
@@ -185,10 +227,6 @@ export function AgentPreferencesForm({
 
   function performSaveFallback(): void {
     if (agent === null) return;
-    if (models.length === 0 || models.some((m) => !isValidFallbackModelId(m))) {
-      setFieldError("Each fallback model must be an exact provider/modelId string (for example openai/gpt-4o).");
-      return;
-    }
     const patch: { autoSwitch?: boolean; models?: string[] } = { models: [...models] };
     const initialAutoSwitch = read.phase === "ready" ? (read.projection.modelFallback.autoSwitch ?? true) : true;
     if (autoSwitch !== initialAutoSwitch) patch.autoSwitch = autoSwitch;
@@ -468,17 +506,15 @@ export function AgentPreferencesForm({
       {confirmOpen && (
         <div className="settings-help-backdrop">
           <div
+            ref={confirmDialogRef}
             className="settings-help-dialog card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="settings-autoswitch-confirm-title"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") cancelPendingFallbackSave();
-            }}
           >
             <header className="settings-help-header">
               <h4 id="settings-autoswitch-confirm-title">Enable automatic switching?</h4>
-              <button ref={confirmCancelRef} type="button" className="settings-help-close" aria-label="Close without saving" autoFocus onClick={cancelPendingFallbackSave}>
+              <button ref={confirmCancelRef} type="button" className="settings-help-close" aria-label="Close without saving" onClick={cancelPendingFallbackSave}>
                 <XIcon size={14} />
               </button>
             </header>

@@ -76,10 +76,14 @@ const FIXTURE = (cssUrl: string): string => `<!doctype html>
                 <button type="button" class="settings-agent-fallback-up" aria-label="Move openai/gpt-4o up">U</button>
                 <button type="button" class="settings-agent-fallback-down" aria-label="Move openai/gpt-4o down">D</button>
                 <button type="button" class="settings-agent-fallback-remove" aria-label="Remove openai/gpt-4o">R</button></li>
-              <li class="settings-agent-fallback-row"><span class="settings-agent-fallback-model">openrouter/kimi-k3</span>
+              <li class="settings-agent-fallback-row"><span class="settings-agent-fallback-model">openrouter/kimi-k3-long-identifier-abcdefghijklmnopqrstuvwxyz-0123456789</span>
                 <button type="button" class="settings-agent-fallback-up" aria-label="Move openrouter/kimi-k3 up">U</button>
                 <button type="button" class="settings-agent-fallback-down" aria-label="Move openrouter/kimi-k3 down" disabled>D</button>
                 <button type="button" class="settings-agent-fallback-remove" aria-label="Remove openrouter/kimi-k3">R</button></li>
+              <li class="settings-agent-fallback-row"><span class="settings-agent-fallback-model">anthropic/claude-opus-4-1-20250805-with-a-deliberately-extreme-provider-and-model-suffix-string</span>
+                <button type="button" class="settings-agent-fallback-up" aria-label="Move long model up">U</button>
+                <button type="button" class="settings-agent-fallback-down" aria-label="Move long model down">D</button>
+                <button type="button" class="settings-agent-fallback-remove" aria-label="Remove long model">R</button></li>
             </ol>
             <button type="button" class="settings-form-save button" id="fallback-save">Save fallback</button>
           </section>
@@ -178,8 +182,8 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       expect(report.documentOverflowX).toBe(false);
       expect(report.innerScrollOwners).toEqual([]);
       expect(report.cardRectsVisible).toBe(2);
-      expect(report.rowCount).toBe(2);
-      expect(report.rowOrder).toEqual(["openai/gpt-4o", "openrouter/kimi-k3"]);
+      expect(report.rowCount).toBe(3);
+      expect(report.rowOrder[2]).toContain("claude-opus-4-1");
       expect(report.rowControlsReachable).toBe(true);
 
       // The confirmation dialog is reachable: unhide it and check placement.
@@ -204,13 +208,25 @@ const probe = describe.skipIf(chromePath === null || builtCssPath() === null)(
       expect(dialogVisible).toBe(true);
     });
 
-    it("narrow portrait: same reachability without horizontal overflow or scroll traps", async () => {
+    it("narrow portrait: a LONG model label shrinks/ellipsizes; controls stay visible without horizontal overflow", async () => {
       await page.setViewport({ width: 420, height: 800 });
       await new Promise((resolve) => setTimeout(resolve, 120));
       const report = await measure(page);
       expect(report.documentOverflowX).toBe(false);
       expect(report.innerScrollOwners).toEqual([]);
-      expect(report.cardRectsVisible).toBe(2);
+      // Every row control stays rendered and reachable next to the ellipsized
+      // label (never pushed offscreen or hidden by the long value).
+      for (const row of await page.evaluate(() =>
+        Array.from(document.querySelectorAll(".settings-agent-fallback-row")).map((row) => ({
+          labelWidth: (row.querySelector(".settings-agent-fallback-model") as HTMLElement).getBoundingClientRect().width,
+          buttons: Array.from(row.querySelectorAll("button")).map((b) => {
+            const r = b.getBoundingClientRect();
+            return { w: r.width, h: r.height, right: r.right };
+          }),
+        })),
+      )) {
+        expect(row.buttons.every((b) => b.w > 0 && b.h > 0 && b.right <= 421)).toBe(true);
+      }
       expect(report.rowControlsReachable).toBe(true);
       await browser.close();
     });
