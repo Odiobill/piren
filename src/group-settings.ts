@@ -15,7 +15,7 @@ import { isValidGroupName } from "./group-config.js";
  * semantics. Local runnable policy is never read or written here.
  */
 
-export type GroupSettingsErrorCode = "conflict" | "not-found" | "exists" | "invalid";
+export type GroupSettingsErrorCode = "conflict" | "not-found" | "exists" | "invalid" | "io";
 
 export class GroupSettingsError extends Error {
   constructor(readonly code: GroupSettingsErrorCode, message: string) {
@@ -34,17 +34,39 @@ export interface GroupSettingsDeps {
   mkdir(path: string): Promise<void>;
 }
 
+/** True when a filesystem error means the path is genuinely absent. */
+function isEnoent(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+/** Bounded non-secret I/O failure; never treated as absence (fail closed). */
+function ioError(): GroupSettingsError {
+  return new GroupSettingsError("io", "The agent groups state could not be read.");
+}
+
 export function createNodeGroupSettingsDeps(): GroupSettingsDeps {
   return {
     async readFile(path) {
       try {
         return await readFile(path, "utf8");
-      } catch {
-        return null;
+      } catch (error) {
+        if (isEnoent(error)) return null;
+        throw ioError();
       }
     },
     async writeFileAtomic(path, content, expectedSource) {
-      const current = await readFile(path, "utf8").catch(() => null);
+      let current: string | null;
+      try {
+        current = await readFile(path, "utf8");
+      } catch (error) {
+        if (isEnoent(error)) current = null;
+        else throw ioError();
+      }
       if (current !== expectedSource) {
         throw new GroupSettingsError("conflict", "The group config changed since it was read; nothing was written.");
       }
@@ -60,8 +82,9 @@ export function createNodeGroupSettingsDeps(): GroupSettingsDeps {
       try {
         const entries = await nodeReaddir(path, { withFileTypes: true });
         return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-      } catch {
-        return [];
+      } catch (error) {
+        if (isEnoent(error)) return [];
+        throw ioError();
       }
     },
     async mkdir(path) {
@@ -104,7 +127,7 @@ export function revisionOf(raw: string): string {
 }
 
 /** Tolerant model extraction; malformed files yield an empty model (findings surface problems instead). */
-function extractModel(raw: string): GroupSettingsData {
+export function parseGroupModel(raw: string): GroupSettingsData {
   const data: GroupSettingsData = { agents: [], fallbackOrder: {} };
   if (raw.trim() === "") return data;
   let parsed: unknown;
@@ -179,7 +202,7 @@ export async function readGroup(deps: GroupSettingsDeps, groupsRoot: string, gro
   if (!isValidGroupName(group)) throw new GroupSettingsError("invalid", "Invalid agent group name.");
   const raw = await deps.readFile(configPath(groupsRoot, group));
   if (raw === null) return null;
-  const data = extractModel(raw);
+  const data = parseGroupModel(raw);
   return { name: group, revision: revisionOf(raw), agents: data.agents, fallbackOrder: data.fallbackOrder, findings: validateGroupModel(data) };
 }
 
@@ -209,8 +232,102 @@ export async function mutateGroup(deps: GroupSettingsDeps, groupsRoot: string, i
   if (intent.expectedRevision !== revisionOf(raw)) {
     throw new GroupSettingsError("conflict", "The group config changed since it was read; nothing was written.");
   }
-  const data = intent.mutate(extractModel(raw));
+  const data = intent.mutate(parseGroupModel(raw));
   const rendered = mergeIntoDocument(raw, data);
   await deps.writeFileAtomic(path, rendered, raw);
   return { name: intent.group, revision: revisionOf(rendered), agents: data.agents, fallbackOrder: data.fallbackOrder, findings: validateGroupModel(data) };
+}
+
+// ---------------------------------------------------------------------------
+// Vault roster + cross-group validation (ST-4 correction)
+// ---------------------------------------------------------------------------
+
+/** Every vault-defined `team/<agent>/` identity, sorted; absent team dir is empty. */
+export async function listVaultAgents(deps: GroupSettingsDeps, vaultRoot: string): Promise<string[]> {
+  const names = await deps.readdirSubdirs(join(vaultRoot, "team"));
+  return names.filter((name) => isValidGroupName(name)).sort();
+}
+
+/**
+ * One cross-group validation finding. Categories mirror the existing
+ * `piren group validate` CLI/core (`src/group-config.ts` `validateGroups`):
+ * missing-config, dangling-fallback, missing-agent-dir, and the
+ * duplicate-across-groups info note.
+ */
+export interface GroupCrossValidationIssue {
+  group: string;
+  kind: "missing-config" | "dangling-fallback" | "missing-agent-dir" | "duplicate-across-groups";
+  severity: "error" | "info";
+  message: string;
+}
+
+/**
+ * Read-only validation across ALL group configs, aligned with the CLI/core
+ * categories rather than only per-detail fallback findings. I/O failures
+ * propagate fail-closed as GroupSettingsError("io").
+ */
+export async function validateAllGroups(
+  deps: GroupSettingsDeps,
+  groupsRoot: string,
+  teamAgentsRoot: string,
+): Promise<GroupCrossValidationIssue[]> {
+  const issues: GroupCrossValidationIssue[] = [];
+  const names = (await deps.readdirSubdirs(groupsRoot)).filter((name) => isValidGroupName(name)).sort();
+  const teamAgents = new Set(await listVaultAgents(deps, join(teamAgentsRoot, "..")));
+  const memberGroups = new Map<string, string[]>();
+
+  for (const group of names) {
+    const raw = await deps.readFile(configPath(groupsRoot, group));
+    if (raw === null) {
+      issues.push({
+        group,
+        kind: "missing-config",
+        severity: "error",
+        message: `Group directory 'agent-groups/${group}/' has no config.yml.`,
+      });
+      continue;
+    }
+    const data = parseGroupModel(raw);
+    for (const agent of data.agents) {
+      const groups = memberGroups.get(agent) ?? [];
+      groups.push(group);
+      memberGroups.set(agent, groups);
+      if (!teamAgents.has(agent)) {
+        issues.push({
+          group,
+          kind: "missing-agent-dir",
+          severity: "error",
+          message: `Agent '${agent}' in group '${group}' has no team/${agent}/ directory.`,
+        });
+      }
+    }
+    for (const [member, candidates] of Object.entries(data.fallbackOrder)) {
+      for (const candidate of candidates) {
+        if (!data.agents.includes(candidate)) {
+          issues.push({
+            group,
+            kind: "dangling-fallback",
+            severity: "error",
+            message: `fallback_order for '${member}' references '${candidate}' which is not a member of group '${group}'.`,
+          });
+        }
+      }
+    }
+  }
+
+  for (const [agent, groups] of memberGroups) {
+    const unique = [...new Set(groups)];
+    if (unique.length > 1) {
+      for (const group of unique) {
+        issues.push({
+          group,
+          kind: "duplicate-across-groups",
+          severity: "info",
+          message: `Agent '${agent}' is declared in ${unique.length} groups: ${unique.join(", ")}.`,
+        });
+      }
+    }
+  }
+
+  return issues;
 }

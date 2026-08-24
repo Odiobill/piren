@@ -12,7 +12,7 @@ import { applyAgentSettingsIntent, applyLocalSettingsIntent, createNodeSettingsF
 import { buildOkfGraph } from "./okf-graph.js";
 import { ConversationBroker } from "./conversation-broker.js";
 import { buildConversationAgentsResponse } from "./conversation-agents.js";
-import { GroupSettingsError, createNodeGroupSettingsDeps, listGroups, mutateGroup, readGroup, } from "./group-settings.js";
+import { GroupSettingsError, createNodeGroupSettingsDeps, listGroups, listVaultAgents, mutateGroup, readGroup, validateAllGroups, } from "./group-settings.js";
 import { CONVERSATION_AGENT_NAME_PATTERN, checkActiveGate, formatActiveGateRejection, resolveStewardMentions } from "./conversation-contract.js";
 import { appendConversationEvent, createConversation, createConversationForAgentStart, createConversationForPeerStart, listConversations, readConversation, readConversationEvents, renameConversation, transitionConversationLifecycle, updateConversationAudience, } from "./conversations.js";
 import { parsePeerAudienceStartRequest, peerStartOriginBody, validatePeerRunnability, } from "./conversation-peer-start.js";
@@ -364,6 +364,9 @@ export class GatewayServer {
         }
         else if (req.method === "POST" && url.pathname === "/api/settings/groups") {
             await this.handleGroupsAction(req, res);
+        }
+        else if (req.method === "GET" && url.pathname === "/api/settings/groups/validation") {
+            await this.handleGroupsValidation(res);
         }
         else if (req.method === "GET" && url.pathname.startsWith("/api/settings/groups/")) {
             await this.handleGroupShow(res, decodeURIComponent(url.pathname.slice("/api/settings/groups/".length)));
@@ -1439,6 +1442,7 @@ export class GatewayServer {
                 this.writeJson(res, 200, { available: false, reason: "Agent group was not found." });
                 return;
             }
+            const vaultAgents = await listVaultAgents(this.groupsIo, root.slice(0, -"/agent-groups".length));
             this.writeJson(res, 200, {
                 available: true,
                 group: {
@@ -1448,7 +1452,9 @@ export class GatewayServer {
                     fallbackOrder: detail.fallbackOrder,
                     findings: detail.findings,
                 },
-                roster: this.runnableAgents.map((name) => ({ name, locallyRunnable: true })),
+                // ST-4 correction: the roster is EVERY vault-defined team/<agent>/
+                // identity; locallyRunnable derives from the resolved gateway set.
+                roster: vaultAgents.map((name) => ({ name, locallyRunnable: this.runnableAgents.includes(name) })),
             });
         }
         catch (error) {
@@ -1457,6 +1463,25 @@ export class GatewayServer {
                 return;
             }
             this.writeJson(res, 500, { error: "Agent group could not be read." });
+        }
+    }
+    /**
+     * ST-4 correction — GET /api/settings/groups/validation: read-only
+     * cross-group report reusing the CLI/core validate categories.
+     */
+    async handleGroupsValidation(res) {
+        const root = this.groupsRoot();
+        if (root === undefined || this.vaultRoot === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        try {
+            const issues = await validateAllGroups(this.groupsIo, root, `${this.vaultRoot}/team`);
+            this.writeJson(res, 200, { available: true, issues });
+        }
+        catch (error) {
+            void error;
+            this.writeJson(res, 500, { error: "Agent groups could not be read." });
         }
     }
     /**
@@ -1527,6 +1552,13 @@ export class GatewayServer {
                 return;
             }
             if (action === "add-agent") {
+                // ST-4 correction: free text is never authority. Only a name that
+                // exists as a vault-defined team/<agent>/ identity may be added.
+                const vaultAgents = await listVaultAgents(this.groupsIo, root.slice(0, -"/agent-groups".length));
+                if (!vaultAgents.includes(agent)) {
+                    this.writeJson(res, 400, { error: "That agent is not a vault-defined agent (no team/<agent>/ directory)." });
+                    return;
+                }
                 await mutateGroup(this.groupsIo, root, {
                     group, expectedRevision, mutate: (data) => ({
                         agents: data.agents.includes(agent) ? data.agents : [...data.agents, agent],
@@ -1577,7 +1609,7 @@ export class GatewayServer {
         }
         catch (error) {
             if (error instanceof GroupSettingsError) {
-                const statusByCode = { conflict: 409, "not-found": 404, exists: 409, invalid: 400 };
+                const statusByCode = { conflict: 409, "not-found": 404, exists: 409, invalid: 400, io: 500 };
                 this.writeJson(res, statusByCode[error.code] ?? 400, { error: error.message });
                 return;
             }

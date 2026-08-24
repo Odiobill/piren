@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GatewayServer } from "../src/gateway-http.js";
-import type { GroupSettingsDeps } from "../src/group-settings.js";
+import { GroupSettingsError, type GroupSettingsDeps } from "../src/group-settings.js";
 
 /**
  * ST-4 route tests: closed bodies, explicit confirmation, bounded errors,
@@ -42,6 +42,120 @@ async function start(files: Map<string, string>): Promise<{ base: string; post: 
 function join0(): string {
   return process.execPath;
 }
+
+describe("ST-4 correction: roster authority, validation read, auth, fail-closed I/O", () => {
+  it("group detail returns ALL vault-defined agents with locallyRunnable markers", async () => {
+    const files = new Map<string, string>([
+      ["/vault/agent-groups/g/config.yml", "agents:\n  - kimi\n  - dipu\n"],
+      ["/vault/team/kimi/SOUL.md", ""],
+      ["/vault/team/dipu/SOUL.md", ""],
+      ["/vault/team/offline-one/SOUL.md", ""],
+    ]);
+    const h = await start(files);
+    try {
+      const show = (await (await h.get("/api/settings/groups/g")).json()) as { roster: Array<{ name: string; locallyRunnable: boolean }> };
+      expect(show.roster.map((r) => r.name)).toEqual(["dipu", "kimi", "offline-one"]);
+      const byName = new Map(show.roster.map((r) => [r.name, r.locallyRunnable]));
+      expect(byName.get("kimi")).toBe(true);
+      expect(byName.get("offline-one")).toBe(false);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("add-agent rejects non-vault-defined names server-side and accepts offline vault agents", async () => {
+    const files = new Map<string, string>([
+      ["/vault/agent-groups/g/config.yml", "agents:\n  - kimi\n"],
+      ["/vault/team/kimi/SOUL.md", ""],
+      ["/vault/team/offline-one/SOUL.md", ""],
+    ]);
+    const h = await start(files);
+    try {
+      const detail = (await (await h.get("/api/settings/groups/g")).json()) as { group: { revision: string } };
+      const bad = await h.post({ action: "add-agent", group: "g", agent: "not-in-vault", expectedRevision: detail.group.revision });
+      expect(bad.status).toBe(400);
+      expect(files.get("/vault/agent-groups/g/config.yml")).toBe("agents:\n  - kimi\n");
+      const ok = await h.post({ action: "add-agent", group: "g", agent: "offline-one", expectedRevision: detail.group.revision });
+      expect(ok.status).toBe(200);
+      expect(files.get("/vault/agent-groups/g/config.yml")).toContain("offline-one");
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("GET /api/settings/groups/validation reports cross-group CLI categories (read-only)", async () => {
+    const files = new Map<string, string>([
+      ["/vault/agent-groups/dev/config.yml", "agents:\n  - kimi\n  - ghost-agent\n"],
+      ["/vault/agent-groups/research/config.yml", "agents:\n  - kimi\nfallback_order:\n  kimi:\n    - ghost\n"],
+      ["/vault/team/kimi/SOUL.md", ""],
+    ]);
+    const before = JSON.stringify([...files.entries()].sort());
+    const h = await start(files);
+    try {
+      const res = await h.get("/api/settings/groups/validation");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { available: boolean; issues: Array<{ group: string; kind: string; severity: string }> };
+      expect(body.available).toBe(true);
+      const kinds = body.issues.map((i) => i.kind);
+      expect(kinds).toContain("missing-agent-dir");
+      expect(kinds).toContain("dangling-fallback");
+      expect(kinds).toContain("duplicate-across-groups");
+      expect(JSON.stringify([...files.entries()].sort())).toBe(before);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("group routes require the bearer token when one is configured (typed 401)", async () => {
+    const server = new GatewayServer({
+      target: { command: process.execPath, args: [join0()], cwd: process.cwd(), env: process.env },
+      vaultRoot: "/vault",
+      groupsIo: fakeGroupsIo(new Map()),
+      runnableAgents: ["kimi"],
+      authToken: "secret-token",
+    } as never);
+    const handle = await server.start();
+    try {
+      const base = `http://${handle.hostname}:${handle.port}`;
+      expect((await fetch(`${base}/api/settings/groups`)).status).toBe(401);
+      expect((await fetch(`${base}/api/settings/groups/validation`)).status).toBe(401);
+      expect((await fetch(`${base}/api/settings/groups/g`)).status).toBe(401);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("unreadable group state fails closed as bounded 500 and never writes", async () => {
+    const ioDeps: GroupSettingsDeps = {
+      readFile: async () => {
+        throw new GroupSettingsError("io", "denied");
+      },
+      writeFileAtomic: async () => {},
+      readdirSubdirs: async (path) => (path === "/vault/team" ? [] : ["g"]),
+      mkdir: async () => {},
+    };
+    const files = new Map<string, string>();
+    const server = new GatewayServer({
+      target: { command: process.execPath, args: [join0()], cwd: process.cwd(), env: process.env },
+      vaultRoot: "/vault",
+      groupsIo: ioDeps,
+      runnableAgents: ["kimi"],
+    } as never);
+    const handle = await server.start();
+    try {
+      const base = `http://${handle.hostname}:${handle.port}`;
+      const post = async (body: unknown) =>
+        fetch(`${base}/api/settings/groups`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      // readdir still works (empty), but every config READ fails closed.
+      expect((await fetch(`${base}/api/settings/groups/validation`)).status).toBe(500);
+      expect((await fetch(`${base}/api/settings/groups/g`)).status).toBe(500);
+      expect((await post({ action: "create", group: "g", expectedRevision: "absent", confirm: true })).status).toBe(500);
+      expect(files.size).toBe(0);
+    } finally {
+      await server.close();
+    }
+  });
+});
 
 describe("ST-4 group settings routes", () => {
   it("lists groups and shows modelled detail with roster markers (never raw source)", async () => {
@@ -94,9 +208,10 @@ describe("ST-4 group settings routes", () => {
       const revision = "rev-0-0";
       const no = await h.post({ action: "remove-agent", group: "g", agent: "dipu", expectedRevision: revision });
       expect(no.status).toBe(400);
-      // Stale revision -> 409, bytes unchanged.
+      // Stale revision is EXACTLY a bounded conflict (409), never a generic 400;
+      // bytes stay untouched.
       const stale = await h.post({ action: "remove-agent", group: "g", agent: "dipu", expectedRevision: revision, confirm: true });
-      expect([400, 409]).toContain(stale.status);
+      expect(stale.status).toBe(409);
       expect(files.get("/vault/agent-groups/g/config.yml")).toBe(raw);
     } finally {
       await h.close();

@@ -9,7 +9,7 @@
  * config and still creates the `skills/` directory per existing CLI
  * semantics. Local runnable policy is never read or written here.
  */
-export type GroupSettingsErrorCode = "conflict" | "not-found" | "exists" | "invalid";
+export type GroupSettingsErrorCode = "conflict" | "not-found" | "exists" | "invalid" | "io";
 export declare class GroupSettingsError extends Error {
     readonly code: GroupSettingsErrorCode;
     constructor(code: GroupSettingsErrorCode, message: string);
@@ -45,6 +45,8 @@ export interface GroupDetail extends GroupSettingsData {
 }
 /** Deterministic bounded non-secret revision token for one config snapshot. */
 export declare function revisionOf(raw: string): string;
+/** Tolerant model extraction; malformed files yield an empty model (findings surface problems instead). */
+export declare function parseGroupModel(raw: string): GroupSettingsData;
 export declare function validateGroupModel(data: GroupSettingsData): GroupValidationFinding[];
 export declare function listGroups(deps: GroupSettingsDeps, groupsRoot: string): Promise<GroupSummary[]>;
 export declare function readGroup(deps: GroupSettingsDeps, groupsRoot: string, group: string): Promise<GroupDetail | null>;
@@ -56,3 +58,23 @@ export interface GroupMutationIntent {
     allowCreate?: boolean;
 }
 export declare function mutateGroup(deps: GroupSettingsDeps, groupsRoot: string, intent: GroupMutationIntent): Promise<GroupDetail>;
+/** Every vault-defined `team/<agent>/` identity, sorted; absent team dir is empty. */
+export declare function listVaultAgents(deps: GroupSettingsDeps, vaultRoot: string): Promise<string[]>;
+/**
+ * One cross-group validation finding. Categories mirror the existing
+ * `piren group validate` CLI/core (`src/group-config.ts` `validateGroups`):
+ * missing-config, dangling-fallback, missing-agent-dir, and the
+ * duplicate-across-groups info note.
+ */
+export interface GroupCrossValidationIssue {
+    group: string;
+    kind: "missing-config" | "dangling-fallback" | "missing-agent-dir" | "duplicate-across-groups";
+    severity: "error" | "info";
+    message: string;
+}
+/**
+ * Read-only validation across ALL group configs, aligned with the CLI/core
+ * categories rather than only per-detail fallback findings. I/O failures
+ * propagate fail-closed as GroupSettingsError("io").
+ */
+export declare function validateAllGroups(deps: GroupSettingsDeps, groupsRoot: string, teamAgentsRoot: string): Promise<GroupCrossValidationIssue[]>;

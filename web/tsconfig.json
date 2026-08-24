@@ -64,6 +64,8 @@
     "../tests/web-wux-explorer-fullpage-browser.test.ts",
     "../tests/web-wux-c-explorer-links.test.ts",
     "../tests/web-wux-c-safe-markdown-vault-mode.test.ts",
-    "../tests/web-wux-c-context-spacing.test.ts"
+    "../tests/web-wux-c-context-spacing.test.ts",
+    "../tests/web-st-4-groups-panel.test.ts",
+    "../tests/web-st-4-groups-layout.test.ts"
   ]
 }

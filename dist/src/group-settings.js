@@ -9,18 +9,40 @@ export class GroupSettingsError extends Error {
         this.code = code;
     }
 }
+/** True when a filesystem error means the path is genuinely absent. */
+function isEnoent(error) {
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
+}
+/** Bounded non-secret I/O failure; never treated as absence (fail closed). */
+function ioError() {
+    return new GroupSettingsError("io", "The agent groups state could not be read.");
+}
 export function createNodeGroupSettingsDeps() {
     return {
         async readFile(path) {
             try {
                 return await readFile(path, "utf8");
             }
-            catch {
-                return null;
+            catch (error) {
+                if (isEnoent(error))
+                    return null;
+                throw ioError();
             }
         },
         async writeFileAtomic(path, content, expectedSource) {
-            const current = await readFile(path, "utf8").catch(() => null);
+            let current;
+            try {
+                current = await readFile(path, "utf8");
+            }
+            catch (error) {
+                if (isEnoent(error))
+                    current = null;
+                else
+                    throw ioError();
+            }
             if (current !== expectedSource) {
                 throw new GroupSettingsError("conflict", "The group config changed since it was read; nothing was written.");
             }
@@ -37,8 +59,10 @@ export function createNodeGroupSettingsDeps() {
                 const entries = await nodeReaddir(path, { withFileTypes: true });
                 return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
             }
-            catch {
-                return [];
+            catch (error) {
+                if (isEnoent(error))
+                    return [];
+                throw ioError();
             }
         },
         async mkdir(path) {
@@ -57,7 +81,7 @@ export function revisionOf(raw) {
     return `rev-${hash.toString(16)}-${raw.length.toString(16)}`;
 }
 /** Tolerant model extraction; malformed files yield an empty model (findings surface problems instead). */
-function extractModel(raw) {
+export function parseGroupModel(raw) {
     const data = { agents: [], fallbackOrder: {} };
     if (raw.trim() === "")
         return data;
@@ -136,7 +160,7 @@ export async function readGroup(deps, groupsRoot, group) {
     const raw = await deps.readFile(configPath(groupsRoot, group));
     if (raw === null)
         return null;
-    const data = extractModel(raw);
+    const data = parseGroupModel(raw);
     return { name: group, revision: revisionOf(raw), agents: data.agents, fallbackOrder: data.fallbackOrder, findings: validateGroupModel(data) };
 }
 export async function mutateGroup(deps, groupsRoot, intent) {
@@ -159,9 +183,80 @@ export async function mutateGroup(deps, groupsRoot, intent) {
     if (intent.expectedRevision !== revisionOf(raw)) {
         throw new GroupSettingsError("conflict", "The group config changed since it was read; nothing was written.");
     }
-    const data = intent.mutate(extractModel(raw));
+    const data = intent.mutate(parseGroupModel(raw));
     const rendered = mergeIntoDocument(raw, data);
     await deps.writeFileAtomic(path, rendered, raw);
     return { name: intent.group, revision: revisionOf(rendered), agents: data.agents, fallbackOrder: data.fallbackOrder, findings: validateGroupModel(data) };
+}
+// ---------------------------------------------------------------------------
+// Vault roster + cross-group validation (ST-4 correction)
+// ---------------------------------------------------------------------------
+/** Every vault-defined `team/<agent>/` identity, sorted; absent team dir is empty. */
+export async function listVaultAgents(deps, vaultRoot) {
+    const names = await deps.readdirSubdirs(join(vaultRoot, "team"));
+    return names.filter((name) => isValidGroupName(name)).sort();
+}
+/**
+ * Read-only validation across ALL group configs, aligned with the CLI/core
+ * categories rather than only per-detail fallback findings. I/O failures
+ * propagate fail-closed as GroupSettingsError("io").
+ */
+export async function validateAllGroups(deps, groupsRoot, teamAgentsRoot) {
+    const issues = [];
+    const names = (await deps.readdirSubdirs(groupsRoot)).filter((name) => isValidGroupName(name)).sort();
+    const teamAgents = new Set(await listVaultAgents(deps, join(teamAgentsRoot, "..")));
+    const memberGroups = new Map();
+    for (const group of names) {
+        const raw = await deps.readFile(configPath(groupsRoot, group));
+        if (raw === null) {
+            issues.push({
+                group,
+                kind: "missing-config",
+                severity: "error",
+                message: `Group directory 'agent-groups/${group}/' has no config.yml.`,
+            });
+            continue;
+        }
+        const data = parseGroupModel(raw);
+        for (const agent of data.agents) {
+            const groups = memberGroups.get(agent) ?? [];
+            groups.push(group);
+            memberGroups.set(agent, groups);
+            if (!teamAgents.has(agent)) {
+                issues.push({
+                    group,
+                    kind: "missing-agent-dir",
+                    severity: "error",
+                    message: `Agent '${agent}' in group '${group}' has no team/${agent}/ directory.`,
+                });
+            }
+        }
+        for (const [member, candidates] of Object.entries(data.fallbackOrder)) {
+            for (const candidate of candidates) {
+                if (!data.agents.includes(candidate)) {
+                    issues.push({
+                        group,
+                        kind: "dangling-fallback",
+                        severity: "error",
+                        message: `fallback_order for '${member}' references '${candidate}' which is not a member of group '${group}'.`,
+                    });
+                }
+            }
+        }
+    }
+    for (const [agent, groups] of memberGroups) {
+        const unique = [...new Set(groups)];
+        if (unique.length > 1) {
+            for (const group of unique) {
+                issues.push({
+                    group,
+                    kind: "duplicate-across-groups",
+                    severity: "info",
+                    message: `Agent '${agent}' is declared in ${unique.length} groups: ${unique.join(", ")}.`,
+                });
+            }
+        }
+    }
+    return issues;
 }
 //# sourceMappingURL=group-settings.js.map

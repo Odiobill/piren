@@ -2853,3 +2853,32 @@ code {
   gap: 8px;
   margin-top: 10px;
 }
+
+/* ST-4 correction: vault-roster markers, roster-restricted selects, and the
+   read-only cross-group validation report. */
+.settings-groups-not-runnable {
+  flex: none;
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--border) 25%, transparent);
+  white-space: nowrap;
+}
+
+.settings-groups select,
+.settings-groups-validation-report {
+  min-width: 0;
+}
+
+.settings-groups-validation-report {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+}
+
+.settings-groups-validation-report ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}

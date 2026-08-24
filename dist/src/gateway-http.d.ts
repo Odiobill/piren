@@ -265,6 +265,11 @@ export declare class GatewayServer {
     /** ST-4 — GET /api/settings/groups/<group>: redacted modelled detail. */
     private handleGroupShow;
     /**
+     * ST-4 correction — GET /api/settings/groups/validation: read-only
+     * cross-group report reusing the CLI/core validate categories.
+     */
+    private handleGroupsValidation;
+    /**
      * POST /api/settings/groups — one closed typed group action. Body keys are
      * closed; create/remove-agent/fallback-set require confirm:true; stale
      * revisions fail as bounded 409 and never clobber.
