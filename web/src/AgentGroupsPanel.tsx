@@ -216,12 +216,23 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
       setNotice("Fallback candidates must be unique members other than the target.");
       return;
     }
+    // SR-2 root-cause guard: a candidate picked in the dropdown but never
+    // added to the ordered list is NOT part of the save. Persisting anyway
+    // silently dropped the steward's visible selection into an empty
+    // fallback_order array in production; refuse with a bounded reason
+    // instead (clearing remains possible once the choice is cleared).
+    if (fallbackCandidates.length === 0 && candidateChoice !== "") {
+      setNotice(`Add ${candidateChoice} to the ordered list first, or set the candidate choice back to “Choose a candidate…”.`);
+      return;
+    }
     const group = detail;
     const agent = fallbackMember;
     const candidates = [...fallbackCandidates];
     openConfirm(
       `Save fallback order for ${agent} in ${group.name}?`,
-      `Saves the ordered candidate list (${candidates.join(", ") || "none"}) exactly as shown.`,
+      candidates.length === 0
+        ? `Saves an EMPTY fallback order for ${agent}; this clears any existing saved candidates for ${agent}.`
+        : `Saves the ordered candidate list (${candidates.join(", ")}) exactly as shown.`,
       () =>
         void run(async () => {
           await postGroupAction(

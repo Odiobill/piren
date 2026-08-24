@@ -161,6 +161,73 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
     );
   });
 
+  it("SR-2: refuses to save while a chosen candidate was never added, with a bounded reason and zero writes", async () => {
+    await renderPanel();
+    await act(async () => {
+      groupButton().click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      const memberSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-member")!;
+      memberSelect.value = "kimi";
+      memberSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // The FALSE AFFORDANCE from SR-2: a candidate picked in the dropdown but
+    // never added to the ordered list.
+    await act(async () => {
+      const candidateSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-candidate-select")!;
+      candidateSelect.value = "offline-one";
+      candidateSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".settings-groups-fallback-save")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // No confirmation, no write: the unadded selection must never be
+    // silently dropped into an empty persisted array.
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(postGroupAction).not.toHaveBeenCalled();
+    const notice = container.querySelector("[role='alert']");
+    expect(notice?.textContent).toContain("offline-one");
+    expect(notice?.textContent).toContain("Add");
+  });
+
+  it("SR-2: states the clearing outcome plainly when an intentionally empty order is confirmed", async () => {
+    await renderPanel();
+    await act(async () => {
+      groupButton().click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      const memberSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-member")!;
+      memberSelect.value = "kimi";
+      memberSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // Deliberate empty save (no candidate chosen): still allowed, but the
+    // modal must say plainly that this CLEARS the saved order.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".settings-groups-fallback-save")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog!.textContent ?? "").toMatch(/empty/i);
+    expect(dialog!.textContent).toContain("clears");
+    // Intentional clearing remains possible behind the explicit confirm.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".settings-agent-confirm-save")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(postGroupAction).toHaveBeenCalledTimes(1);
+    expect(postGroupAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "fallback-set", agent: "kimi", candidates: [], confirm: true }),
+      "t",
+    );
+  });
+
   it("gives the confirmation modal full discipline: Escape cancels without writing and returns focus to the action", async () => {
     await renderPanel();
     await act(async () => {
