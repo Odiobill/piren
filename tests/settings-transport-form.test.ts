@@ -232,6 +232,8 @@ describe("TelegramSettingsForm: ST-1B prefill/touch/select semantics", () => {
   });
 
   it("the default agent is a labelled roster select with an explicit No-default choice", async () => {
+    // Runnable-only selector: both offered agents are online here.
+    mockedFetchConversationAgents.mockResolvedValue({ agents: [{ name: "kimi", online: true }, { name: "ghost", online: true }] });
     vi.mocked(saveTelegramSettings).mockResolvedValue();
     await renderTelegram();
 
@@ -281,6 +283,104 @@ describe("TelegramSettingsForm: ST-1B prefill/touch/select semantics", () => {
     await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
     expect(vi.mocked(saveTelegramSettings)).toHaveBeenLastCalledWith({ allowedChatIds: [111, 222, 333] }, "T");
+  });
+});
+
+describe("ST-1B lead correction: runnable-only selectors and roster 401 recovery", () => {
+  const OFFLINE_ROSTER = { agents: [{ name: "kimi", online: true }, { name: "ghost", online: false }] };
+  const SEEDED = {
+    available: true as const,
+    value: {
+      configured: true,
+      allowedChatIds: 1,
+      allowedChatIdValues: [42],
+      defaultAgent: null,
+      feedbackEnabled: null,
+    },
+  };
+
+  function agentOptions(): string[] {
+    const select = container.querySelector(".settings-form-default-agent") as HTMLSelectElement;
+    return Array.from(select.options).map((o) => o.value);
+  }
+
+  beforeEach(() => {
+    mockedFetchConversationAgents.mockResolvedValue(OFFLINE_ROSTER);
+    vi.mocked(fetchTelegramSettings).mockResolvedValue(SEEDED);
+  });
+
+  it("telegram: an offline vault agent is ABSENT from ordinary options; only a stored offline default shows the bounded state", async () => {
+    await renderTelegram();
+    const options = agentOptions();
+    expect(options).toContain("kimi");
+    expect(options).not.toContain("ghost");
+
+    // A stored OFFLINE default keeps its bounded Not-locally-runnable option.
+    vi.mocked(fetchTelegramSettings).mockResolvedValue({
+      available: true,
+      value: { ...SEEDED.value, defaultAgent: "ghost" },
+    });
+    await renderTelegram();
+    expect(agentOptions()).toContain("kimi");
+    expect(agentOptions()).toContain("ghost"); // present ONLY as bounded state
+    const select = container.querySelector(".settings-form-default-agent") as HTMLSelectElement;
+    const ghostOption = select.selectedOptions[0] ?? Array.from(select.options).find((o) => o.value === "ghost")!;
+    expect(ghostOption.textContent).toMatch(/not locally runnable/i);
+    // The runnable choice is ordinary.
+    expect(Array.from(select.options).find((o) => o.value === "kimi")!.textContent).toBe("kimi");
+  });
+
+  it("discord: an offline vault agent is ABSENT from ordinary options", async () => {
+    vi.mocked(fetchDiscordSettings).mockResolvedValue({
+      available: true as const,
+      value: {
+        configured: true,
+        allowedGuildIds: 0,
+        allowedGuildIdValues: [],
+        allowedChannelIds: 0,
+        allowedChannelIdValues: [],
+        allowedThreadIds: null,
+        allowedThreadIdValues: null,
+        allowedDmUserIds: null,
+        allowedDmUserIdValues: null,
+        defaultAgent: null,
+        feedbackEnabled: null,
+      },
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(DiscordSettingsForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+    const options = agentOptions();
+    expect(options).toContain("kimi");
+    expect(options).not.toContain("ghost");
+  });
+
+  it("a roster 401 calls the shell recovery callback (onUnauthorized) for both transports", async () => {
+    mockedFetchConversationAgents.mockRejectedValue(new UnauthorizedError());
+    const telegramOnUnauthorized = await renderTelegram();
+    expect(telegramOnUnauthorized).toHaveBeenCalled();
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    const discordOnUnauthorized = vi.fn();
+    await act(async () => {
+      root.render(createElement(DiscordSettingsForm, { token: "T", onUnauthorized: discordOnUnauthorized, onValidated: vi.fn() }));
+    });
+    await flush();
+    expect(discordOnUnauthorized).toHaveBeenCalled();
+  });
+
+  it("non-auth roster failures stay bounded (no crash, no policy bypass)", async () => {
+    mockedFetchConversationAgents.mockRejectedValue(new Error("network down"));
+    await renderTelegram();
+    // The select still renders with No-default plus any stored bounded state.
+    expect(agentOptions()).toContain("");
+    expect(saveButton()).not.toBeNull();
   });
 });
 

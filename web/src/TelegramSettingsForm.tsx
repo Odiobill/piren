@@ -67,12 +67,18 @@ export function TelegramSettingsForm({
         } else {
           setRead({ phase: "unavailable", reason: result.reason });
         }
+        // ST-1B correction: only locally runnable agents (online flag) become
+        // ordinary default choices; a stored offline default keeps its bounded
+        // Not-locally-runnable option. Auth failures recover through the shell.
         void fetchConversationAgents(token)
           .then((rosterResult) => {
-            if (!cancelled) setRoster(rosterResult.agents.map((agent) => agent.name));
+            if (!cancelled) setRoster(rosterResult.agents.filter((agent) => agent.online).map((agent) => agent.name));
           })
-          .catch(() => {
-            /* Bounded: the select still renders with the stored state. */
+          .catch((cause: unknown) => {
+            if (cancelled) return;
+            if (cause instanceof UnauthorizedError) onUnauthorized();
+            /* Non-auth roster failures stay bounded: the select still renders
+               with No-default plus any stored bounded state. */
           });
       })
       .catch((cause: unknown) => {
