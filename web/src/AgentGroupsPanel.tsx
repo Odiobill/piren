@@ -213,6 +213,8 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
     next[index] = next[target]!;
     next[target] = swapped;
     setFallbackCandidates(next);
+    // SR-3 lead correction: a corrective reorder clears a stale local error.
+    setFallbackNotice(null);
   }
 
   /**
@@ -234,6 +236,8 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
 
   function removeFallbackCandidate(index: number): void {
     setFallbackCandidates(fallbackCandidates.filter((_, i) => i !== index));
+    // SR-3 lead correction: a corrective removal clears a stale local error.
+    setFallbackNotice(null);
   }
 
   function requestFallbackSet(trigger: HTMLElement): void {
@@ -244,6 +248,9 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
       setFallbackNotice("Fallback candidates must be unique members other than the target.");
       return;
     }
+    // SR-3 lead correction: an otherwise-valid confirmation never shows a
+    // stale local error beneath it.
+    setFallbackNotice(null);
     const group = detail;
     const agent = fallbackMember;
     const candidates = [...fallbackCandidates];
@@ -294,10 +301,14 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
     const entry = detailRoster.find((r) => r.name === name);
     return entry === undefined ? null : entry.locallyRunnable;
   };
+  // SR-3 lead correction: only addable choices are offered — non-self and
+  // not already staged — so a just-staged candidate can never be re-chosen
+  // into a confusing duplicate error on the normal path. The staging core
+  // keeps its defensive duplicate/self rejection regardless.
   const candidateChoices =
     fallbackMember === ""
       ? []
-      : detail?.agents.filter((a) => a !== fallbackMember) ?? [];
+      : detail?.agents.filter((a) => a !== fallbackMember && !fallbackCandidates.includes(a)) ?? [];
 
   return (
     <div className="settings-groups">

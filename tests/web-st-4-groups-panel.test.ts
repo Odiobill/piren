@@ -161,10 +161,10 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
     );
   });
 
-  it("SR-3: selecting an already-staged candidate is rejected with a bounded alert INSIDE the fallback editor, never below the create form", async () => {
+  it("SR-3 lead correction: staged candidates vanish from the dropdown and a remaining candidate stages in exact order", async () => {
     vi.mocked(fetchGroupDetail).mockResolvedValue({
       available: true,
-      group: { ...GROUP, agents: ["kimi", "offline-one"], fallbackOrder: {} },
+      group: { ...GROUP, agents: ["kimi", "offline-one", "offline-two"], fallbackOrder: {} },
       roster: ROSTER,
     });
     await renderPanel();
@@ -178,34 +178,82 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
       memberSelect.dispatchEvent(new Event("change", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    // Stage offline-one, then choose it AGAIN — still selectable on purpose,
-    // so the rejection is explicit feedback instead of a silently missing
-    // option.
-    async function pick(value: string): Promise<void> {
-      await act(async () => {
-        const select = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-candidate-select")!;
-        select.value = value;
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      });
+    // Before staging, both non-self members are addable.
+    function optionValues(): string[] {
+      return Array.from(
+        container.querySelector<HTMLSelectElement>(".settings-groups-fallback-candidate-select")!.querySelectorAll("option"),
+      ).map((o) => o.value);
     }
-    await pick("offline-one");
-    await pick("offline-one");
-    // The duplicate stays rejected: list unchanged, nothing written.
+    expect(optionValues()).toEqual(["", "offline-one", "offline-two"]);
+    // Stage offline-two: it must disappear from the remaining choices.
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-candidate-select")!;
+      select.value = "offline-two";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(optionValues()).toEqual(["", "offline-one"]);
+    // The one remaining valid choice stages in EXACT order after the first.
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-candidate-select")!;
+      select.value = "offline-one";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     const order = Array.from(container.querySelectorAll(".settings-groups-fallback-list .settings-agent-fallback-model")).map(
       (n) => n.textContent,
     );
-    expect(order).toEqual(["offline-one"]);
+    expect(order).toEqual(["offline-two", "offline-one"]);
+    // Nothing left to offer; no local error was needed on the normal path.
+    expect(optionValues()).toEqual([""]);
+    expect(container.querySelector("[role='alert']")).toBeNull();
+  });
+
+  it("SR-3 lead correction: a defensively invalid saved order keeps its alert INSIDE the family with zero writes, and corrective actions clear it", async () => {
+    vi.mocked(fetchGroupDetail).mockResolvedValue({
+      available: true,
+      group: { ...GROUP, agents: ["kimi", "offline-one"], fallbackOrder: { kimi: ["kimi"] } },
+      roster: ROSTER,
+    });
+    await renderPanel();
+    await act(async () => {
+      groupButton().click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      const memberSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-member")!;
+      memberSelect.value = "kimi";
+      memberSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // The loaded (defensively invalid) order shows the target as its own
+    // candidate; Save refuses deterministically without any write.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".settings-groups-fallback-save")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(postGroupAction).not.toHaveBeenCalled();
-    // The ONLY alert lives inside the fallback editor section, adjacent to
-    // its control — never in the global slot below the New group name form.
     const alerts = Array.from(container.querySelectorAll("[role='alert']"));
     expect(alerts.length).toBe(1);
-    const family = alerts[0]!.closest(".settings-agent-family");
-    expect(family).not.toBeNull();
-    expect(alerts[0]!.textContent).toContain("already in the ordered list");
-    // The global notice slot (outside the detail section) stays empty.
+    expect(alerts[0]!.closest(".settings-agent-family")).not.toBeNull();
+    // Never below the New group name form.
     expect(container.querySelector(":scope > .settings-form-error")).toBeNull();
+
+    // A corrective action (removing the offending row) clears the stale
+    // alert; the next Save then opens a VALID confirmation under which no
+    // local error survives.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".settings-groups-fallback-remove")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector("[role='alert']")).toBeNull();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".settings-groups-fallback-save")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(container.querySelector("[role='alert']")).toBeNull();
   });
 
   it("SR-2: states the clearing outcome plainly when an intentionally empty order is confirmed", async () => {
