@@ -26,7 +26,7 @@ export interface ResolvedContextInjectionMode {
  * Resolve the effective context-injection mode with deterministic fallbacks:
  * a valid `PIREN_CONTEXT_INJECTION` override wins; an invalid override warns
  * and falls back to the config value; an invalid/absent config block warns
- * (when present but invalid) and falls back to `per_turn`.
+ * (when present but invalid) and falls back to `session_start_only`.
  */
 export declare function resolveContextInjectionMode(options: ResolveContextInjectionModeOptions): ResolvedContextInjectionMode;
 export interface ShouldInjectContextOptions {
@@ -36,7 +36,7 @@ export interface ShouldInjectContextOptions {
 }
 /**
  * Injection decision for one before_agent_start turn. `per_turn` always
- * injects (current behavior). `session_start_only` injects only on the first
+ * injects. `session_start_only` (the core default) injects only on the first
  * prompt after each session_start.
  */
 export declare function shouldInjectContext(options: ShouldInjectContextOptions): boolean;

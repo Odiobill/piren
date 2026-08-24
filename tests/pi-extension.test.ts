@@ -1297,12 +1297,12 @@ describe("context injection mode (C2)", () => {
     return (result as { message?: { customType?: string } } | undefined)?.message?.customType === "piren-context";
   }
 
-  it("default (no context_injection key) keeps byte-for-byte current behavior: injects on every prompt", async () => {
+  it("default (no context_injection key) consumes the session_start_only core default: injects once per session", async () => {
     const { beforeAgentStart } = await boot();
     const first = await beforeAgentStart();
     const second = await beforeAgentStart();
     expect(injected(first)).toBe(true);
-    expect(injected(second)).toBe(true);
+    expect(injected(second)).toBe(false);
     const message = (first as { message: { customType: string; content: string; display: string } }).message;
     expect(message.customType).toBe("piren-context");
     expect(message.display).toBe("Piren context loaded for thor");
@@ -1340,10 +1340,10 @@ describe("context injection mode (C2)", () => {
     expect(injected(await beforeAgentStart())).toBe(false);
   });
 
-  it("invalid config mode falls back to per_turn with a visible warning", async () => {
+  it("invalid config mode falls back to session_start_only with a visible warning", async () => {
     const { beforeAgentStart, fireSessionStart, notifications } = await boot({ agentConfig: "context_injection:\n  mode: session_start\n" });
     expect(injected(await beforeAgentStart())).toBe(true);
-    expect(injected(await beforeAgentStart())).toBe(true);
+    expect(injected(await beforeAgentStart())).toBe(false);
     await fireSessionStart("startup");
     expect(notifications.some((n) => n.level === "warning" && n.message.includes("session_start"))).toBe(true);
   });
@@ -1377,12 +1377,12 @@ describe("context injection mode (C2)", () => {
     expect(booted.notifications[0]?.message).toContain("context_injection: session_start_only");
   });
 
-  it("piren_status reports per_turn by default", async () => {
+  it("piren_status reports session_start_only by default", async () => {
     const booted = await boot();
     await booted.pi.commands.piren_status.handler([], {
       ui: { notify(message: string, level: string) { booted.notifications.push({ message, level }); } },
     });
-    expect(booted.notifications[0]?.message).toContain("context_injection: per_turn");
+    expect(booted.notifications[0]?.message).toContain("context_injection: session_start_only");
   });
 });
 

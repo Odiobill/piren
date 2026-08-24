@@ -16,7 +16,7 @@ export type ContextInjectionMode = "per_turn" | "session_start_only";
 
 export const CONTEXT_INJECTION_MODES: readonly ContextInjectionMode[] = ["per_turn", "session_start_only"];
 
-export const DEFAULT_CONTEXT_INJECTION_MODE: ContextInjectionMode = "per_turn";
+export const DEFAULT_CONTEXT_INJECTION_MODE: ContextInjectionMode = "session_start_only";
 
 export interface ResolveContextInjectionModeOptions {
   env: Record<string, string | undefined>;
@@ -38,7 +38,7 @@ function parseMode(value: unknown): ContextInjectionMode | null {
  * Resolve the effective context-injection mode with deterministic fallbacks:
  * a valid `PIREN_CONTEXT_INJECTION` override wins; an invalid override warns
  * and falls back to the config value; an invalid/absent config block warns
- * (when present but invalid) and falls back to `per_turn`.
+ * (when present but invalid) and falls back to `session_start_only`.
  */
 export function resolveContextInjectionMode(options: ResolveContextInjectionModeOptions): ResolvedContextInjectionMode {
   const warnings: string[] = [];
@@ -78,7 +78,7 @@ export interface ShouldInjectContextOptions {
 
 /**
  * Injection decision for one before_agent_start turn. `per_turn` always
- * injects (current behavior). `session_start_only` injects only on the first
+ * injects. `session_start_only` (the core default) injects only on the first
  * prompt after each session_start.
  */
 export function shouldInjectContext(options: ShouldInjectContextOptions): boolean {

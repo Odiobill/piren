@@ -130,7 +130,7 @@ describe("piren doctor context-injection wiring", () => {
 
 describe("E2-S2 context-injection exact guidance wiring", () => {
   const EXPECTED_MESSAGE =
-    "Unknown context_injection.mode 'session_start' in agent config (expected per_turn | session_start_only); falling back to per_turn. " +
+    "Unknown context_injection.mode 'session_start' in agent config (expected per_turn | session_start_only); falling back to session_start_only. " +
     "Authority: a valid context_injection.mode is not inferred from a malformed declaration; the documented default applies. " +
     "Next: inspect context_injection.mode in team/<agent>/config.yml.";
 

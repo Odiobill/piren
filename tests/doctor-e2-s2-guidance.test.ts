@@ -182,7 +182,7 @@ describe("E2-S2 context-injection WARN guidance", () => {
   it("invalid mode value (map block)", () => {
     expectMessage(
       checkContextInjectionConfig({ context_injection: { mode: "sometimes" } }),
-      "Unknown context_injection.mode 'sometimes' in agent config (expected per_turn | session_start_only); falling back to per_turn. " +
+      "Unknown context_injection.mode 'sometimes' in agent config (expected per_turn | session_start_only); falling back to session_start_only. " +
         `${CONTEXT_INJECTION_AUTHORITY} Next: inspect context_injection.mode in team/<agent>/config.yml.`,
     );
   });
@@ -190,7 +190,7 @@ describe("E2-S2 context-injection WARN guidance", () => {
   it("non-map block", () => {
     expectMessage(
       checkContextInjectionConfig({ context_injection: "sometimes" }),
-      "Invalid context_injection block in agent config (expected a mapping with mode: per_turn | session_start_only); falling back to per_turn. " +
+      "Invalid context_injection block in agent config (expected a mapping with mode: per_turn | session_start_only); falling back to session_start_only. " +
         `${CONTEXT_INJECTION_AUTHORITY} Next: inspect context_injection in team/<agent>/config.yml.`,
     );
   });
