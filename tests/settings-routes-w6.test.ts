@@ -61,8 +61,8 @@ function fakeIo(initial: Record<string, string> = {}): {
 const LOCAL = "vault_root: /vault\nscheduler:\n  enabled: true\n  poll_interval_seconds: 15\n  device_id: thor\n";
 const AGENT_CFG = "model:\n  id: anthropic/claude-sonnet-4-6\n  fallback:\n    auto_switch: true\n    models:\n      - openrouter/kimi-k3\n";
 
-async function startServer(overrides: Record<string, unknown> = {}): Promise<{ base: string; files: Map<string, string>; close: () => Promise<void> }> {
-  const { io, files } = fakeIo({ "/tmp/config.yml": LOCAL, "/vault/team/kimi/config.yml": AGENT_CFG });
+async function startServer(overrides: Record<string, unknown> = {}, initialConfig: string = LOCAL): Promise<{ base: string; files: Map<string, string>; close: () => Promise<void> }> {
+  const { io, files } = fakeIo({ "/tmp/config.yml": initialConfig, "/vault/team/kimi/config.yml": AGENT_CFG });
   const server = new GatewayServer({
     target: fakePiTarget(),
     settingsConfigPath: "/tmp/config.yml",
@@ -112,6 +112,65 @@ describe("W6 scheduler settings route", () => {
       expect(((await res.json()) as Record<string, unknown>).error).toMatch(/[Uu]nknown field/);
       // The config is byte-for-byte unchanged (no write, no cleanup).
       expect(files.get("/tmp/config.yml")).toBe(LOCAL);
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects a non-runnable transport default agent with a bounded 400 and leaves config byte-identical (ST-1B)", async () => {
+    const { base, files, close } = await startServer();
+    try {
+      const res = await post(base, "/api/settings/telegram", {
+        surface: "local",
+        family: "telegram",
+        block: { defaultAgent: "ghost" },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as Record<string, unknown>).error).toMatch(/not locally runnable/i);
+      expect(files.get("/tmp/config.yml")).toBe(LOCAL);
+    } finally {
+      await close();
+    }
+  });
+
+  it("writes an explicit No-default-agent removal and preserves unrelated fields (ST-1B)", async () => {
+    const seeded = [
+      "vault_root: /vault",
+      "telegram:",
+      "  bot_token: TOK",
+      "  allowed_chat_ids:",
+      "    - 42",
+      "  default_agent: kimi",
+      "",
+    ].join("\n");
+    const { base, files, close } = await startServer({}, seeded);
+    try {
+      const res = await post(base, "/api/settings/telegram", {
+        surface: "local",
+        family: "telegram",
+        block: { defaultAgent: null },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ wrote: true });
+      const written = files.get("/tmp/config.yml") ?? "";
+      expect(written).not.toContain("default_agent");
+      expect(written).toContain("bot_token: TOK");
+      expect(written).toContain("- 42");
+    } finally {
+      await close();
+    }
+  });
+
+  it("accepts a runnable transport default agent (ST-1B)", async () => {
+    const { base, files, close } = await startServer();
+    try {
+      const res = await post(base, "/api/settings/discord", {
+        surface: "local",
+        family: "discord",
+        block: { defaultAgent: "dipu" },
+      });
+      expect(res.status).toBe(200);
+      expect(files.get("/tmp/config.yml")).toContain("default_agent: dipu");
     } finally {
       await close();
     }

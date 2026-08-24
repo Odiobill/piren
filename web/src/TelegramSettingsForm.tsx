@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchTelegramSettings, saveTelegramSettings, SettingsHttpError, UnauthorizedError } from "./api";
+import { fetchConversationAgents, fetchTelegramSettings, saveTelegramSettings, SettingsHttpError, UnauthorizedError } from "./api";
 import { parseTelegramChatIdsInput, type TelegramSettingsProjection } from "./settings-transport";
 import { SaveIcon } from "./icons";
 
@@ -9,9 +9,14 @@ import { SaveIcon } from "./icons";
  * unless newly entered, never repopulated from reads, cleared on a
  * successful save, and excluded from URLs/storage/log/error/telemetry. The
  * chat-id list is validated structurally (mirroring the accepted CLI
- * contract); the read only ever returns a count + default agent + feedback,
- * so the list is entered fresh to replace. No platform contact, no service
- * action, no storage.
+ * contract). ST-1B: the read prefills the full non-secret allowlist values;
+ * untouched fields are never resent, an explicitly cleared list sends an
+ * empty replacement, and the default agent is a labelled select over the
+ * gateway-resolved locally runnable roster with an explicit No-default
+ * choice (null removes the declaration; a stored non-runnable agent shows a
+ * bounded Not-locally-runnable state and is not resent until changed).
+ * The bot token stays WRITE-ONLY. No platform contact, no service action,
+ * no storage.
  */
 
 type ReadState =
@@ -38,6 +43,7 @@ export function TelegramSettingsForm({
   const [botToken, setBotToken] = useState("");
   const [chatIdsText, setChatIdsText] = useState("");
   const [defaultAgent, setDefaultAgent] = useState("");
+  const [roster, setRoster] = useState<string[]>([]);
   const [feedback, setFeedback] = useState(true);
   // Preserve an absent feedback declaration unless the steward changes it.
   const [feedbackTouched, setFeedbackTouched] = useState(false);
@@ -54,11 +60,20 @@ export function TelegramSettingsForm({
         onValidated();
         if (result.available) {
           setRead({ phase: "ready", projection: result.value });
+          // ST-1B prefill: editable non-secret values (never a token).
+          setChatIdsText(result.value.allowedChatIdValues.join(", "));
           setDefaultAgent(result.value.defaultAgent ?? "");
           setFeedback(result.value.feedbackEnabled ?? true);
         } else {
           setRead({ phase: "unavailable", reason: result.reason });
         }
+        void fetchConversationAgents(token)
+          .then((rosterResult) => {
+            if (!cancelled) setRoster(rosterResult.agents.map((agent) => agent.name));
+          })
+          .catch(() => {
+            /* Bounded: the select still renders with the stored state. */
+          });
       })
       .catch((cause: unknown) => {
         if (cancelled) return;
@@ -77,23 +92,33 @@ export function TelegramSettingsForm({
     setFieldError(null);
     setSaveError(null);
     setSaved(false);
+    if (read.phase !== "ready") return;
 
-    const patch: { botToken?: string; allowedChatIds?: number[]; defaultAgent?: string; feedbackEnabled?: boolean } = {};
+    const patch: { botToken?: string; allowedChatIds?: number[]; defaultAgent?: string | null; feedbackEnabled?: boolean } = {};
     const trimmedToken = botToken.trim();
     if (trimmedToken !== "") patch.botToken = trimmedToken;
 
-    const trimmedIds = chatIdsText.trim();
-    if (trimmedIds !== "") {
-      const parsed = parseTelegramChatIdsInput(trimmedIds);
-      if (!parsed.ok) {
-        setFieldError(parsed.error);
-        return;
+    // ST-1B touch semantics: an untouched list is never resent; a touched
+    // list is parsed as a full replacement (empty string clears it).
+    const initialIdsText = read.projection.allowedChatIdValues.join(", ");
+    if (chatIdsText.trim() !== initialIdsText) {
+      if (chatIdsText.trim() === "") {
+        patch.allowedChatIds = [];
+      } else {
+        const parsed = parseTelegramChatIdsInput(chatIdsText.trim());
+        if (!parsed.ok) {
+          setFieldError(parsed.error);
+          return;
+        }
+        patch.allowedChatIds = parsed.ids;
       }
-      patch.allowedChatIds = parsed.ids;
     }
 
+    // Untouched default agent is not resent; explicit No default removes it.
     const trimmedAgent = defaultAgent.trim();
-    if (trimmedAgent !== "") patch.defaultAgent = trimmedAgent;
+    if (trimmedAgent !== (read.projection.defaultAgent ?? "")) {
+      patch.defaultAgent = trimmedAgent === "" ? null : trimmedAgent;
+    }
     if (feedbackTouched) patch.feedbackEnabled = feedback;
 
     setSaving(true);
@@ -150,13 +175,24 @@ export function TelegramSettingsForm({
           </label>
           <label className="settings-field">
             Default agent
-            <input
+            <select
               className="settings-form-default-agent"
-              type="text"
               aria-label="Default agent"
               value={defaultAgent}
               onChange={(event) => setDefaultAgent(event.target.value)}
-            />
+            >
+              <option value="">No default agent</option>
+              {roster.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+              {/* A stored but no-longer-runnable agent stays visible and is
+                  never silently rewritten or resubmitted. */}
+              {defaultAgent !== "" && !roster.includes(defaultAgent) && (
+                <option value={defaultAgent}>{`${defaultAgent} - not locally runnable`}</option>
+              )}
+            </select>
           </label>
           <label className="settings-field settings-field-checkbox">
             <input

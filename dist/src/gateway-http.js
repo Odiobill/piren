@@ -1453,6 +1453,13 @@ export class GatewayServer {
             this.writeJson(res, 400, { error: "Settings intent does not match this transport route." });
             return;
         }
+        // ST-1B: a submitted non-null transport default agent must be locally
+        // runnable (gateway-resolved roster); bounded 400 before any write.
+        const submittedAgent = parsed.intent.block.defaultAgent;
+        if (submittedAgent !== undefined && submittedAgent !== null && !this.runnableAgents.includes(submittedAgent)) {
+            this.writeJson(res, 400, { error: "Default agent is not locally runnable." });
+            return;
+        }
         try {
             await applyLocalSettingsIntent(this.settingsIo, this.settingsConfigPath, parsed.intent);
             this.writeJson(res, 200, { wrote: true });

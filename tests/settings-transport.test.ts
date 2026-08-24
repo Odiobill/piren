@@ -62,14 +62,26 @@ describe("parseDiscordSnowflakesInput (structural, mirrors CLI contract)", () =>
 });
 
 describe("read projection parsers (fail-closed, redacted only)", () => {
-  it("parses a valid telegram projection with a count, never raw ids", () => {
+  it("parses a valid telegram projection incl. full non-secret chat-id values (ST-1B)", () => {
     const read = parseTelegramSettingsRead({
       available: true,
-      telegram: { configured: true, allowedChatIds: 3, defaultAgent: "piren", feedbackEnabled: true },
+      telegram: {
+        configured: true,
+        allowedChatIds: 2,
+        allowedChatIdValues: [42, -100],
+        defaultAgent: "piren",
+        feedbackEnabled: true,
+      },
     });
     expect(read).toEqual({
       available: true,
-      value: { configured: true, allowedChatIds: 3, defaultAgent: "piren", feedbackEnabled: true },
+      value: {
+        configured: true,
+        allowedChatIds: 2,
+        allowedChatIdValues: [42, -100],
+        defaultAgent: "piren",
+        feedbackEnabled: true,
+      },
     });
   });
 
@@ -86,9 +98,13 @@ describe("read projection parsers (fail-closed, redacted only)", () => {
       discord: {
         configured: true,
         allowedGuildIds: 1,
+        allowedGuildIdValues: ["111"],
         allowedChannelIds: 2,
+        allowedChannelIdValues: ["222", "333"],
         allowedThreadIds: 0,
+        allowedThreadIdValues: [],
         allowedDmUserIds: null,
+        allowedDmUserIdValues: null,
         defaultAgent: "piren",
         feedbackEnabled: false,
       },
@@ -98,9 +114,13 @@ describe("read projection parsers (fail-closed, redacted only)", () => {
       value: {
         configured: true,
         allowedGuildIds: 1,
+        allowedGuildIdValues: ["111"],
         allowedChannelIds: 2,
+        allowedChannelIdValues: ["222", "333"],
         allowedThreadIds: 0,
+        allowedThreadIdValues: [],
         allowedDmUserIds: null,
+        allowedDmUserIdValues: null,
         defaultAgent: "piren",
         feedbackEnabled: false,
       },
@@ -113,6 +133,31 @@ describe("read projection parsers (fail-closed, redacted only)", () => {
     expect(() => parseTelegramSettingsRead({ available: false })).toThrow();
     expect(() => parseDiscordSettingsRead({ available: true, discord: { configured: true } })).toThrow();
     expect(() => parseTelegramSettingsRead(null)).toThrow();
+    // ST-1B: allowlist value arrays are validated entry-by-entry.
+    expect(() =>
+      parseTelegramSettingsRead({
+        available: true,
+        telegram: { configured: true, allowedChatIds: 1, allowedChatIdValues: ["42"], defaultAgent: null, feedbackEnabled: null },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseDiscordSettingsRead({
+        available: true,
+        discord: {
+          configured: true,
+          allowedGuildIds: 1,
+          allowedGuildIdValues: [111],
+          allowedChannelIds: 0,
+          allowedChannelIdValues: [],
+          allowedThreadIds: null,
+          allowedThreadIdValues: null,
+          allowedDmUserIds: null,
+          allowedDmUserIdValues: null,
+          defaultAgent: null,
+          feedbackEnabled: null,
+        },
+      }),
+    ).toThrow();
   });
 });
 

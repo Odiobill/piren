@@ -247,15 +247,20 @@ describe("readLocalConfigRedacted", () => {
     expect(projection.telegram).toEqual({
       configured: true,
       allowedChatIds: 2,
+      allowedChatIdValues: [42, -100],
       defaultAgent: "kimi",
       feedbackEnabled: false,
     });
     expect(projection.discord).toEqual({
       configured: true,
       allowedGuildIds: 1,
+      allowedGuildIdValues: ["111"],
       allowedChannelIds: 0,
+      allowedChannelIdValues: [],
       allowedThreadIds: null,
+      allowedThreadIdValues: null,
       allowedDmUserIds: null,
+      allowedDmUserIdValues: null,
       defaultAgent: null,
       feedbackEnabled: null,
     });
@@ -1030,5 +1035,88 @@ describe("ST-1A: retired scheduler master gate (closed Settings contract)", () =
     // The stale retired key survives untouched; configure owns its removal.
     expect(written.scheduler.enabled).toBe(true);
     expect(written.scheduler.automation.inbox_tasks).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ST-1B: full non-secret transport projections and default-agent removal
+// ---------------------------------------------------------------------------
+
+describe("ST-1B: prefilled non-secret transport values and default-agent removal", () => {
+  it("exposes full allowlist VALUES alongside the bounded counts (never tokens)", async () => {
+    const { readLocalConfigRedacted } = await import("../src/settings-foundation.js");
+    const config = [
+      "vault_root: /v",
+      "telegram:",
+      "  bot_token: \"TOKEN\"",
+      "  allowed_chat_ids:",
+      "    - 42",
+      "    - -100",
+      "  default_agent: kimi",
+      "discord:",
+      "  allowed_guild_ids:",
+      "    - \"111111111111111111\"",
+      "  allowed_channel_ids:",
+      "    - \"222222222222222222\"",
+      "    - \"333333333333333333\"",
+      "  allowed_thread_ids:",
+      "    - \"444444444444444444\"",
+      "",
+    ].join("\n");
+    const { io } = fakeFs(new Map([["/cfg/config.yml", config]]));
+    const projection = await readLocalConfigRedacted(io, "/cfg/config.yml");
+    expect(projection.telegram).toMatchObject({
+      configured: true,
+      allowedChatIds: 2,
+      allowedChatIdValues: [42, -100],
+      defaultAgent: "kimi",
+    });
+    expect(projection.discord).toMatchObject({
+      allowedGuildIds: 1,
+      allowedGuildIdValues: ["111111111111111111"],
+      allowedChannelIds: 2,
+      allowedChannelIdValues: ["222222222222222222", "333333333333333333"],
+      allowedThreadIds: 1,
+      allowedThreadIdValues: ["444444444444444444"],
+      allowedDmUserIds: null,
+      allowedDmUserIdValues: null,
+    });
+    // Tokens are never projected.
+    expect(JSON.stringify(projection.telegram)).not.toContain("TOKEN");
+    const discordJson = JSON.stringify(projection.discord);
+    expect(discordJson.toLowerCase()).not.toContain("token");
+  });
+
+  it("accepts defaultAgent:null as an explicit removal and writes the key absent", async () => {
+    const original = [
+      "vault_root: /v",
+      "telegram:",
+      "  bot_token: \"TOK\"",
+      "  allowed_chat_ids:",
+      "    - 42",
+      "  default_agent: ghost",
+      "",
+    ].join("\n");
+    const parsed = parseSettingsIntent({
+      surface: "local",
+      family: "telegram",
+      block: { defaultAgent: null },
+    });
+    expect(parsed.ok).toBe(true);
+    const fs = statefulFs(new Map([["/cfg/config.yml", original]]));
+    const { applyLocalSettingsIntent } = await import("../src/settings-foundation.js");
+    await applyLocalSettingsIntent(fs.io, "/cfg/config.yml", (
+      parsed as { ok: true; intent: { surface: "local"; family: "telegram"; block: { defaultAgent: null } } }
+    ).intent, { nowMs: () => 1700000000000 });
+    const written = parseYaml(fs.files.get("/cfg/config.yml")!) as Record<string, any>;
+    // Explicit removal only touches default_agent; unrelated fields survive.
+    expect(written.telegram.default_agent).toBeUndefined();
+    expect(written.telegram.bot_token).toBe("TOK");
+    expect(written.telegram.allowed_chat_ids).toEqual([42]);
+  });
+
+  it("accepts a non-null default agent string as today (closed write path)", () => {
+    const result = parseSettingsIntent({ surface: "local", family: "discord", block: { defaultAgent: "kimi" } });
+    expect(result.ok).toBe(true);
   });
 });

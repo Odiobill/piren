@@ -14,8 +14,10 @@
 
 export interface TelegramSettingsProjection {
   configured: boolean;
-  /** Count only — the actual chat IDs are never returned to the browser. */
+  /** Bounded count for status copy. */
   allowedChatIds: number;
+  /** ST-1B: the full non-secret chat IDs (prefill). Tokens stay write-only. */
+  allowedChatIdValues: number[];
   defaultAgent: string | null;
   feedbackEnabled: boolean | null;
 }
@@ -23,9 +25,14 @@ export interface TelegramSettingsProjection {
 export interface DiscordSettingsProjection {
   configured: boolean;
   allowedGuildIds: number;
+  /** ST-1B: full non-secret snowflake values (prefill). */
+  allowedGuildIdValues: string[];
   allowedChannelIds: number;
+  allowedChannelIdValues: string[];
   allowedThreadIds: number | null;
+  allowedThreadIdValues: string[] | null;
   allowedDmUserIds: number | null;
+  allowedDmUserIdValues: string[] | null;
   defaultAgent: string | null;
   feedbackEnabled: boolean | null;
 }
@@ -62,16 +69,33 @@ function asStringOrNull(value: unknown): string | null | "invalid" {
   return typeof value === "string" ? value : "invalid";
 }
 
+function asIdValueList(value: unknown): number[] | "invalid" {
+  if (!Array.isArray(value)) return "invalid";
+  return value.every((entry) => typeof entry === "number") ? (value as number[]) : "invalid";
+}
+
+function asSnowflakeValueList(value: unknown): string[] | "invalid" {
+  if (!Array.isArray(value)) return "invalid";
+  return value.every((entry) => typeof entry === "string") ? (value as string[]) : "invalid";
+}
+
+function asSnowflakeValueListOrNull(value: unknown): string[] | null | "invalid" {
+  return value === null ? null : asSnowflakeValueList(value);
+}
+
 function parseTelegramProjection(value: unknown): TelegramSettingsProjection {
   if (!isRecord(value)) throw new Error("unexpected telegram settings projection");
   if (asBoolean(value.configured) === "invalid") throw new Error("unexpected telegram settings projection");
   if (asCount(value.allowedChatIds) === "invalid") throw new Error("unexpected telegram settings projection");
+  const chatIdValues = asIdValueList(value.allowedChatIdValues);
+  if (chatIdValues === "invalid") throw new Error("unexpected telegram settings projection");
   if (asStringOrNull(value.defaultAgent) === "invalid") throw new Error("unexpected telegram settings projection");
   const feedback = value.feedbackEnabled === null ? null : asBoolean(value.feedbackEnabled);
   if (feedback === "invalid") throw new Error("unexpected telegram settings projection");
   return {
     configured: value.configured as boolean,
     allowedChatIds: value.allowedChatIds as number,
+    allowedChatIdValues: chatIdValues,
     defaultAgent: value.defaultAgent as string | null,
     feedbackEnabled: feedback,
   };
@@ -84,15 +108,26 @@ function parseDiscordProjection(value: unknown): DiscordSettingsProjection {
   if (asCount(value.allowedChannelIds) === "invalid") throw new Error("unexpected discord settings projection");
   if (asCountOrNull(value.allowedThreadIds) === "invalid") throw new Error("unexpected discord settings projection");
   if (asCountOrNull(value.allowedDmUserIds) === "invalid") throw new Error("unexpected discord settings projection");
+  const guildValues = asSnowflakeValueList(value.allowedGuildIdValues);
+  const channelValues = asSnowflakeValueList(value.allowedChannelIdValues);
+  const threadValues = asSnowflakeValueListOrNull(value.allowedThreadIdValues);
+  const dmValues = asSnowflakeValueListOrNull(value.allowedDmUserIdValues);
+  if (guildValues === "invalid" || channelValues === "invalid" || threadValues === "invalid" || dmValues === "invalid") {
+    throw new Error("unexpected discord settings projection");
+  }
   if (asStringOrNull(value.defaultAgent) === "invalid") throw new Error("unexpected discord settings projection");
   const feedback = value.feedbackEnabled === null ? null : asBoolean(value.feedbackEnabled);
   if (feedback === "invalid") throw new Error("unexpected discord settings projection");
   return {
     configured: value.configured as boolean,
     allowedGuildIds: value.allowedGuildIds as number,
+    allowedGuildIdValues: guildValues,
     allowedChannelIds: value.allowedChannelIds as number,
+    allowedChannelIdValues: channelValues,
     allowedThreadIds: value.allowedThreadIds as number | null,
+    allowedThreadIdValues: threadValues,
     allowedDmUserIds: value.allowedDmUserIds as number | null,
+    allowedDmUserIdValues: dmValues,
     defaultAgent: value.defaultAgent as string | null,
     feedbackEnabled: feedback,
   };
@@ -144,7 +179,8 @@ export function parseSettingsWriteResponse(json: unknown): void {
 export interface TelegramSettingsPatchInput {
   botToken?: string;
   allowedChatIds?: number[];
-  defaultAgent?: string;
+  /** ST-1B: explicit null removes the declaration (No default agent). */
+  defaultAgent?: string | null;
   feedbackEnabled?: boolean;
 }
 
@@ -154,7 +190,8 @@ export interface DiscordSettingsPatchInput {
   allowedChannelIds?: string[];
   allowedThreadIds?: string[];
   allowedDmUserIds?: string[];
-  defaultAgent?: string;
+  /** ST-1B: explicit null removes the declaration (No default agent). */
+  defaultAgent?: string | null;
   feedbackEnabled?: boolean;
 }
 

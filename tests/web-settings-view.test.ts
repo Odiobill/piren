@@ -68,8 +68,8 @@ describe("SettingsView (S1 authority-first page)", () => {
   });
 
   it("keeps the existing typed workflows in their correct authority section", async () => {
-    vi.mocked(fetchTelegramSettings).mockResolvedValue({ available: true, value: { configured: false, allowedChatIds: 0, defaultAgent: null, feedbackEnabled: null } });
-    vi.mocked(fetchDiscordSettings).mockResolvedValue({ available: true, value: { configured: false, allowedGuildIds: 0, allowedChannelIds: 0, allowedThreadIds: null, allowedDmUserIds: null, defaultAgent: null, feedbackEnabled: null } });
+    vi.mocked(fetchTelegramSettings).mockResolvedValue({ available: true, value: { configured: false, allowedChatIds: 0, allowedChatIdValues: [], defaultAgent: null, feedbackEnabled: null } });
+    vi.mocked(fetchDiscordSettings).mockResolvedValue({ available: true, value: { configured: false, allowedGuildIds: 0, allowedGuildIdValues: [], allowedChannelIds: 0, allowedChannelIdValues: [], allowedThreadIds: null, allowedThreadIdValues: null, allowedDmUserIds: null, allowedDmUserIdValues: null, defaultAgent: null, feedbackEnabled: null } });
     vi.mocked(fetchSchedulerSettings).mockResolvedValue({ available: true, value: { present: false, legacyMasterGate: "absent", automation: { inboxTasks: false, agentCron: false, scriptCron: false }, deviceIdConfigured: false, pollIntervalSeconds: null, staleAfterSeconds: null, maxConcurrentAgents: null, deviceId: null } });
     vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "kimi", online: true }] });
     await renderSettings();

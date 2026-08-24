@@ -31,9 +31,9 @@ afterEach(() => {
 
 describe("telegram/discord settings reads", () => {
   it("sends the in-memory Bearer header and parses the redacted projection", async () => {
-    const fake = stubFetch(200, { available: true, telegram: { configured: true, allowedChatIds: 2, defaultAgent: null, feedbackEnabled: true } });
+    const fake = stubFetch(200, { available: true, telegram: { configured: true, allowedChatIds: 2, allowedChatIdValues: [42], defaultAgent: null, feedbackEnabled: true } });
     const read = await fetchTelegramSettings("secret-token");
-    expect(read).toEqual({ available: true, value: { configured: true, allowedChatIds: 2, defaultAgent: null, feedbackEnabled: true } });
+    expect(read).toEqual({ available: true, value: { configured: true, allowedChatIds: 2, allowedChatIdValues: [42], defaultAgent: null, feedbackEnabled: true } });
     expect(fake).toHaveBeenCalledTimes(1);
     const [path, init] = fake.mock.calls[0] as unknown as [string, RequestInit];
     expect(path).toBe("/api/settings/telegram");

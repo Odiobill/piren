@@ -40,6 +40,7 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
 });
 
 const mockedTelegramFetch = vi.mocked(fetchTelegramSettings);
+const mockedFetchConversationAgents = vi.mocked(fetchConversationAgents);
 const mockedDiscordFetch = vi.mocked(fetchDiscordSettings);
 const mockedTelegramSave = vi.mocked(saveTelegramSettings);
 const mockedDiscordSave = vi.mocked(saveDiscordSettings);
@@ -96,18 +97,30 @@ afterEach(async () => {
 });
 
 describe("TelegramSettingsForm: read + redacted display", () => {
-  it("loads the redacted projection, shows the count (never the raw ids/token), and populates default agent + feedback", async () => {
+  it("loads the projection, PREFILLS the non-secret allowlist values, keeps counts, never shows a token (ST-1B)", async () => {
     mockedTelegramFetch.mockResolvedValue({
       available: true,
-      value: { configured: true, allowedChatIds: 3, defaultAgent: "piren", feedbackEnabled: true },
+      value: {
+        configured: true,
+        allowedChatIds: 3,
+        allowedChatIdValues: [123456789, -100, 42],
+        defaultAgent: "piren",
+        feedbackEnabled: true,
+      },
     });
+    mockedFetchConversationAgents.mockResolvedValue({ agents: [{ name: "kimi", online: true }] });
     await renderTelegram();
-    expect(container.textContent).toContain("3");
-    expect(container.textContent).not.toContain("123456789"); // never raw ids
+    expect(container.textContent).toContain("3"); // bounded count copy stays
     expect(container.textContent).toContain("configured"); // token status only
-    expect(inputByClass("settings-form-default-agent").value).toBe("piren");
+    // Full non-secret values are prefilled as editable text.
+    expect(inputByClass("settings-form-chat-ids").value).toBe("123456789, -100, 42");
+    // The stored default agent is selected even when not locally runnable.
+    const agentSelect = container.querySelector(".settings-form-default-agent") as HTMLSelectElement;
+    expect(agentSelect.tagName).toBe("SELECT");
+    expect(agentSelect.value).toBe("piren");
+    expect(agentSelect.textContent).toContain("not locally runnable");
     expect(inputByClass("settings-form-feedback").checked).toBe(true);
-    // The token field is empty and password-typed.
+    // The token field is empty and password-typed; never repopulated.
     const token = inputByClass("settings-form-token");
     expect(token.type).toBe("password");
     expect(token.value).toBe("");
@@ -125,8 +138,9 @@ describe("TelegramSettingsForm: validation + save", () => {
   beforeEach(() => {
     mockedTelegramFetch.mockResolvedValue({
       available: true,
-      value: { configured: false, allowedChatIds: 0, defaultAgent: null, feedbackEnabled: null },
+      value: { configured: false, allowedChatIds: 0, allowedChatIdValues: [], defaultAgent: null, feedbackEnabled: null },
     });
+    mockedFetchConversationAgents.mockResolvedValue({ agents: [{ name: "kimi", online: true }, { name: "dipu", online: true }, { name: "ghost", online: false }] });
   });
 
   it("shows a bounded field error for a malformed chat-id list and does not save", async () => {
@@ -169,6 +183,107 @@ describe("TelegramSettingsForm: validation + save", () => {
   });
 });
 
+describe("TelegramSettingsForm: ST-1B prefill/touch/select semantics", () => {
+  const SEEDED = {
+    available: true as const,
+    value: {
+      configured: true,
+      allowedChatIds: 2,
+      allowedChatIdValues: [111, 222],
+      defaultAgent: null,
+      feedbackEnabled: null,
+    },
+  };
+
+  function selectByClass(cls: string): HTMLSelectElement {
+    const el = container.querySelector(`.${cls}`);
+    if (el === null) throw new Error(`missing .${cls}`);
+    return el as HTMLSelectElement;
+  }
+
+  function setSelect(select: HTMLSelectElement, value: string): void {
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, value);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  beforeEach(() => {
+    vi.mocked(fetchTelegramSettings).mockResolvedValue(SEEDED);
+    mockedFetchConversationAgents.mockResolvedValue({ agents: [{ name: "kimi", online: true }, { name: "ghost", online: false }] });
+  });
+
+  it("an UNTOUCHED prefilled list is never resent; an explicitly CLEARED list sends an empty replacement", async () => {
+    vi.mocked(saveTelegramSettings).mockResolvedValue();
+    await renderTelegram();
+
+    // Untouched: only the token change is sent.
+    setInput(inputByClass("settings-form-token"), "NEWTOKEN");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(vi.mocked(saveTelegramSettings)).toHaveBeenLastCalledWith({ botToken: "NEWTOKEN" }, "T");
+
+    // Explicitly clearing the touched list clears it through the write path.
+    setInput(inputByClass("settings-form-chat-ids"), "");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    // The token was cleared by the first successful save.
+    expect(vi.mocked(saveTelegramSettings)).toHaveBeenLastCalledWith({ allowedChatIds: [] }, "T");
+  });
+
+  it("the default agent is a labelled roster select with an explicit No-default choice", async () => {
+    vi.mocked(saveTelegramSettings).mockResolvedValue();
+    await renderTelegram();
+
+    const select = selectByClass("settings-form-default-agent");
+    const options = Array.from(select.options).map((o) => o.value);
+    expect(options[0]).toBe("");
+    expect(options).toContain("kimi");
+    expect(options).toContain("ghost");
+
+    setSelect(select, "kimi");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(vi.mocked(saveTelegramSettings)).toHaveBeenLastCalledWith({ defaultAgent: "kimi" }, "T");
+  });
+
+  it("selecting No default agent removes the declaration through the typed write contract", async () => {
+    vi.mocked(fetchTelegramSettings).mockResolvedValue({
+      available: true,
+      value: { ...SEEDED.value, defaultAgent: "kimi" },
+    });
+    vi.mocked(saveTelegramSettings).mockResolvedValue();
+    await renderTelegram();
+
+    const select = selectByClass("settings-form-default-agent");
+    expect(select.value).toBe("kimi");
+    setSelect(select, "");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(vi.mocked(saveTelegramSettings)).toHaveBeenCalledWith({ defaultAgent: null }, "T");
+  });
+
+  it("a stored but non-runnable agent displays a bounded Not-locally-runnable state and is NOT resent untouched", async () => {
+    vi.mocked(fetchTelegramSettings).mockResolvedValue({
+      available: true,
+      value: { ...SEEDED.value, defaultAgent: "ghost" },
+    });
+    mockedFetchConversationAgents.mockResolvedValue({ agents: [{ name: "kimi", online: true }] });
+    vi.mocked(saveTelegramSettings).mockResolvedValue();
+    await renderTelegram();
+
+    const select = selectByClass("settings-form-default-agent");
+    expect(select.value).toBe("ghost");
+    expect((select.selectedOptions[0]?.textContent ?? "")).toMatch(/not locally runnable/i);
+
+    // Unrelated edit only: the stale selection is not silently resubmitted.
+    setInput(inputByClass("settings-form-chat-ids"), "111, 222, 333");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(vi.mocked(saveTelegramSettings)).toHaveBeenLastCalledWith({ allowedChatIds: [111, 222, 333] }, "T");
+  });
+});
+
 describe("DiscordSettingsForm: snowflake validation smoke", () => {
   beforeEach(() => {
     mockedDiscordFetch.mockResolvedValue({
@@ -176,14 +291,63 @@ describe("DiscordSettingsForm: snowflake validation smoke", () => {
       value: {
         configured: false,
         allowedGuildIds: 0,
+        allowedGuildIdValues: [],
         allowedChannelIds: 0,
+        allowedChannelIdValues: [],
         allowedThreadIds: null,
+        allowedThreadIdValues: null,
         allowedDmUserIds: null,
+        allowedDmUserIdValues: null,
         defaultAgent: null,
         feedbackEnabled: null,
       },
     });
   });
+
+  it("ST-1B: prefills non-secret snowflake lists; an untouched list is not resent; a cleared list sends an empty replacement", async () => {
+    vi.mocked(fetchDiscordSettings).mockResolvedValue({
+      available: true as const,
+      value: {
+        configured: true,
+        allowedGuildIds: 2,
+        allowedGuildIdValues: ["111111111111111111", "222222222222222222"],
+        allowedChannelIds: 1,
+        allowedChannelIdValues: ["333333333333333333"],
+        allowedThreadIds: null,
+        allowedThreadIdValues: null,
+        allowedDmUserIds: null,
+        allowedDmUserIdValues: null,
+        defaultAgent: null,
+        feedbackEnabled: null,
+      },
+    });
+    mockedFetchConversationAgents.mockResolvedValue({ agents: [{ name: "kimi", online: true }] });
+    mockedDiscordSave.mockResolvedValue();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(DiscordSettingsForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+
+    expect(inputByClass("settings-form-guild-ids").value).toBe("111111111111111111, 222222222222222222");
+    expect(inputByClass("settings-form-channel-ids").value).toBe("333333333333333333");
+
+    // Untouched lists are not resent.
+    setInput(inputByClass("settings-form-token"), "DTOKEN");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(mockedDiscordSave).toHaveBeenLastCalledWith({ botToken: "DTOKEN" }, "T");
+
+    // Explicitly clearing the touched guild list clears it.
+    setInput(inputByClass("settings-form-guild-ids"), "");
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    // The token was cleared by the first successful save.
+    expect(mockedDiscordSave).toHaveBeenLastCalledWith({ allowedGuildIds: [] }, "T");
+  });
+
 
   it("validates guild snowflakes structurally before saving", async () => {
     container = document.createElement("div");

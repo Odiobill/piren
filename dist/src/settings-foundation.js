@@ -167,11 +167,18 @@ function parseTelegramBlock(block) {
         return "invalid";
     if (chatIds !== undefined)
         patch.allowedChatIds = chatIds;
-    const defaultAgent = asOptionalNonEmptyString(block, "defaultAgent");
-    if (defaultAgent === "invalid")
-        return "invalid";
-    if (defaultAgent !== undefined)
-        patch.defaultAgent = defaultAgent;
+    const defaultAgent = block.defaultAgent;
+    if (defaultAgent !== undefined) {
+        if (defaultAgent === null) {
+            patch.defaultAgent = null;
+        }
+        else {
+            const parsed = asOptionalNonEmptyString(block, "defaultAgent");
+            if (parsed === "invalid" || parsed === undefined)
+                return "invalid";
+            patch.defaultAgent = parsed;
+        }
+    }
     const feedback = asOptionalBoolean(block, "feedbackEnabled");
     if (feedback === "invalid")
         return "invalid";
@@ -194,11 +201,18 @@ function parseDiscordBlock(block) {
         if (list !== undefined)
             patch[key] = list;
     }
-    const defaultAgent = asOptionalNonEmptyString(block, "defaultAgent");
-    if (defaultAgent === "invalid")
-        return "invalid";
-    if (defaultAgent !== undefined)
-        patch.defaultAgent = defaultAgent;
+    const defaultAgent = block.defaultAgent;
+    if (defaultAgent !== undefined) {
+        if (defaultAgent === null) {
+            patch.defaultAgent = null;
+        }
+        else {
+            const parsed = asOptionalNonEmptyString(block, "defaultAgent");
+            if (parsed === "invalid" || parsed === undefined)
+                return "invalid";
+            patch.defaultAgent = parsed;
+        }
+    }
     const feedback = asOptionalBoolean(block, "feedbackEnabled");
     if (feedback === "invalid")
         return "invalid";
@@ -431,6 +445,16 @@ function asStringList(value) {
         return [];
     return value.filter((entry) => typeof entry === "string");
 }
+/** Full non-secret list values of one primitive kind; malformed entries are skipped. */
+function numberListValues(value) {
+    return Array.isArray(value) ? value.filter((entry) => typeof entry === "number") : [];
+}
+function stringListValues(value) {
+    return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
+}
+function stringListValuesOrNull(value) {
+    return value === undefined ? null : stringListValues(value);
+}
 function countList(value) {
     return Array.isArray(value) ? value.length : 0;
 }
@@ -481,15 +505,20 @@ export async function readLocalConfigRedacted(io, configPath) {
     const telegram = {
         configured: asNonEmptyStringOrNull(telegramBlock?.bot_token) !== null,
         allowedChatIds: countList(telegramBlock?.allowed_chat_ids),
+        allowedChatIdValues: numberListValues(telegramBlock?.allowed_chat_ids),
         defaultAgent: asNonEmptyStringOrNull(telegramBlock?.default_agent),
         feedbackEnabled: asBooleanOrNull(isRecord(telegramBlock?.feedback) ? telegramBlock.feedback.enabled : undefined),
     };
     const discord = {
         configured: asNonEmptyStringOrNull(discordBlock?.bot_token) !== null,
         allowedGuildIds: countList(discordBlock?.allowed_guild_ids),
+        allowedGuildIdValues: stringListValues(discordBlock?.allowed_guild_ids),
         allowedChannelIds: countList(discordBlock?.allowed_channel_ids),
+        allowedChannelIdValues: stringListValues(discordBlock?.allowed_channel_ids),
         allowedThreadIds: countListOrNull(discordBlock?.allowed_thread_ids),
+        allowedThreadIdValues: stringListValuesOrNull(discordBlock?.allowed_thread_ids),
         allowedDmUserIds: countListOrNull(discordBlock?.allowed_dm_user_ids),
+        allowedDmUserIdValues: stringListValuesOrNull(discordBlock?.allowed_dm_user_ids),
         defaultAgent: asNonEmptyStringOrNull(discordBlock?.default_agent),
         feedbackEnabled: asBooleanOrNull(isRecord(discordBlock?.feedback) ? discordBlock.feedback.enabled : undefined),
     };

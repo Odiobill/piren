@@ -158,16 +158,20 @@ beforeEach(() => {
   });
   vi.mocked(fetchTelegramSettings).mockResolvedValue({
     available: true,
-    value: { configured: false, allowedChatIds: 0, defaultAgent: null, feedbackEnabled: null },
+    value: { configured: false, allowedChatIds: 0, allowedChatIdValues: [], defaultAgent: null, feedbackEnabled: null },
   });
   vi.mocked(fetchDiscordSettings).mockResolvedValue({
     available: true,
     value: {
       configured: false,
       allowedGuildIds: 0,
+      allowedGuildIdValues: [],
       allowedChannelIds: 0,
+      allowedChannelIdValues: [],
       allowedThreadIds: null,
+      allowedThreadIdValues: null,
       allowedDmUserIds: null,
+      allowedDmUserIdValues: null,
       defaultAgent: null,
       feedbackEnabled: null,
     },

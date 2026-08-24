@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchDiscordSettings, saveDiscordSettings, SettingsHttpError, UnauthorizedError } from "./api";
+import { fetchConversationAgents, fetchDiscordSettings, saveDiscordSettings, SettingsHttpError, UnauthorizedError } from "./api";
 import { parseDiscordSnowflakesInput, type DiscordSettingsProjection } from "./settings-transport";
 import { SaveIcon } from "./icons";
 
@@ -40,6 +40,7 @@ export function DiscordSettingsForm({
   const [threadIds, setThreadIds] = useState("");
   const [dmUserIds, setDmUserIds] = useState("");
   const [defaultAgent, setDefaultAgent] = useState("");
+  const [roster, setRoster] = useState<string[]>([]);
   const [feedback, setFeedback] = useState(true);
   // Preserve an absent feedback declaration unless the steward changes it.
   const [feedbackTouched, setFeedbackTouched] = useState(false);
@@ -56,11 +57,23 @@ export function DiscordSettingsForm({
         onValidated();
         if (result.available) {
           setRead({ phase: "ready", projection: result.value });
+          // ST-1B prefill: editable non-secret snowflake values (never a token).
+          setGuildIds(result.value.allowedGuildIdValues.join(", "));
+          setChannelIds(result.value.allowedChannelIdValues.join(", "));
+          setThreadIds(result.value.allowedThreadIdValues === null ? "" : result.value.allowedThreadIdValues.join(", "));
+          setDmUserIds(result.value.allowedDmUserIdValues === null ? "" : result.value.allowedDmUserIdValues.join(", "));
           setDefaultAgent(result.value.defaultAgent ?? "");
           setFeedback(result.value.feedbackEnabled ?? true);
         } else {
           setRead({ phase: "unavailable", reason: result.reason });
         }
+        void fetchConversationAgents(token)
+          .then((rosterResult) => {
+            if (!cancelled) setRoster(rosterResult.agents.map((agent) => agent.name));
+          })
+          .catch(() => {
+            /* Bounded: the select still renders with the stored state. */
+          });
       })
       .catch((cause: unknown) => {
         if (cancelled) return;
@@ -86,19 +99,29 @@ export function DiscordSettingsForm({
       allowedChannelIds?: string[];
       allowedThreadIds?: string[];
       allowedDmUserIds?: string[];
-      defaultAgent?: string;
+      defaultAgent?: string | null;
       feedbackEnabled?: boolean;
     } = {};
     const trimmedToken = botToken.trim();
     if (trimmedToken !== "") patch.botToken = trimmedToken;
 
-    const required = [
-      { text: guildIds, key: "allowedGuildIds", field: "guilds", noun: "server" },
-      { text: channelIds, key: "allowedChannelIds", field: "channels", noun: "channel" },
+    // ST-1B touch semantics: an untouched list is never resent; a touched
+    // list is parsed as a full replacement (empty string clears it).
+    const initial = read.phase === "ready" ? read.projection : undefined;
+    const lists = [
+      { text: guildIds, initialValues: initial?.allowedGuildIdValues ?? [], key: "allowedGuildIds", field: "guilds", noun: "server" },
+      { text: channelIds, initialValues: initial?.allowedChannelIdValues ?? [], key: "allowedChannelIds", field: "channels", noun: "channel" },
+      { text: threadIds, initialValues: initial?.allowedThreadIdValues ?? [], key: "allowedThreadIds", field: "threads", noun: "thread" },
+      { text: dmUserIds, initialValues: initial?.allowedDmUserIdValues ?? [], key: "allowedDmUserIds", field: "DM users", noun: "user" },
     ] as const;
-    for (const entry of required) {
+    for (const entry of lists) {
+      if (entry.text.trim() === entry.initialValues.join(", ")) continue;
       const trimmed = entry.text.trim();
-      if (trimmed === "") continue;
+      if (trimmed === "") {
+        // Explicitly cleared touched list: clear it through the write path.
+        (patch as Record<string, unknown>)[entry.key] = [];
+        continue;
+      }
       const parsed = parseDiscordSnowflakesInput(trimmed, entry.field, entry.noun);
       if (!parsed.ok) {
         setFieldError(parsed.error);
@@ -107,21 +130,11 @@ export function DiscordSettingsForm({
       (patch as Record<string, unknown>)[entry.key] = parsed.ids;
     }
 
-    const optional = [
-      { text: threadIds, key: "allowedThreadIds", field: "threads", noun: "thread" },
-      { text: dmUserIds, key: "allowedDmUserIds", field: "DM users", noun: "user" },
-    ] as const;
-    for (const entry of optional) {
-      const parsed = parseDiscordSnowflakesInput(entry.text, entry.field, entry.noun, { optional: true });
-      if (!parsed.ok) {
-        setFieldError(parsed.error);
-        return;
-      }
-      if (parsed.ids.length > 0) (patch as Record<string, unknown>)[entry.key] = parsed.ids;
-    }
-
+    // Untouched default agent is not resent; explicit No default removes it.
     const trimmedAgent = defaultAgent.trim();
-    if (trimmedAgent !== "") patch.defaultAgent = trimmedAgent;
+    if (initial !== undefined && trimmedAgent !== (initial.defaultAgent ?? "")) {
+      patch.defaultAgent = trimmedAgent === "" ? null : trimmedAgent;
+    }
     if (feedbackTouched) patch.feedbackEnabled = feedback;
 
     setSaving(true);
@@ -209,13 +222,24 @@ export function DiscordSettingsForm({
           </label>
           <label className="settings-field">
             Default agent
-            <input
+            <select
               className="settings-form-default-agent"
-              type="text"
               aria-label="Default agent"
               value={defaultAgent}
               onChange={(event) => setDefaultAgent(event.target.value)}
-            />
+            >
+              <option value="">No default agent</option>
+              {roster.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+              {/* A stored but no-longer-runnable agent stays visible and is
+                  never silently rewritten or resubmitted. */}
+              {defaultAgent !== "" && !roster.includes(defaultAgent) && (
+                <option value={defaultAgent}>{`${defaultAgent} - not locally runnable`}</option>
+              )}
+            </select>
           </label>
           <label className="settings-field settings-field-checkbox">
             <input

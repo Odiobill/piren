@@ -89,7 +89,13 @@ describe("W5 transport Settings routes: redacted reads", () => {
       const json = (await res.json()) as Record<string, unknown>;
       expect(json).toEqual({
         available: true,
-        telegram: { configured: true, allowedChatIds: 1, defaultAgent: "piren", feedbackEnabled: true },
+        telegram: {
+          configured: true,
+          allowedChatIds: 1,
+          allowedChatIdValues: [123456789],
+          defaultAgent: "piren",
+          feedbackEnabled: true,
+        },
       });
       // Hostile proof: the token never appears in the body.
       expect(res.headers.get("content-type")).toBe("application/json");
@@ -121,9 +127,13 @@ describe("W5 transport Settings routes: redacted reads", () => {
         discord: {
           configured: true,
           allowedGuildIds: 1,
+          allowedGuildIdValues: ["1"],
           allowedChannelIds: 1,
+          allowedChannelIdValues: ["2"],
           allowedThreadIds: null,
+          allowedThreadIdValues: null,
           allowedDmUserIds: null,
+          allowedDmUserIdValues: null,
           defaultAgent: null,
           feedbackEnabled: false,
         },
@@ -151,7 +161,7 @@ describe("W5 transport Settings routes: redacted reads", () => {
 describe("W5 transport Settings routes: closed writes", () => {
   it("POST /api/settings/telegram applies the intent and returns only { wrote: true }", async () => {
     const { io, files } = fakeIo({ "/tmp/config.yml": TELEGRAM_CONFIG });
-    const server = new GatewayServer({ target: fakePiTarget(), settingsConfigPath: "/tmp/config.yml", settingsIo: io } as never);
+    const server = new GatewayServer({ target: fakePiTarget(), settingsConfigPath: "/tmp/config.yml", settingsIo: io, runnableAgents: ["other"] } as never);
     const handle = await server.start();
     try {
       const res = await fetch(`http://${handle.hostname}:${handle.port}/api/settings/telegram`, {
@@ -205,7 +215,7 @@ describe("W5 transport Settings routes: closed writes", () => {
 
   it("maps foundation error codes to bounded statuses without echoing anything", async () => {
     const { io, failOn } = fakeIo({ "/tmp/config.yml": TELEGRAM_CONFIG });
-    const server = new GatewayServer({ target: fakePiTarget(), settingsConfigPath: "/tmp/config.yml", settingsIo: io } as never);
+    const server = new GatewayServer({ target: fakePiTarget(), settingsConfigPath: "/tmp/config.yml", settingsIo: io, runnableAgents: ["x"] } as never);
     const handle = await server.start();
     const base = `http://${handle.hostname}:${handle.port}`;
     const body = JSON.stringify({ surface: "local", family: "telegram", block: { defaultAgent: "x" } });

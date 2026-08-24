@@ -100,7 +100,8 @@ function isEnoent(error: unknown): boolean {
 export interface TelegramSettingsPatch {
   botToken?: string;
   allowedChatIds?: number[];
-  defaultAgent?: string;
+  /** ST-1B: explicit null removes the declaration (No default agent). */
+  defaultAgent?: string | null;
   feedbackEnabled?: boolean;
 }
 
@@ -110,7 +111,8 @@ export interface DiscordSettingsPatch {
   allowedChannelIds?: string[];
   allowedThreadIds?: string[];
   allowedDmUserIds?: string[];
-  defaultAgent?: string;
+  /** ST-1B: explicit null removes the declaration (No default agent). */
+  defaultAgent?: string | null;
   feedbackEnabled?: boolean;
 }
 
@@ -266,9 +268,16 @@ function parseTelegramBlock(block: Record<string, unknown>): TelegramSettingsPat
   const chatIds = asOptionalIntList(block, "allowedChatIds");
   if (chatIds === "invalid") return "invalid";
   if (chatIds !== undefined) patch.allowedChatIds = chatIds;
-  const defaultAgent = asOptionalNonEmptyString(block, "defaultAgent");
-  if (defaultAgent === "invalid") return "invalid";
-  if (defaultAgent !== undefined) patch.defaultAgent = defaultAgent;
+  const defaultAgent = block.defaultAgent;
+  if (defaultAgent !== undefined) {
+    if (defaultAgent === null) {
+      patch.defaultAgent = null;
+    } else {
+      const parsed = asOptionalNonEmptyString(block, "defaultAgent");
+      if (parsed === "invalid" || parsed === undefined) return "invalid";
+      patch.defaultAgent = parsed;
+    }
+  }
   const feedback = asOptionalBoolean(block, "feedbackEnabled");
   if (feedback === "invalid") return "invalid";
   if (feedback !== undefined) patch.feedbackEnabled = feedback;
@@ -287,9 +296,16 @@ function parseDiscordBlock(block: Record<string, unknown>): DiscordSettingsPatch
     if (list === "invalid") return "invalid";
     if (list !== undefined) patch[key] = list;
   }
-  const defaultAgent = asOptionalNonEmptyString(block, "defaultAgent");
-  if (defaultAgent === "invalid") return "invalid";
-  if (defaultAgent !== undefined) patch.defaultAgent = defaultAgent;
+  const defaultAgent = block.defaultAgent;
+  if (defaultAgent !== undefined) {
+    if (defaultAgent === null) {
+      patch.defaultAgent = null;
+    } else {
+      const parsed = asOptionalNonEmptyString(block, "defaultAgent");
+      if (parsed === "invalid" || parsed === undefined) return "invalid";
+      patch.defaultAgent = parsed;
+    }
+  }
   const feedback = asOptionalBoolean(block, "feedbackEnabled");
   if (feedback === "invalid") return "invalid";
   if (feedback !== undefined) patch.feedbackEnabled = feedback;
@@ -487,6 +503,8 @@ export function parseSettingsIntent(raw: unknown): ParseIntentResult {
 export interface RedactedTelegramProjection {
   configured: boolean;
   allowedChatIds: number;
+  /** ST-1B: the full non-secret allowlist values (prefill), never a token. */
+  allowedChatIdValues: number[];
   defaultAgent: string | null;
   feedbackEnabled: boolean | null;
 }
@@ -494,9 +512,14 @@ export interface RedactedTelegramProjection {
 export interface RedactedDiscordProjection {
   configured: boolean;
   allowedGuildIds: number;
+  /** ST-1B: full non-secret snowflake values (prefill). */
+  allowedGuildIdValues: string[];
   allowedChannelIds: number;
+  allowedChannelIdValues: string[];
   allowedThreadIds: number | null;
+  allowedThreadIdValues: string[] | null;
   allowedDmUserIds: number | null;
+  allowedDmUserIdValues: string[] | null;
   defaultAgent: string | null;
   /** W5: the §5.1 inventory lists feedback for both transports. */
   feedbackEnabled: boolean | null;
@@ -564,6 +587,19 @@ function asStringList(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+/** Full non-secret list values of one primitive kind; malformed entries are skipped. */
+function numberListValues(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((entry): entry is number => typeof entry === "number") : [];
+}
+
+function stringListValues(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function stringListValuesOrNull(value: unknown): string[] | null {
+  return value === undefined ? null : stringListValues(value);
+}
+
 function countList(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
 }
@@ -623,6 +659,7 @@ export async function readLocalConfigRedacted(
   const telegram: RedactedTelegramProjection = {
     configured: asNonEmptyStringOrNull(telegramBlock?.bot_token) !== null,
     allowedChatIds: countList(telegramBlock?.allowed_chat_ids),
+    allowedChatIdValues: numberListValues(telegramBlock?.allowed_chat_ids),
     defaultAgent: asNonEmptyStringOrNull(telegramBlock?.default_agent),
     feedbackEnabled: asBooleanOrNull(isRecord(telegramBlock?.feedback) ? telegramBlock.feedback.enabled : undefined),
   };
@@ -630,9 +667,13 @@ export async function readLocalConfigRedacted(
   const discord: RedactedDiscordProjection = {
     configured: asNonEmptyStringOrNull(discordBlock?.bot_token) !== null,
     allowedGuildIds: countList(discordBlock?.allowed_guild_ids),
+    allowedGuildIdValues: stringListValues(discordBlock?.allowed_guild_ids),
     allowedChannelIds: countList(discordBlock?.allowed_channel_ids),
+    allowedChannelIdValues: stringListValues(discordBlock?.allowed_channel_ids),
     allowedThreadIds: countListOrNull(discordBlock?.allowed_thread_ids),
+    allowedThreadIdValues: stringListValuesOrNull(discordBlock?.allowed_thread_ids),
     allowedDmUserIds: countListOrNull(discordBlock?.allowed_dm_user_ids),
+    allowedDmUserIdValues: stringListValuesOrNull(discordBlock?.allowed_dm_user_ids),
     defaultAgent: asNonEmptyStringOrNull(discordBlock?.default_agent),
     feedbackEnabled: asBooleanOrNull(isRecord(discordBlock?.feedback) ? discordBlock.feedback.enabled : undefined),
   };

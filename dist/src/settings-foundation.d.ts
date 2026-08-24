@@ -48,7 +48,8 @@ export declare function createNodeSettingsFoundationIo(): SettingsFoundationIo;
 export interface TelegramSettingsPatch {
     botToken?: string;
     allowedChatIds?: number[];
-    defaultAgent?: string;
+    /** ST-1B: explicit null removes the declaration (No default agent). */
+    defaultAgent?: string | null;
     feedbackEnabled?: boolean;
 }
 export interface DiscordSettingsPatch {
@@ -57,7 +58,8 @@ export interface DiscordSettingsPatch {
     allowedChannelIds?: string[];
     allowedThreadIds?: string[];
     allowedDmUserIds?: string[];
-    defaultAgent?: string;
+    /** ST-1B: explicit null removes the declaration (No default agent). */
+    defaultAgent?: string | null;
     feedbackEnabled?: boolean;
 }
 export interface SchedulerSettingsPatch {
@@ -140,15 +142,22 @@ export declare function parseSettingsIntent(raw: unknown): ParseIntentResult;
 export interface RedactedTelegramProjection {
     configured: boolean;
     allowedChatIds: number;
+    /** ST-1B: the full non-secret allowlist values (prefill), never a token. */
+    allowedChatIdValues: number[];
     defaultAgent: string | null;
     feedbackEnabled: boolean | null;
 }
 export interface RedactedDiscordProjection {
     configured: boolean;
     allowedGuildIds: number;
+    /** ST-1B: full non-secret snowflake values (prefill). */
+    allowedGuildIdValues: string[];
     allowedChannelIds: number;
+    allowedChannelIdValues: string[];
     allowedThreadIds: number | null;
+    allowedThreadIdValues: string[] | null;
     allowedDmUserIds: number | null;
+    allowedDmUserIdValues: string[] | null;
     defaultAgent: string | null;
     /** W5: the §5.1 inventory lists feedback for both transports. */
     feedbackEnabled: boolean | null;
