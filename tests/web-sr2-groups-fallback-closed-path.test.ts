@@ -12,14 +12,16 @@ import { GatewayServer } from "../src/gateway-http.js";
 import { AgentGroupsPanel } from "../web/src/AgentGroupsPanel.js";
 
 /**
- * SR-2 regression — FULL closed path for the reported production defect:
- * persisted agent-groups fallback_order entries saved empty.
+ * SR-2/SR-3 regression — FULL closed path for the reported production
+ * defects: persisted agent-groups fallback_order entries saved empty, then
+ * the confusing two-step select/Add affordance whose failure surfaced in
+ * the wrong place.
  *
  * Unlike tests/web-st-4-groups-panel.test.ts (which mocks postGroupAction),
  * this drives the REAL panel against a REAL gateway over real HTTP with a
  * real temp vault: create group -> add two vault members -> select target ->
- * add candidate -> explicit confirmation -> POST -> persisted YAML re-read,
- * plus the reloaded UI state.
+ * CHOOSE a candidate (staged immediately) -> explicit confirmation -> POST
+ * -> persisted YAML re-read, plus the reloaded UI state.
  */
 
 const fakePiScript = join(process.cwd(), "tests", "fixtures", "fake-pi-rpc.cjs");
@@ -145,9 +147,11 @@ describe("SR-2: persisted groups fallback candidates end to end (panel -> gatewa
       await waitFor("Vera member row", () => memberRows().includes("Vera"));
 
       // 4. Build the ordered fallback list for target Piren: [Vera].
+      // SR-3: selecting Vera stages it immediately — there is no separate
+      // Add step left to miss.
       await choose(".settings-groups-fallback-member", "Piren");
+      expect(container.querySelector(".settings-groups-fallback-add"))?.toBeNull();
       await choose(".settings-groups-fallback-candidate-select", "Vera");
-      await click(".settings-groups-fallback-add");
       const order = Array.from(
         container.querySelectorAll(".settings-groups-fallback-list .settings-agent-fallback-model"),
       ).map((n) => (n as HTMLElement).textContent);

@@ -2941,3 +2941,65 @@ code {
   margin: 6px 0 0;
   padding-left: 18px;
 }
+
+/* ===========================================================================
+   SR-3 — polished Settings controls. Text inputs and selects across the
+   Settings page (including every Groups control) match the Workbench card
+   language: surface background, rounded bordered frame, comfortable padding,
+   readable placeholder/select text, visible focus, hover/disabled states,
+   dark-theme correctness via tokens. Scoped to .settings-page so dashboard,
+   conversation, and native controls are untouched.
+   =========================================================================== */
+
+.settings-page input[type="text"],
+.settings-page input[type="password"],
+.settings-page select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.875rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.settings-page input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.settings-page input[type="text"]:hover:not(:disabled):not(:focus),
+.settings-page input[type="password"]:hover:not(:disabled):not(:focus),
+.settings-page select:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.settings-page input[type="text"]:focus-visible,
+.settings-page input[type="password"]:focus-visible,
+.settings-page select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.settings-page input[type="text"]:disabled,
+.settings-page input[type="password"]:disabled,
+.settings-page select:disabled {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 8%, var(--surface));
+  cursor: not-allowed;
+}
+
+/* Group create/add rows wrap instead of overflowing with long values. */
+.settings-agent-fallback-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-agent-fallback-add-row > input,
+.settings-agent-fallback-add-row > select {
+  flex: 1 1 220px;
+}

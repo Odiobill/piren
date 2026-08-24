@@ -10,6 +10,7 @@ import {
   type GroupSummaryDto,
   type GroupValidationIssueDto,
 } from "./groups-api";
+import { stageFallbackCandidate } from "./groups-fallback";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -29,6 +30,14 @@ import {
  * require explicit labelled confirmation modals with full focus discipline;
  * conflict re-reads; a typed 401 hands over to the shell. No local-policy
  * access, no persistence.
+ *
+ * SR-3: choosing a fallback candidate stages it IMMEDIATELY in the ordered
+ * list (the two-step select-then-Add false affordance is gone), the selector
+ * resets after every choice so no invisible pending state remains, and
+ * fallback-specific validation messages render as a bounded local alert
+ * inside the fallback editor — never in the global notice slot below the
+ * New group name form. Save stays confirmation-gated; remove/reorder stay
+ * explicit.
  */
 
 type Phase =
@@ -66,7 +75,8 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
   const [addChoice, setAddChoice] = useState("");
   const [fallbackMember, setFallbackMember] = useState("");
   const [fallbackCandidates, setFallbackCandidates] = useState<string[]>([]);
-  const [candidateChoice, setCandidateChoice] = useState("");
+  // SR-3: bounded local validation message for the fallback editor only.
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [validation, setValidation] = useState<ValidationState>({ kind: "idle" });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -112,13 +122,13 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
       setDetailRoster(shown.roster);
       setNotice(null);
       setAddChoice("");
-      setCandidateChoice("");
       // SR-2 lead correction: a newly committed group detail resets the WHOLE
       // staged fallback editor, so group A's target/candidates can never be
       // applied to group B and post-mutation re-reads start clean. The
       // member's saved order loads only after an explicit fresh selection.
       setFallbackMember("");
       setFallbackCandidates([]);
+      setFallbackNotice(null);
     } catch (cause) {
       if (!handleAuth(cause)) setNotice("The group could not be read.");
     }
@@ -192,7 +202,7 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
   function chooseFallbackMember(member: string): void {
     setFallbackMember(member);
     setFallbackCandidates([...(detail?.fallbackOrder[member] ?? [])]);
-    setCandidateChoice("");
+    setFallbackNotice(null);
   }
 
   function moveFallbackCandidate(index: number, delta: -1 | 1): void {
@@ -205,11 +215,21 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
     setFallbackCandidates(next);
   }
 
-  function addFallbackCandidate(): void {
-    if (candidateChoice === "" || fallbackMember === "") return;
-    if (candidateChoice === fallbackMember || fallbackCandidates.includes(candidateChoice)) return;
-    setFallbackCandidates([...fallbackCandidates, candidateChoice]);
-    setCandidateChoice("");
+  /**
+   * SR-3: a valid selection joins the staged ordered list immediately and
+   * the selector resets, so there is no selected-but-not-added state left
+   * for Save to trip over. Self/duplicate choices are rejected with a
+   * bounded local reason instead of being silently discarded.
+   */
+  function chooseFallbackCandidate(choice: string): void {
+    if (choice === "") return;
+    const result = stageFallbackCandidate(fallbackCandidates, fallbackMember, choice);
+    if (result.kind === "staged") {
+      setFallbackCandidates(result.candidates);
+      setFallbackNotice(null);
+    } else {
+      setFallbackNotice(result.reason);
+    }
   }
 
   function removeFallbackCandidate(index: number): void {
@@ -218,17 +238,10 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
 
   function requestFallbackSet(trigger: HTMLElement): void {
     if (detail === null || fallbackMember === "" || busy) return;
+    // Defensive invariant (unreachable through the staging core): keep the
+    // rejection local and exact rather than ever writing a bad order.
     if (fallbackCandidates.includes(fallbackMember) || new Set(fallbackCandidates).size !== fallbackCandidates.length) {
-      setNotice("Fallback candidates must be unique members other than the target.");
-      return;
-    }
-    // SR-2 root-cause guard: a candidate picked in the dropdown but never
-    // added to the ordered list is NOT part of the save — even when the list
-    // already holds other entries. Persisting anyway silently dropped the
-    // steward's visible selection; refuse with a bounded reason instead
-    // (clearing remains possible once the choice is reset).
-    if (candidateChoice !== "") {
-      setNotice(`Add ${candidateChoice} to the ordered list first, or set the candidate choice back to “Choose a candidate…”.`);
+      setFallbackNotice("Fallback candidates must be unique members other than the target.");
       return;
     }
     const group = detail;
@@ -284,7 +297,7 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
   const candidateChoices =
     fallbackMember === ""
       ? []
-      : detail?.agents.filter((a) => a !== fallbackMember && !fallbackCandidates.includes(a)) ?? [];
+      : detail?.agents.filter((a) => a !== fallbackMember) ?? [];
 
   return (
     <div className="settings-groups">
@@ -442,7 +455,7 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
 
           <section className="settings-agent-family" aria-label={`Fallback order in ${detail.name}`}>
             <strong>Fallback order per member</strong>
-            <p className="muted">Pick a member, build its ordered candidate list, then save. The visible order is the saved order.</p>
+            <p className="muted">Pick a member, then choose candidates — each choice joins the ordered list immediately. Reorder or remove rows, then save. The visible order is the saved order.</p>
             <label className="settings-field">
               Fallback target (member)
               <select
@@ -498,19 +511,18 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
                 <select
                   className="settings-groups-fallback-candidate-select"
                   aria-label="Add fallback candidate"
-                  value={candidateChoice}
-                  onChange={(e) => setCandidateChoice(e.target.value)}
+                  value=""
+                  onChange={(e) => chooseFallbackCandidate(e.target.value)}
                 >
                   <option value="">Choose a candidate…</option>
                   {candidateChoices.map((choice) => (
                     <option key={choice} value={choice}>{choice}</option>
                   ))}
                 </select>
-                <button type="button" className="settings-groups-fallback-add button-link" aria-label="Add fallback candidate" onClick={addFallbackCandidate}>
-                  <PlusIcon size={13} />
-                  Add
-                </button>
               </div>
+            )}
+            {fallbackNotice !== null && (
+              <p className="settings-form-error settings-groups-fallback-alert" role="alert">{fallbackNotice}</p>
             )}
             <button
               type="button"
