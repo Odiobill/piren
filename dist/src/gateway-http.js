@@ -12,6 +12,7 @@ import { applyAgentSettingsIntent, applyLocalSettingsIntent, createNodeSettingsF
 import { buildOkfGraph } from "./okf-graph.js";
 import { ConversationBroker } from "./conversation-broker.js";
 import { buildConversationAgentsResponse } from "./conversation-agents.js";
+import { GroupSettingsError, createNodeGroupSettingsDeps, listGroups, mutateGroup, readGroup, } from "./group-settings.js";
 import { CONVERSATION_AGENT_NAME_PATTERN, checkActiveGate, formatActiveGateRejection, resolveStewardMentions } from "./conversation-contract.js";
 import { appendConversationEvent, createConversation, createConversationForAgentStart, createConversationForPeerStart, listConversations, readConversation, readConversationEvents, renameConversation, transitionConversationLifecycle, updateConversationAudience, } from "./conversations.js";
 import { parsePeerAudienceStartRequest, peerStartOriginBody, validatePeerRunnability, } from "./conversation-peer-start.js";
@@ -171,6 +172,7 @@ export class GatewayServer {
     serviceStatusReader;
     settingsConfigPath;
     settingsIo;
+    groupsIo;
     /** TB4: explicit steward model selection disables automatic fallback for this session. */
     explicitModelSelected = false;
     /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
@@ -191,6 +193,7 @@ export class GatewayServer {
         this.serviceStatusReader = options.serviceStatusReader;
         this.settingsConfigPath = options.settingsConfigPath;
         this.settingsIo = options.settingsIo ?? createNodeSettingsFoundationIo();
+        this.groupsIo = options.groupsIo ?? createNodeGroupSettingsDeps();
         // C2: the conversation broker is wired with the same runtime options;
         // conversation runs use isolated conversation × agent clients, never the
         // global gateway chat client. (The retired room broker is gone — no
@@ -355,6 +358,15 @@ export class GatewayServer {
         }
         else if (req.method === "POST" && url.pathname === "/api/settings/scheduler") {
             await this.handleSchedulerSettingsWrite(req, res);
+        }
+        else if (req.method === "GET" && url.pathname === "/api/settings/groups") {
+            await this.handleGroupsList(res);
+        }
+        else if (req.method === "POST" && url.pathname === "/api/settings/groups") {
+            await this.handleGroupsAction(req, res);
+        }
+        else if (req.method === "GET" && url.pathname.startsWith("/api/settings/groups/")) {
+            await this.handleGroupShow(res, decodeURIComponent(url.pathname.slice("/api/settings/groups/".length)));
         }
         else if (url.pathname.startsWith("/api/settings/agents/")) {
             const agent = url.pathname.slice("/api/settings/agents/".length);
@@ -1395,6 +1407,183 @@ export class GatewayServer {
     // -------------------------------------------------------------------------
     // W5 — typed transport Settings routes (ADR-0046)
     // -------------------------------------------------------------------------
+    groupsRoot() {
+        return this.vaultRoot === undefined ? undefined : `${this.vaultRoot}/agent-groups`;
+    }
+    /** ST-4 — GET /api/settings/groups: bounded typed group summaries. */
+    async handleGroupsList(res) {
+        const root = this.groupsRoot();
+        if (root === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        try {
+            const groups = await listGroups(this.groupsIo, root);
+            this.writeJson(res, 200, { available: true, groups });
+        }
+        catch (error) {
+            void error;
+            this.writeJson(res, 500, { error: "Agent groups could not be read." });
+        }
+    }
+    /** ST-4 — GET /api/settings/groups/<group>: redacted modelled detail. */
+    async handleGroupShow(res, group) {
+        const root = this.groupsRoot();
+        if (root === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        try {
+            const detail = await readGroup(this.groupsIo, root, group);
+            if (detail === null) {
+                this.writeJson(res, 200, { available: false, reason: "Agent group was not found." });
+                return;
+            }
+            this.writeJson(res, 200, {
+                available: true,
+                group: {
+                    name: detail.name,
+                    revision: detail.revision,
+                    agents: detail.agents,
+                    fallbackOrder: detail.fallbackOrder,
+                    findings: detail.findings,
+                },
+                roster: this.runnableAgents.map((name) => ({ name, locallyRunnable: true })),
+            });
+        }
+        catch (error) {
+            if (error instanceof GroupSettingsError && error.code === "invalid") {
+                this.writeJson(res, 400, { error: "Invalid agent group name." });
+                return;
+            }
+            this.writeJson(res, 500, { error: "Agent group could not be read." });
+        }
+    }
+    /**
+     * POST /api/settings/groups — one closed typed group action. Body keys are
+     * closed; create/remove-agent/fallback-set require confirm:true; stale
+     * revisions fail as bounded 409 and never clobber.
+     */
+    async handleGroupsAction(req, res) {
+        const root = this.groupsRoot();
+        if (root === undefined) {
+            this.writeJson(res, 404, { error: "settings unavailable" });
+            return;
+        }
+        const body = await this.readJsonBody(req);
+        if (!body.ok) {
+            this.writeJson(res, body.status, { error: body.error });
+            return;
+        }
+        const raw = body.value;
+        if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+            this.writeJson(res, 400, { error: "Group action must be an object." });
+            return;
+        }
+        const allowedKeys = ["action", "group", "agent", "candidates", "confirm", "expectedRevision"];
+        for (const key of Object.keys(raw)) {
+            if (!allowedKeys.includes(key)) {
+                this.writeJson(res, 400, { error: "Unknown field(s) in the group action (closed inventory)." });
+                return;
+            }
+        }
+        const record = raw;
+        const action = record.action;
+        if (action !== "create" && action !== "add-agent" && action !== "remove-agent" && action !== "fallback-set") {
+            this.writeJson(res, 400, { error: "Unknown group action." });
+            return;
+        }
+        const group = typeof record.group === "string" ? record.group : "";
+        const expectedRevision = typeof record.expectedRevision === "string" ? record.expectedRevision : undefined;
+        if (expectedRevision === undefined) {
+            this.writeJson(res, 400, { error: "A source revision is required for every group action." });
+            return;
+        }
+        const needsConfirm = action !== "add-agent";
+        if (needsConfirm && record.confirm !== true) {
+            this.writeJson(res, 400, { error: "This group action requires explicit confirmation." });
+            return;
+        }
+        const agent = typeof record.agent === "string" ? record.agent : undefined;
+        let candidates;
+        if (record.candidates !== undefined) {
+            const list = record.candidates;
+            if (!Array.isArray(list) || !list.every((c) => typeof c === "string")) {
+                this.writeJson(res, 400, { error: "Fallback candidates must be a list of member names." });
+                return;
+            }
+            candidates = [...list];
+        }
+        try {
+            if (action === "create") {
+                await mutateGroup(this.groupsIo, root, {
+                    group, expectedRevision, allowCreate: true, mutate: (data) => data,
+                });
+                this.writeJson(res, 200, { wrote: true });
+                return;
+            }
+            if (group === "" || agent === undefined || agent.trim() === "") {
+                this.writeJson(res, 400, { error: "An existing group and an agent name are required." });
+                return;
+            }
+            if (action === "add-agent") {
+                await mutateGroup(this.groupsIo, root, {
+                    group, expectedRevision, mutate: (data) => ({
+                        agents: data.agents.includes(agent) ? data.agents : [...data.agents, agent],
+                        fallbackOrder: data.fallbackOrder,
+                    }),
+                });
+                this.writeJson(res, 200, { wrote: true });
+                return;
+            }
+            if (action === "remove-agent") {
+                await mutateGroup(this.groupsIo, root, {
+                    group, expectedRevision, mutate: (data) => {
+                        const fallbackOrder = {};
+                        for (const [member, list] of Object.entries(data.fallbackOrder)) {
+                            if (member === agent)
+                                continue;
+                            fallbackOrder[member] = list.filter((c) => c !== agent);
+                        }
+                        return { agents: data.agents.filter((a) => a !== agent), fallbackOrder };
+                    },
+                });
+                this.writeJson(res, 200, { wrote: true });
+                return;
+            }
+            // fallback-set
+            if (candidates === undefined) {
+                this.writeJson(res, 400, { error: "The fallback-set action requires the ordered candidate list." });
+                return;
+            }
+            await mutateGroup(this.groupsIo, root, {
+                group, expectedRevision, mutate: (data) => {
+                    if (!data.agents.includes(agent)) {
+                        throw new GroupSettingsError("invalid", "The fallback target must be a group member.");
+                    }
+                    for (const candidate of candidates) {
+                        if (!data.agents.includes(candidate)) {
+                            throw new GroupSettingsError("invalid", "Every fallback candidate must be a group member.");
+                        }
+                    }
+                    if (candidates.includes(agent) || new Set(candidates).size !== candidates.length) {
+                        throw new GroupSettingsError("invalid", "Fallback candidates must be unique members other than the target.");
+                    }
+                    const fallbackOrder = { ...data.fallbackOrder, [agent]: candidates };
+                    return { agents: data.agents, fallbackOrder };
+                },
+            });
+            this.writeJson(res, 200, { wrote: true });
+        }
+        catch (error) {
+            if (error instanceof GroupSettingsError) {
+                const statusByCode = { conflict: 409, "not-found": 404, exists: 409, invalid: 400 };
+                this.writeJson(res, statusByCode[error.code] ?? 400, { error: error.message });
+                return;
+            }
+            this.writeJson(res, 500, { error: "The group action failed; nothing was changed." });
+        }
+    }
     /**
      * GET /api/settings/telegram|discord — the fully-redacted transport
      * projection (token `configured` boolean, ID counts, default agent,

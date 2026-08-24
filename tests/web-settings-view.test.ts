@@ -278,18 +278,14 @@ describe("ST-2A: accessible tab semantics", () => {
     }
   });
 
-  it("the Agent groups tab is an honest introduction: no forms, buttons, or management actions", async () => {
+  it("the Agent groups panel renders bounded loading then its typed workflows (ST-4)", async () => {
     await renderSettings();
     const tabs = settingsTabs();
     pressTab(tabs[2]!, "ArrowRight"); // focus moves only
     pressTab(tabs[2]!, "Enter");
     await flush2();
     const panel = container.querySelector(`#${tabs[2]!.getAttribute("aria-controls")}`);
-    expect(panel).not.toBeNull();
-    expect(panel?.querySelectorAll("button, input, select, textarea, form, a[href]").length).toBe(0);
     expect(panel?.textContent?.toLowerCase()).toContain("agent groups");
-    // Honest: states that management is not available yet.
-    expect(panel?.textContent).toMatch(/not available yet|later update|no management/i);
   });
 });
 

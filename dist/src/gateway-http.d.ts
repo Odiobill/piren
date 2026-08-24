@@ -1,5 +1,6 @@
 import { type RpcSpawnTarget } from "./gateway-rpc.js";
 import { type SettingsFoundationIo } from "./settings-foundation.js";
+import { type GroupSettingsDeps } from "./group-settings.js";
 import { type GatewayFallbackPolicy } from "./model-fallback-gateway.js";
 import { type ServiceStatusReader } from "./service-observability.js";
 export type RpcTargetBuilder = (agent: string) => Promise<RpcSpawnTarget>;
@@ -79,6 +80,8 @@ export interface GatewayServerOptions {
      * local config. Reads/writes stay atomic and revision-checked (W4).
      */
     settingsIo?: SettingsFoundationIo | undefined;
+    /** ST-4: injected group-settings filesystem seam (defaults to node fs). */
+    groupsIo?: GroupSettingsDeps | undefined;
 }
 export interface GatewayHandle {
     port: number;
@@ -115,6 +118,7 @@ export declare class GatewayServer {
     private readonly serviceStatusReader;
     private readonly settingsConfigPath;
     private readonly settingsIo;
+    private readonly groupsIo;
     /** TB4: explicit steward model selection disables automatic fallback for this session. */
     private explicitModelSelected;
     /** TB4: the session's current model id (evidence + rotation skip); mirrors the live client. */
@@ -255,6 +259,17 @@ export declare class GatewayServer {
      * non-diagnostic 503, never a fabricated observation.
      */
     private handleServiceStatus;
+    private groupsRoot;
+    /** ST-4 — GET /api/settings/groups: bounded typed group summaries. */
+    private handleGroupsList;
+    /** ST-4 — GET /api/settings/groups/<group>: redacted modelled detail. */
+    private handleGroupShow;
+    /**
+     * POST /api/settings/groups — one closed typed group action. Body keys are
+     * closed; create/remove-agent/fallback-set require confirm:true; stale
+     * revisions fail as bounded 409 and never clobber.
+     */
+    private handleGroupsAction;
     /**
      * GET /api/settings/telegram|discord — the fully-redacted transport
      * projection (token `configured` boolean, ID counts, default agent,

@@ -4,6 +4,7 @@ import { DiscordSettingsForm } from "./DiscordSettingsForm.js";
 import { SchedulerSettingsForm } from "./SchedulerSettingsForm.js";
 import { AgentPreferencesForm } from "./AgentPreferencesForm.js";
 import { SettingsHelpControl } from "./SettingsHelpControl.js";
+import { AgentGroupsPanel } from "./AgentGroupsPanel.js";
 import { FolderIcon, GearIcon, HomeIcon } from "./icons.js";
 
 /**
@@ -150,14 +151,7 @@ export function SettingsView({
 
       <section role="tabpanel" id="settings-panel-groups" aria-labelledby="settings-tab-groups" hidden={activeTab !== "groups"}>
         <h3 id="settings-groups-heading">Agent groups</h3>
-        <p className="muted">
-          Agent groups describe vault-owned team topology: which agents belong together for skills and fallback
-          ordering. Groups live in <code>agent-groups/</code> in the vault.
-        </p>
-        <p className="muted">
-          Group management is not available yet; there is nothing to configure here in this update. Today you can
-          manage groups with the <code>piren group</code> command line tool.
-        </p>
+        <AgentGroupsPanel token={token} onUnauthorized={onUnauthorized} />
       </section>
     </div>
   );
