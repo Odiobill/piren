@@ -370,9 +370,9 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 });
 
 describe("ADR-0033: release artifact and public-surface guards", () => {
-  it("package version is the unpublished 0.2.0-internal.16 local pilot", () => {
+  it("package version is the unpublished 0.2.0-internal.17 local pilot", () => {
     const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
-    expect(pkg.version).toBe("0.2.0-internal.16");
+    expect(pkg.version).toBe("0.2.0-internal.17");
   });
 
   it("does not add a pi runtime dependency to the package", () => {
