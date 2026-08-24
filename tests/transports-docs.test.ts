@@ -74,9 +74,9 @@ describe("transport operator docs (0.1.6)", () => {
     expect(CONFIGURATION).toContain("allowed_dm_user_ids");
   });
 
-  it("keeps per_turn the documented context-injection default with the history caveat", () => {
-    expect(CONFIGURATION).toContain("The default remains `per_turn`");
+  it("keeps session_start_only the documented context-injection core default with the history caveat (CI-1)", () => {
+    expect(CONFIGURATION).toMatch(/core default `session_start_only`/);
     expect(CONFIGURATION).toMatch(/session_start_only` bounds only the repeated Piren-context copies/);
-    expect(CONFIGURATION).not.toMatch(/default\s*(is|:|=)?\s*`?session_start_only/i);
+    expect(CONFIGURATION).not.toMatch(/default remains `per_turn`/i);
   });
 });

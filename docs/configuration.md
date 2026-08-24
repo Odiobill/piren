@@ -131,16 +131,16 @@ Context injection is configured per agent:
 
 ```yaml
 context_injection:
-  mode: per_turn            # default; inject the Piren context on every prompt
-  # mode: session_start_only # inject once per session instead
+  mode: session_start_only # core default; inject once per session start
+  # mode: per_turn         # inject on every prompt instead (explicit declaration required)
 ```
 
 The Piren context (agent identity, steward directives, SOUL.md, tool catalog, skills catalog) is injected as a visible `piren-context` message that persists in the session transcript.
-With the default `per_turn`, it is injected on every prompt and each copy accumulates in the transcript.
-With `session_start_only`, it is injected only on the first prompt after session startup, `/new`, `/resume`, `/fork`, or reload, and not on later prompts in that session; directive or SOUL.md edits take effect after the next session restart or resume.
-The injected content and message shape are identical in both modes — only the timing changes. `session_start_only` bounds only the repeated Piren-context copies; the ordinary conversation history of the session still accumulates normally. The default remains `per_turn`. The preference lives in `team/<agent>/config.yml`; the Workbench Settings page offers a typed workflow that edits the same file through the existing parse contract.
+With the core default `session_start_only`, it is injected only on the first prompt after session startup, `/new`, `/resume`, `/fork`, or reload, and not on later prompts in that session; directive or SOUL.md edits take effect after the next session restart or resume.
+With explicit `per_turn`, it is injected on every prompt and each copy accumulates in the transcript.
+The injected content and message shape are identical in both modes; only the timing changes. `session_start_only` bounds only the repeated Piren-context copies; the ordinary conversation history of the session still accumulates normally. The preference lives in `team/<agent>/config.yml`; the Workbench Settings page offers a typed workflow that edits the same file through the existing parse contract, with an empty option labelled truthfully `Default (session_start_only)` that writes nothing.
 
-An absent `context_injection` block means `per_turn` with no warning. An unknown mode or a non-map block falls back to `per_turn` with a visible startup warning, and `piren doctor` reports a `context-injection` warning for the affected agent (doctor assesses agent config only, never the environment override). `piren_status` reports the resolved mode as `context_injection: <mode>`.
+An absent `context_injection` block means the core default `session_start_only` with no warning; agents that need every-turn injection must declare `mode: per_turn` explicitly. An unknown mode or a non-map block falls back to `session_start_only` with a visible startup warning, and `piren doctor` reports a `context-injection` warning for the affected agent (doctor assesses agent config only, never the environment override). `piren_status` reports the resolved mode as `context_injection: <mode>`.
 
 For a single-process override, `PIREN_CONTEXT_INJECTION=per_turn|session_start_only` overrides the agent-local value; an invalid override value falls back to the configured value with a warning.
 
@@ -245,18 +245,17 @@ The device-local scheduler is **disabled by default** and configured under `sche
 
 ```yaml
 scheduler:
-  enabled: true               # master gate (default false)
   automation:
-    inbox_tasks: true         # default false, even when cron classes are on
-    agent_cron: true          # default false
-    script_cron: true         # default false
+    inbox_tasks: true         # sole inbox gate (default false)
+    agent_cron: true          # sole agent-cron gate (default false)
+    script_cron: true         # sole script-cron gate (default false)
   poll_interval_seconds: 30
   stale_after_seconds: 300
   max_concurrent_agents: 1
   device_id: workstation      # optional; absent -> sanitized hostname
 ```
 
-Absent or malformed values fail closed. An established legacy block with legacy keys but no `enabled` key resolves effective `enabled: true` with a read-only migration notice until an explicit confirmed write materializes it. `piren scheduler configure` is the guided interactive writer (current-state display, preview, confirmation, atomic write; never starts anything). The Workbench Settings page offers the same typed fields over the same atomic, fail-closed write discipline; saving never installs, starts, or ticks anything. See [scheduler.md](scheduler.md) for the full semantics, including the bounded `piren scheduler --once --force` override (master and inbox gates only, one tick, never persisted).
+Absent or malformed class values resolve disabled (fail closed). A retired `scheduler.enabled` key is never a gate: `true` is inert-to-ignore, and `false` or a malformed value gates every class off until an operator-confirmed `piren scheduler configure` migration removes the stale key; Settings and doctor report that state read-only and never migrate it. Supervision stays separate: a running scheduler with every class disabled is an inert supervisor. `piren scheduler configure` is the guided interactive writer (current-state display, preview, confirmation, atomic write; never starts anything). The Workbench Settings page offers the same typed fields over the same atomic, fail-closed write discipline; saving never installs, starts, or ticks anything. See [scheduler.md](scheduler.md) for the full semantics, including the non-persistent `piren scheduler --once --force` override (a disabled inbox automation class only, one tick, never cron, never the legacy gate).
 
 ## Environment variables
 

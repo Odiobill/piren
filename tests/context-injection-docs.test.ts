@@ -3,16 +3,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Operator-docs contract for the context-injection runtime preference (C3).
- * Prevents stale claims: the exact YAML schema, the per_turn default, the
- * session_start_only semantics, the PIREN_CONTEXT_INJECTION measurement
- * override, the invalid-value fallback, and piren_status visibility must be
- * documented, and the docs must never claim session_start_only is the
- * default. The Workbench presentation is contracted to the delivered typed
- * Settings workflow over the same vault-owned team/<agent>/config.yml file
- * (0.2.0 scope amendment section 5.1): never a live Pi-session control, a
- * browser-persisted setting, a generic editor, a provider-credential
- * workflow, or an alternative authority store.
+ * Operator-docs contract for the context-injection runtime preference (C3,
+ * CI-1 default flip). Prevents stale claims: the exact YAML schema, the
+ * session_start_only core default, the explicit per_turn opt-in, the
+ * PIREN_CONTEXT_INJECTION measurement override, the invalid-value fallback,
+ * and piren_status visibility must be documented, and the docs must never
+ * claim per_turn is the default any more. The Workbench presentation is
+ * contracted to the delivered typed Settings workflow over the same
+ * vault-owned team/<agent>/config.yml file (0.2.0 scope amendment section
+ * 5.1): never a live Pi-session control, a browser-persisted setting, a
+ * generic editor, a provider-credential workflow, or an alternative
+ * authority store.
  */
 
 const root = process.cwd();
@@ -31,8 +32,9 @@ describe("context-injection operator docs", () => {
     expect(CONFIGURATION).toContain("team/<agent>/config.yml");
   });
 
-  it("documents per_turn as the default", () => {
-    expect(CONFIGURATION).toMatch(/default[^\n]*per_turn|per_turn[^\n]*default/i);
+  it("documents session_start_only as the core default with an explicit per_turn opt-in (CI-1)", () => {
+    expect(CONFIGURATION).toMatch(/core default `session_start_only`/);
+    expect(CONFIGURATION).toMatch(/declare `mode: per_turn` explicitly/);
   });
 
   it("documents session reload/new/resume as the freshness boundary", () => {
@@ -50,9 +52,9 @@ describe("context-injection operator docs", () => {
     expect(CONFIGURATION).toMatch(/piren_status[^\n]*context_injection|context_injection[^\n]*piren_status/i);
   });
 
-  it("never claims session_start_only is the default", () => {
-    expect(CONFIGURATION).not.toMatch(/default\s*(is|:|=)?\s*`?session_start_only/i);
-    expect(CONFIGURATION).not.toMatch(/session_start_only[^\n]*\bis the default\b/i);
+  it("never claims per_turn is the default (CI-1 flipped it)", () => {
+    expect(CONFIGURATION).not.toMatch(/default remains `per_turn`/i);
+    expect(CONFIGURATION).not.toMatch(/mode: per_turn\s*#\s*default/);
   });
 
   it("documents the preference as vault-owned, with only the delivered typed Settings workflow in the Workbench", () => {
