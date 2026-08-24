@@ -624,66 +624,131 @@ describe("AgentPreferencesForm: roster + fallback confirmation (W6)", () => {
     },
   };
 
+  function renderPrefs(): void {
+    // A previous render inside the same test must be unmounted before the
+    // file-level query helpers can stay unambiguous.
+    if (root !== undefined) {
+      act(() => root.unmount());
+      container?.remove();
+    }
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root.render(createElement(AgentPreferencesForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+  }
+
+  async function chooseAgent(name: string): Promise<void> {
+    const radio = container.querySelector<HTMLInputElement>(`.settings-agent-card input[value="${name}"]`);
+    if (radio === null) throw new Error(`agent card missing: ${name}`);
+    await act(async () => radio.click());
+    await flush();
+  }
+
   beforeEach(() => {
     vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "kimi", online: true }, { name: "ghost", online: false }] });
     vi.mocked(fetchAgentPreferences).mockResolvedValue(PREF);
   });
 
-  it("lists only locally-runnable agents and requires confirmation for an enabled auto-switch edit", async () => {
-    vi.mocked(saveAgentModelFallback).mockResolvedValue();
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    await act(async () => {
-      root.render(createElement(AgentPreferencesForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
-    });
+  it("ST-3 roster: runnable-only radio cards load the projection; offline agents excluded; empty roster is honest", async () => {
+    renderPrefs();
     await flush();
-    // Only runnable agents appear in the select.
-    const options = Array.from(container.querySelectorAll(".settings-agent-select option")).map((o) => o.getAttribute("value"));
-    expect(options).toEqual(["", "kimi"]);
+    // Radio group with ONLY the runnable agent.
+    const group = container.querySelector('[role="radiogroup"]');
+    expect(group).not.toBeNull();
+    const values = Array.from(container.querySelectorAll<HTMLInputElement>('.settings-agent-cards input[type="radio"]')).map((r) => r.value);
+    expect(values).toEqual(["kimi"]);
+    // Selecting a card loads the projection.
+    await chooseAgent("kimi");
+    expect(fetchAgentPreferences).toHaveBeenCalledWith("kimi", "T");
 
-    // Select the agent and load preferences.
-    const select = container.querySelector(".settings-agent-select") as HTMLSelectElement;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, "kimi");
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    // No runnable agents: honest non-action state with CLI guidance.
+    vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "ghost", online: false }] });
+    renderPrefs();
     await flush();
-
-    // Editing models while auto-switch stays enabled needs the confirm checkbox.
-    const fallbackSave = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save fallback") as HTMLButtonElement;
-    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flush();
-    expect(container.textContent).toMatch(/confirm/i);
-    expect(saveAgentModelFallback).not.toHaveBeenCalled();
-
-    const confirm = inputByClass("settings-agent-confirm");
-    setChecked(confirm, true);
-    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flush();
-    expect(saveAgentModelFallback).toHaveBeenCalledWith("kimi", expect.anything(), true, "T");
+    expect(container.textContent).toMatch(/no locally runnable agents/i);
+    expect(container.textContent).toMatch(/piren|config/i);
   });
 
-  it("disabling auto-switch never requires confirmation", async () => {
+  it("ST-3 fallback: ordered editor rows reorder and save the whole visible order; enabled auto-switch needs explicit modal confirm", async () => {
     vi.mocked(saveAgentModelFallback).mockResolvedValue();
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    await act(async () => {
-      root.render(createElement(AgentPreferencesForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
-    });
+    renderPrefs();
     await flush();
-    const select = container.querySelector(".settings-agent-select") as HTMLSelectElement;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(select, "kimi");
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await chooseAgent("kimi");
+
+    // The stored model appears as an ordered row; add a second one.
+    expect(document.querySelectorAll(".settings-agent-fallback-row").length).toBe(1);
+    const add = inputByClass("settings-agent-fallback-add");
+    setInput(add, "openai/gpt-4o");
+    act(() => container.querySelector(".settings-agent-fallback-add-button")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    let rows = Array.from(container.querySelectorAll(".settings-agent-fallback-model")).map((n) => n.textContent);
+    expect(rows).toEqual(["openrouter/kimi-k3", "openai/gpt-4o"]);
+
+    // Move the second row up: visible order becomes saved order.
+    act(() => container.querySelector(".settings-agent-fallback-down")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    rows = Array.from(container.querySelectorAll(".settings-agent-fallback-model")).map((n) => n.textContent);
+    expect(rows).toEqual(["openai/gpt-4o", "openrouter/kimi-k3"]);
+
+    // Save with auto-switch still enabled: modal opens, NOTHING writes yet.
+    const fallbackSave = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save fallback") as HTMLButtonElement;
+    fallbackSave.focus();
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(saveAgentModelFallback).not.toHaveBeenCalled();
+
+    // Escape cancels: no write, focus returns to the save button.
+    act(() => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await flush();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(saveAgentModelFallback).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(fallbackSave);
+
+    // Confirm executes the ORIGINAL pending save with confirmAutoSwitch:true.
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    act(() => container.querySelector(".settings-agent-confirm-save")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveAgentModelFallback).toHaveBeenCalledWith(
+      "kimi",
+      { models: ["openai/gpt-4o", "openrouter/kimi-k3"] },
+      true,
+      "T",
+    );
+  });
+
+  it("ST-3 fallback: disabled auto-switch saves directly without any dialog; remove control updates the list", async () => {
+    vi.mocked(saveAgentModelFallback).mockResolvedValue();
+    renderPrefs();
+    await flush();
+    await chooseAgent("kimi");
     setChecked(inputByClass("settings-agent-autoswitch"), false);
+
+    // Remove the only row -> validation error, no write.
+    act(() => container.querySelector(".settings-agent-fallback-remove")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     const fallbackSave = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save fallback") as HTMLButtonElement;
     await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
-    expect(saveAgentModelFallback).toHaveBeenCalledWith("kimi", { models: ["openrouter/kimi-k3"], autoSwitch: false }, false, "T");
+    expect(container.textContent).toMatch(/provider\/modelId/i);
+    expect(saveAgentModelFallback).not.toHaveBeenCalled();
+
+    // Re-add and save: no dialog for a disabled declaration.
+    setInput(inputByClass("settings-agent-fallback-add"), "openai/gpt-4o");
+    act(() => container.querySelector(".settings-agent-fallback-add-button")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => fallbackSave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(saveAgentModelFallback).toHaveBeenCalledWith("kimi", { models: ["openai/gpt-4o"], autoSwitch: false }, false, "T");
+  });
+
+  it("ST-3 context: the Default option label names the core default exactly", async () => {
+    renderPrefs();
+    await flush();
+    await chooseAgent("kimi");
+    const modeSelect = container.querySelector(".settings-agent-context-mode") as HTMLSelectElement;
+    expect(modeSelect.options[0]?.textContent).toBe("Default (session_start_only)");
   });
 });
 

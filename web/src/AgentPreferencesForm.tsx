@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchAgentPreferences,
   fetchConversationAgents,
@@ -16,17 +16,18 @@ import {
   isValidThinkingLevel,
   type AgentPreferencesProjection,
 } from "./settings-transport";
-import { SaveIcon } from "./icons";
+import { ArrowDownIcon, ArrowUpIcon, CheckIcon, PlusIcon, SaveIcon, XIcon } from "./icons";
 
 /**
- * W6 (0.2.0 amendment §5/§5.1): the typed vault-owned agent-preference
- * Settings workflow. The agent is chosen ONLY from the existing locally-
- * runnable roster. Each family edits its own closed declaration and sends
- * only changed fields (preserving unprompted/unknown keys via the W4 merge).
- * Durable future-launch preferences only — saving never alters a live Pi
- * session. Enabling model-fallback auto-switch requires a separate explicit
- * confirmation. No provider catalog/preflight contact, no storage, no
- * service action.
+ * W6 + ST-3 (Settings contract §2.4/§4.4): the typed vault-owned agent
+ * preference Settings workflow. The agent is chosen ONLY from the existing
+ * locally-runnable roster via an accessible radio group of dashboard cards;
+ * selection loads the redacted projection and never contacts or alters a
+ * live session. The model-fallback editor is an ordered list with up/down/
+ * remove controls; the saved order is the visible order. Enabling auto-switch
+ * requires an explicit confirmation modal before anything writes. Each family
+ * sends only changed fields (W4 merge). No provider catalog contact, no
+ * storage, no service action.
  */
 
 type Roster = { agents: { name: string; online: boolean }[] };
@@ -55,22 +56,23 @@ export function AgentPreferencesForm({
   const [agent, setAgent] = useState<string | null>(null);
   const [read, setRead] = useState<ReadState>({ phase: "idle" });
 
-  // Model preference fields.
   const [modelId, setModelId] = useState("");
   const [thinking, setThinking] = useState("");
-  // Fallback fields.
   const [autoSwitch, setAutoSwitch] = useState(true);
-  const [modelsText, setModelsText] = useState("");
-  // Context injection.
+  const [models, setModels] = useState<string[]>([]);
+  const [fallbackAdd, setFallbackAdd] = useState("");
   const [contextMode, setContextMode] = useState("");
-  // Self-improvement.
   const [autoNudge, setAutoNudge] = useState(false);
   const [reviewEnabled, setReviewEnabled] = useState(false);
   const [reviewIntervalTurns, setReviewIntervalTurns] = useState("");
   const [recentMessages, setRecentMessages] = useState("");
   const [timeoutMs, setTimeoutMs] = useState("");
 
-  const [confirmAutoSwitch, setConfirmAutoSwitch] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const pendingSaveRef = useRef<(() => void) | null>(null);
+  const confirmCancelRef = useRef<HTMLButtonElement>(null);
+  const fallbackSaveRef = useRef<HTMLButtonElement>(null);
+
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -100,7 +102,7 @@ export function AgentPreferencesForm({
   function loadAgent(nextAgent: string): void {
     setAgent(nextAgent);
     setRead({ phase: "loading" });
-    setConfirmAutoSwitch(false);
+    setConfirmOpen(false);
     setFieldError(null);
     setSaveError(null);
     setSaved(false);
@@ -112,7 +114,7 @@ export function AgentPreferencesForm({
           setModelId(p.model.id ?? "");
           setThinking(p.model.thinking ?? "");
           setAutoSwitch(p.modelFallback.autoSwitch ?? true);
-          setModelsText(p.modelFallback.models.join(", "));
+          setModels(p.modelFallback.models);
           setContextMode(p.contextInjection.mode ?? "");
           setAutoNudge(p.selfImprovement.autoNudge ?? false);
           setReviewEnabled(p.selfImprovement.reviewLoopEnabled ?? false);
@@ -134,14 +136,10 @@ export function AgentPreferencesForm({
 
   const runnable = (roster?.agents ?? []).filter((entry) => entry.online).map((entry) => entry.name);
 
-  function runSave(run: () => Promise<void>, confirm: boolean): void {
+  function runSave(run: () => Promise<void>): void {
     setFieldError(null);
     setSaveError(null);
     setSaved(false);
-    if (confirm && !confirmAutoSwitch) {
-      setFieldError("Please confirm the enabled auto-switch declaration before saving.");
-      return;
-    }
     setSaving(true);
     void run()
       .then(() => {
@@ -167,34 +165,77 @@ export function AgentPreferencesForm({
       if (modelId.trim() !== "" && modelId.trim() !== (initial.model.id ?? "")) patch.id = modelId.trim();
       if (thinking !== "" && thinking !== (initial.model.thinking ?? "")) patch.thinking = thinking;
     } else if (modelId.trim() !== "") patch.id = modelId.trim();
-    if (thinking !== "" && patch.thinking === undefined && read.phase !== "ready") patch.thinking = thinking;
     if (Object.keys(patch).length === 0) {
       setSaved(true);
       return;
     }
-    runSave(() => saveAgentModel(agent, patch, token), false);
+    runSave(() => saveAgentModel(agent, patch, token));
   }
 
-  function saveFallback(): void {
-    if (agent === null) return;
-    const trimmedModels = modelsText.trim();
-    if (trimmedModels === "") {
-      setFieldError("At least one fallback model is required.");
+  function requestSaveFallback(): void {
+    // ST-3: nothing writes until the explicit confirmation for an enabled
+    // auto-switch declaration.
+    if (autoSwitch) {
+      pendingSaveRef.current = performSaveFallback;
+      setConfirmOpen(true);
       return;
     }
-    const models = trimmedModels.split(",").map((m) => m.trim()).filter((m) => m !== "");
+    performSaveFallback();
+  }
+
+  function performSaveFallback(): void {
+    if (agent === null) return;
     if (models.length === 0 || models.some((m) => !isValidFallbackModelId(m))) {
       setFieldError("Each fallback model must be an exact provider/modelId string (for example openai/gpt-4o).");
       return;
     }
-    // The fallback declaration requires the models list; it is always sent
-    // as part of the closed declaration.
-    const patch: { autoSwitch?: boolean; models?: string[] } = { models };
+    const patch: { autoSwitch?: boolean; models?: string[] } = { models: [...models] };
     const initialAutoSwitch = read.phase === "ready" ? (read.projection.modelFallback.autoSwitch ?? true) : true;
     if (autoSwitch !== initialAutoSwitch) patch.autoSwitch = autoSwitch;
-    // The resulting auto-switch state is the form's checkbox; enabling it
-    // requires the explicit confirmation.
-    runSave(() => saveAgentModelFallback(agent, patch, autoSwitch, token), autoSwitch);
+    runSave(() => saveAgentModelFallback(agent, patch, autoSwitch, token));
+  }
+
+  function confirmPendingFallbackSave(): void {
+    setConfirmOpen(false);
+    pendingSaveRef.current?.();
+    pendingSaveRef.current = null;
+    fallbackSaveRef.current?.focus();
+  }
+
+  function cancelPendingFallbackSave(): void {
+    setConfirmOpen(false);
+    pendingSaveRef.current = null;
+    fallbackSaveRef.current?.focus();
+  }
+
+  function addFallbackModel(): void {
+    const value = fallbackAdd.trim();
+    if (value === "") return;
+    if (!isValidFallbackModelId(value)) {
+      setFieldError("Each fallback model must be an exact provider/modelId string (for example openai/gpt-4o).");
+      return;
+    }
+    if (models.includes(value)) {
+      setFieldError("That fallback model is already in the list.");
+      return;
+    }
+    setModels([...models, value]);
+    setFallbackAdd("");
+    setFieldError(null);
+  }
+
+  function moveFallbackModel(index: number, delta: -1 | 1): void {
+    const next = [...models];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return;
+    const swapped = next[index]!;
+    next[index] = next[target]!;
+    next[target] = swapped;
+    setModels(next);
+  }
+
+  function removeFallbackModel(index: number): void {
+    setModels(models.filter((_, i) => i !== index));
   }
 
   function saveContext(): void {
@@ -207,7 +248,7 @@ export function AgentPreferencesForm({
       setFieldError("Choose a valid context-injection mode.");
       return;
     }
-    runSave(() => saveAgentContextInjection(agent, contextMode as "per_turn" | "session_start_only", token), false);
+    runSave(() => saveAgentContextInjection(agent, contextMode as "per_turn" | "session_start_only", token));
   }
 
   function saveSelfImprovement(): void {
@@ -241,30 +282,41 @@ export function AgentPreferencesForm({
       setSaved(true);
       return;
     }
-    runSave(() => saveAgentSelfImprovement(agent, patch, token), false);
+    runSave(() => saveAgentSelfImprovement(agent, patch, token));
   }
 
   return (
     <li className="settings-family">
       <strong>Agent preferences</strong>
       <p className="muted">
-        Durable preferences for future agent launches, saved only through the agent-config parse contract. These are
-        not live-session controls and never alter a running conversation.
+        Durable future-launch preferences only. Saving never contacts an agent, never alters a running conversation,
+        and never restarts anything.
       </p>
       <div className="settings-form">
-        <label className="settings-field">
-          Agent (locally runnable)
-          <select className="settings-agent-select" value={agent ?? ""} onChange={(e) => loadAgent(e.target.value)}>
-            <option value="" disabled>
-              Choose an agent
-            </option>
-            {runnable.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <fieldset className="settings-agent-roster">
+          <legend>Choose an agent (locally runnable)</legend>
+          {(roster?.agents ?? []).filter((entry) => entry.online).length === 0 ? (
+            <p className="muted" role="status">
+              No locally runnable agents. Add an agent to allowed_agents in the local config with the piren command
+              line tool first.
+            </p>
+          ) : (
+            <div className="settings-agent-cards" role="radiogroup" aria-label="Locally runnable agents">
+              {runnable.map((name) => (
+                <label key={name} className={agent === name ? "settings-agent-card settings-agent-card-active" : "settings-agent-card"}>
+                  <input
+                    type="radio"
+                    name="settings-agent-roster"
+                    value={name}
+                    checked={agent === name}
+                    onChange={() => loadAgent(name)}
+                  />
+                  <span>{name}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </fieldset>
 
         {read.phase === "loading" && <p className="muted">Loading…</p>}
         {read.phase === "error" && <p className="muted" role="alert">{read.bounded}</p>}
@@ -299,30 +351,65 @@ export function AgentPreferencesForm({
             <section className="settings-agent-family" aria-label="Model fallback declaration">
               <strong>Model fallback declaration</strong>
               <p className="muted">
-                Already delivered: with an enabled declaration, the same agent continues on its declared fallback
-                models within the same live session after a fully settled, zero-side-effect provider error: ordered,
-                at-most-once, terminal on exhaustion. Explicit steward model selection disables it for the session.
+                With an enabled declaration, the same agent continues on its declared fallback models within the same
+                live session after a fully settled, zero-side-effect provider error: ordered, at most once each,
+                ending when the list is exhausted. Explicit steward model selection disables it for the session.
               </p>
               <label className="settings-field settings-field-checkbox">
                 <input className="settings-agent-autoswitch" type="checkbox" checked={autoSwitch} onChange={(e) => setAutoSwitch(e.target.checked)} />
                 Enable automatic switching
               </label>
-              <label className="settings-field">
-                Fallback models (comma-separated provider/modelId)
-                <input className="settings-agent-fallback-models" type="text" value={modelsText} onChange={(e) => setModelsText(e.target.value)} />
-              </label>
-              {autoSwitch && (
-                <label className="settings-field settings-field-checkbox">
-                  <input
-                    className="settings-agent-confirm"
-                    type="checkbox"
-                    checked={confirmAutoSwitch}
-                    onChange={(e) => setConfirmAutoSwitch(e.target.checked)}
-                  />
-                  I confirm the bounded same-agent, same-live-session auto-switch continuation described above.
-                </label>
+              {/* ST-3: ordered fallback editor; visible order is saved order. */}
+              {models.length > 0 && (
+                <ol className="settings-agent-fallback-list">
+                  {models.map((model, index) => (
+                    <li key={`${model}-${index}`} className="settings-agent-fallback-row">
+                      <span className="settings-agent-fallback-model">{model}</span>
+                      <button
+                        type="button"
+                        className="settings-agent-fallback-up"
+                        aria-label={`Move ${model} up`}
+                        disabled={index === 0}
+                        onClick={() => moveFallbackModel(index, -1)}
+                      >
+                        <ArrowUpIcon size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-agent-fallback-down"
+                        aria-label={`Move ${model} down`}
+                        disabled={index === models.length - 1}
+                        onClick={() => moveFallbackModel(index, 1)}
+                      >
+                        <ArrowDownIcon size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-agent-fallback-remove"
+                        aria-label={`Remove ${model}`}
+                        onClick={() => removeFallbackModel(index)}
+                      >
+                        <XIcon size={13} />
+                      </button>
+                    </li>
+                  ))}
+                </ol>
               )}
-              <button type="button" className="settings-form-save button" disabled={saving} onClick={saveFallback}>
+              <div className="settings-agent-fallback-add-row">
+                <input
+                  className="settings-agent-fallback-add"
+                  type="text"
+                  placeholder="provider/modelId"
+                  aria-label="Add fallback model"
+                  value={fallbackAdd}
+                  onChange={(e) => setFallbackAdd(e.target.value)}
+                />
+                <button type="button" className="settings-agent-fallback-add-button" aria-label="Add fallback model" onClick={addFallbackModel}>
+                  <PlusIcon size={13} />
+                  Add
+                </button>
+              </div>
+              <button ref={fallbackSaveRef} type="button" className="settings-form-save button" disabled={saving} onClick={requestSaveFallback}>
                 <SaveIcon size={13} />
                 Save fallback
               </button>
@@ -333,7 +420,7 @@ export function AgentPreferencesForm({
               <label className="settings-field">
                 Injection mode
                 <select className="settings-agent-context-mode" value={contextMode} onChange={(e) => setContextMode(e.target.value)}>
-                  <option value="">Default</option>
+                  <option value="">Default (session_start_only)</option>
                   <option value="per_turn">per_turn</option>
                   <option value="session_start_only">session_start_only</option>
                 </select>
@@ -377,6 +464,45 @@ export function AgentPreferencesForm({
         {saveError !== null && <p className="settings-form-save-error" role="alert">{saveError}</p>}
         {saved && <p className="settings-form-saved" role="status">Saved.</p>}
       </div>
+
+      {confirmOpen && (
+        <div className="settings-help-backdrop">
+          <div
+            className="settings-help-dialog card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-autoswitch-confirm-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") cancelPendingFallbackSave();
+            }}
+          >
+            <header className="settings-help-header">
+              <h4 id="settings-autoswitch-confirm-title">Enable automatic switching?</h4>
+              <button ref={confirmCancelRef} type="button" className="settings-help-close" aria-label="Close without saving" autoFocus onClick={cancelPendingFallbackSave}>
+                <XIcon size={14} />
+              </button>
+            </header>
+            <p>Saving will leave automatic switching enabled:</p>
+            <ul>
+              <li>The same agent continues within its same live session after a fully settled, zero-side-effect provider error.</li>
+              <li>Fallback models are tried in order, at most once each.</li>
+              <li>The rotation ends when the list is exhausted.</li>
+              <li>Your explicit model selection disables it for the session.</li>
+            </ul>
+            <p className="muted">Nothing has been written yet.</p>
+            <div className="settings-agent-confirm-actions">
+              <button type="button" className="settings-agent-confirm-save button" onClick={confirmPendingFallbackSave}>
+                <CheckIcon size={13} />
+                Confirm and save
+              </button>
+              <button type="button" className="settings-agent-confirm-cancel button" onClick={cancelPendingFallbackSave}>
+                <XIcon size={13} />
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </li>
   );
 }

@@ -75,6 +75,7 @@
     "tests/web-wux-c-safe-markdown-vault-mode.test.ts",
     "tests/web-wux-c-context-spacing.test.ts",
     "tests/web-wux-d-edge-affordances.test.ts",
-    "tests/web-st-2a-settings-layout.test.ts"
+    "tests/web-st-2a-settings-layout.test.ts",
+    "tests/web-st-3-agent-settings-layout.test.ts"
   ]
 }

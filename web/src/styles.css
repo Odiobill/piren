@@ -2760,3 +2760,87 @@ code {
     border: 1px solid transparent;
   }
 }
+
+/* ST-3 — dashboard agent settings: roster radio cards, ordered fallback
+   editor, confirmation actions. Presentation only. */
+.settings-agent-roster {
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0 0 10px;
+}
+
+.settings-agent-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-agent-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.settings-agent-card-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.settings-agent-card:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.settings-agent-fallback-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.settings-agent-fallback-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
+
+.settings-agent-fallback-model {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-agent-fallback-row button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 3px;
+  cursor: pointer;
+}
+
+.settings-agent-fallback-row button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.settings-agent-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}

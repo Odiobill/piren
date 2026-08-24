@@ -463,3 +463,43 @@ export function ClockIcon({ size = 13 }: IconProps): ReactElement {
     </svg>
   );
 }
+
+/** ST-3: up arrow glyph for ordered fallback list rows. */
+export function ArrowUpIcon({ size = 14 }: IconProps): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 19V5" />
+      <path d="m5 12 7-7 7 7" />
+    </svg>
+  );
+}
+
+/** ST-3: down arrow glyph for ordered fallback list rows. */
+export function ArrowDownIcon({ size = 14 }: IconProps): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
+    </svg>
+  );
+}

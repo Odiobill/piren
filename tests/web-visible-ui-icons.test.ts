@@ -344,13 +344,11 @@ describe("every rendered Workbench button has a decorative SVG icon (WUX-A)", ()
       root = createRoot(container);
       await mount(element);
       if (name === "AgentPreferencesForm") {
-        // Save controls appear only after an agent is chosen from the roster.
+        // ST-3: save controls appear only after a roster radio card is chosen.
         await act(async () => {
-          const select = container.querySelector<HTMLSelectElement>(".settings-agent-select");
-          if (select === null) throw new Error("agent select missing");
-          const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")?.set;
-          setter?.call(select, "dipu");
-          select.dispatchEvent(new Event("change", { bubbles: true }));
+          const radio = container.querySelector<HTMLInputElement>('input[name="settings-agent-roster"]');
+          if (radio === null) throw new Error("agent radio missing");
+          radio.click();
         });
         await flush();
       }

@@ -92,9 +92,10 @@ describe("SettingsView (S1 authority-first page)", () => {
     expect(installation?.querySelector(".settings-scheduler-enabled")).toBeNull();
     expect(installation?.querySelector(".settings-scheduler-inbox")).not.toBeNull();
     // The vault-owned agent preferences workflow lives under Agents.
-    expect(agents?.querySelector(".settings-agent-select")).not.toBeNull();
-    // No cross-placement.
-    expect(installation?.querySelector(".settings-agent-select")).toBeNull();
+    // ST-3: the agent picker is now a radio-card group, not a select.
+    expect(agents?.querySelector(".settings-agent-cards")).not.toBeNull();
+    expect(installation?.querySelector(".settings-agent-cards")).toBeNull();
+    expect(agents?.querySelector(".settings-agent-select")).toBeNull();
     expect(agents?.querySelectorAll(".settings-form-token").length).toBe(0);
     expect(agents?.querySelector(".settings-scheduler-enabled")).toBeNull();
   });
