@@ -4,14 +4,16 @@ import { parseOptionalPositiveInt, type SchedulerSettingsProjection } from "./se
 import { SaveIcon } from "./icons";
 
 /**
- * W6 (0.2.0 amendment §2/§5/§5.1): the typed scheduler Settings workflow.
- * The form edits only the closed scheduler inventory (master gate, the three
- * automation classes, poll/stale/concurrency, device id); it preserves
- * unprompted/unknown fields by sending only fields the steward changed. It
- * never starts/installs/stops/reloads the scheduler, ticks, refreshes
- * heartbeats, or claims/spawns work — config affects future scheduler
- * execution only. C6 remains explicit (inbox_tasks:false). No storage, no
- * service action.
+ * W6 (0.2.0 amendment §2/§5/§5.1; ST-1A): the typed scheduler Settings
+ * workflow. The form edits only the closed scheduler inventory (the three
+ * automation classes, poll/stale/concurrency, device id) — the retired
+ * `scheduler.enabled` master gate is not a Settings control. A legacy-GATED
+ * projection refuses every save with bounded guidance toward `piren scheduler
+ * configure` (Settings never migrates or silently cleans up); a legacy-
+ * IGNORED projection shows a bounded inert-key notice but saves normally.
+ * It preserves unprompted/unknown fields by sending only fields the steward
+ * changed. It never starts/installs/stops/reloads the scheduler, ticks,
+ * refreshes heartbeats, or claims/spawns work. No storage, no service action.
  */
 
 type ReadState =
@@ -35,7 +37,6 @@ export function SchedulerSettingsForm({
   onValidated: () => void;
 }) {
   const [read, setRead] = useState<ReadState>({ phase: "loading" });
-  const [enabled, setEnabled] = useState(false);
   const [inboxTasks, setInboxTasks] = useState(false);
   const [agentCron, setAgentCron] = useState(false);
   const [scriptCron, setScriptCron] = useState(false);
@@ -56,7 +57,6 @@ export function SchedulerSettingsForm({
         onValidated();
         if (result.available) {
           setRead({ phase: "ready", projection: result.value });
-          setEnabled(result.value.enabled);
           setInboxTasks(result.value.automation.inboxTasks);
           setAgentCron(result.value.automation.agentCron);
           setScriptCron(result.value.automation.scriptCron);
@@ -94,6 +94,8 @@ export function SchedulerSettingsForm({
     setSaveError(null);
     setSaved(false);
     if (read.phase !== "ready") return;
+    // ST-1A: a gated legacy block is never migrated or cleaned up here.
+    if (read.projection.legacyMasterGate === "gated") return;
     const initial = read.projection;
 
     const poll = parseNumeric(pollText, "poll interval");
@@ -105,7 +107,6 @@ export function SchedulerSettingsForm({
     }
 
     const patch: {
-      enabled?: boolean;
       automation?: { inbox_tasks?: boolean; agent_cron?: boolean; script_cron?: boolean };
       pollIntervalSeconds?: number;
       staleAfterSeconds?: number;
@@ -113,7 +114,6 @@ export function SchedulerSettingsForm({
       deviceId?: string | null;
     } = {};
 
-    if (enabled !== initial.enabled) patch.enabled = enabled;
     const automation: { inbox_tasks?: boolean; agent_cron?: boolean; script_cron?: boolean } = {};
     if (inboxTasks !== initial.automation.inboxTasks) automation.inbox_tasks = inboxTasks;
     if (agentCron !== initial.automation.agentCron) automation.agent_cron = agentCron;
@@ -162,42 +162,97 @@ export function SchedulerSettingsForm({
             the scheduler. Fresh installs resolve everything off; the interactive conversation workflow still requires
             the inbox-task class to stay off.
           </p>
+          {read.projection.legacyMasterGate === "gated" && (
+            <p className="settings-scheduler-legacy-gate muted" role="alert">
+              This config has a legacy retired scheduler gate. Settings cannot migrate it: all automation classes are
+              held off until you run `piren scheduler configure` and confirm the migration there. Saving is disabled.
+            </p>
+          )}
+          {read.projection.legacyMasterGate === "ignored" && (
+            <p className="settings-scheduler-legacy-inert muted">
+              This config still carries a retired scheduler gate key; it is ignored and never adds execution. It is
+              not removed here: run `piren scheduler configure` to clean it up.
+            </p>
+          )}
           <label className="settings-field settings-field-checkbox">
-            <input className="settings-scheduler-enabled" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-            Scheduler enabled
-          </label>
-          <label className="settings-field settings-field-checkbox">
-            <input className="settings-scheduler-inbox" type="checkbox" checked={inboxTasks} onChange={(e) => setInboxTasks(e.target.checked)} />
+            <input
+              className="settings-scheduler-inbox"
+              type="checkbox"
+              checked={inboxTasks}
+              disabled={read.projection.legacyMasterGate === "gated"}
+              onChange={(e) => setInboxTasks(e.target.checked)}
+            />
             Inbox task automation
           </label>
           <label className="settings-field settings-field-checkbox">
-            <input className="settings-scheduler-agent-cron" type="checkbox" checked={agentCron} onChange={(e) => setAgentCron(e.target.checked)} />
+            <input
+              className="settings-scheduler-agent-cron"
+              type="checkbox"
+              checked={agentCron}
+              disabled={read.projection.legacyMasterGate === "gated"}
+              onChange={(e) => setAgentCron(e.target.checked)}
+            />
             Agent cron automation
           </label>
           <label className="settings-field settings-field-checkbox">
-            <input className="settings-scheduler-script-cron" type="checkbox" checked={scriptCron} onChange={(e) => setScriptCron(e.target.checked)} />
+            <input
+              className="settings-scheduler-script-cron"
+              type="checkbox"
+              checked={scriptCron}
+              disabled={read.projection.legacyMasterGate === "gated"}
+              onChange={(e) => setScriptCron(e.target.checked)}
+            />
             Script cron automation
           </label>
           <label className="settings-field">
             Poll interval (seconds)
-            <input className="settings-scheduler-poll" type="text" value={pollText} onChange={(e) => setPollText(e.target.value)} />
+            <input
+              className="settings-scheduler-poll"
+              type="text"
+              value={pollText}
+              disabled={read.projection.legacyMasterGate === "gated"}
+              onChange={(e) => setPollText(e.target.value)}
+            />
           </label>
           <label className="settings-field">
             Stale-after (seconds)
-            <input className="settings-scheduler-stale" type="text" value={staleText} onChange={(e) => setStaleText(e.target.value)} />
+            <input
+              className="settings-scheduler-stale"
+              type="text"
+              value={staleText}
+              disabled={read.projection.legacyMasterGate === "gated"}
+              onChange={(e) => setStaleText(e.target.value)}
+            />
           </label>
           <label className="settings-field">
             Max concurrent agents
-            <input className="settings-scheduler-concurrency" type="text" value={concurrencyText} onChange={(e) => setConcurrencyText(e.target.value)} />
+            <input
+              className="settings-scheduler-concurrency"
+              type="text"
+              value={concurrencyText}
+              disabled={read.projection.legacyMasterGate === "gated"}
+              onChange={(e) => setConcurrencyText(e.target.value)}
+            />
           </label>
           <label className="settings-field">
             Device id
-            <input className="settings-scheduler-device" type="text" value={deviceText} onChange={(e) => setDeviceText(e.target.value)} />
+            <input
+              className="settings-scheduler-device"
+              type="text"
+              value={deviceText}
+              disabled={read.projection.legacyMasterGate === "gated"}
+              onChange={(e) => setDeviceText(e.target.value)}
+            />
           </label>
           {fieldError !== null && <p className="settings-form-error" role="alert">{fieldError}</p>}
           {saveError !== null && <p className="settings-form-save-error" role="alert">{saveError}</p>}
           {saved && <p className="settings-form-saved" role="status">Saved.</p>}
-          <button type="button" className="settings-form-save button" disabled={saving} onClick={handleSave}>
+          <button
+            type="button"
+            className="settings-form-save button"
+            disabled={saving || read.projection.legacyMasterGate === "gated"}
+            onClick={handleSave}
+          >
             <SaveIcon size={13} />
             {saving ? "Saving…" : "Save"}
           </button>

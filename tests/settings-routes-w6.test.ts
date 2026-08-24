@@ -90,10 +90,28 @@ describe("W6 scheduler settings route", () => {
       expect(res.status).toBe(200);
       const json = (await res.json()) as Record<string, unknown>;
       expect(json.available).toBe(true);
-      expect((json.scheduler as Record<string, unknown>).enabled).toBe(true);
+      expect((json.scheduler as Record<string, unknown>).legacyMasterGate).toBe("ignored");
+      expect((json.scheduler as Record<string, unknown>)).not.toHaveProperty("enabled");
       expect((json.scheduler as Record<string, unknown>).pollIntervalSeconds).toBe(15);
       expect((json.scheduler as Record<string, unknown>).deviceId).toBe("thor");
       expect((json.scheduler as Record<string, unknown>).staleAfterSeconds).toBeNull();
+    } finally {
+      await close();
+    }
+  });
+
+  it("rejects an intent carrying the retired enabled key as unknown (ST-1A)", async () => {
+    const { base, files, close } = await startServer();
+    try {
+      const res = await post(base, "/api/settings/scheduler", {
+        surface: "local",
+        family: "scheduler",
+        block: { enabled: true },
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as Record<string, unknown>).error).toMatch(/[Uu]nknown field/);
+      // The config is byte-for-byte unchanged (no write, no cleanup).
+      expect(files.get("/tmp/config.yml")).toBe(LOCAL);
     } finally {
       await close();
     }

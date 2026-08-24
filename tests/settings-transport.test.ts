@@ -166,12 +166,12 @@ describe("closed write intent builders (never include unknown fields)", () => {
 });
 
 describe("W6 scheduler settings read parser", () => {
-  it("parses the redacted scheduler projection incl. poll/stale/concurrency/device", () => {
+  it("parses the redacted scheduler projection incl. closed legacyMasterGate state (ST-1A)", () => {
     const read = parseSchedulerSettingsRead({
       available: true,
       scheduler: {
         present: true,
-        enabled: true,
+        legacyMasterGate: "ignored",
         automation: { inboxTasks: true, agentCron: false, scriptCron: false },
         deviceIdConfigured: true,
         pollIntervalSeconds: 15,
@@ -184,7 +184,7 @@ describe("W6 scheduler settings read parser", () => {
       available: true,
       value: {
         present: true,
-        enabled: true,
+        legacyMasterGate: "ignored",
         automation: { inboxTasks: true, agentCron: false, scriptCron: false },
         deviceIdConfigured: true,
         pollIntervalSeconds: 15,
@@ -197,7 +197,22 @@ describe("W6 scheduler settings read parser", () => {
 
   it("fails closed on malformed scheduler projections", () => {
     expect(() => parseSchedulerSettingsRead({ available: true })).toThrow();
-    expect(() => parseSchedulerSettingsRead({ available: true, scheduler: { enabled: "yes" } })).toThrow();
+    expect(() => parseSchedulerSettingsRead({ available: true, scheduler: { enabled: true } })).toThrow();
+    expect(() =>
+      parseSchedulerSettingsRead({
+        available: true,
+        scheduler: {
+          present: true,
+          legacyMasterGate: "sometimes",
+          automation: { inboxTasks: false, agentCron: false, scriptCron: false },
+          deviceIdConfigured: false,
+          pollIntervalSeconds: null,
+          staleAfterSeconds: null,
+          maxConcurrentAgents: null,
+          deviceId: null,
+        },
+      }),
+    ).toThrow();
     expect(() => parseSchedulerSettingsRead({ available: false })).toThrow();
   });
 });

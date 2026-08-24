@@ -20,7 +20,7 @@ describe("parseSettingsIntent: closed kind model", () => {
           ? { surface: "local", family, block: { allowedChatIds: [42] } }
           : family === "discord"
             ? { surface: "local", family, block: { allowedGuildIds: ["123456789012345678"] } }
-            : { surface: "local", family, block: { enabled: true } };
+            : { surface: "local", family, block: { automation: { inbox_tasks: true } } };
       const result = parseSettingsIntent(raw);
       expect(result.ok).toBe(true);
     }
@@ -261,7 +261,7 @@ describe("readLocalConfigRedacted", () => {
     });
     expect(projection.scheduler).toMatchObject({
       present: true,
-      enabled: true,
+      legacyMasterGate: "ignored",
       automation: { inboxTasks: true, agentCron: false, scriptCron: true },
       deviceIdConfigured: true,
     });
@@ -284,7 +284,7 @@ describe("readLocalConfigRedacted", () => {
     expect(projection.telegram?.configured).toBe(false);
     expect(projection.discord?.configured).toBe(false);
     expect(projection.scheduler?.present).toBe(false);
-    expect(projection.scheduler?.enabled).toBe(false);
+    expect(projection.scheduler?.legacyMasterGate).toBe("absent");
   });
 
   it("fails closed with a bounded reason for a missing config (no directory creation)", async () => {
@@ -701,12 +701,13 @@ describe("applyLocalSettingsIntent", () => {
     await applyLocalSettingsIntent(fs.io, "/cfg/config.yml", {
       surface: "local",
       family: "scheduler",
-      block: { enabled: true, automation: { inbox_tasks: true }, deviceId: null, pollIntervalSeconds: 45 },
+      block: { automation: { inbox_tasks: true }, deviceId: null, pollIntervalSeconds: 45 },
     }, { nowMs: NOW });
 
     const written = parseYaml(fs.files.get("/cfg/config.yml")!) as Record<string, any>;
+    // The retired master key is never written, rewritten, or removed by Settings.
     expect(written.scheduler).toEqual({
-      enabled: true,
+      enabled: false,
       future_key: "keep",
       poll_interval_seconds: 45,
       automation: { inbox_tasks: true, agent_cron: false, script_cron: false },
@@ -732,7 +733,7 @@ describe("applyLocalSettingsIntent", () => {
       applyLocalSettingsIntent(racingIo, "/cfg/config.yml", {
         surface: "local",
         family: "scheduler",
-        block: { enabled: true },
+        block: { automation: { inbox_tasks: true } },
       }, { nowMs: NOW }),
     ).rejects.toMatchObject({ code: "revision-changed" });
     expect(fs.files.get("/cfg/config.yml")).toBe("concurrent: edit\n");
@@ -764,15 +765,16 @@ describe("applyLocalSettingsIntent", () => {
     expect(fs.files.get("/cfg/config.yml")).toBe(original);
   });
 
-  it("creates a new config when none exists (expected source null)", async () => {
+  it("creates a new config when none exists and NEVER writes a retired master gate (ST-1A)", async () => {
     const fs = statefulFs(new Map());
     await applyLocalSettingsIntent(fs.io, "/cfg/config.yml", {
       surface: "local",
       family: "scheduler",
-      block: { enabled: true },
+      block: { automation: { inbox_tasks: true } },
     }, { nowMs: NOW });
     const written = parseYaml(fs.files.get("/cfg/config.yml")!) as Record<string, any>;
-    expect(written.scheduler.enabled).toBe(true);
+    expect(written.scheduler.automation.inbox_tasks).toBe(true);
+    expect(written.scheduler).not.toHaveProperty("enabled");
   });
 });
 
@@ -948,5 +950,65 @@ describe("applyAgentSettingsIntent", () => {
         block: { thinking: "high" },
       }, { nowMs: NOW }),
     ).rejects.toMatchObject({ code: "revision-changed" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ST-1A: the retired scheduler master gate leaves the Settings data contract
+// ---------------------------------------------------------------------------
+
+describe("ST-1A: retired scheduler master gate (closed Settings contract)", () => {
+  const NOW = () => 1700000000000;
+  it("rejects an enabled key in the scheduler Settings intent as unknown (closed inventory)", () => {
+    for (const block of [{ enabled: true }, { enabled: false }, { enabled: null }]) {
+      const result = parseSettingsIntent({ surface: "local", family: "scheduler", block });
+      expect(result.ok, JSON.stringify(block)).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/[Uu]nknown field/);
+    }
+    // Other closed scheduler fields keep parsing.
+    expect(
+      parseSettingsIntent({ surface: "local", family: "scheduler", block: { automation: { inbox_tasks: true } } }).ok,
+    ).toBe(true);
+  });
+
+  it("the redacted scheduler projection exposes legacyMasterGate states and never an enabled boolean", async () => {
+    const { readLocalConfigRedacted } = await import("../src/settings-foundation.js");
+    const cases: Array<[string, string]> = [
+      ["vault_root: /v\n", "absent"],
+      ["vault_root: /v\nscheduler:\n  automation:\n    inbox_tasks: true\n", "absent"],
+      ["vault_root: /v\nscheduler:\n  enabled: true\n", "ignored"],
+      ["vault_root: /v\nscheduler:\n  enabled: false\n", "gated"],
+      ["vault_root: /v\nscheduler:\n  enabled: \"junk\"\n", "gated"],
+      ["vault_root: /v\nscheduler:\n  enabled:\n", "gated"],
+    ];
+    for (const [configText, expected] of cases) {
+      const { io } = fakeFs(new Map([["/cfg/config.yml", configText]]));
+      const projection = await readLocalConfigRedacted(io, "/cfg/config.yml");
+      expect(projection.available).toBe(true);
+      expect(projection.scheduler?.legacyMasterGate, configText).toBe(expected);
+      // The projection never carries a raw enabled boolean or raw value.
+      expect(projection.scheduler).not.toHaveProperty("enabled");
+    }
+  });
+
+  it("a confirmed Settings save never removes or rewrites a stale retired key (no silent cleanup)", async () => {
+    const original = [
+      "vault_root: /v",
+      "scheduler:",
+      "  enabled: true",
+      "  automation:",
+      "    inbox_tasks: false",
+      "",
+    ].join("\n");
+    const fs = statefulFs(new Map([["/cfg/config.yml", original]]));
+    await applyLocalSettingsIntent(fs.io, "/cfg/config.yml", {
+      surface: "local",
+      family: "scheduler",
+      block: { automation: { inbox_tasks: true } },
+    }, { nowMs: NOW });
+    const written = parseYaml(fs.files.get("/cfg/config.yml")!) as Record<string, any>;
+    // The stale retired key survives untouched; configure owns its removal.
+    expect(written.scheduler.enabled).toBe(true);
+    expect(written.scheduler.automation.inbox_tasks).toBe(true);
   });
 });

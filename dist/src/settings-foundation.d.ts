@@ -61,7 +61,6 @@ export interface DiscordSettingsPatch {
     feedbackEnabled?: boolean;
 }
 export interface SchedulerSettingsPatch {
-    enabled?: boolean;
     automation?: {
         inbox_tasks?: boolean;
         agent_cron?: boolean;
@@ -154,9 +153,12 @@ export interface RedactedDiscordProjection {
     /** W5: the §5.1 inventory lists feedback for both transports. */
     feedbackEnabled: boolean | null;
 }
+/** Closed retired-master-gate state, derived from key presence and value kind only. */
+export type SchedulerLegacyMasterGateState = "absent" | "ignored" | "gated";
 export interface RedactedSchedulerProjection {
     present: boolean;
-    enabled: boolean;
+    /** ST-1A: closed retired-master-gate state; never raw YAML or its value. */
+    legacyMasterGate: SchedulerLegacyMasterGateState;
     automation: {
         inboxTasks: boolean;
         agentCron: boolean;

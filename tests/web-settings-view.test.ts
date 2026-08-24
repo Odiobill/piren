@@ -70,14 +70,16 @@ describe("SettingsView (S1 authority-first page)", () => {
   it("keeps the existing typed workflows in their correct authority section", async () => {
     vi.mocked(fetchTelegramSettings).mockResolvedValue({ available: true, value: { configured: false, allowedChatIds: 0, defaultAgent: null, feedbackEnabled: null } });
     vi.mocked(fetchDiscordSettings).mockResolvedValue({ available: true, value: { configured: false, allowedGuildIds: 0, allowedChannelIds: 0, allowedThreadIds: null, allowedDmUserIds: null, defaultAgent: null, feedbackEnabled: null } });
-    vi.mocked(fetchSchedulerSettings).mockResolvedValue({ available: true, value: { present: false, enabled: false, automation: { inboxTasks: false, agentCron: false, scriptCron: false }, deviceIdConfigured: false, pollIntervalSeconds: null, staleAfterSeconds: null, maxConcurrentAgents: null, deviceId: null } });
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue({ available: true, value: { present: false, legacyMasterGate: "absent", automation: { inboxTasks: false, agentCron: false, scriptCron: false }, deviceIdConfigured: false, pollIntervalSeconds: null, staleAfterSeconds: null, maxConcurrentAgents: null, deviceId: null } });
     vi.mocked(fetchConversationAgents).mockResolvedValue({ agents: [{ name: "kimi", online: true }] });
     await renderSettings();
     const installation = container.querySelector("#settings-installation-heading")?.closest("section");
     const agents = container.querySelector("#settings-agents-heading")?.closest("section");
     // Machine-local typed workflows live under This installation.
     expect(installation?.querySelectorAll(".settings-form-token").length).toBe(2);
-    expect(installation?.querySelector(".settings-scheduler-enabled")).not.toBeNull();
+    // The retired master gate is gone from the form (ST-1A).
+    expect(installation?.querySelector(".settings-scheduler-enabled")).toBeNull();
+    expect(installation?.querySelector(".settings-scheduler-inbox")).not.toBeNull();
     // The vault-owned agent preferences workflow lives under Agents.
     expect(agents?.querySelector(".settings-agent-select")).not.toBeNull();
     // No cross-placement.

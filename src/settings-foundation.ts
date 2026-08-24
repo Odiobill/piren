@@ -115,7 +115,6 @@ export interface DiscordSettingsPatch {
 }
 
 export interface SchedulerSettingsPatch {
-  enabled?: boolean;
   automation?: { inbox_tasks?: boolean; agent_cron?: boolean; script_cron?: boolean };
   pollIntervalSeconds?: number;
   staleAfterSeconds?: number;
@@ -235,8 +234,10 @@ const DISCORD_KEYS = [
   "defaultAgent",
   "feedbackEnabled",
 ] as const;
+// ST-1A: the retired `scheduler.enabled` master gate is NOT a Settings key;
+// an `enabled` key in an intent is rejected as unknown (configure migrates).
 const SCHEDULER_KEYS = [
-  "enabled",
+  "automation",
   "automation",
   "pollIntervalSeconds",
   "staleAfterSeconds",
@@ -298,9 +299,6 @@ function parseDiscordBlock(block: Record<string, unknown>): DiscordSettingsPatch
 
 function parseSchedulerBlock(block: Record<string, unknown>): SchedulerSettingsPatch | "invalid" {
   const patch: SchedulerSettingsPatch = {};
-  const enabled = asOptionalBoolean(block, "enabled");
-  if (enabled === "invalid") return "invalid";
-  if (enabled !== undefined) patch.enabled = enabled;
   const automation = block.automation;
   if (automation !== undefined) {
     if (!isRecord(automation)) return "invalid";
@@ -505,9 +503,13 @@ export interface RedactedDiscordProjection {
   feedbackEnabled: boolean | null;
 }
 
+/** Closed retired-master-gate state, derived from key presence and value kind only. */
+export type SchedulerLegacyMasterGateState = "absent" | "ignored" | "gated";
+
 export interface RedactedSchedulerProjection {
   present: boolean;
-  enabled: boolean;
+  /** ST-1A: closed retired-master-gate state; never raw YAML or its value. */
+  legacyMasterGate: SchedulerLegacyMasterGateState;
   automation: { inboxTasks: boolean; agentCron: boolean; scriptCron: boolean };
   deviceIdConfigured: boolean;
   /** W6: the editable non-secret scheduler values (null = absent/default). */
@@ -637,9 +639,14 @@ export async function readLocalConfigRedacted(
   };
 
   const automationBlock = isRecord(schedulerBlock?.automation) ? schedulerBlock.automation : undefined;
+  // Closed legacy state from key presence and value kind only (ST-1A): no key
+  // -> absent; true -> ignored (inert); false/null/anything else -> gated.
+  const rawEnabled = schedulerBlock?.enabled;
+  const legacyMasterGate: SchedulerLegacyMasterGateState =
+    rawEnabled === undefined ? "absent" : rawEnabled === true ? "ignored" : "gated";
   const scheduler: RedactedSchedulerProjection = {
     present: schedulerBlock !== undefined,
-    enabled: schedulerBlock?.enabled === true,
+    legacyMasterGate,
     automation: {
       inboxTasks: automationBlock?.inbox_tasks === true,
       agentCron: automationBlock?.agent_cron === true,
@@ -907,7 +914,6 @@ function localManagedEntries(intent: LocalSettingsIntent): Array<readonly [strin
     case "scheduler": {
       const b = intent.block;
       return [
-        ["enabled", b.enabled],
         ["poll_interval_seconds", b.pollIntervalSeconds],
         ["stale_after_seconds", b.staleAfterSeconds],
         ["max_concurrent_agents", b.maxConcurrentAgents],

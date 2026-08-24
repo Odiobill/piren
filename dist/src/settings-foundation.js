@@ -133,8 +133,10 @@ const DISCORD_KEYS = [
     "defaultAgent",
     "feedbackEnabled",
 ];
+// ST-1A: the retired `scheduler.enabled` master gate is NOT a Settings key;
+// an `enabled` key in an intent is rejected as unknown (configure migrates).
 const SCHEDULER_KEYS = [
-    "enabled",
+    "automation",
     "automation",
     "pollIntervalSeconds",
     "staleAfterSeconds",
@@ -207,11 +209,6 @@ function parseDiscordBlock(block) {
 }
 function parseSchedulerBlock(block) {
     const patch = {};
-    const enabled = asOptionalBoolean(block, "enabled");
-    if (enabled === "invalid")
-        return "invalid";
-    if (enabled !== undefined)
-        patch.enabled = enabled;
     const automation = block.automation;
     if (automation !== undefined) {
         if (!isRecord(automation))
@@ -498,9 +495,13 @@ export async function readLocalConfigRedacted(io, configPath) {
         feedbackEnabled: asBooleanOrNull(isRecord(discordBlock?.feedback) ? discordBlock.feedback.enabled : undefined),
     };
     const automationBlock = isRecord(schedulerBlock?.automation) ? schedulerBlock.automation : undefined;
+    // Closed legacy state from key presence and value kind only (ST-1A): no key
+    // -> absent; true -> ignored (inert); false/null/anything else -> gated.
+    const rawEnabled = schedulerBlock?.enabled;
+    const legacyMasterGate = rawEnabled === undefined ? "absent" : rawEnabled === true ? "ignored" : "gated";
     const scheduler = {
         present: schedulerBlock !== undefined,
-        enabled: schedulerBlock?.enabled === true,
+        legacyMasterGate,
         automation: {
             inboxTasks: automationBlock?.inbox_tasks === true,
             agentCron: automationBlock?.agent_cron === true,
@@ -720,7 +721,6 @@ function localManagedEntries(intent) {
         case "scheduler": {
             const b = intent.block;
             return [
-                ["enabled", b.enabled],
                 ["poll_interval_seconds", b.pollIntervalSeconds],
                 ["stale_after_seconds", b.staleAfterSeconds],
                 ["max_concurrent_agents", b.maxConcurrentAgents],

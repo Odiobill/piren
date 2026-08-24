@@ -231,7 +231,8 @@ export function parseDiscordSnowflakesInput(
 
 export interface SchedulerSettingsProjection {
   present: boolean;
-  enabled: boolean;
+  /** ST-1A: closed retired-master-gate state; never a raw enabled boolean. */
+  legacyMasterGate: "absent" | "ignored" | "gated";
   automation: { inboxTasks: boolean; agentCron: boolean; scriptCron: boolean };
   deviceIdConfigured: boolean;
   pollIntervalSeconds: number | null;
@@ -279,7 +280,10 @@ export function parseSchedulerSettingsRead(json: unknown): SettingsReadResult<Sc
   if (json.available === true) {
     const s = json.scheduler;
     if (!isRecord(s)) throw new Error("unexpected scheduler settings read");
-    if (typeof s.present !== "boolean" || typeof s.enabled !== "boolean" || typeof s.deviceIdConfigured !== "boolean") {
+    if (typeof s.present !== "boolean" || typeof s.deviceIdConfigured !== "boolean") {
+      throw new Error("unexpected scheduler settings read");
+    }
+    if (s.legacyMasterGate !== "absent" && s.legacyMasterGate !== "ignored" && s.legacyMasterGate !== "gated") {
       throw new Error("unexpected scheduler settings read");
     }
     const automation = s.automation;
@@ -298,7 +302,7 @@ export function parseSchedulerSettingsRead(json: unknown): SettingsReadResult<Sc
       available: true,
       value: {
         present: s.present as boolean,
-        enabled: s.enabled as boolean,
+        legacyMasterGate: s.legacyMasterGate as "absent" | "ignored" | "gated",
         automation: {
           inboxTasks: automation.inboxTasks as boolean,
           agentCron: automation.agentCron as boolean,
@@ -382,7 +386,6 @@ function parseAgentPreferencesProjection(json: Record<string, unknown>): AgentPr
 // ---------------------------------------------------------------------------
 
 export interface SchedulerSettingsPatchInput {
-  enabled?: boolean;
   automation?: { inbox_tasks?: boolean; agent_cron?: boolean; script_cron?: boolean };
   pollIntervalSeconds?: number;
   staleAfterSeconds?: number;

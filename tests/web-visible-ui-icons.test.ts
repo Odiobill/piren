@@ -176,7 +176,7 @@ beforeEach(() => {
     available: true,
     value: {
       present: true,
-      enabled: false,
+      legacyMasterGate: "absent",
       automation: { inboxTasks: false, agentCron: false, scriptCron: false },
       deviceIdConfigured: false,
       pollIntervalSeconds: null,

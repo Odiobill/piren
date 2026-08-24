@@ -216,7 +216,7 @@ describe("SchedulerSettingsForm: closed diff save (W6)", () => {
     available: true as const,
     value: {
       present: true,
-      enabled: false,
+      legacyMasterGate: "absent" as const,
       automation: { inboxTasks: false, agentCron: false, scriptCron: false },
       deviceIdConfigured: false,
       pollIntervalSeconds: null,
@@ -230,7 +230,7 @@ describe("SchedulerSettingsForm: closed diff save (W6)", () => {
     vi.mocked(fetchSchedulerSettings).mockResolvedValue(SCHED);
   });
 
-  it("sends only the fields the steward changed", async () => {
+  it("renders no master-gate checkbox and sends only the fields the steward changed (ST-1A)", async () => {
     vi.mocked(saveSchedulerSettings).mockResolvedValue();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -240,12 +240,98 @@ describe("SchedulerSettingsForm: closed diff save (W6)", () => {
     });
     await flush();
 
-    const enabled = inputByClass("settings-scheduler-enabled");
-    setChecked(enabled, true);
+    // The retired master gate is gone from the form entirely.
+    expect(container.querySelector(".settings-scheduler-enabled")).toBeNull();
+    expect(container.textContent).not.toMatch(/scheduler enabled/i);
+
+    const inbox = inputByClass("settings-scheduler-inbox");
+    setChecked(inbox, true);
     await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await flush();
 
-    expect(saveSchedulerSettings).toHaveBeenCalledWith({ enabled: true }, "T");
+    expect(saveSchedulerSettings).toHaveBeenCalledWith({ automation: { inbox_tasks: true } }, "T");
+  });
+
+  it("a legacy-GATED projection refuses every save with bounded configure guidance and performs no write", async () => {
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue({
+      available: true as const,
+      value: {
+        present: true,
+        legacyMasterGate: "gated" as const,
+        automation: { inboxTasks: false, agentCron: false, scriptCron: false },
+        deviceIdConfigured: false,
+        pollIntervalSeconds: null,
+        staleAfterSeconds: null,
+        maxConcurrentAgents: null,
+        deviceId: null,
+      },
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(SchedulerSettingsForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+
+    // Bounded guidance names the sole migration writer; never raw config.
+    expect(container.textContent).toContain("piren scheduler configure");
+    expect(container.textContent).toMatch(/cannot migrate|legacy/i);
+
+    // Every control and the save button are disabled.
+    for (const selector of [
+      ".settings-scheduler-inbox",
+      ".settings-scheduler-agent-cron",
+      ".settings-scheduler-script-cron",
+      ".settings-scheduler-poll",
+      ".settings-scheduler-stale",
+      ".settings-scheduler-concurrency",
+      ".settings-scheduler-device",
+      ".settings-form-save",
+    ]) {
+      const el = container.querySelector(selector) as HTMLInputElement | HTMLButtonElement;
+      expect(el, selector).not.toBeNull();
+      expect(el.disabled, selector).toBe(true);
+    }
+
+    // Clicking save (even programmatically) performs NO write.
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).not.toHaveBeenCalled();
+  });
+
+  it("a legacy-IGNORED projection shows a bounded inert-key notice but keeps normal saving", async () => {
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue({
+      available: true as const,
+      value: {
+        present: true,
+        legacyMasterGate: "ignored" as const,
+        automation: { inboxTasks: false, agentCron: false, scriptCron: false },
+        deviceIdConfigured: false,
+        pollIntervalSeconds: null,
+        staleAfterSeconds: null,
+        maxConcurrentAgents: null,
+        deviceId: null,
+      },
+    });
+    vi.mocked(saveSchedulerSettings).mockResolvedValue();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(SchedulerSettingsForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+
+    expect(container.textContent).toMatch(/inert|ignored/i);
+    expect(container.textContent).toContain("piren scheduler configure");
+
+    const inbox = inputByClass("settings-scheduler-inbox");
+    expect(inbox.disabled).toBe(false);
+    setChecked(inbox, true);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).toHaveBeenCalledWith({ automation: { inbox_tasks: true } }, "T");
   });
 
   it("rejects a non-positive poll interval with a bounded field error", async () => {
