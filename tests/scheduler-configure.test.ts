@@ -642,6 +642,26 @@ describe("SGC-3 runSchedulerConfigure: operator-confirmed legacy-gate migration"
     expect(result.removedLegacyMasterKey).toBe(false);
   });
 
+  it("an explicit enabled:null key is gated: bounded guidance, fail-closed defaults, confirmed write removes the key (SGC-3 correction)", async () => {
+    const existing = "vault_root: /v\nscheduler:\n  enabled:\n  automation:\n    inbox_tasks: true\n";
+    const { prompt, calls } = fakePrompt({ confirmAnswers: [undefined, undefined, undefined, true] });
+    const { io, writes } = fakeIo(existing);
+    const logs: string[] = [];
+
+    const result = await runSchedulerConfigure(prompt, { configPath: "/cfg", io, log: (m) => logs.push(m) });
+
+    expect(logs.join("\n")).toMatch(/legacy gate/i);
+    for (const gate of calls.confirm.filter((c) => c.message.includes("automation."))) {
+      expect(gate.defaultValue).toBe(false);
+    }
+    expect(writes).toHaveLength(1);
+    const written = parseYaml(writes[0]!.content) as { scheduler: Record<string, unknown> };
+    expect(written.scheduler).not.toHaveProperty("enabled");
+    expect(written.scheduler.automation).toEqual({ inbox_tasks: false, agent_cron: false, script_cron: false });
+    expect(result.wrote).toBe(true);
+    expect(result.removedLegacyMasterKey).toBe(true);
+  });
+
   it("a malformed retired enabled value is gated with guidance and never echoed", async () => {
     const secretValue = "junk-value-must-not-appear";
     const existing = `vault_root: /v\nscheduler:\n  enabled: "${secretValue}"\n  automation:\n    script_cron: true\n`;

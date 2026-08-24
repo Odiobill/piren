@@ -305,7 +305,7 @@ export function resolveSchedulerConfig(config: LocalPirenConfig): ResolvedSchedu
   let enabled: boolean;
   let migration: SchedulerMigrationSignal | undefined;
   let legacyMasterGate: SchedulerLegacyMasterGateState;
-  if (isAbsentLike(enabledRaw)) {
+  if (enabledRaw === undefined) {
     if (legacyKeysPresent.length > 0) {
       enabled = true;
       migration = {
@@ -322,6 +322,14 @@ export function resolveSchedulerConfig(config: LocalPirenConfig): ResolvedSchedu
       enabled = false;
     }
     legacyMasterGate = "absent";
+  } else if (enabledRaw === null) {
+    // SGC-3 lead correction: a PRESENT-but-empty retired key is a malformed
+    // value, not an absent one — it gates fail-closed exactly like false.
+    enabled = false;
+    legacyMasterGate = "gated";
+    warnings.push(
+      "scheduler.enabled is present with an empty value; ambiguous legacy gate: all automation classes resolve disabled (fail closed) until an operator-confirmed migration removes the retired key; --force never bypasses this legacy gate.",
+    );
   } else if (enabledRaw === true) {
     enabled = true;
     legacyMasterGate = "ignored";

@@ -1572,6 +1572,29 @@ describe("schedulerOnce automation gates (0.2.0 S2)", () => {
     expect(deviceFiles).toEqual([]);
   });
 
+  it("--force never bypasses legacy gating for an explicit enabled:null key (SGC-3 correction)", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  enabled:\n  automation:\n    inbox_tasks: true\n",
+    });
+    await writeInboxTask("codex", "gated-null-task");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      force: true,
+    });
+
+    expect(inboxCalls).toEqual([]);
+    expect(result.executed).toBe(false);
+    expect(result.noWork).toBe(true);
+    expect(result.summary).toMatch(/legacy gate/i);
+    expect(result.summary).toMatch(/force: not applied|never bypasses/i);
+  });
+
   it("executes normally without --force when master and all classes are enabled", async () => {
     await writeConfig({ allowed: ["codex"] });
     await writeInboxTask("codex", "normal-task");

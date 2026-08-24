@@ -88,15 +88,16 @@ describe("checkSchedulerAutomationConfig: valid present blocks (ok)", () => {
     expect(check?.message).toBe(gatedOk(true, false, false));
   });
 
-  it("treats null values as absent-like (fail closed, still ok)", () => {
+  it("treats a null class value as absent-like but a null enabled key as gated (SGC-3 correction)", () => {
     const check = checkSchedulerAutomationConfig({
       scheduler: {
         enabled: null as unknown as boolean,
         automation: { inbox_tasks: null as unknown as boolean },
       },
     });
-    expect(check?.status).toBe("ok");
-    expect(check?.message).toBe(gatedOk(false, false, false));
+    // The retired key gates; the null class value is merely absent-like.
+    expect(check?.status).toBe("warn");
+    expect(check?.message).toBe(GATED_WARN);
   });
 
   it("does not warn for unknown automation keys and never echoes their names", () => {
@@ -137,6 +138,15 @@ describe("checkSchedulerAutomationConfig: malformed WARN with exact E2-S2 guidan
 
     expectWarn(
       checkSchedulerAutomationConfig({ scheduler: { enabled: 1 } } as unknown as LocalPirenConfig),
+      GATED_WARN,
+    );
+  });
+
+  it("warns on an explicit enabled:null legacy gate (present-but-empty retired value) with the exact SGC-3 guidance", () => {
+    expectWarn(
+      checkSchedulerAutomationConfig({
+        scheduler: { enabled: null as unknown as boolean, automation: { inbox_tasks: true } },
+      } as unknown as LocalPirenConfig),
       GATED_WARN,
     );
   });

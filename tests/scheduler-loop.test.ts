@@ -214,22 +214,32 @@ describe("resolveSchedulerConfig: enabled master gate (0.2.0 S1)", () => {
     expect(resolved.warnings).toEqual([]);
   });
 
-  it("enabled: null is absent-like: legacy block still gets the migration signal, fresh block stays false with no warning", () => {
+  it("enabled: null is a PRESENT malformed retired value (SGC-3 correction): gated fail-closed with a bounded warning", () => {
     // `enabled:` with an empty YAML value parses to null (verified against the
-    // `yaml` library). Absent-like: never a malformed-value warning.
+    // `yaml` library). A present-but-empty key is NOT absent: it gates.
     const legacyNull = resolveSchedulerConfig({
-      scheduler: { poll_interval_seconds: 30, enabled: null as unknown as boolean },
+      scheduler: { poll_interval_seconds: 30, automation: { inbox_tasks: true }, enabled: null as unknown as boolean },
     });
-    expect(legacyNull.enabled).toBe(true);
-    expect(legacyNull.migration?.materializeEnabled).toBe(true);
-    expect(legacyNull.warnings).toEqual([]);
+    expect(legacyNull.legacyMasterGate).toBe("gated");
+    expect(legacyNull.enabled).toBe(false);
+    expect(legacyNull.migration).toBeUndefined();
+    // Declared classes are gated off fail-closed.
+    expect(legacyNull.automation).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(legacyNull.warnings).toHaveLength(1);
+    expect(legacyNull.warnings[0]).toContain("scheduler.enabled");
+    expect(legacyNull.warnings[0]).toContain("--force never bypasses");
 
     const freshNull = resolveSchedulerConfig({
       scheduler: { enabled: null as unknown as boolean },
     });
-    expect(freshNull.enabled).toBe(false);
-    expect(freshNull.migration).toBeUndefined();
-    expect(freshNull.warnings).toEqual([]);
+    expect(freshNull.legacyMasterGate).toBe("gated");
+    expect(freshNull.automation).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+  });
+
+  it("an actually absent enabled key stays legacyMasterGate absent (no gating, no warning)", () => {
+    const resolved = resolveSchedulerConfig({ scheduler: { poll_interval_seconds: 30 } });
+    expect(resolved.legacyMasterGate).toBe("absent");
+    expect(resolved.warnings.filter((w) => w.includes("scheduler.enabled"))).toEqual([]);
   });
 });
 
