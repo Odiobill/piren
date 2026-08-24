@@ -137,7 +137,6 @@ const DISCORD_KEYS = [
 // an `enabled` key in an intent is rejected as unknown (configure migrates).
 const SCHEDULER_KEYS = [
     "automation",
-    "automation",
     "pollIntervalSeconds",
     "staleAfterSeconds",
     "maxConcurrentAgents",

@@ -965,9 +965,29 @@ describe("ST-1A: retired scheduler master gate (closed Settings contract)", () =
       expect(result.ok, JSON.stringify(block)).toBe(false);
       if (!result.ok) expect(result.error).toMatch(/[Uu]nknown field/);
     }
-    // Other closed scheduler fields keep parsing.
+    // Every intended unique closed key parses on its own (and each remains
+    // accepted when combined), so the inventory is exact and duplicate-free.
+    const singleKeyBlocks = [
+      { automation: { inbox_tasks: true } },
+      { pollIntervalSeconds: 30 },
+      { staleAfterSeconds: 300 },
+      { maxConcurrentAgents: 1 },
+      { deviceId: null },
+    ];
+    for (const block of singleKeyBlocks) {
+      expect(parseSettingsIntent({ surface: "local", family: "scheduler", block }).ok, JSON.stringify(block)).toBe(true);
+    }
     expect(
-      parseSettingsIntent({ surface: "local", family: "scheduler", block: { automation: { inbox_tasks: true } } }).ok,
+      parseSettingsIntent({
+        surface: "local",
+        family: "scheduler",
+        block: {
+          automation: { agent_cron: true },
+          pollIntervalSeconds: 30,
+          staleAfterSeconds: 300,
+          maxConcurrentAgents: 1,
+        },
+      }).ok,
     ).toBe(true);
   });
 
