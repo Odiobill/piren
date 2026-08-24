@@ -113,6 +113,12 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
       setNotice(null);
       setAddChoice("");
       setCandidateChoice("");
+      // SR-2 lead correction: a newly committed group detail resets the WHOLE
+      // staged fallback editor, so group A's target/candidates can never be
+      // applied to group B and post-mutation re-reads start clean. The
+      // member's saved order loads only after an explicit fresh selection.
+      setFallbackMember("");
+      setFallbackCandidates([]);
     } catch (cause) {
       if (!handleAuth(cause)) setNotice("The group could not be read.");
     }
@@ -217,11 +223,11 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
       return;
     }
     // SR-2 root-cause guard: a candidate picked in the dropdown but never
-    // added to the ordered list is NOT part of the save. Persisting anyway
-    // silently dropped the steward's visible selection into an empty
-    // fallback_order array in production; refuse with a bounded reason
-    // instead (clearing remains possible once the choice is cleared).
-    if (fallbackCandidates.length === 0 && candidateChoice !== "") {
+    // added to the ordered list is NOT part of the save — even when the list
+    // already holds other entries. Persisting anyway silently dropped the
+    // steward's visible selection; refuse with a bounded reason instead
+    // (clearing remains possible once the choice is reset).
+    if (candidateChoice !== "") {
       setNotice(`Add ${candidateChoice} to the ordered list first, or set the candidate choice back to “Choose a candidate…”.`);
       return;
     }

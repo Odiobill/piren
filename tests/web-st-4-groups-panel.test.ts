@@ -228,6 +228,100 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
     );
   });
 
+  it("SR-2 correction: blocks an unadded candidate even when the ordered list already has entries", async () => {
+    vi.mocked(fetchGroupDetail).mockResolvedValue({
+      available: true,
+      group: { ...GROUP, agents: ["kimi", "offline-one", "offline-two"], fallbackOrder: { kimi: ["offline-one"] } },
+      roster: ROSTER,
+    });
+    await renderPanel();
+    await act(async () => {
+      groupButton().click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // Pick kimi: the EXISTING ordered list loads [offline-one].
+    await act(async () => {
+      const memberSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-member")!;
+      memberSelect.value = "kimi";
+      memberSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const loaded = Array.from(container.querySelectorAll(".settings-groups-fallback-list .settings-agent-fallback-model")).map(
+      (n) => n.textContent,
+    );
+    expect(loaded).toEqual(["offline-one"]);
+    // Choose a SECOND candidate in the dropdown but never press Add.
+    await act(async () => {
+      const candidateSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-candidate-select")!;
+      candidateSelect.value = "offline-two";
+      candidateSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".settings-groups-fallback-save")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // No confirmation, no write: the unadded second candidate must never be
+    // silently dropped, regardless of what is already in the list.
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(postGroupAction).not.toHaveBeenCalled();
+    const notice = container.querySelector("[role='alert']");
+    expect(notice?.textContent).toContain("offline-two");
+    expect(notice?.textContent).toContain("Add");
+  });
+
+  it("SR-2 correction: opening another group resets the whole staged fallback editor", async () => {
+    vi.mocked(fetchGroupsList).mockResolvedValue({
+      available: true,
+      groups: [
+        { name: "group-a", revision: "rev-a-1" },
+        { name: "group-b", revision: "rev-b-1" },
+      ],
+    });
+    const groupA: GroupDetailDto = { name: "group-a", revision: "rev-a", agents: ["kimi", "offline-one"], fallbackOrder: {}, findings: [] };
+    const groupB: GroupDetailDto = { name: "group-b", revision: "rev-b", agents: ["kimi"], fallbackOrder: {}, findings: [] };
+    vi.mocked(fetchGroupDetail)
+      .mockResolvedValueOnce({ available: true, group: groupA, roster: ROSTER })
+      .mockResolvedValueOnce({ available: true, group: groupB, roster: ROSTER });
+    await renderPanel();
+    await act(async () => {
+      container.querySelectorAll<HTMLButtonElement>(".settings-group-item")[0]!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // Stage target + candidate on group A.
+    await act(async () => {
+      const memberSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-member")!;
+      memberSelect.value = "kimi";
+      memberSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      const candidateSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-candidate-select")!;
+      candidateSelect.value = "offline-one";
+      candidateSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".settings-groups-fallback-add")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // Switch to group B.
+    await act(async () => {
+      container.querySelectorAll<HTMLButtonElement>(".settings-group-item")[1]!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(fetchGroupDetail).toHaveBeenLastCalledWith("group-b", "t");
+    // The whole editor is unselected/empty: A's staged state cannot leak.
+    const memberSelect = container.querySelector<HTMLSelectElement>(".settings-groups-fallback-member");
+    expect(memberSelect?.value ?? "").toBe("");
+    expect(container.querySelector(".settings-groups-fallback-candidate-select")).toBeNull();
+    expect(container.querySelector(".settings-groups-fallback-list"))?.toBeNull();
+    const save = container.querySelector<HTMLButtonElement>(".settings-groups-fallback-save");
+    expect(save?.disabled).toBe(true);
+    expect(postGroupAction).not.toHaveBeenCalled();
+    void groupB;
+  });
+
   it("gives the confirmation modal full discipline: Escape cancels without writing and returns focus to the action", async () => {
     await renderPanel();
     await act(async () => {

@@ -74,7 +74,7 @@ describe("SR-2: persisted groups fallback candidates end to end (panel -> gatewa
 
       const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
       async function waitFor(what: string, condition: () => boolean): Promise<void> {
-        for (let i = 0; i < 200 && !condition(); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+        for (let i = 0; i < 400 && !condition(); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
         if (!condition()) throw new Error(`timed out waiting for ${what}`);
       }
       function memberRows(): string[] {
@@ -84,6 +84,18 @@ describe("SR-2: persisted groups fallback candidates end to end (panel -> gatewa
       }
       async function click(selector: string): Promise<void> {
         await waitFor(selector, () => container.querySelector<HTMLButtonElement>(selector) !== null);
+        await act(async () => {
+          container.querySelector<HTMLButtonElement>(selector)!.click();
+          await tick();
+        });
+      }
+      // Busy-gated controls stay disabled while a mutation round trip is in
+      // flight; wait for ENABLED so a click can never be a silent no-op.
+      async function clickEnabled(selector: string): Promise<void> {
+        await waitFor(`${selector} enabled`, () => {
+          const button = container.querySelector<HTMLButtonElement>(selector);
+          return button !== null && !button.disabled;
+        });
         await act(async () => {
           container.querySelector<HTMLButtonElement>(selector)!.click();
           await tick();
@@ -126,10 +138,10 @@ describe("SR-2: persisted groups fallback candidates end to end (panel -> gatewa
 
       // 3. Add both vault-defined members, each awaited to its visible result.
       await choose(".settings-groups-add-select", "Piren");
-      await click(".settings-groups-add");
+      await clickEnabled(".settings-groups-add");
       await waitFor("Piren member row", () => memberRows().includes("Piren"));
       await choose(".settings-groups-add-select", "Vera");
-      await click(".settings-groups-add");
+      await clickEnabled(".settings-groups-add");
       await waitFor("Vera member row", () => memberRows().includes("Vera"));
 
       // 4. Build the ordered fallback list for target Piren: [Vera].
@@ -142,7 +154,7 @@ describe("SR-2: persisted groups fallback candidates end to end (panel -> gatewa
       expect(order).toEqual(["Vera"]);
 
       // 5. Explicit confirmation, then wait for the write + refresh cycle.
-      await click(".settings-groups-fallback-save");
+      await clickEnabled(".settings-groups-fallback-save");
       expect(container.querySelector('[role="dialog"]')).not.toBeNull();
       expect(container.textContent).toContain("Nothing has been written yet.");
       await click(".settings-agent-confirm-save");
@@ -155,11 +167,14 @@ describe("SR-2: persisted groups fallback candidates end to end (panel -> gatewa
       expect(persisted).toContain("fallback_order:");
       expect(persisted).toMatch(/Piren:[\s\S]*-\s*Vera/);
 
-      // 7. Reloaded UI state still shows the saved order (client state loss check).
-      const reloaded = Array.from(
-        container.querySelectorAll(".settings-groups-fallback-list .settings-agent-fallback-model"),
-      ).map((n) => (n as HTMLElement).textContent);
-      expect(reloaded).toEqual(["Vera"]);
+      // 7. SR-2 lead correction: the post-mutation re-read resets the WHOLE
+      // editor — unselected target, no staged list — while the persisted YAML
+      // above carries the saved order for an explicit fresh selection.
+      await waitFor("editor reset", () => container.querySelector<HTMLSelectElement>(".settings-groups-fallback-member")?.value === "");
+      expect(container.querySelector(".settings-groups-fallback-list")).toBeNull();
+      expect(container.querySelector(".settings-groups-fallback-candidate-select")).toBeNull();
+      const saveAfter = container.querySelector<HTMLButtonElement>(".settings-groups-fallback-save");
+      expect(saveAfter?.disabled).toBe(true);
     } finally {
       await act(async () => root.unmount());
       container.remove();
