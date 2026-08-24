@@ -6,6 +6,7 @@ import {
   postGroupAction,
   UnauthorizedError,
   type GroupDetailDto,
+  type GroupRosterEntryDto,
   type GroupSummaryDto,
   type GroupValidationIssueDto,
 } from "./groups-api";
@@ -58,6 +59,9 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [groups, setGroups] = useState<GroupSummaryDto[]>([]);
   const [detail, setDetail] = useState<GroupDetailDto | null>(null);
+  // SR-1: the roster arrives as a sibling of the group detail; it is kept
+  // separately so render can never see an undefined roster.
+  const [detailRoster, setDetailRoster] = useState<GroupRosterEntryDto[]>([]);
   const [newGroup, setNewGroup] = useState("");
   const [addChoice, setAddChoice] = useState("");
   const [fallbackMember, setFallbackMember] = useState("");
@@ -88,7 +92,10 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
       }
       setGroups(list.groups);
       setPhase(list.groups.length === 0 ? { kind: "empty" } : { kind: "ready" });
-      if (list.groups.length === 0) setDetail(null);
+      if (list.groups.length === 0) {
+        setDetail(null);
+        setDetailRoster([]);
+      }
     } catch (cause) {
       if (!handleAuth(cause)) setPhase({ kind: "error", message: "Agent groups could not be read." });
     }
@@ -97,11 +104,12 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
   async function openGroup(name: string): Promise<void> {
     try {
       const shown = await fetchGroupDetail(name, token);
-      if (!shown.available || !shown.group) {
+      if (!shown.available) {
         setNotice(shown.reason ?? "The group could not be read.");
         return;
       }
       setDetail(shown.group);
+      setDetailRoster(shown.roster);
       setNotice(null);
       setAddChoice("");
       setCandidateChoice("");
@@ -250,10 +258,10 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
     }
   }
 
-  const rosterChoices = detail === null ? [] : detail.roster.filter((entry) => !detail.agents.includes(entry.name));
+  const rosterChoices = detail === null ? [] : detailRoster.filter((entry) => !detail.agents.includes(entry.name));
   const runnableOf = (name: string): boolean | null => {
     if (detail === null) return null;
-    const entry = detail.roster.find((r) => r.name === name);
+    const entry = detailRoster.find((r) => r.name === name);
     return entry === undefined ? null : entry.locallyRunnable;
   };
   const candidateChoices =

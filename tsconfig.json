@@ -78,6 +78,7 @@
     "tests/web-st-2a-settings-layout.test.ts",
     "tests/web-st-3-agent-settings-layout.test.ts",
     "tests/web-st-4-groups-panel.test.ts",
-    "tests/web-st-4-groups-layout.test.ts"
+    "tests/web-st-4-groups-layout.test.ts",
+    "tests/web-groups-detail-client.test.ts"
   ]
 }

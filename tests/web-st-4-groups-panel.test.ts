@@ -21,6 +21,11 @@ import { AgentGroupsPanel } from "../web/src/AgentGroupsPanel.js";
  * fallback-set editing behind explicit confirmation, full confirmation-modal
  * discipline (trap/escape/focus return/icons incl. Cancel), typed 401
  * recovery, and the read-only cross-group validation report.
+ *
+ * SR-1: the fixtures use the REAL documented/route response shape — `roster`
+ * is a SIBLING of `group`, never nested inside it — so the panel is proven
+ * against a compliant live payload (the earlier nested shape hid the crash),
+ * and a strictly rejected malformed roster stays a bounded notice.
  */
 
 vi.mock("../web/src/groups-api.js", async (importOriginal) => {
@@ -34,18 +39,19 @@ vi.mock("../web/src/groups-api.js", async (importOriginal) => {
   };
 });
 
-const DETAIL: GroupDetailDto = {
+// The REAL route shape: `group` carries no roster; `roster` is its sibling.
+const GROUP: GroupDetailDto = {
   name: "dev",
   revision: "rev-abc-12",
   agents: ["kimi", "offline-one"],
   fallbackOrder: {},
   findings: [],
-  roster: [
-    { name: "kimi", locallyRunnable: true },
-    { name: "offline-one", locallyRunnable: false },
-    { name: "offline-two", locallyRunnable: false },
-  ],
 };
+const ROSTER: Array<{ name: string; locallyRunnable: boolean }> = [
+  { name: "kimi", locallyRunnable: true },
+  { name: "offline-one", locallyRunnable: false },
+  { name: "offline-two", locallyRunnable: false },
+];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -57,7 +63,7 @@ beforeEach(() => {
   root = createRoot(container);
   onUnauthorized = vi.fn();
   vi.mocked(fetchGroupsList).mockResolvedValue({ available: true, groups: [{ name: "dev", revision: "rev-list-1" }] });
-  vi.mocked(fetchGroupDetail).mockResolvedValue({ available: true, group: DETAIL });
+  vi.mocked(fetchGroupDetail).mockResolvedValue({ available: true, group: GROUP, roster: ROSTER });
   vi.mocked(fetchGroupsValidation).mockResolvedValue({ available: true, issues: [] });
   vi.mocked(postGroupAction).mockResolvedValue(undefined);
 });
@@ -233,5 +239,39 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
     expect(report!.textContent).toContain("dangling-fallback");
     expect(report!.textContent).toContain("duplicate-across-groups");
     expect(fetchGroupsValidation).toHaveBeenCalledTimes(1);
+  });
+
+  it("SR-1: a real compliant detail response (sibling roster) renders selection, members, and offline markers without throwing", async () => {
+    await renderPanel();
+    await act(async () => {
+      groupButton().click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // No crash: the panel reached render with a defined roster.
+    const text = container.textContent ?? "";
+    expect(text).toContain("dev");
+    expect(text).toContain("kimi");
+    expect(text).toContain("Not locally runnable");
+    // Roster authority: only offline-two is an addable choice.
+    const addSelect = container.querySelector<HTMLSelectElement>(".settings-groups-add-select");
+    const options = Array.from(addSelect?.querySelectorAll("option") ?? []).map((o) => o.value);
+    expect(options).toEqual(["", "offline-two"]);
+  });
+
+  it("SR-1: a strictly rejected malformed roster response stays a bounded notice — no throw, no blank page", async () => {
+    // The typed client boundary refuses malformed payloads before render;
+    // the mock simulates that bounded rejection exactly.
+    vi.mocked(fetchGroupDetail).mockRejectedValue(new Error("Agent group could not be read."));
+    await renderPanel();
+    await act(async () => {
+      groupButton().click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const text = container.textContent ?? "";
+    expect(text).toContain("could not be read");
+    // The page keeps its structure: list, create row, and retry paths remain.
+    expect(container.querySelector(".settings-group-item")).not.toBeNull();
+    expect(container.querySelector(".settings-groups-create")).not.toBeNull();
+    expect(container.querySelector(".settings-group-detail")).toBeNull();
   });
 });
