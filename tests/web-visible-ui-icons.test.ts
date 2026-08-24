@@ -12,6 +12,7 @@ import { ConversationComposer } from "../web/src/ConversationComposer.js";
 import { AssignTaskModal } from "../web/src/AssignTaskModal.js";
 import { ConversationTimeline } from "../web/src/ConversationTimeline.js";
 import { VaultExplorer } from "../web/src/VaultExplorer.js";
+import { SettingsView } from "../web/src/SettingsView.js";
 import { TelegramSettingsForm } from "../web/src/TelegramSettingsForm.js";
 import { DiscordSettingsForm } from "../web/src/DiscordSettingsForm.js";
 import { SchedulerSettingsForm } from "../web/src/SchedulerSettingsForm.js";
@@ -53,6 +54,22 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
     fetchSchedulerSettings: vi.fn(),
     fetchAgentPreferences: vi.fn(),
   };
+});
+
+beforeEach(() => {
+  // SettingsView mounts all typed forms; give them bounded reads.
+  vi.mocked(fetchTelegramSettings).mockResolvedValue({ available: false, reason: "Local config is not present." });
+  vi.mocked(fetchDiscordSettings).mockResolvedValue({ available: false, reason: "Local config is not present." });
+  vi.mocked(fetchSchedulerSettings).mockResolvedValue({ available: false, reason: "Local config is not present." });
+  vi.mocked(fetchAgentPreferences).mockResolvedValue({
+    available: true,
+    value: {
+      model: { id: null, thinking: null },
+      modelFallback: { declared: false, autoSwitch: null, modelCount: 0, models: [] },
+      contextInjection: { mode: null },
+      selfImprovement: { autoNudge: null, reviewLoopEnabled: null, reviewLoop: { intervalTurns: null, recentMessages: null, timeoutMs: null } },
+    },
+  } as never);
 });
 
 const ROSTER = {
@@ -208,6 +225,23 @@ afterEach(() => {
 });
 
 describe("every rendered Workbench button has a decorative SVG icon (WUX-A)", () => {
+  it("SettingsView tabs and help triggers (ST-2A correction)", async () => {
+    const props = { token: "t", onUnauthorized: () => {}, onValidated: () => {} };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await mount(createElement(SettingsView, props));
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
+    expect(buttons.length).toBeGreaterThan(0);
+    // The three tabs are among the rendered buttons.
+    const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs.length).toBe(3);
+    const unadorned = buttons.filter((button) => !buttonHasVisibleIcon(button));
+    const described = unadorned.map((button) => `<${button.className}>${button.textContent?.slice(0, 40) ?? ""}</>`);
+    expect(described, "buttons without a decorative icon").toEqual([]);
+  });
+
+
   it("DashboardView ready surface", async () => {
     await mount(
       createElement(DashboardView, {

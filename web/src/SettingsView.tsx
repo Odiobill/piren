@@ -4,6 +4,7 @@ import { DiscordSettingsForm } from "./DiscordSettingsForm.js";
 import { SchedulerSettingsForm } from "./SchedulerSettingsForm.js";
 import { AgentPreferencesForm } from "./AgentPreferencesForm.js";
 import { SettingsHelpControl } from "./SettingsHelpControl.js";
+import { FolderIcon, GearIcon, HomeIcon } from "./icons.js";
 
 /**
  * ST-2A (Settings contract §§2.1/4.1): a welcoming tabbed Settings shell with
@@ -19,10 +20,10 @@ import { SettingsHelpControl } from "./SettingsHelpControl.js";
 
 type SettingsTabId = "installation" | "agents" | "groups";
 
-const TABS: Array<{ id: SettingsTabId; label: string }> = [
-  { id: "installation", label: "This installation" },
-  { id: "agents", label: "Agent settings" },
-  { id: "groups", label: "Agent groups" },
+const TABS: Array<{ id: SettingsTabId; label: string; Icon: (props: { size?: number }) => ReactElement }> = [
+  { id: "installation", label: "This installation", Icon: HomeIcon },
+  { id: "agents", label: "Agent settings", Icon: GearIcon },
+  { id: "groups", label: "Agent groups", Icon: FolderIcon },
 ];
 
 const TELEGRAM_HELP = {
@@ -104,6 +105,7 @@ export function SettingsView({
             onKeyDown={(event) => onTabKeyDown(event, index)}
             onClick={() => setActiveTab(tab.id)}
           >
+            <tab.Icon size={14} />
             {tab.label}
           </button>
         ))}
