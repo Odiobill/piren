@@ -109,6 +109,24 @@ describe("DOC-1: Settings surface and context default docs", () => {
   });
 });
 
+describe("DOC-1 correction: transport projection docs (ST-1B)", () => {
+  it("api.md documents full non-secret allowlist identifier values for editable prefill, never a count-only projection", async () => {
+    const api = await read("docs/api.md");
+    expect(api).toMatch(/allowlist[^\n]*(identifier )?values/i);
+    expect(api).toMatch(/prefill/i);
+    // Tokens stay configured-only; identifiers are intentionally returned.
+    expect(api).toMatch(/token `configured` boolean/);
+    expect(api).not.toMatch(/token `configured` boolean, allowlist counts/);
+  });
+
+  it("gateway.md drops the count-only reads claim while keeping tokens write-only", async () => {
+    const gateway = await read("docs/gateway.md");
+    expect(gateway).toMatch(/[Nn]on-secret allowlist (identifiers|values)/);
+    expect(gateway).toMatch(/never returned by any route|write-only/);
+    expect(gateway).not.toMatch(/lists report counts/);
+  });
+});
+
 describe("DOC-1: API route docs", () => {
   it("documents the additive closed Groups routes without raw YAML or generic-write claims", async () => {
     const api = await read("docs/api.md");
