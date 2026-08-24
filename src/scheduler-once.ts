@@ -22,7 +22,7 @@ import {
   type IsScheduleDueOptions,
 } from "./cron.js";
 import { planSchedulerTick, type PlannerAutomation, type PlannerCronJob, type PlannerTask } from "./scheduler.js";
-import { resolveSchedulerConfig, type SchedulerMigrationSignal } from "./scheduler-loop.js";
+import { resolveSchedulerConfig, type SchedulerLegacyMasterGateState } from "./scheduler-loop.js";
 import { registerDevice } from "./devices.js";
 import type { ExecuteClaimedInboxTaskResult, ClaimedInboxTaskRunner } from "./scheduler-executor.js";
 import {
@@ -81,13 +81,14 @@ export interface SchedulerOnceOptions {
    */
   retryTransition?: SchedulerOnceRetryTransition;
   /**
-   * Bounded non-persistent one-shot override (0.2.0 S2 `--once --force`).
-   * Overrides ONLY the master `scheduler.enabled` gate and the
-   * `automation.inbox_tasks` class gate for this tick: a disabled master gate
-   * or inbox class permits one normal bounded tick. It NEVER enables disabled
-   * `agent_cron`/`script_cron` classes, never writes config, never starts or
-   * installs a service, and never alters claim/retry/release/priority or
-   * at-most-one execution semantics.
+   * Bounded non-persistent one-shot override (0.2 Settings contract §4.3).
+   * Overrides ONLY an ordinary disabled `automation.inbox_tasks` class gate
+   * for this tick: a disabled inbox class permits one normal bounded tick.
+   * It NEVER bypasses legacy gating (a retired `scheduler.enabled` key with a
+   * disabled/malformed value), never enables disabled `agent_cron`/
+   * `script_cron` classes, never writes config, never starts or installs a
+   * service, and never alters claim/retry/release/priority or at-most-one
+   * execution semantics.
    */
   force?: boolean;
 }
@@ -229,18 +230,23 @@ export interface SchedulerOnceResult {
   noWork: boolean;
   summary: string;
   /**
-   * Resolved automation-class gates applied to this tick (0.2.0 S2), after
-   * any `--force` master/inbox override. Present on normal tick results.
+   * Resolved automation-class gates applied to this tick (0.2 Settings
+   * contract §4.3), after any `--force` inbox override. Present on normal
+   * tick results.
    */
   automation?: PlannerAutomation;
-  /** True when this tick ran under the bounded `--force` override. */
+  /**
+   * True when this tick ran under the applied `--force` inbox override
+   * (ordinary disabled inbox class only; never legacy gating).
+   */
   forced?: boolean;
   /**
-   * Present when the resolved config carried the pure S1 migration signal
-   * (legacy scheduler block without `enabled`). Read-only notice only; S2
-   * never persists it (the writer/wizard is a later tracer).
+   * Present when the resolved config carried a retired `scheduler.enabled`
+   * key that is not "absent" ("ignored" = enabled:true, inert-to-ignore;
+   * "gated" = enabled:false/malformed, all classes fail closed). Read-only
+   * bounded notice only; never persisted.
    */
-  migration?: SchedulerMigrationSignal;
+  legacyMasterGate?: SchedulerLegacyMasterGateState;
 }
 
 function errorMessage(error: unknown): string {
@@ -296,9 +302,9 @@ function formatSummary(result: SchedulerOnceResult): string {
   const lines: string[] = [`SCHEDULER ONCE (device: ${result.deviceId})`];
   lines.push(`enabled agents: ${result.enabledAgents.join(", ") || "(none)"}`);
   if (result.automation !== undefined) lines.push(formatGateState(result.automation));
-  if (result.forced === true) lines.push("force: master+inbox gate override (this tick only; not persisted)");
-  if (result.migration !== undefined) {
-    lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+  if (result.forced === true) lines.push("force: inbox automation override (this tick only; not persisted)");
+  if (result.legacyMasterGate === "ignored") {
+    lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
   }
   lines.push(`planned claims: ${result.plannedCount}`);
   if (result.claimAttempts.length > 0) {
@@ -340,12 +346,24 @@ function formatGateState(automation: PlannerAutomation): string {
   );
 }
 
-function disabledSummary(deviceId: string, enabledAgents: string[]): string {
+function inertSummary(
+  deviceId: string,
+  enabledAgents: string[],
+  state: { legacyGated: boolean; forcePassed: boolean },
+): string {
   const lines: string[] = [`SCHEDULER ONCE (device: ${deviceId})`];
   lines.push(`enabled agents: ${enabledAgents.join(", ") || "(none)"}`);
   lines.push("");
-  lines.push("scheduler disabled (scheduler.enabled resolved false). No heartbeat, planning, claim, or spawn ran.");
-  lines.push("Enable the scheduler in local config, or pass --force for one bounded master/inbox-only tick.");
+  lines.push("no enabled automation classes; no heartbeat, planning, claim, or spawn ran.");
+  if (state.legacyGated) {
+    lines.push("legacy gate: retired scheduler.enabled key present with a disabled/malformed value; all automation classes resolve disabled (fail closed).");
+    lines.push("Run 'piren scheduler configure' to confirm an operator migration that removes the retired key.");
+  } else {
+    lines.push("Enable an automation class in local config, or pass --force for one bounded inbox-only tick.");
+  }
+  if (state.forcePassed) {
+    lines.push("force: not applied (the override never bypasses legacy gating).");
+  }
   lines.push("no work to execute this tick.");
   return lines.join("\n") + "\n";
 }
@@ -386,21 +404,29 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
     );
   }
 
-  // 0.2.0 S2: master gate (fail-closed) + closed automation classes. The
-  // master gate no-ops BEFORE any heartbeat refresh, planning, claim, or
-  // spawn. `--force` overrides ONLY the master and inbox gates for this one
-  // bounded tick; disabled cron classes stay gated.
+  // 0.2 Settings contract §4.3 (SGC-1/2): automation classes are the sole
+  // execution gates; there is no master-gate no-op. `--force` overrides ONLY
+  // an ordinary disabled `automation.inbox_tasks` class for this one
+  // non-persistent tick and NEVER bypasses legacy gating. With every class
+  // disabled the tick is inert supervision: no heartbeat refresh, planning,
+  // claim, or spawn.
   const schedulerConfig = resolveSchedulerConfig(config);
   const force = options.force === true;
-  if (!schedulerConfig.enabled && !force) {
-    return noWorkResult(deviceId, enabledAgents, disabledSummary(deviceId, enabledAgents));
-  }
+  const legacyGated = schedulerConfig.legacyMasterGate === "gated";
+  const forceApplied = force && !legacyGated;
   const automation: PlannerAutomation = {
-    inboxTasks: schedulerConfig.automation.inboxTasks || force,
+    inboxTasks: schedulerConfig.automation.inboxTasks || forceApplied,
     agentCron: schedulerConfig.automation.agentCron,
     scriptCron: schedulerConfig.automation.scriptCron,
   };
-  const migration = schedulerConfig.migration;
+  if (!automation.inboxTasks && !automation.agentCron && !automation.scriptCron) {
+    return noWorkResult(
+      deviceId,
+      enabledAgents,
+      inertSummary(deviceId, enabledAgents, { legacyGated, forcePassed: force }),
+    );
+  }
+  const legacyMasterGate = schedulerConfig.legacyMasterGate;
 
   const root = resolve(vaultRoot);
 
@@ -705,8 +731,8 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
     automation,
     summary: "",
   };
-  if (force) result.forced = true;
-  if (migration !== undefined) result.migration = migration;
+  if (forceApplied) result.forced = true;
+  if (legacyMasterGate !== "absent") result.legacyMasterGate = legacyMasterGate;
   if (executedItemType !== undefined) result.executedItemType = executedItemType;
   if (executedItemPath !== undefined) result.executedItemPath = executedItemPath;
   if (executedAgentName !== undefined) result.executedAgentName = executedAgentName;

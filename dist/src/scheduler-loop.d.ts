@@ -3,6 +3,16 @@ import type { SchedulerOnceOptions, SchedulerOnceResult, SchedulerOnceExecutors 
 /** Effective concurrency supported by S5. S4 is one-at-a-time; S5 is honest. */
 export declare const SCHEDULER_EFFECTIVE_CONCURRENCY: 1;
 /**
+ * Closed retired-master-gate state (0.2 Settings contract §4.3):
+ * - "absent": no `scheduler.enabled` key (normal);
+ * - "ignored": explicit `enabled: true` — inert-to-ignore, never adds
+ *   execution; classes are the sole gates;
+ * - "gated": explicit `enabled: false` or malformed value — ambiguous
+ *   legacy gate; ALL automation classes resolve disabled (fail closed) and
+ *   `--force` never bypasses it.
+ */
+export type SchedulerLegacyMasterGateState = "absent" | "ignored" | "gated";
+/**
  * Closed automation-class model: exactly these three classes exist. No
  * per-task/per-cron/per-agent allowlists or expressions.
  */
@@ -68,9 +78,10 @@ export interface ResolvedSchedulerConfig {
     /** Explicit device id override, or undefined to use S4 hostname fallback. */
     deviceId?: string;
     /**
-     * Master gate (0.2.0 scope amendment §2). Fail-closed default false; a
-     * legacy established block without `enabled` resolves true and carries a
-     * migration signal. S1 resolves only; gating is wired in a later tracer.
+     * Transitional master-gate compat (SGC-1/2). Kept byte-for-byte with the
+     * S1 computation because the SGC-3 consumers (doctor/configure) are
+     * reworked in a later tracer. Runtime surfaces never treat this as a gate:
+     * they use {@link legacyMasterGate} + {@link automation}.
      */
     enabled: boolean;
     /** Closed automation classes (inbox_tasks / agent_cron / script_cron). */
@@ -80,6 +91,12 @@ export interface ResolvedSchedulerConfig {
      * `enabled`: inspectable pure signal for a later writer/wizard tracer.
      */
     migration?: SchedulerMigrationSignal;
+    /**
+     * Closed retired-master-gate state (0.2 Settings contract §4.3). Runtime
+     * surfaces gate execution on {@link automation} only; when this is
+     * "gated", {@link automation} is ALL disabled (fail-closed legacy gate).
+     */
+    legacyMasterGate: SchedulerLegacyMasterGateState;
     warnings: string[];
 }
 /**

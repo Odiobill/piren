@@ -668,8 +668,9 @@ try {
       const output = await schedulerDryRun({});
       console.log(output);
     } else if (parsed.once) {
-      // 0.2.0 S2: `--force` is the bounded non-persistent one-shot override of
-      // ONLY the master and inbox gates (see SchedulerOnceOptions.force).
+      // 0.2 Settings contract §4.3: `--force` is the bounded non-persistent
+      // one-shot override of ONLY an ordinary disabled `automation.inbox_tasks`
+      // class (never legacy gating, never cron; see SchedulerOnceOptions.force).
       const onceOptions: Parameters<typeof schedulerOnce>[0] = {
         executors: createSchedulerExecutors({
           runner: createAskRunner(),

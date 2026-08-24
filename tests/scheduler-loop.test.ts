@@ -173,13 +173,17 @@ describe("resolveSchedulerConfig: enabled master gate (0.2.0 S1)", () => {
     }
   });
 
-  it("an explicit enabled on a legacy block wins and suppresses the migration signal", () => {
+  it("an explicit enabled on a legacy block wins for the compat field and carries the legacy-gate state", () => {
     const resolved = resolveSchedulerConfig({
       scheduler: { poll_interval_seconds: 15, enabled: false },
     });
     expect(resolved.enabled).toBe(false);
     expect(resolved.migration).toBeUndefined();
-    expect(resolved.warnings).toEqual([]);
+    // SGC-1: enabled:false is an ambiguous legacy gate — all classes fail
+    // closed with a deterministic warning (never silently re-enabled).
+    expect(resolved.legacyMasterGate).toBe("gated");
+    expect(resolved.automation).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(resolved.warnings.some((w) => w.includes("legacy gate"))).toBe(true);
   });
 
   it("a present-but-malformed enabled fails closed to false with a deterministic warning", () => {
@@ -226,6 +230,52 @@ describe("resolveSchedulerConfig: enabled master gate (0.2.0 S1)", () => {
     expect(freshNull.enabled).toBe(false);
     expect(freshNull.migration).toBeUndefined();
     expect(freshNull.warnings).toEqual([]);
+  });
+});
+
+describe("resolveSchedulerConfig: retired master gate and legacy shapes (SGC-1)", () => {
+  it("legacyMasterGate is absent when no scheduler.enabled key exists and classes resolve independently", () => {
+    const resolved = resolveSchedulerConfig({
+      scheduler: { automation: { inbox_tasks: true, agent_cron: true } },
+    });
+    expect(resolved.legacyMasterGate).toBe("absent");
+    expect(resolved.automation).toEqual({ inboxTasks: true, agentCron: true, scriptCron: false });
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("explicit enabled:true is inert-to-ignore: never adds execution, classes are the sole gates", () => {
+    const resolved = resolveSchedulerConfig({
+      scheduler: { enabled: true, automation: { inbox_tasks: true } },
+    });
+    expect(resolved.legacyMasterGate).toBe("ignored");
+    expect(resolved.automation).toEqual({ inboxTasks: true, agentCron: false, scriptCron: false });
+    // Bounded legacy notice; the retired key alone never enables anything.
+    expect(resolved.warnings.some((w) => w.includes("inert-to-ignore"))).toBe(true);
+  });
+
+  it("enabled:true with no automation classes never enables anything", () => {
+    const resolved = resolveSchedulerConfig({ scheduler: { enabled: true } });
+    expect(resolved.legacyMasterGate).toBe("ignored");
+    expect(resolved.automation).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+  });
+
+  it("enabled:false is an ambiguous legacy gate: ALL classes resolve disabled (fail closed)", () => {
+    const resolved = resolveSchedulerConfig({
+      scheduler: { enabled: false, automation: { inbox_tasks: true, agent_cron: true, script_cron: true } },
+    });
+    expect(resolved.legacyMasterGate).toBe("gated");
+    expect(resolved.automation).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(resolved.warnings.some((w) => w.includes("legacy gate"))).toBe(true);
+  });
+
+  it("a malformed enabled value is also a legacy gate: all classes disabled, no value echo", () => {
+    const secret = "scheduler-secret-must-not-appear";
+    const resolved = resolveSchedulerConfig({
+      scheduler: { enabled: secret as unknown as boolean, automation: { inbox_tasks: true } },
+    });
+    expect(resolved.legacyMasterGate).toBe("gated");
+    expect(resolved.automation).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(resolved.warnings.join("\n")).not.toContain(secret);
   });
 });
 
@@ -432,12 +482,11 @@ function baseLoopOptions(overrides: Partial<SchedulerLoopOptions> & { controller
   const logs: string[] = [];
   return {
     configPath: "/tmp/fake-config.yml",
-    // 0.2.0 S2: the loop no-ops on a disabled master gate, so the default
-    // fixture is an explicitly enabled scheduler block; pre-S2 tests keep
-    // exercising tick cadence unchanged.
+    // 0.2 Settings contract §4.3: no retired `scheduler.enabled` key (so the
+    // legacy notices stay absent) and every automation class enabled, so the
+    // default fixture keeps exercising tick cadence unchanged.
     schedulerConfig: resolveSchedulerConfig({
       scheduler: {
-        enabled: true,
         automation: { inbox_tasks: true, agent_cron: true, script_cron: true },
       },
     }),
@@ -745,14 +794,11 @@ describe("createRealSchedulerLoopSleep", () => {
   });
 });
 
-describe("runSchedulerLoop: master gate and startup summary (0.2.0 S2)", () => {
-  it("no-ops immediately when scheduler.enabled is false: zero ticks, zero sleeps, zero spawns", async () => {
+describe("runSchedulerLoop: automation gates and startup summary (SGC-1/2)", () => {
+  it("runs as inert supervision when legacy-gated (enabled:false): ticks run, no heartbeat/planning/claim/spawn", async () => {
     const controller = createSchedulerLoopController();
     const logs: string[] = [];
     const { sleep, waits } = immediateSleep();
-    // The tick records calls and shuts the loop down after 2 ticks so the
-    // test terminates even before the gate exists (RED); with the gate, it
-    // must never be called at all.
     const tick = fakeTick({ controller, shutdownAfter: 2 });
     const schedulerConfig = resolveSchedulerConfig({
       scheduler: { enabled: false, automation: { inbox_tasks: true, agent_cron: true, script_cron: true } },
@@ -768,18 +814,19 @@ describe("runSchedulerLoop: master gate and startup summary (0.2.0 S2)", () => {
       }),
     );
 
-    expect(tick.calls).toEqual([]);
-    expect(waits).toEqual([]);
-    expect(result.tickCount).toBe(0);
+    // The loop is supervision only: it keeps ticking (no master-gate exit).
+    expect(tick.calls).toHaveLength(2);
+    expect(waits).toHaveLength(1);
+    expect(result.tickCount).toBe(2);
     expect(result.executedCount).toBe(0);
     const output = logs.join("\n");
-    expect(output).toMatch(/scheduler disabled/i);
-    expect(output).toContain("no ticks ran");
-    // Bounded and non-secret: no config content beyond the gate state.
-    expect(output).not.toContain("inbox_tasks");
+    // Bounded and non-secret inert-supervision + legacy-gate notices.
+    expect(output).toMatch(/no enabled automation classes/i);
+    expect(output).toMatch(/legacy gate/i);
+    expect(output).not.toContain("scheduler disabled");
   });
 
-  it("no-ops for a fresh install with no scheduler block (fail-closed default)", async () => {
+  it("runs as inert supervision for a fresh install with no scheduler block (fail-closed default)", async () => {
     const controller = createSchedulerLoopController();
     const logs: string[] = [];
     const tick = fakeTick({ controller, shutdownAfter: 2 });
@@ -793,9 +840,10 @@ describe("runSchedulerLoop: master gate and startup summary (0.2.0 S2)", () => {
       }),
     );
 
-    expect(tick.calls).toEqual([]);
-    expect(result.tickCount).toBe(0);
-    expect(logs.join("\n")).toMatch(/scheduler disabled/i);
+    expect(tick.calls).toHaveLength(2);
+    expect(result.tickCount).toBe(2);
+    expect(logs.join("\n")).toMatch(/no enabled automation classes/i);
+    expect(logs.join("\n")).not.toMatch(/legacy/i);
   });
 
   it("startup summary lists the resolved automation classes (bounded, non-secret)", async () => {
@@ -818,12 +866,14 @@ describe("runSchedulerLoop: master gate and startup summary (0.2.0 S2)", () => {
     expect(startup).toContain("automation: inbox_tasks=on agent_cron=off script_cron=on");
   });
 
-  it("startup summary surfaces the migration signal as a read-only notice (never persisted)", async () => {
+  it("startup summary surfaces the legacy-gate notice for a gated config (read-only, never persisted)", async () => {
     const controller = createSchedulerLoopController();
     const logs: string[] = [];
-    // Legacy established block: legacy key present, no `enabled` key.
-    const schedulerConfig = resolveSchedulerConfig({ scheduler: { poll_interval_seconds: 45 } });
-    expect(schedulerConfig.migration).toBeDefined();
+    // Legacy ambiguous gate: `enabled: false` with enabled automation classes.
+    const schedulerConfig = resolveSchedulerConfig({
+      scheduler: { enabled: false, automation: { inbox_tasks: true } },
+    });
+    expect(schedulerConfig.legacyMasterGate).toBe("gated");
 
     await runSchedulerLoop(
       baseLoopOptions({
@@ -835,10 +885,11 @@ describe("runSchedulerLoop: master gate and startup summary (0.2.0 S2)", () => {
     );
 
     const startup = logs[0] ?? "";
-    expect(startup).toMatch(/migration: .*not persisted/i);
+    expect(startup).toMatch(/legacy gate: .*fail closed/i);
+    expect(startup).toMatch(/not persisted/i);
   });
 
-  it("startup summary omits the migration notice when no signal is present", async () => {
+  it("startup summary omits legacy notices when no retired scheduler.enabled key is present", async () => {
     const controller = createSchedulerLoopController();
     const logs: string[] = [];
 
@@ -850,6 +901,6 @@ describe("runSchedulerLoop: master gate and startup summary (0.2.0 S2)", () => {
       }),
     );
 
-    expect(logs[0] ?? "").not.toMatch(/migration:/i);
+    expect(logs[0] ?? "").not.toMatch(/legacy:|legacy gate:/i);
   });
 });

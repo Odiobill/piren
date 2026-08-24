@@ -1,5 +1,5 @@
 import type { DependencyTaskNode, LoadedInboxTask } from "./scheduler-dependencies.js";
-import { type ResolvedSchedulerAutomation, type SchedulerMigrationSignal } from "./scheduler-loop.js";
+import { type ResolvedSchedulerAutomation, type SchedulerLegacyMasterGateState } from "./scheduler-loop.js";
 /**
  * Read-only scheduler operator report (ADR-0038 R3 operator surface).
  *
@@ -56,14 +56,13 @@ export declare function classifySchedulerReportFindings(input: SchedulerReportCl
  * report cannot identify which from vault state alone.
  */
 /**
- * Resolved master/class gate state rendered by the report (0.2.0 S2). The
- * report stays read-only regardless of the gates; these lines only make the
- * effective automation surface inspectable.
+ * Resolved automation/legacy gate state rendered by the report (0.2 Settings
+ * contract §4.3). The report stays read-only regardless of the gates; these
+ * lines only make the effective automation surface inspectable.
  */
 export interface SchedulerReportGateState {
-    masterEnabled: boolean;
     automation: ResolvedSchedulerAutomation;
-    migration?: SchedulerMigrationSignal;
+    legacyMasterGate: SchedulerLegacyMasterGateState;
 }
 export declare function formatSchedulerReport(enabledAgents: string[], findings: SchedulerReportFinding[], gates?: SchedulerReportGateState): string;
 export interface SchedulerReportOptions {

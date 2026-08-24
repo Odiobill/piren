@@ -24,19 +24,6 @@ const DEFAULT_STALE_AFTER_SECONDS = 300;
 const DEFAULT_MAX_CONCURRENT_AGENTS = 1;
 /** Effective concurrency supported by S5. S4 is one-at-a-time; S5 is honest. */
 export const SCHEDULER_EFFECTIVE_CONCURRENCY = 1;
-// ---------------------------------------------------------------------------
-// 0.2.0 S1: master gate + closed automation classes (pure resolver)
-// ---------------------------------------------------------------------------
-// Binding contract (0.2.0 scope amendment §2 + S1 task):
-//   - ~/.config/piren/config.yml is the sole scheduler authority;
-//   - fresh / no scheduler config -> enabled:false and all classes false;
-//   - present-but-malformed booleans fail closed with deterministic
-//     non-secret warnings;
-//   - a legacy established `scheduler:` block lacking the new `enabled` key
-//     resolves effective enabled=true so upgrade intent is preserved, carrying
-//     a PURE, inspectable migration signal; S1 never writes a file (atomic
-//     persistence belongs to a later separately gated writer/wizard tracer);
-//   - missing automation / classes remain false (fail closed).
 /**
  * Closed automation-class model: exactly these three classes exist. No
  * per-task/per-cron/per-agent allowlists or expressions.
@@ -158,15 +145,16 @@ export function resolveSchedulerConfig(config) {
     const pollIntervalSeconds = resolvePositiveInt(sched.poll_interval_seconds, DEFAULT_POLL_INTERVAL_SECONDS, "poll_interval_seconds", warnings);
     const staleAfterSeconds = resolvePositiveInt(sched.stale_after_seconds, DEFAULT_STALE_AFTER_SECONDS, "stale_after_seconds", warnings);
     const maxConcurrentAgents = resolvePositiveInt(sched.max_concurrent_agents, DEFAULT_MAX_CONCURRENT_AGENTS, "max_concurrent_agents", warnings);
-    // 0.2.0 S1: master gate. Fresh / no scheduler config -> false. A legacy
-    // established block (any legacy key present, no usable `enabled` key)
-    // resolves effective true so established upgrade intent is preserved,
-    // carrying a PURE migration signal; S1 never writes a file. An explicit
-    // boolean wins; a present-but-malformed value fails closed to false.
+    // Retired master gate (0.2 Settings contract §4.3). The `enabled`/
+    // `migration` compat fields below keep the S1 computation byte-for-byte
+    // (the SGC-3 consumers doctor/configure are reworked in a later tracer);
+    // runtime surfaces gate on `legacyMasterGate` + `automation` and never
+    // treat `enabled` as a gate.
     const legacyKeysPresent = LEGACY_SCHEDULER_KEYS.filter((key) => sched[key] !== undefined);
     const enabledRaw = sched.enabled;
     let enabled;
     let migration;
+    let legacyMasterGate;
     if (isAbsentLike(enabledRaw)) {
         if (legacyKeysPresent.length > 0) {
             enabled = true;
@@ -183,24 +171,40 @@ export function resolveSchedulerConfig(config) {
         else {
             enabled = false;
         }
+        legacyMasterGate = "absent";
     }
-    else if (typeof enabledRaw === "boolean") {
-        enabled = enabledRaw;
+    else if (enabledRaw === true) {
+        enabled = true;
+        legacyMasterGate = "ignored";
+        warnings.push("scheduler.enabled is present with value true; the retired master gate is inert-to-ignore and never adds execution (automation classes are the sole gates).");
+    }
+    else if (enabledRaw === false) {
+        enabled = false;
+        legacyMasterGate = "gated";
+        warnings.push("scheduler.enabled is present with value false; ambiguous legacy gate: all automation classes resolve disabled (fail closed) until an operator-confirmed migration removes the retired key; --force never bypasses this legacy gate.");
     }
     else {
-        warnings.push(`scheduler.enabled has invalid ${configValueKind(enabledRaw)} content; treating the scheduler as disabled (fail closed).`);
         enabled = false;
+        legacyMasterGate = "gated";
+        warnings.push(`scheduler.enabled has invalid ${configValueKind(enabledRaw)} content; ambiguous legacy gate: all automation classes resolve disabled (fail closed); --force never bypasses this legacy gate.`);
     }
     const automationResult = resolveAutomationClasses(sched.automation);
     for (const warning of automationResult.warnings)
         warnings.push(warning);
+    // Fail-closed legacy gating: a "gated" retired master key disables EVERY
+    // automation class regardless of the declared `automation` block, so no
+    // old `enabled:false` installation can silently begin executing.
+    const automation = legacyMasterGate === "gated"
+        ? { inboxTasks: false, agentCron: false, scriptCron: false }
+        : automationResult.classes;
     const result = {
         pollIntervalSeconds,
         staleAfterSeconds,
         maxConcurrentAgents,
         effectiveConcurrency: SCHEDULER_EFFECTIVE_CONCURRENCY,
         enabled,
-        automation: automationResult.classes,
+        automation,
+        legacyMasterGate,
         warnings,
     };
     if (migration !== undefined)
@@ -300,15 +304,21 @@ function formatStartupSummary(schedulerConfig, enabledAgents, startedAt) {
     lines.push(`poll interval: ${schedulerConfig.pollIntervalSeconds}s`);
     lines.push(`stale after: ${schedulerConfig.staleAfterSeconds}s`);
     lines.push(`max_concurrent_agents: ${schedulerConfig.maxConcurrentAgents} (effective: ${schedulerConfig.effectiveConcurrency}, one-at-a-time)`);
-    // 0.2.0 S2: resolved closed automation classes, bounded and non-secret.
+    // 0.2 Settings contract §4.3: bounded resolved automation classes, an
+    // inert-supervision note when every class is disabled, and bounded legacy
+    // notices for a retired `scheduler.enabled` key (never config content).
     const onOff = (value) => (value ? "on" : "off");
     lines.push(`automation: inbox_tasks=${onOff(schedulerConfig.automation.inboxTasks)} ` +
         `agent_cron=${onOff(schedulerConfig.automation.agentCron)} ` +
         `script_cron=${onOff(schedulerConfig.automation.scriptCron)}`);
-    if (schedulerConfig.migration !== undefined) {
-        // Read-only notice only: S2 never persists the migration signal (the
-        // writer/wizard is a later separately gated tracer).
-        lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+    if (!schedulerConfig.automation.inboxTasks && !schedulerConfig.automation.agentCron && !schedulerConfig.automation.scriptCron) {
+        lines.push("no enabled automation classes; the loop runs as supervision only and will not heartbeat, plan, claim, or spawn until a class is enabled.");
+    }
+    if (schedulerConfig.legacyMasterGate === "gated") {
+        lines.push("legacy gate: retired scheduler.enabled key present with a disabled/malformed value; all automation classes resolve disabled (fail closed); operator-confirmed migration required (read-only notice, not persisted)");
+    }
+    else if (schedulerConfig.legacyMasterGate === "ignored") {
+        lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
     }
     if (schedulerConfig.warnings.length > 0) {
         lines.push("config warnings:");
@@ -316,19 +326,6 @@ function formatStartupSummary(schedulerConfig, enabledAgents, startedAt) {
             lines.push(`  - ${w}`);
     }
     lines.push("press Ctrl+C (SIGINT/SIGTERM) to stop cleanly after the current tick.");
-    return lines.join("\n") + "\n";
-}
-/**
- * Bounded non-secret disabled notice (0.2.0 S2 master gate). Logged when the
- * resolved `scheduler.enabled` is false: the loop returns immediately with no
- * tick, heartbeat, planning, claim, spawn, or sleep.
- */
-function formatDisabledSummary(startedAt) {
-    const lines = ["SCHEDULER LOOP DISABLED"];
-    lines.push(`started at: ${startedAt.toISOString()}`);
-    lines.push("scheduler disabled (scheduler.enabled resolved false); no ticks ran.");
-    lines.push("No heartbeat refresh, planning, claim, spawn, or sleep occurred.");
-    lines.push("Enable scheduler.enabled in local config, or use piren scheduler --once --force for one bounded master/inbox-only tick.");
     return lines.join("\n") + "\n";
 }
 function formatTickSummary(tickNumber, result) {
@@ -372,22 +369,10 @@ export async function runSchedulerLoop(options) {
     const pollIntervalMs = schedulerConfig.pollIntervalSeconds * 1000;
     const staleAfterMs = schedulerConfig.staleAfterSeconds * 1000;
     const startedAt = now();
-    // 0.2.0 S2 master gate: a resolved disabled scheduler no-ops immediately -
-    // before any tick (and therefore before any heartbeat refresh, planning,
-    // claim, or spawn) and before any sleep. `--dry-run`/`--report` remain the
-    // read-only operator surfaces while disabled.
-    if (!schedulerConfig.enabled) {
-        const summary = formatDisabledSummary(startedAt);
-        log(summary);
-        return {
-            tickCount: 0,
-            executedCount: 0,
-            startedAt,
-            finishedAt: startedAt,
-            shutdownReason: "scheduler disabled",
-            summary,
-        };
-    }
+    // 0.2 Settings contract §4.3: there is no master-gate exit. The loop runs
+    // as supervision; schedulerOnce per tick gates execution on the resolved
+    // automation classes (all classes off = inert supervision with no
+    // heartbeat/planning/claim/spawn per tick).
     log(formatStartupSummary(schedulerConfig, options.enabledAgents, startedAt));
     let tickCount = 0;
     let executedCount = 0;

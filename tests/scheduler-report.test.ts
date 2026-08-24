@@ -589,7 +589,7 @@ describe("schedulerReport resolved master/class state (0.2.0 S2)", () => {
 
   afterEach(async () => rm(root, { recursive: true, force: true }));
 
-  it("renders resolved master/class state lines and stays read-only when disabled", async () => {
+  it("renders resolved automation/legacy state lines and stays read-only when legacy-gated", async () => {
     await writeFile(
       configPath,
       `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  enabled: false\n  automation:\n    inbox_tasks: false\n    agent_cron: true\n    script_cron: false\n`,
@@ -597,15 +597,16 @@ describe("schedulerReport resolved master/class state (0.2.0 S2)", () => {
 
     const output = await schedulerReport({ configPath });
 
-    expect(output).toContain("scheduler enabled: no");
-    expect(output).toContain("automation: inbox_tasks=off agent_cron=on script_cron=off");
+    // enabled:false is an ambiguous legacy gate: ALL classes resolve disabled.
+    expect(output).toContain("automation: inbox_tasks=off agent_cron=off script_cron=off");
+    expect(output).toMatch(/legacy gate: .*fail closed/i);
     expect(output).toContain("read-only");
     // No findings/mutation side effects: no device or run files created.
     const teamEntries = await readdir(join(vault, "team", "thor"));
     expect(teamEntries).toEqual(["inbox"]);
   });
 
-  it("renders enabled state and omits disabled-class noise when all classes are on", async () => {
+  it("renders enabled automation state with the inert-to-ignore legacy notice when enabled:true is present", async () => {
     await writeFile(
       configPath,
       `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  enabled: true\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n`,
@@ -613,12 +614,12 @@ describe("schedulerReport resolved master/class state (0.2.0 S2)", () => {
 
     const output = await schedulerReport({ configPath });
 
-    expect(output).toContain("scheduler enabled: yes");
     expect(output).toContain("automation: inbox_tasks=on agent_cron=on script_cron=on");
+    expect(output).toMatch(/inert-to-ignore/i);
     expect(output).not.toMatch(/migration:/i);
   });
 
-  it("renders the migration notice for a legacy block without 'enabled' (read-only, never persisted)", async () => {
+  it("emits no legacy notice for a legacy block without an 'enabled' key (classes are the sole gates)", async () => {
     await writeFile(
       configPath,
       `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  poll_interval_seconds: 45\n`,
@@ -626,8 +627,8 @@ describe("schedulerReport resolved master/class state (0.2.0 S2)", () => {
 
     const output = await schedulerReport({ configPath });
 
-    expect(output).toContain("scheduler enabled: yes");
-    expect(output).toMatch(/migration: .*not persisted/i);
+    expect(output).toContain("automation: inbox_tasks=off agent_cron=off script_cron=off");
+    expect(output).not.toMatch(/legacy:|legacy gate:|migration:/i);
     const after = await readFile(configPath, "utf8");
     expect(after).not.toContain("enabled: true");
   });
@@ -637,7 +638,6 @@ describe("schedulerReport resolved master/class state (0.2.0 S2)", () => {
 
     const output = await schedulerReport({ configPath });
 
-    expect(output).toContain("scheduler enabled: no");
     expect(output).toContain("automation: inbox_tasks=off agent_cron=off script_cron=off");
   });
 });

@@ -1360,7 +1360,7 @@ describe("schedulerOnce automation gates (0.2.0 S2)", () => {
     };
   }
 
-  it("no-ops before heartbeat/planning/claim/spawn when scheduler.enabled is false", async () => {
+  it("is inert supervision when legacy-gated (enabled:false fails closed): no heartbeat/planning/claim/spawn", async () => {
     await writeConfig({
       allowed: ["codex"],
       scheduler: "scheduler:\n  enabled: false\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true",
@@ -1380,14 +1380,15 @@ describe("schedulerOnce automation gates (0.2.0 S2)", () => {
     expect(result.noWork).toBe(true);
     expect(result.plannedCount).toBe(0);
     expect(result.claimAttempts).toEqual([]);
-    expect(result.summary).toMatch(/scheduler disabled/i);
+    expect(result.summary).toMatch(/no enabled automation classes/i);
+    expect(result.summary).toMatch(/legacy gate/i);
     expect(claimCalls).toEqual([]);
-    // Zero heartbeat writes: the devices directory stays empty.
+    // Inert supervision: zero heartbeat writes; the devices directory stays empty.
     const deviceFiles = await readdir(join(vault, "team", "codex", "devices"));
     expect(deviceFiles).toEqual([]);
   });
 
-  it("no-ops for a fresh install with no scheduler block (fail-closed default)", async () => {
+  it("is inert supervision when every automation class is disabled (fresh-install default)", async () => {
     await writeConfig({ allowed: ["codex"], scheduler: "none" });
     await writeInboxTask("codex", "fresh-task");
 
@@ -1400,7 +1401,8 @@ describe("schedulerOnce automation gates (0.2.0 S2)", () => {
 
     expect(result.executed).toBe(false);
     expect(result.noWork).toBe(true);
-    expect(result.summary).toMatch(/scheduler disabled/i);
+    expect(result.summary).toMatch(/no enabled automation classes/i);
+    expect(result.summary).not.toMatch(/legacy gate/i);
     const deviceFiles = await readdir(join(vault, "team", "codex", "devices"));
     expect(deviceFiles).toEqual([]);
   });
@@ -1474,14 +1476,13 @@ describe("schedulerOnce automation gates (0.2.0 S2)", () => {
     expect(result.summary).toContain("script_cron=off");
   });
 
-  it("--force permits a bounded tick over master+inbox gates but never enables disabled cron classes", async () => {
+  it("--force with only due cron work and disabled cron classes executes nothing (legacy-gated)", async () => {
     await writeConfig({
       allowed: ["codex"],
-      scheduler: "scheduler:\n  enabled: false\n  automation:\n    inbox_tasks: false\n    agent_cron: false\n    script_cron: false",
+      scheduler: "scheduler:\n  enabled: false\n  automation:\n    agent_cron: false\n    script_cron: false",
     });
-    await writeInboxTask("codex", "forced-task");
     await writeCronJob({ id: "agent-job", agent: "codex", mode: "agent", prompt: "Summarize logs." });
-    const { executors, inboxCalls, cronAgentCalls } = recordingExecutors();
+    const { executors, cronAgentCalls } = recordingExecutors();
 
     const result = await schedulerOnce({
       configPath,
@@ -1491,16 +1492,10 @@ describe("schedulerOnce automation gates (0.2.0 S2)", () => {
       force: true,
     });
 
-    expect(inboxCalls).toHaveLength(1);
     expect(cronAgentCalls).toEqual([]);
-    expect(result.executedItemType).toBe("inbox_task");
-    // The cron class stayed gated: it was never even planned.
-    expect(result.claimAttempts.every((a) => a.itemType === "inbox_task")).toBe(true);
-    expect(result.summary).toMatch(/force/i);
-    expect(result.summary).toContain("agent_cron=off");
-    // Config was NOT written by the force override.
-    const after = await readFile(configPath, "utf8");
-    expect(after).toContain("enabled: false");
+    expect(result.executed).toBe(false);
+    expect(result.plannedCount).toBe(0);
+    expect(result.summary).toMatch(/legacy gate/i);
   });
 
   it("--force with only due cron work and disabled cron classes executes nothing", async () => {
@@ -1522,6 +1517,59 @@ describe("schedulerOnce automation gates (0.2.0 S2)", () => {
     expect(cronAgentCalls).toEqual([]);
     expect(result.executed).toBe(false);
     expect(result.plannedCount).toBe(0);
+  });
+
+  it("--force overrides an ordinary disabled inbox class (no legacy key) but never cron", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  automation:\n    inbox_tasks: false\n    agent_cron: false\n    script_cron: false\n",
+    });
+    await writeInboxTask("codex", "forced-task");
+    await writeCronJob({ id: "agent-job", agent: "codex", mode: "agent", prompt: "Summarize logs." });
+    const { executors, inboxCalls, cronAgentCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      force: true,
+    });
+
+    expect(inboxCalls).toHaveLength(1);
+    expect(cronAgentCalls).toEqual([]);
+    expect(result.executedItemType).toBe("inbox_task");
+    expect(result.summary).toMatch(/force: inbox automation override/);
+    expect(result.summary).toContain("agent_cron=off");
+    // The force override never persists: no scheduler.enabled key is written.
+    const after = await readFile(configPath, "utf8");
+    expect(after).not.toContain("enabled:");
+  });
+
+  it("--force never bypasses legacy gating (enabled:false fails closed)", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler: "scheduler:\n  enabled: false\n  automation:\n    inbox_tasks: false\n    agent_cron: false\n    script_cron: false\n",
+    });
+    await writeInboxTask("codex", "gated-task");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      force: true,
+    });
+
+    expect(inboxCalls).toEqual([]);
+    expect(result.executed).toBe(false);
+    expect(result.noWork).toBe(true);
+    expect(result.summary).toMatch(/legacy gate/i);
+    expect(result.summary).toMatch(/force: not applied|never bypasses/i);
+    // Inert supervision: no heartbeat refresh either.
+    const deviceFiles = await readdir(join(vault, "team", "codex", "devices"));
+    expect(deviceFiles).toEqual([]);
   });
 
   it("executes normally without --force when master and all classes are enabled", async () => {

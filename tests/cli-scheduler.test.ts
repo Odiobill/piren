@@ -220,15 +220,16 @@ describe("piren scheduler CLI gates (0.2.0 S2)", () => {
     return { home, vault };
   }
 
-  it("'piren scheduler --once' with scheduler disabled prints a bounded disabled notice, exits 0, writes nothing", async () => {
+  it("'piren scheduler --once' with a legacy-gated config prints an inert legacy-gate notice, exits 0, writes nothing", async () => {
     const { home, vault } = await makeHome("scheduler:\n  enabled: false\n");
     try {
       const result = runScheduler(["--once"], { HOME: home });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("SCHEDULER ONCE");
-      expect(result.stdout).toMatch(/scheduler disabled/i);
+      expect(result.stdout).toMatch(/no enabled automation classes/i);
+      expect(result.stdout).toMatch(/legacy gate/i);
       expect(result.stdout).not.toContain("[EXEC]");
-      // No heartbeat: the devices directory stays empty.
+      // Inert supervision: no heartbeat; the devices directory stays empty.
       const { readdir } = await import("node:fs/promises");
       expect(await readdir(join(vault, "team", "codex", "devices"))).toEqual([]);
     } finally {
@@ -236,16 +237,16 @@ describe("piren scheduler CLI gates (0.2.0 S2)", () => {
     }
   });
 
-  it("'piren scheduler --once --force' overrides the master gate for one bounded tick (no persistence)", async () => {
+  it("'piren scheduler --once --force' never bypasses legacy gating (enabled:false fails closed; no persistence)", async () => {
     const { home } = await makeHome("scheduler:\n  enabled: false\n  automation:\n    agent_cron: false\n    script_cron: false\n");
     try {
       const result = runScheduler(["--once", "--force"], { HOME: home });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("SCHEDULER ONCE");
-      expect(result.stdout).toMatch(/force: master\+inbox gate override/);
-      expect(result.stdout).toContain("agent_cron=off");
-      expect(result.stdout).not.toMatch(/scheduler disabled/i);
-      // Config unchanged: force never persists.
+      expect(result.stdout).toMatch(/legacy gate/i);
+      expect(result.stdout).toMatch(/force: not applied/i);
+      expect(result.stdout).not.toMatch(/force: inbox automation override/);
+      // Config unchanged: force never persists and never migrates.
       const after = await import("node:fs/promises").then((fs) =>
         fs.readFile(join(home, ".config", "piren", "config.yml"), "utf8"),
       );
@@ -255,18 +256,20 @@ describe("piren scheduler CLI gates (0.2.0 S2)", () => {
     }
   });
 
-  it("bare 'piren scheduler' with scheduler disabled prints the bounded disabled notice and exits 0 promptly", async () => {
+  it("bare 'piren scheduler' with a legacy-gated config runs as inert supervision until SIGTERM (clean exit 0)", async () => {
     const { home } = await makeHome("scheduler:\n  enabled: false\n");
     try {
-      const result = runScheduler([], { HOME: home });
+      const result = await runSchedulerLoopUntilSignal([], { HOME: home }, { readyMs: 1000, killMs: 5000 });
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("SCHEDULER LOOP DISABLED");
-      expect(result.stdout).toMatch(/no ticks ran/i);
-      expect(result.stdout).not.toContain("SCHEDULER LOOP STARTING");
+      expect(result.signal).toBe(null);
+      expect(result.stdout).toContain("SCHEDULER LOOP STARTING");
+      expect(result.stdout).toMatch(/no enabled automation classes/i);
+      expect(result.stdout).toMatch(/legacy gate/i);
+      expect(result.stdout).toContain("SCHEDULER LOOP SHUTDOWN");
     } finally {
       await rm(home, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("bare 'piren scheduler' startup summary lists resolved automation classes", async () => {
     const { home } = await makeHome(
@@ -282,14 +285,15 @@ describe("piren scheduler CLI gates (0.2.0 S2)", () => {
     }
   }, 15000);
 
-  it("'piren scheduler --report' renders resolved master/class state and stays read-only", async () => {
+  it("'piren scheduler --report' renders resolved automation/legacy state and stays read-only", async () => {
     const { home } = await makeHome("scheduler:\n  enabled: false\n  automation:\n    inbox_tasks: false\n    agent_cron: true\n    script_cron: false\n");
     try {
       const result = runScheduler(["--report"], { HOME: home });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("SCHEDULER REPORT");
-      expect(result.stdout).toContain("scheduler enabled: no");
-      expect(result.stdout).toContain("automation: inbox_tasks=off agent_cron=on script_cron=off");
+      // enabled:false is an ambiguous legacy gate: ALL classes resolve disabled.
+      expect(result.stdout).toContain("automation: inbox_tasks=off agent_cron=off script_cron=off");
+      expect(result.stdout).toMatch(/legacy gate: .*fail closed/i);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

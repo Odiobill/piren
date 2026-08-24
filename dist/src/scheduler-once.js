@@ -87,9 +87,9 @@ function formatSummary(result) {
     if (result.automation !== undefined)
         lines.push(formatGateState(result.automation));
     if (result.forced === true)
-        lines.push("force: master+inbox gate override (this tick only; not persisted)");
-    if (result.migration !== undefined) {
-        lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+        lines.push("force: inbox automation override (this tick only; not persisted)");
+    if (result.legacyMasterGate === "ignored") {
+        lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
     }
     lines.push(`planned claims: ${result.plannedCount}`);
     if (result.claimAttempts.length > 0) {
@@ -133,12 +133,21 @@ function formatGateState(automation) {
         `agent_cron=${onOff(automation.agentCron)} ` +
         `script_cron=${onOff(automation.scriptCron)}`);
 }
-function disabledSummary(deviceId, enabledAgents) {
+function inertSummary(deviceId, enabledAgents, state) {
     const lines = [`SCHEDULER ONCE (device: ${deviceId})`];
     lines.push(`enabled agents: ${enabledAgents.join(", ") || "(none)"}`);
     lines.push("");
-    lines.push("scheduler disabled (scheduler.enabled resolved false). No heartbeat, planning, claim, or spawn ran.");
-    lines.push("Enable the scheduler in local config, or pass --force for one bounded master/inbox-only tick.");
+    lines.push("no enabled automation classes; no heartbeat, planning, claim, or spawn ran.");
+    if (state.legacyGated) {
+        lines.push("legacy gate: retired scheduler.enabled key present with a disabled/malformed value; all automation classes resolve disabled (fail closed).");
+        lines.push("Run 'piren scheduler configure' to confirm an operator migration that removes the retired key.");
+    }
+    else {
+        lines.push("Enable an automation class in local config, or pass --force for one bounded inbox-only tick.");
+    }
+    if (state.forcePassed) {
+        lines.push("force: not applied (the override never bypasses legacy gating).");
+    }
     lines.push("no work to execute this tick.");
     return lines.join("\n") + "\n";
 }
@@ -166,21 +175,25 @@ export async function schedulerOnce(options) {
     if (enabledAgents.length === 0) {
         return noWorkResult(deviceId, enabledAgents, `SCHEDULER ONCE (device: ${deviceId})\n\nNo enabled agents. Configure allowed_agents in local config.\nno work to execute this tick.\n`);
     }
-    // 0.2.0 S2: master gate (fail-closed) + closed automation classes. The
-    // master gate no-ops BEFORE any heartbeat refresh, planning, claim, or
-    // spawn. `--force` overrides ONLY the master and inbox gates for this one
-    // bounded tick; disabled cron classes stay gated.
+    // 0.2 Settings contract §4.3 (SGC-1/2): automation classes are the sole
+    // execution gates; there is no master-gate no-op. `--force` overrides ONLY
+    // an ordinary disabled `automation.inbox_tasks` class for this one
+    // non-persistent tick and NEVER bypasses legacy gating. With every class
+    // disabled the tick is inert supervision: no heartbeat refresh, planning,
+    // claim, or spawn.
     const schedulerConfig = resolveSchedulerConfig(config);
     const force = options.force === true;
-    if (!schedulerConfig.enabled && !force) {
-        return noWorkResult(deviceId, enabledAgents, disabledSummary(deviceId, enabledAgents));
-    }
+    const legacyGated = schedulerConfig.legacyMasterGate === "gated";
+    const forceApplied = force && !legacyGated;
     const automation = {
-        inboxTasks: schedulerConfig.automation.inboxTasks || force,
+        inboxTasks: schedulerConfig.automation.inboxTasks || forceApplied,
         agentCron: schedulerConfig.automation.agentCron,
         scriptCron: schedulerConfig.automation.scriptCron,
     };
-    const migration = schedulerConfig.migration;
+    if (!automation.inboxTasks && !automation.agentCron && !automation.scriptCron) {
+        return noWorkResult(deviceId, enabledAgents, inertSummary(deviceId, enabledAgents, { legacyGated, forcePassed: force }));
+    }
+    const legacyMasterGate = schedulerConfig.legacyMasterGate;
     const root = resolve(vaultRoot);
     // 1. Refresh this device heartbeat for each enabled agent. registerDevice
     //    preserves a manually edited priority unless an explicit override is
@@ -489,10 +502,10 @@ export async function schedulerOnce(options) {
         automation,
         summary: "",
     };
-    if (force)
+    if (forceApplied)
         result.forced = true;
-    if (migration !== undefined)
-        result.migration = migration;
+    if (legacyMasterGate !== "absent")
+        result.legacyMasterGate = legacyMasterGate;
     if (executedItemType !== undefined)
         result.executedItemType = executedItemType;
     if (executedItemPath !== undefined)

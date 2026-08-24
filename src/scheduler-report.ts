@@ -5,7 +5,7 @@ import { readYamlConfig, resolveEnabledAgents, DEFAULT_CONFIG_PATH } from "./sch
 import {
   resolveSchedulerConfig,
   type ResolvedSchedulerAutomation,
-  type SchedulerMigrationSignal,
+  type SchedulerLegacyMasterGateState,
 } from "./scheduler-loop.js";
 
 /**
@@ -181,14 +181,13 @@ const CONTINUATION_INDENT = " ".repeat(4 /*indent*/ + 8 /*tag field*/ + 1 /*spac
  * report cannot identify which from vault state alone.
  */
 /**
- * Resolved master/class gate state rendered by the report (0.2.0 S2). The
- * report stays read-only regardless of the gates; these lines only make the
- * effective automation surface inspectable.
+ * Resolved automation/legacy gate state rendered by the report (0.2 Settings
+ * contract §4.3). The report stays read-only regardless of the gates; these
+ * lines only make the effective automation surface inspectable.
  */
 export interface SchedulerReportGateState {
-  masterEnabled: boolean;
   automation: ResolvedSchedulerAutomation;
-  migration?: SchedulerMigrationSignal;
+  legacyMasterGate: SchedulerLegacyMasterGateState;
 }
 
 export function formatSchedulerReport(enabledAgents: string[], findings: SchedulerReportFinding[], gates?: SchedulerReportGateState): string {
@@ -197,17 +196,19 @@ export function formatSchedulerReport(enabledAgents: string[], findings: Schedul
   lines.push("");
 
   if (gates !== undefined) {
-    // 0.2.0 S2: bounded resolved master/class state (never config content).
-    lines.push(`scheduler enabled: ${gates.masterEnabled ? "yes" : "no"}`);
+    // 0.2 Settings contract §4.3: bounded resolved automation state (never
+    // config content).
     const onOff = (value: boolean): string => (value ? "on" : "off");
     lines.push(
       `automation: inbox_tasks=${onOff(gates.automation.inboxTasks)} ` +
         `agent_cron=${onOff(gates.automation.agentCron)} ` +
         `script_cron=${onOff(gates.automation.scriptCron)}`,
     );
-    if (gates.migration !== undefined) {
-      // Read-only notice only: the report never persists the signal.
-      lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+    if (gates.legacyMasterGate === "gated") {
+      // Read-only notice only: the report never persists or migrates config.
+      lines.push("legacy gate: retired scheduler.enabled key present with a disabled/malformed value; all automation classes resolve disabled (fail closed); operator-confirmed migration required (read-only notice, not persisted)");
+    } else if (gates.legacyMasterGate === "ignored") {
+      lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
     }
     lines.push("");
   }
@@ -285,12 +286,12 @@ export async function schedulerReport(options: SchedulerReportOptions): Promise<
     duplicateIds: inboxState.duplicateIds,
     now,
   });
-  // 0.2.0 S2: resolved master/class state, read-only regardless of the gates.
+  // 0.2 Settings contract §4.3: resolved automation/legacy state, read-only
+  // regardless of the gates.
   const schedulerConfig = resolveSchedulerConfig(config);
   const gates: SchedulerReportGateState = {
-    masterEnabled: schedulerConfig.enabled,
     automation: schedulerConfig.automation,
+    legacyMasterGate: schedulerConfig.legacyMasterGate,
   };
-  if (schedulerConfig.migration !== undefined) gates.migration = schedulerConfig.migration;
   return formatSchedulerReport(enabledAgents, findings, gates);
 }

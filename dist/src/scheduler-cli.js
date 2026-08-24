@@ -58,14 +58,15 @@ export async function schedulerDryRun(options) {
     if (enabledAgents.length === 0) {
         return `SCHEDULER DRY-RUN (device: ${deviceId})\n\nNo enabled agents. Configure allowed_agents in local config.\n`;
     }
-    // 0.2.0 S2: resolve the master gate and closed automation classes. The
-    // dry-run stays read-only regardless of the master gate, but it previews an
-    // honest tick: a disabled master gate proposes nothing, and disabled
-    // classes are never proposed (bounded [SKIPPED] lines explain why).
+    // 0.2 Settings contract §4.3 (SGC-1/2): automation classes are the sole
+    // execution gates; there is no master gate. The dry-run stays read-only
+    // regardless of the gates, previews an honest tick (disabled classes are
+    // never proposed), and is discovery-complete: unclaimed pending inbox
+    // tasks are still listed with a bounded [DISABLED] status when inbox
+    // automation is disabled.
     const schedulerConfig = resolveSchedulerConfig(config);
-    const masterEnabled = schedulerConfig.enabled;
     const automation = schedulerConfig.automation;
-    const migration = schedulerConfig.migration;
+    const legacyMasterGate = schedulerConfig.legacyMasterGate;
     // Load inbox state (pending candidates + dependency resolver) across all
     // enabled agents. The resolver includes claimed files so an atomic claim
     // never hides a prerequisite (ADR-0038 R1).
@@ -103,34 +104,34 @@ export async function schedulerDryRun(options) {
     }
     // Plan claims. The planner excludes dependency-blocked tasks from claim
     // proposals using the resolver map (fail-closed), and excludes disabled
-    // automation classes (0.2.0 S2). A disabled master gate proposes nothing.
-    const claims = masterEnabled
-        ? planSchedulerTick({
-            enabledAgents,
-            pendingTasks,
-            dueCronJobs,
-            activeDevices,
-            deviceId,
-            staleAfterMs,
-            now,
-            dependencyNodes: inboxState.dependencyNodes,
-            duplicateIds: inboxState.duplicateIds,
-            automation,
-        })
-        : [];
+    // automation classes (0.2 Settings contract §4.3).
+    const claims = planSchedulerTick({
+        enabledAgents,
+        pendingTasks,
+        dueCronJobs,
+        activeDevices,
+        deviceId,
+        staleAfterMs,
+        now,
+        dependencyNodes: inboxState.dependencyNodes,
+        duplicateIds: inboxState.duplicateIds,
+        automation,
+    });
     // Separately classify pending candidates for the human-readable report so
     // the dry-run can distinguish runnable from dependency-blocked work without
     // mutating anything. This reuses the same pure evaluator the planner uses.
-    // Skipped when the inbox class (or the master gate) is disabled: those
-    // tasks are class-gated, not dependency/retry-blocked.
-    const blocked = masterEnabled && automation.inboxTasks
+    // Skipped when the inbox class is disabled: those tasks are class-gated,
+    // not dependency/retry-blocked.
+    const blocked = automation.inboxTasks
         ? classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds, now)
         : [];
+    // Discovery-complete: when inbox automation is disabled (ordinary disabled
+    // or legacy-gated), every unclaimed pending inbox task is still listed
+    // with a bounded [DISABLED] status; no claim is proposed.
+    const disabledInboxTasks = automation.inboxTasks ? [] : inboxState.pendingTasks;
     // Format output
-    const gates = { masterEnabled, automation };
-    if (migration !== undefined)
-        gates.migration = migration;
-    return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, gates);
+    const gates = { automation, legacyMasterGate };
+    return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, disabledInboxTasks, gates);
 }
 /** Map a loaded inbox task to the planner's task shape, carrying dependency fields. */
 function toPlannerTask(task) {
@@ -185,24 +186,32 @@ function classifyBlockedTasks(pendingTasks, dependencyNodes, duplicateIds, now) 
     }
     return blocked;
 }
-function formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, gates) {
+function formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, disabledInboxTasks, gates) {
     const lines = [];
     lines.push(`SCHEDULER DRY-RUN (device: ${deviceId})`);
-    // 0.2.0 S2: bounded master/class state, then one [SKIPPED] line per
-    // disabled class so the output explains why nothing is proposed for it.
-    lines.push(`scheduler enabled: ${gates.masterEnabled ? "yes" : "no"}`);
+    // 0.2 Settings contract §4.3: bounded resolved automation state, then one
+    // [SKIPPED] line per disabled cron class and per-task [DISABLED] lines for
+    // disabled inbox automation (discovery-complete), so the output explains
+    // why nothing is proposed for it.
+    const onOff = (value) => (value ? "on" : "off");
+    lines.push(`automation: inbox_tasks=${onOff(gates.automation.inboxTasks)} ` +
+        `agent_cron=${onOff(gates.automation.agentCron)} ` +
+        `script_cron=${onOff(gates.automation.scriptCron)}`);
     const classLines = [
         ["inboxTasks", "inbox_tasks"],
         ["agentCron", "agent_cron"],
         ["scriptCron", "script_cron"],
     ];
     for (const [key, label] of classLines) {
-        if (!gates.automation[key])
+        if (!gates.automation[key] && key !== "inboxTasks") {
             lines.push(`[SKIPPED] ${label} - automation disabled`);
+        }
     }
-    if (gates.migration !== undefined) {
-        // Read-only notice only: the dry-run never persists the migration signal.
-        lines.push("migration: legacy scheduler block without 'enabled'; effective enabled=true (read-only notice, not persisted)");
+    if (gates.legacyMasterGate === "gated") {
+        lines.push("legacy gate: retired scheduler.enabled key present with a disabled/malformed value; all automation classes resolve disabled (fail closed); operator-confirmed migration required (read-only notice, not persisted)");
+    }
+    else if (gates.legacyMasterGate === "ignored") {
+        lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
     }
     // Group claims by agent
     const agentClaims = new Map();
@@ -218,12 +227,21 @@ function formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, gates) 
         list.push(item);
         agentBlocked.set(item.agentName, list);
     }
-    // Report claims and blocked tasks per agent
+    // Group discovery-only disabled inbox tasks by agent
+    const agentDisabled = new Map();
+    for (const task of disabledInboxTasks) {
+        const list = agentDisabled.get(task.agentName) ?? [];
+        list.push(task);
+        agentDisabled.set(task.agentName, list);
+    }
+    // Report claims, blocked tasks, and discovery-only disabled inbox tasks per
+    // agent
     for (const agentName of enabledAgents) {
         const agentClaimList = agentClaims.get(agentName) ?? [];
         const agentBlockedList = (agentBlocked.get(agentName) ?? []).slice().sort((a, b) => a.path.localeCompare(b.path));
+        const agentDisabledList = (agentDisabled.get(agentName) ?? []).slice().sort((a, b) => a.path.localeCompare(b.path));
         lines.push(`  agent: ${agentName}`);
-        if (agentClaimList.length === 0 && agentBlockedList.length === 0) {
+        if (agentClaimList.length === 0 && agentBlockedList.length === 0 && agentDisabledList.length === 0) {
             lines.push(`    (no claims)`);
         }
         else {
@@ -233,6 +251,9 @@ function formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, gates) 
             }
             for (const item of agentBlockedList) {
                 lines.push(`    [BLOCK] ${"inbox_task".padEnd(12)} ${item.path} - ${item.reason}`);
+            }
+            for (const item of agentDisabledList) {
+                lines.push(`    [DISABLED] ${"inbox_task".padEnd(12)} ${item.path} - inbox automation disabled (no claim proposed)`);
             }
         }
     }

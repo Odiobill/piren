@@ -485,19 +485,23 @@ describe("scheduler dry-run automation gates (0.2.0 S2)", () => {
       now: new Date("2026-07-05T10:00:00Z"),
     });
 
-    expect(output).toContain("scheduler enabled: yes");
-    expect(output).toContain("[SKIPPED] inbox_tasks - automation disabled");
+    expect(output).toContain("automation: inbox_tasks=off agent_cron=on script_cron=off");
     expect(output).toContain("[SKIPPED] script_cron - automation disabled");
     expect(output).not.toContain("[SKIPPED] agent_cron");
-    // Only the enabled class is proposed; the gated inbox task is not.
+    // enabled:true is inert-to-ignore: bounded legacy notice, no execution.
+    expect(output).toMatch(/inert-to-ignore/i);
+    // Only the enabled class is proposed; the gated inbox task is listed as
+    // [DISABLED] discovery (never a claim).
+    expect(output).toContain("[CLAIM]");
     expect(output).toContain("owned-job");
-    expect(output).not.toContain("gated-task");
+    expect(output).toContain("[DISABLED] inbox_task   team/thor/inbox/gated-task.md - inbox automation disabled (no claim proposed)");
+    expect(output).not.toMatch(/\[CLAIM\].*gated-task/);
     // Read-only: the pending task stays pending and unclaimed.
     const task = await readFile(join(vault, "team", "thor", "inbox", "gated-task.md"), "utf8");
     expect(task).toContain("status: pending");
   });
 
-  it("master gate off: no proposals, bounded master/class state, still read-only", async () => {
+  it("legacy-gated config (enabled:false) proposes nothing, shows the gate notice, and lists inbox tasks as [DISABLED]", async () => {
     await writeFile(
       configPath,
       `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  enabled: false\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n`,
@@ -506,26 +510,72 @@ describe("scheduler dry-run automation gates (0.2.0 S2)", () => {
 
     const output = await schedulerDryRun({ configPath });
 
-    expect(output).toContain("scheduler enabled: no");
+    expect(output).toContain("automation: inbox_tasks=off agent_cron=off script_cron=off");
+    expect(output).toMatch(/legacy gate: .*fail closed/i);
     expect(output).not.toContain("[CLAIM]");
+    expect(output).toContain("[DISABLED] inbox_task   team/thor/inbox/gated-task.md - inbox automation disabled (no claim proposed)");
     const task = await readFile(join(vault, "team", "thor", "inbox", "gated-task.md"), "utf8");
     expect(task).toContain("status: pending");
   });
 
-  it("fresh install (no scheduler block): no proposals and [SKIPPED] lines for every class", async () => {
+  it("fresh install (no scheduler block): no proposals, [SKIPPED] for cron classes, [DISABLED] for inbox tasks", async () => {
     await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n`);
     await writePendingTask("thor", "fresh-task");
 
     const output = await schedulerDryRun({ configPath });
 
-    expect(output).toContain("scheduler enabled: no");
-    expect(output).toContain("[SKIPPED] inbox_tasks - automation disabled");
+    expect(output).toContain("automation: inbox_tasks=off agent_cron=off script_cron=off");
     expect(output).toContain("[SKIPPED] agent_cron - automation disabled");
     expect(output).toContain("[SKIPPED] script_cron - automation disabled");
     expect(output).not.toContain("[CLAIM]");
+    expect(output).toContain("[DISABLED] inbox_task   team/thor/inbox/fresh-task.md - inbox automation disabled (no claim proposed)");
   });
 
-  it("legacy block surfaces the migration notice as read-only state and still proposes enabled classes", async () => {
+  it("discovery-complete: lists unclaimed inbox tasks with [DISABLED] when inbox automation is off", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  automation:\n    inbox_tasks: false\n    agent_cron: true\n    script_cron: false\n`,
+    );
+    await writePendingTask("thor", "discover-task");
+
+    const output = await schedulerDryRun({ configPath });
+
+    // Automation summary line always present.
+    expect(output).toContain("automation: inbox_tasks=off agent_cron=on script_cron=off");
+    // Every unclaimed pending inbox task is still listed with a bounded
+    // [DISABLED] status; no claim is proposed for it.
+    expect(output).toContain(
+      "[DISABLED] inbox_task   team/thor/inbox/discover-task.md - inbox automation disabled (no claim proposed)",
+    );
+    expect(output).not.toContain("[CLAIM]");
+    // Disabled cron stays class-level [SKIPPED].
+    expect(output).toContain("[SKIPPED] script_cron - automation disabled");
+    expect(output).not.toContain("[SKIPPED] agent_cron");
+    // Read-only: the pending task stays pending and unclaimed.
+    const task = await readFile(join(vault, "team", "thor", "inbox", "discover-task.md"), "utf8");
+    expect(task).toContain("status: pending");
+  });
+
+  it("legacy-gated config (enabled:false) proposes nothing and lists inbox tasks as [DISABLED] with the gate notice", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  enabled: false\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n`,
+    );
+    await writePendingTask("thor", "gated-task");
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toContain("automation: inbox_tasks=off agent_cron=off script_cron=off");
+    expect(output).toMatch(/legacy gate/i);
+    expect(output).toContain(
+      "[DISABLED] inbox_task   team/thor/inbox/gated-task.md - inbox automation disabled (no claim proposed)",
+    );
+    expect(output).not.toContain("[CLAIM]");
+    const task = await readFile(join(vault, "team", "thor", "inbox", "gated-task.md"), "utf8");
+    expect(task).toContain("status: pending");
+  });
+
+  it("legacy block without an enabled key keeps class-driven proposals and emits no migration notice", async () => {
     await writeFile(
       configPath,
       `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  poll_interval_seconds: 45\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n`,
@@ -534,11 +584,11 @@ describe("scheduler dry-run automation gates (0.2.0 S2)", () => {
 
     const output = await schedulerDryRun({ configPath });
 
-    expect(output).toContain("scheduler enabled: yes");
-    expect(output).toMatch(/migration: .*not persisted/i);
+    expect(output).toContain("automation: inbox_tasks=on agent_cron=on script_cron=on");
+    expect(output).not.toMatch(/migration:/i);
     expect(output).toContain("[CLAIM]");
     expect(output).toContain("legacy-task");
-    // The migration signal is never persisted by the dry-run.
+    // Read-only: no config write ever happens.
     const after = await readFile(configPath, "utf8");
     expect(after).not.toContain("enabled: true");
   });
