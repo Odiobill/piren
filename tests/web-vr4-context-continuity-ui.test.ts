@@ -344,3 +344,21 @@ describe("ConversationNavigator VR-4 immediate token-loss/401 clearing", () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 });
+
+// --- VR-4 final correction: token-loss clear must be pre-paint ---
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+describe("VR-4 token-loss clear lifecycle placement", () => {
+  it("the ordinary token-change Context clear is pre-paint (useLayoutEffect keyed on token)", async () => {
+    const source = await readFile(join(process.cwd(), "web", "src", "ConversationNavigator.tsx"), "utf8");
+    const marker = source.indexOf("an ordinary token change performs the SAME complete");
+    expect(marker).toBeGreaterThan(-1);
+    // The effect containing the clear must be a LAYOUT effect keyed exactly
+    // on token, so a token update runs the clear synchronously before paint.
+    const window = source.slice(marker, marker + 900);
+    expect(window).toContain("useLayoutEffect(() => {");
+    expect(window).toContain("}, [token]);");
+    expect(window.indexOf("useEffect(() => {")).toBe(-1);
+  });
+});

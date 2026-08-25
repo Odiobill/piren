@@ -903,10 +903,12 @@ export function ConversationNavigator({
   useEffect(() => {
     return () => contextContinuityStore.clear();
   }, []);
-  useEffect(() => {
-    // VR-4 correction: an ordinary token change performs the SAME complete
-    // clear as a typed 401 — both current live telemetry and restored
-    // presentation must disappear, never survive a token handover.
+  // VR-4 correction: an ordinary token change performs the SAME complete
+  // clear as a typed 401 — both current live telemetry and restored
+  // presentation must disappear, never survive a token handover. A LAYOUT
+  // effect runs synchronously before paint so a same-selection token update
+  // can never flash stale live/restored Context facts for a frame.
+  useLayoutEffect(() => {
     contextContinuityStore.clear();
     setTelemetryByAgent(emptyConversationTelemetryState());
     setRestoredByAgent(new Map());
