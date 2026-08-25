@@ -8,9 +8,13 @@ import {
   compactActivityRuns,
   conversationActivityLiveAnnouncement,
   conversationActivityRunAbortLabel,
+  conversationWorkCards,
   emptyConversationActivity,
   parseConversationActivityFrame,
   reconcileConversationActivity,
+  WORK_CARD_TAIL_RENDER_MAX,
+  WORK_CARD_TEXT_RETENTION_MAX,
+  WORK_CARD_TOOLS_MAX,
   type ConversationActivityFrame,
   type ConversationActivityState,
   type ConversationCompactActivityRun,
@@ -28,11 +32,15 @@ import { parseConversationEventRecord, type ConversationEventRecord } from "../w
 
 const CID = "20260811T000000000Z-live";
 
-function frame(kind: "working" | "text_delta" | "settled", overrides: Partial<ConversationActivityFrame> = {}): ConversationActivityFrame {
+function frame(kind: "working" | "text_delta" | "settled" | "tool", overrides: Partial<ConversationActivityFrame> = {}): ConversationActivityFrame {
   const base: ConversationActivityFrame = { conversationId: CID, runId: "run-0001", agent: "dipu", kind };
   if (kind === "text_delta") base.delta = "Hel";
   if (kind === "settled") base.outcome = "completed";
-  return { ...base, ...overrides };
+  if (kind === "tool") {
+    base.toolName = "vault_read";
+    base.status = "started";
+  }
+  return { ...base, ...overrides } as ConversationActivityFrame;
 }
 
 describe("parseConversationActivityFrame (strict, fail-closed)", () => {
@@ -64,6 +72,43 @@ describe("parseConversationActivityFrame (strict, fail-closed)", () => {
   });
 });
 
+describe("VR-3 tool frames — strict fail-closed parsing", () => {
+  const valid = { conversationId: CID, runId: "r9", agent: "zai", kind: "tool", toolName: "vault_read", status: "started" };
+
+  it("accepts a well-formed tool frame with sanitized name and exact status", () => {
+    const parsed = parseConversationActivityFrame(valid, CID);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.frame.kind === "tool") {
+      expect(parsed.frame.toolName).toBe("vault_read");
+      expect(parsed.frame.status).toBe("started");
+    }
+  });
+
+  it.each([
+    ["missing name", { ...valid, toolName: undefined }],
+    ["non-string name", { ...valid, toolName: 7 }],
+    ["empty name", { ...valid, toolName: "" }],
+    ["oversized name (>80)", { ...valid, toolName: "a".repeat(81) }],
+    ["hostile characters in name", { ...valid, toolName: "vault_read; rm -rf" }],
+    ["newline injection in name", { ...valid, toolName: "read\n<script>" }],
+    ["missing status", { ...valid, status: undefined }],
+    ["unknown status", { ...valid, status: "succeeded" }],
+    ["non-string status", { ...valid, status: 1 }],
+    ["carries delta", { ...valid, delta: "leak" }],
+    ["carries outcome", { ...valid, outcome: "completed" }],
+    ["carries arguments-shaped field", { ...valid, args: { path: "/etc/passwd" } }],
+    ["carries result-shaped field", { ...valid, result: "file contents" }],
+    ["carries output field", { ...valid, output: "stdout" }],
+    ["carries environment field", { ...valid, env: { TOKEN: "x" } }],
+    ["carries input field", { ...valid, input: "raw" }],
+    ["carries token field", { ...valid, token: "secret" }],
+    ["foreign conversation", { ...valid, conversationId: "other" }],
+    ["invalid runId", { ...valid, runId: "" }],
+  ])("rejects %s fail-closed", (_label, bad) => {
+    expect(parseConversationActivityFrame(bad, CID).ok).toBe(false);
+  });
+});
+
 describe("transient activity state machine (per-run)", () => {
   it("working sets a working run; the first text_delta flips it to typing and accumulates the exact deltas", () => {
     let state: ConversationActivityState = emptyConversationActivity();
@@ -90,18 +135,57 @@ describe("transient activity state machine (per-run)", () => {
     expect(state.runs[0]).toMatchObject({ runId: "r3", phase: "typing", partial: "Hi" });
   });
 
-  it("caps the accumulated partial at the bounded limit with a truthful truncation marker", () => {
+  it("VR-3: retains at most the MOST RECENT streamed characters with a truthful truncation marker", () => {
     let state: ConversationActivityState = emptyConversationActivity();
     state = applyConversationActivityFrame(state, frame("working", { runId: "r1" }));
     const chunk = "a".repeat(100);
-    for (let index = 0; index < CONVERSATION_ACTIVITY_PARTIAL_MAX / 100 + 2; index += 1) {
-      state = applyConversationActivityFrame(state, frame("text_delta", { runId: "r1", delta: chunk }));
+    const iterations = Math.floor(WORK_CARD_TEXT_RETENTION_MAX / 100) + 4;
+    for (let index = 0; index < iterations; index += 1) {
+      state = applyConversationActivityFrame(state, frame("text_delta", { runId: "r1", delta: `${chunk}-${index};` }));
     }
     const run = state.runs[0];
-    expect(run?.partial.length).toBeLessThanOrEqual(CONVERSATION_ACTIVITY_PARTIAL_MAX);
+    expect(run?.partial.length).toBe(WORK_CARD_TEXT_RETENTION_MAX - (WORK_CARD_TEXT_RETENTION_MAX % 100));
     expect(run?.truncated).toBe(true);
-    // Excess live text is never fabricated or persisted beyond the cap.
-    expect(run?.partial).toBe("a".repeat(CONVERSATION_ACTIVITY_PARTIAL_MAX));
+    // Rolling retention keeps the MOST RECENT content, not the head.
+    expect(run?.partial.endsWith(`-${iterations - 1};`)).toBe(true);
+  });
+
+  it("VR-3: tool frames append to the run's bounded most-recent tool lines in order", () => {
+    let state: ConversationActivityState = emptyConversationActivity();
+    state = applyConversationActivityFrame(state, frame("working"));
+    for (let index = 0; index < WORK_CARD_TOOLS_MAX + 2; index += 1) {
+      state = applyConversationActivityFrame(state, frame("tool", { toolName: `tool_${index}`, status: "started" }));
+    }
+    const run = state.runs[0];
+    expect(run?.tools).toHaveLength(WORK_CARD_TOOLS_MAX);
+    // The five MOST RECENT events survive, in order.
+    expect(run?.tools.map((t) => t.name)).toEqual(["tool_2", "tool_3", "tool_4", "tool_5", "tool_6"]);
+    state = applyConversationActivityFrame(state, frame("tool", { toolName: "tool_6", status: "failed" }));
+    expect(state.runs[0]?.tools.at(-1)).toEqual({ name: "tool_6", status: "failed" });
+  });
+
+  it("VR-3: a tool frame without a preceding working frame still shows truthful working state (tolerates lost frames)", () => {
+    const state = applyConversationActivityFrame(emptyConversationActivity(), frame("tool", { toolName: "bash", status: "completed" }));
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]).toMatchObject({ agent: "dipu", phase: "working" });
+    expect(state.runs[0]?.tools).toEqual([{ name: "bash", status: "completed" }]);
+  });
+
+  it("VR-3: settled/durable-reconciliation clears the run together with its transient tail and tools", () => {
+    let state: ConversationActivityState = emptyConversationActivity();
+    state = applyConversationActivityFrame(state, frame("working"));
+    state = applyConversationActivityFrame(state, frame("text_delta", { delta: "visible tail" }));
+    state = applyConversationActivityFrame(state, frame("tool", { toolName: "bash", status: "started" }));
+    state = applyConversationActivityFrame(state, frame("settled"));
+    expect(state.runs).toHaveLength(0);
+    // Durable evidence is authoritative too.
+    state = applyConversationActivityFrame(state, frame("working"));
+    state = applyConversationActivityFrame(state, frame("text_delta", { delta: "more" }));
+    state = reconcileConversationActivity(state, {
+      id: "e1", conversationId: CID, kind: "agent_message", authorKind: "agent", author: "dipu",
+      created: "2026-08-25T00:00:00.000Z", sequence: 2, mentions: [], body: "done", path: "p",
+    });
+    expect(state.runs).toHaveLength(0);
   });
 });
 
@@ -274,5 +358,55 @@ describe("U1 status-only card helpers (pure)", () => {
     const next = [run("r2", "zai", "typing"), run("r3", "kim", "working")];
     // r1 removed, r3 appeared; r2 unchanged (not re-announced).
     expect(conversationActivityLiveAnnouncement(previous, next)).toBe("kim is working…. dipu is no longer working");
+  });
+});
+
+describe("VR-3 conversationWorkCards — safe bounded render projection", () => {
+  function buildState(): ConversationActivityState {
+    let state: ConversationActivityState = emptyConversationActivity();
+    state = applyConversationActivityFrame(state, frame("working"));
+    state = applyConversationActivityFrame(state, frame("text_delta", { delta: "short tail" }));
+    state = applyConversationActivityFrame(state, frame("tool", { toolName: "vault_read", status: "started" }));
+    state = applyConversationActivityFrame(state, frame("tool", { toolName: "bash", status: "completed" }));
+    return state;
+  }
+
+  it("projects the exact agent/phase plus a plain-text tail and sanitized tool lines", () => {
+    const cards = conversationWorkCards(buildState());
+    expect(cards).toHaveLength(1);
+    const card = cards[0]!;
+    expect(card.runId).toBe("run-0001");
+    expect(card.agent).toBe("dipu");
+    expect(card.phase).toBe("typing");
+    expect(card.textTail).toBe("short tail");
+    expect(card.tools).toEqual([
+      { name: "vault_read", status: "started" },
+      { name: "bash", status: "completed" },
+    ]);
+  });
+
+  it("renders ONLY the most recent 400 characters with exactly one leading ellipsis when truncated", () => {
+    let state: ConversationActivityState = emptyConversationActivity();
+    state = applyConversationActivityFrame(state, frame("working"));
+    const long = "x".repeat(WORK_CARD_TAIL_RENDER_MAX + 50) + "THE-END";
+    state = applyConversationActivityFrame(state, frame("text_delta", { delta: long }));
+    const card = conversationWorkCards(state)[0]!;
+    expect(card.textTail).toBe(`…${"x".repeat(WORK_CARD_TAIL_RENDER_MAX - "THE-END".length)}THE-END`);
+    expect(card.textTail?.length).toBe(WORK_CARD_TAIL_RENDER_MAX + 1); // tail + one ellipsis
+    // Under the threshold: no ellipsis.
+    let short: ConversationActivityState = emptyConversationActivity();
+    short = applyConversationActivityFrame(short, frame("working"));
+    short = applyConversationActivityFrame(short, frame("text_delta", { delta: "abc" }));
+    expect(conversationWorkCards(short)[0]?.textTail).toBe("abc");
+    // No text at all: null tail (never an empty-string fabrication).
+    let empty: ConversationActivityState = emptyConversationActivity();
+    empty = applyConversationActivityFrame(empty, frame("working"));
+    expect(conversationWorkCards(empty)[0]?.textTail).toBeNull();
+  });
+
+  it("the projection carries no raw payload fields — only name/status/tool text", () => {
+    const card = conversationWorkCards(buildState())[0]!;
+    expect(Object.keys(card).sort()).toEqual(["agent", "phase", "runId", "textTail", "tools"]);
+    expect(Object.keys(card.tools[0]!).sort()).toEqual(["name", "status"]);
   });
 });

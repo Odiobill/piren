@@ -59,6 +59,7 @@ import {
   conversationActivityRunAbortLabel,
   conversationActivityRunStateLabel,
   type ConversationCompactActivityRun,
+  type ConversationWorkCard,
 } from "./conversation-activity";
 import {
   applyConversationTelemetryFrame,
@@ -211,6 +212,8 @@ export function ConversationNavigator({
    * content immediately above the dock (R1 contract §6).
    */
   const [dockRuns, setDockRuns] = useState<ConversationCompactActivityRun[]>([]);
+  /** VR-3: bounded safe work-card projection (tail + tools) for rendering. */
+  const [workCards, setWorkCards] = useState<ConversationWorkCard[]>([]);
   /**
    * U1 — one polite live announcement per card appearance/state transition/
    * removal (never per token/tick). Computed from the COMPACT card set (agent
@@ -424,6 +427,7 @@ export function ConversationNavigator({
     // R2: the compact dock live state is session-scoped and never survives a
     // fresh open flow (the timeline also clears it on reread/selection).
     setDockRuns([]);
+    setWorkCards([]);
     // U1: the activity announcement diff must not fire a stale removal line
     // when a prior selection's cards are discarded on navigation.
     previousDockRunsRef.current = [];
@@ -918,6 +922,7 @@ export function ConversationNavigator({
                   onLifecycleTransition={handleLifecycleEvent}
                   onApproval={handleApprovalFrame}
                   onActivityChange={handleActivityChange}
+                  onWorkCards={setWorkCards}
                   onTelemetry={handleTelemetry}
                   onAppend={bumpContentVersion}
                   onHistoryLoaded={() => {
@@ -937,6 +942,10 @@ export function ConversationNavigator({
                     {dockRuns.map((run) => {
                       const aborting = abortState?.phase === "busy" && abortState.agent === run.agent;
                       const failed = abortState?.phase === "error" && abortState.agent === run.agent;
+                      // VR-3: the safe bounded work-card projection carries the
+                      // plain-text tail and sanitized tool lines; it is derived
+                      // from the SAME validated live state as the compact set.
+                      const card = workCards.find((item) => item.runId === run.runId);
                       return (
                         <div key={run.runId} className={`activity-card activity-card-${run.phase}`}>
                           <span className="activity-card-agent">{run.agent}</span>
@@ -952,6 +961,16 @@ export function ConversationNavigator({
                           >
                             <StopIcon size={14} />
                           </button>
+                          {card?.textTail !== null && card?.textTail !== undefined && (
+                            <p className="activity-card-tail">{card.textTail}</p>
+                          )}
+                          {card !== undefined && card.tools.length > 0 && (
+                            <ul className="activity-card-tools">
+                              {card.tools.map((tool, index) => (
+                                <li key={`${tool.name}-${index}`}>{tool.name} — {tool.status}</li>
+                              ))}
+                            </ul>
+                          )}
                           {failed && (
                             <p className="transient-run-error" role="alert">
                               {abortState?.phase === "error" ? abortState.error.message : ""}

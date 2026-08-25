@@ -1617,6 +1617,42 @@ code {
   color: var(--muted);
 }
 
+/* VR-3 — bounded transient streamed tail + safe sanitized tool lines. Plain
+   text only (the component renders text nodes; no Markdown/link markup). */
+.activity-card-tail {
+  flex-basis: 100%;
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  /* Bounded visual: at most a few wrapped lines; never its own scroll region. */
+  max-height: 6em;
+  overflow: hidden;
+}
+
+.activity-card-tools {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.activity-card-tools li {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .transient-run-abort {
   flex: none;
   width: 30px;

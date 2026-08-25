@@ -201,9 +201,11 @@ export interface ConversationApprovalNotification {
   payload: Record<string, unknown>;
 }
 
-/** U4: broker-authoritative transient live activity for one active run. */
-export type ConversationActivityKind = "working" | "text_delta" | "settled";
+/** U4+VR-3: broker-authoritative transient live activity for one active run. */
+export type ConversationActivityKind = "working" | "text_delta" | "settled" | "tool";
 export type ConversationActivityOutcome = "completed" | "failed" | "timed_out" | "cancelled";
+/** VR-3: exact bounded tool lifecycle status. */
+export type ConversationToolStatus = "started" | "completed" | "failed";
 
 export interface ConversationActivityNotification {
   conversationId: string;
@@ -216,6 +218,10 @@ export interface ConversationActivityNotification {
   delta?: string;
   /** settled only: the terminal outcome after the durable terminal append. */
   outcome?: ConversationActivityOutcome;
+  /** tool only: bounded sanitized Pi tool name. */
+  toolName?: string;
+  /** tool only: exact lifecycle status. */
+  status?: ConversationToolStatus;
 }
 
 /**
@@ -774,6 +780,11 @@ export class ConversationBroker {
    * event is not a real text delta (empty/non-string/oversized/non-text
    * events emit no frame and never imply typing).
    */
+  /**
+   * U4: a genuine bounded text delta while the run is active emits one
+   * transient text_delta frame (never synthesized from agent_end, errors,
+   * approvals, fallback notices, or the final durable body).
+   */
   private conversationTextDelta(event: RpcEvent): string | null {
     if (event.type !== "message_update") return null;
     const inner = event.assistantMessageEvent;
@@ -783,6 +794,27 @@ export class ConversationBroker {
     const delta = record.delta;
     if (delta === "" || delta.length > CONVERSATION_ACTIVITY_DELTA_MAX) return null;
     return delta;
+  }
+
+  /**
+   * VR-3: project a Pi tool_execution_start/end event into a bounded activity
+   * frame (kind tool + sanitized name + exact status). Raw args/results/
+   * output/environment never leave this helper; malformed or hostile tool
+   * names are dropped (the browser parser also rejects them fail-closed).
+   */
+  private conversationToolFrame(event: RpcEvent): { kind: "tool"; toolName: string; status: ConversationToolStatus } | null {
+    if (event.type !== "tool_execution_start" && event.type !== "tool_execution_end") return null;
+    const raw = (event as Record<string, unknown>).toolName;
+    if (typeof raw !== "string") return null;
+    const toolName = raw.trim();
+    // Bounded: non-empty, no control characters, at most 128 chars. The
+    // browser's stricter [A-Za-z0-9 _:-]{1,80} check remains authoritative.
+    if (toolName === "" || toolName.length > 128 || /[\u0000-\u001f\u007f]/.test(toolName)) return null;
+    if (event.type === "tool_execution_start") {
+      return { kind: "tool", toolName, status: "started" };
+    }
+    const isError = (event as Record<string, unknown>).isError;
+    return { kind: "tool", toolName, status: isError === true ? "failed" : "completed" };
   }
 
   private async appendAndPublish(
@@ -1139,6 +1171,14 @@ export class ConversationBroker {
     const delta = this.conversationTextDelta(event);
     if (delta !== null) {
       this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "text_delta", delta });
+    }
+    // VR-3: bounded tool lifecycle frames (started/completed/failed) from the
+    // existing Pi tool_execution_* events. Only a bounded sanitized tool name
+    // and the exact status reach the browser; raw args/results/errors never
+    // enter an activity frame. Malformed/hostile names are dropped silently.
+    const toolFrame = this.conversationToolFrame(event);
+    if (toolFrame !== null) {
+      this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, ...toolFrame });
     }
     if (event.type === "extension_ui_request" && typeof event.id === "string") {
       // C5-3: a reserved conversation-handoff control request is consumed only

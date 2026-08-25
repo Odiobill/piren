@@ -162,9 +162,11 @@ export interface ConversationApprovalNotification {
     /** Bounded Pi request payload (everything except type/id). */
     payload: Record<string, unknown>;
 }
-/** U4: broker-authoritative transient live activity for one active run. */
-export type ConversationActivityKind = "working" | "text_delta" | "settled";
+/** U4+VR-3: broker-authoritative transient live activity for one active run. */
+export type ConversationActivityKind = "working" | "text_delta" | "settled" | "tool";
 export type ConversationActivityOutcome = "completed" | "failed" | "timed_out" | "cancelled";
+/** VR-3: exact bounded tool lifecycle status. */
+export type ConversationToolStatus = "started" | "completed" | "failed";
 export interface ConversationActivityNotification {
     conversationId: string;
     /** Opaque broker-generated per-active-run key (unique while the broker is alive). */
@@ -176,6 +178,10 @@ export interface ConversationActivityNotification {
     delta?: string;
     /** settled only: the terminal outcome after the durable terminal append. */
     outcome?: ConversationActivityOutcome;
+    /** tool only: bounded sanitized Pi tool name. */
+    toolName?: string;
+    /** tool only: exact lifecycle status. */
+    status?: ConversationToolStatus;
 }
 /**
  * T3: live-only telemetry notification for one exact settled
@@ -389,7 +395,19 @@ export declare class ConversationBroker {
      * event is not a real text delta (empty/non-string/oversized/non-text
      * events emit no frame and never imply typing).
      */
+    /**
+     * U4: a genuine bounded text delta while the run is active emits one
+     * transient text_delta frame (never synthesized from agent_end, errors,
+     * approvals, fallback notices, or the final durable body).
+     */
     private conversationTextDelta;
+    /**
+     * VR-3: project a Pi tool_execution_start/end event into a bounded activity
+     * frame (kind tool + sanitized name + exact status). Raw args/results/
+     * output/environment never leave this helper; malformed or hostile tool
+     * names are dropped (the browser parser also rejects them fail-closed).
+     */
+    private conversationToolFrame;
     private appendAndPublish;
     /**
      * Dispatch one validated conversation mention. The durable steward message

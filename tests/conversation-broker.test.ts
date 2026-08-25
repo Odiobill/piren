@@ -30,6 +30,7 @@ type FakeBehavior =
   | "start-fail"
   | "exit-mid-run"
   | "with-text"
+  | "with-tools"
   | "provider-error-empty"
   | "approval"
   | "approval-hang"
@@ -140,6 +141,14 @@ class FakeConversationClient implements ConversationRpcClient {
         type: "message_update",
         assistantMessageEvent: { type: "text_delta", delta: "Visible agent reply." },
       });
+    }
+    if (this.behavior === "with-tools") {
+      // VR-3: two tool lifecycle events, one success and one failure, with
+      // raw args/results present to prove they never reach the activity frame.
+      this.emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "vault_read", args: { path: "/secret.md" } });
+      this.emit({ type: "tool_execution_end", toolCallId: "t1", toolName: "vault_read", isError: false, result: "secret file contents" });
+      this.emit({ type: "tool_execution_start", toolCallId: "t2", toolName: "bash", args: { command: "rm -rf" } });
+      this.emit({ type: "tool_execution_end", toolCallId: "t2", toolName: "bash", isError: true, result: "permission denied" });
     }
     if (this.behavior === "provider-error-empty") {
       // P6: the pilot's real shape — a fully settled run whose final assistant
@@ -2045,7 +2054,7 @@ describe("ConversationBroker C5-3 tool control bridge", () => {
 
 describe("broker-authoritative live activity (U4)", () => {
   type ActivityLog = {
-    kind: "working" | "text_delta" | "settled";
+    kind: "working" | "text_delta" | "settled" | "tool";
     runId: string;
     agent: string;
     delta?: string;
@@ -2098,6 +2107,32 @@ describe("broker-authoritative live activity (U4)", () => {
     expect(activity[2]).toMatchObject({ kind: "settled", outcome: "completed" });
     // No synthetic activity: exactly one working + the exact real delta + one settled.
     expect(activity).toHaveLength(3);
+    await broker.close();
+  });
+
+  it("VR-3: tool lifecycle events emit bounded tool activity frames (name + status only, never args/results)", async () => {
+    const { broker } = makeBroker({ behaviors: ["with-tools"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Reply");
+    const activity: Array<Record<string, unknown>> = [];
+    broker.onConversationActivity(conversationId, (a) => activity.push(a as unknown as Record<string, unknown>));
+
+    const outcome = await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Reply", stewardEventId, priorEvents: [] });
+    expect(outcome.status).toBe("completed");
+
+    const tools = activity.filter((entry) => entry.kind === "tool");
+    expect(tools).toEqual([
+      { conversationId, runId: expect.any(String), agent: "zai", kind: "tool", toolName: "vault_read", status: "started" },
+      { conversationId, runId: expect.any(String), agent: "zai", kind: "tool", toolName: "vault_read", status: "completed" },
+      { conversationId, runId: expect.any(String), agent: "zai", kind: "tool", toolName: "bash", status: "started" },
+      { conversationId, runId: expect.any(String), agent: "zai", kind: "tool", toolName: "bash", status: "failed" },
+    ]);
+    // No raw payload fields survive into the notification.
+    for (const entry of tools) {
+      for (const forbidden of ["args", "arguments", "input", "result", "output", "env", "token", "secret", "partialResult"]) {
+        expect(entry).not.toHaveProperty(forbidden);
+      }
+    }
     await broker.close();
   });
 

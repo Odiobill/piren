@@ -16,11 +16,13 @@ import {
   applyConversationActivityFrame,
   clearConversationActivity,
   compactActivityRuns,
+  conversationWorkCards,
   emptyConversationActivity,
   parseConversationActivityFrame,
   reconcileConversationActivity,
   type ConversationActivityState,
   type ConversationCompactActivityRun,
+  type ConversationWorkCard,
 } from "./conversation-activity";
 import { parseConversationApprovalFrame, type PendingApproval } from "./conversation-controls";
 import { parseConversationTelemetryFrame, type ConversationTelemetryFrame } from "./conversation-telemetry";
@@ -70,6 +72,7 @@ export function ConversationTimeline({
   onLifecycleTransition,
   onApproval,
   onActivityChange,
+  onWorkCards,
   onTelemetry,
   onAppend,
   onHistoryLoaded,
@@ -89,6 +92,8 @@ export function ConversationTimeline({
    * and on every fail-closed cleanup path; history never reconstructs it.
    */
   onActivityChange?: (runs: ConversationCompactActivityRun[]) => void;
+  /** VR-3: bounded safe work-card projection for the selected active surface. */
+  onWorkCards?: (cards: ConversationWorkCard[]) => void;
   /**
    * T6 — forward a validated scoped live telemetry frame for the selected
    * conversation. Session-only presentation state: never a timeline entry,
@@ -123,8 +128,9 @@ export function ConversationTimeline({
   const reportActivity = useCallback(
     (next: ConversationActivityState) => {
       onActivityChange?.(compactActivityRuns(next));
+      onWorkCards?.(conversationWorkCards(next));
     },
-    [onActivityChange],
+    [onActivityChange, onWorkCards],
   );
   /** Update the synchronous activity ref AND report the compact dock state. */
   const updateActivity = useCallback(

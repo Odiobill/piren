@@ -15,8 +15,10 @@
  */
 import type { ConversationEventRecord } from "./conversations.js";
 
-export type ConversationActivityKind = "working" | "text_delta" | "settled";
+export type ConversationActivityKind = "working" | "text_delta" | "settled" | "tool";
 export type ConversationActivityOutcome = "completed" | "failed" | "timed_out" | "cancelled";
+/** VR-3: exact bounded tool statuses on a `tool` activity frame. */
+export type ConversationToolStatus = "started" | "completed" | "failed";
 
 export interface ConversationActivityFrame {
   conversationId: string;
@@ -27,6 +29,10 @@ export interface ConversationActivityFrame {
   delta?: string;
   /** settled only: terminal outcome after the durable terminal append. */
   outcome?: ConversationActivityOutcome;
+  /** tool only: sanitized bounded Pi tool name. */
+  toolName?: string;
+  /** tool only: exact lifecycle status. */
+  status?: ConversationToolStatus;
 }
 
 /** U4: bounded live-frame delta and transient partial-reply limits. */
@@ -34,6 +40,25 @@ export const CONVERSATION_ACTIVITY_DELTA_MAX = 4096;
 export const CONVERSATION_ACTIVITY_PARTIAL_MAX = 16384;
 /** U4: bounded in-memory settled-run tombstones (delayed stale frames are ignored). */
 export const CONVERSATION_ACTIVITY_SETTLED_TOMBSTONES_MAX = 32;
+
+/**
+ * VR-3 — closed work-card rendering bounds. Assistant text is RETAINED up to
+ * WORK_CARD_TEXT_RETENTION_MAX characters (rolling: the most recent content
+ * survives) and RENDERED only as the most recent WORK_CARD_TAIL_RENDER_MAX
+ * characters prefixed by exactly one leading ellipsis when truncated. At most
+ * WORK_CARD_TOOLS_MAX most-recent sanitized tool lines are retained/rendered.
+ */
+export const WORK_CARD_TEXT_RETENTION_MAX = 2000;
+export const WORK_CARD_TAIL_RENDER_MAX = 400;
+export const WORK_CARD_TOOLS_MAX = 5;
+/** VR-3: a tool frame name must already be exactly this shape (no stripping). */
+const TOOL_NAME_PATTERN = /^[A-Za-z0-9 _:-]{1,80}$/;
+const TOOL_STATUSES: readonly ConversationToolStatus[] = ["started", "completed", "failed"];
+/** VR-3: payload-shaped keys a tool frame must NEVER carry (fail closed). */
+const TOOL_FORBIDDEN_KEYS: readonly string[] = [
+  "args", "arguments", "input", "result", "output", "partialResult",
+  "env", "environment", "token", "secret", "key", "content", "delta", "outcome", "text",
+];
 
 const ACTIVITY_OUTCOMES: readonly ConversationActivityOutcome[] = ["completed", "failed", "timed_out", "cancelled"];
 
@@ -63,7 +88,7 @@ export function parseConversationActivityFrame(json: unknown, conversationId: st
   if (!isBoundedString(json.runId)) return { ok: false, reason: "invalid runId" };
   if (!isBoundedString(json.agent)) return { ok: false, reason: "invalid agent" };
   const kind = json.kind;
-  if (kind !== "working" && kind !== "text_delta" && kind !== "settled") {
+  if (kind !== "working" && kind !== "text_delta" && kind !== "settled" && kind !== "tool") {
     return { ok: false, reason: "unknown kind" };
   }
   if (kind === "working") {
@@ -71,6 +96,24 @@ export function parseConversationActivityFrame(json: unknown, conversationId: st
       return { ok: false, reason: "working carries no delta/outcome" };
     }
     return { ok: true, frame: { conversationId, runId: json.runId, agent: json.agent, kind } };
+  }
+  if (kind === "tool") {
+    if (json.delta !== undefined || json.outcome !== undefined) {
+      return { ok: false, reason: "tool carries no delta/outcome" };
+    }
+    // Payload-shaped fields fail closed on tool frames.
+    for (const forbidden of TOOL_FORBIDDEN_KEYS) {
+      if (json[forbidden] !== undefined) return { ok: false, reason: `tool carries ${forbidden}` };
+    }
+    const toolName = json.toolName;
+    if (typeof toolName !== "string" || !TOOL_NAME_PATTERN.test(toolName)) {
+      return { ok: false, reason: "invalid toolName" };
+    }
+    const status = json.status;
+    if (typeof status !== "string" || !(TOOL_STATUSES as readonly string[]).includes(status)) {
+      return { ok: false, reason: "invalid tool status" };
+    }
+    return { ok: true, frame: { conversationId, runId: json.runId, agent: json.agent, kind, toolName, status: status as ConversationToolStatus } };
   }
   if (kind === "text_delta") {
     if (json.outcome !== undefined) return { ok: false, reason: "text_delta carries no outcome" };
@@ -96,6 +139,14 @@ export interface ConversationActivityRun {
   /** Accumulated exact live deltas, bounded; excess is never fabricated/persisted. */
   partial: string;
   truncated: boolean;
+  /** VR-3: at most WORK_CARD_TOOLS_MAX most-recent sanitized tool lines. */
+  tools: ConversationToolLine[];
+}
+
+/** VR-3: one retained safe tool line (sanitized name + exact status only). */
+export interface ConversationToolLine {
+  name: string;
+  status: ConversationToolStatus;
 }
 
 export interface ConversationActivityState {
@@ -207,19 +258,34 @@ export function applyConversationActivityFrame(state: ConversationActivityState,
   }
   if (frame.kind === "working") {
     const others = state.runs.filter((run) => run.runId !== frame.runId);
-    return { runs: [...others, { runId: frame.runId, agent: frame.agent, phase: "working", partial: "", truncated: false }], settled: state.settled };
+    return { runs: [...others, { runId: frame.runId, agent: frame.agent, phase: "working", partial: "", truncated: false, tools: [] }], settled: state.settled };
+  }
+  if (frame.kind === "tool") {
+    const line: ConversationToolLine = { name: frame.toolName ?? "", status: frame.status ?? "started" };
+    const existingRun = state.runs.find((run) => run.runId === frame.runId);
+    if (existingRun === undefined) {
+      // Tolerate lost/reordered frames like text_delta does: truthful active
+      // work with the tool line attached.
+      return { runs: [...state.runs, { runId: frame.runId, agent: frame.agent, phase: "working", partial: "", truncated: false, tools: [line] }], settled: state.settled };
+    }
+    // Keep at most WORK_CARD_TOOLS_MAX MOST-RECENT lines.
+    const tools = [...existingRun.tools, line].slice(-WORK_CARD_TOOLS_MAX);
+    return { runs: state.runs.map((run) => (run.runId === frame.runId ? { ...run, tools } : run)), settled: state.settled };
   }
   const delta = frame.delta ?? "";
   const existing = state.runs.find((run) => run.runId === frame.runId);
   if (existing === undefined) {
+    const boundedDelta = delta.length > WORK_CARD_TEXT_RETENTION_MAX ? delta.slice(-WORK_CARD_TEXT_RETENTION_MAX) : delta;
     return {
-      runs: [...state.runs, { runId: frame.runId, agent: frame.agent, phase: "typing", partial: delta, truncated: delta.length > CONVERSATION_ACTIVITY_PARTIAL_MAX }],
+      runs: [...state.runs, { runId: frame.runId, agent: frame.agent, phase: "typing", partial: boundedDelta, truncated: delta.length > WORK_CARD_TEXT_RETENTION_MAX, tools: [] }],
       settled: state.settled,
     };
   }
   const combined = existing.partial + delta;
-  const truncated = existing.truncated || combined.length > CONVERSATION_ACTIVITY_PARTIAL_MAX;
-  const partial = truncated ? combined.slice(0, CONVERSATION_ACTIVITY_PARTIAL_MAX) : combined;
+  // VR-3 rolling retention: keep the MOST RECENT characters within the cap;
+  // excess is dropped from the front and never fabricated or persisted.
+  const truncated = existing.truncated || combined.length > WORK_CARD_TEXT_RETENTION_MAX;
+  const partial = combined.length > WORK_CARD_TEXT_RETENTION_MAX ? combined.slice(-WORK_CARD_TEXT_RETENTION_MAX) : combined;
   return {
     runs: state.runs.map((run) => (run.runId === frame.runId ? { ...run, phase: "typing", partial, truncated } : run)),
     settled: state.settled,
@@ -251,4 +317,52 @@ export function reconcileConversationActivity(state: ConversationActivityState, 
     }
   }
   return state;
+}
+
+/**
+ * VR-3 — the safe bounded render projection for one transient work card.
+ *
+ * Everything here is browser-memory-only and derived exclusively from the
+ * validated live-frame state above (never from durable history, get_messages,
+ * telemetry, storage, or any fetch). The projection carries ONLY:
+ *   - exact agent/phase (as today);
+ *   - `textTail`: the most recent WORK_CARD_TAIL_RENDER_MAX characters of the
+ *     retained streamed assistant text as PLAIN TEXT, prefixed by exactly one
+ *     leading ellipsis when retention truncated earlier content; null when no
+ *     text exists (never an empty-string fabrication). It is never
+ *     Markdown-rendered, linkified, or announced;
+ *   - `tools`: at most WORK_CARD_TOOLS_MAX most-recent lines, each ONLY a
+ *     sanitized name plus the exact started/completed/failed status. Raw tool
+ *     arguments/results/output/environment values can never reach it: the
+ *     parser rejects payload-shaped fields fail-closed.
+ */
+export interface ConversationWorkCard {
+  runId: string;
+  agent: string;
+  phase: "working" | "typing";
+  textTail: string | null;
+  tools: ConversationToolLine[];
+}
+
+export function conversationWorkCards(state: ConversationActivityState): ConversationWorkCard[] {
+  return state.runs.map((run) => {
+    let textTail: string | null = null;
+    if (run.partial.length > 0) {
+      textTail =
+        run.partial.length > WORK_CARD_TAIL_RENDER_MAX
+          ? `…${run.partial.slice(-WORK_CARD_TAIL_RENDER_MAX)}`
+          : run.partial;
+    }
+    return {
+      runId: run.runId,
+      agent: run.agent,
+      phase: run.phase,
+      textTail,
+      // Defensive re-filter at the render boundary: only well-formed safe
+      // lines survive, whatever the state holds.
+      tools: run.tools
+        .filter((line) => TOOL_NAME_PATTERN.test(line.name) && (TOOL_STATUSES as readonly string[]).includes(line.status))
+        .slice(-WORK_CARD_TOOLS_MAX),
+    };
+  });
 }

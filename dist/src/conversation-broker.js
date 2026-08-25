@@ -465,6 +465,11 @@ export class ConversationBroker {
      * event is not a real text delta (empty/non-string/oversized/non-text
      * events emit no frame and never imply typing).
      */
+    /**
+     * U4: a genuine bounded text delta while the run is active emits one
+     * transient text_delta frame (never synthesized from agent_end, errors,
+     * approvals, fallback notices, or the final durable body).
+     */
     conversationTextDelta(event) {
         if (event.type !== "message_update")
             return null;
@@ -478,6 +483,29 @@ export class ConversationBroker {
         if (delta === "" || delta.length > CONVERSATION_ACTIVITY_DELTA_MAX)
             return null;
         return delta;
+    }
+    /**
+     * VR-3: project a Pi tool_execution_start/end event into a bounded activity
+     * frame (kind tool + sanitized name + exact status). Raw args/results/
+     * output/environment never leave this helper; malformed or hostile tool
+     * names are dropped (the browser parser also rejects them fail-closed).
+     */
+    conversationToolFrame(event) {
+        if (event.type !== "tool_execution_start" && event.type !== "tool_execution_end")
+            return null;
+        const raw = event.toolName;
+        if (typeof raw !== "string")
+            return null;
+        const toolName = raw.trim();
+        // Bounded: non-empty, no control characters, at most 128 chars. The
+        // browser's stricter [A-Za-z0-9 _:-]{1,80} check remains authoritative.
+        if (toolName === "" || toolName.length > 128 || /[\u0000-\u001f\u007f]/.test(toolName))
+            return null;
+        if (event.type === "tool_execution_start") {
+            return { kind: "tool", toolName, status: "started" };
+        }
+        const isError = event.isError;
+        return { kind: "tool", toolName, status: isError === true ? "failed" : "completed" };
     }
     async appendAndPublish(conversationId, options) {
         const result = await appendConversationEvent({
@@ -811,6 +839,14 @@ export class ConversationBroker {
         const delta = this.conversationTextDelta(event);
         if (delta !== null) {
             this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, kind: "text_delta", delta });
+        }
+        // VR-3: bounded tool lifecycle frames (started/completed/failed) from the
+        // existing Pi tool_execution_* events. Only a bounded sanitized tool name
+        // and the exact status reach the browser; raw args/results/errors never
+        // enter an activity frame. Malformed/hostile names are dropped silently.
+        const toolFrame = this.conversationToolFrame(event);
+        if (toolFrame !== null) {
+            this.publishActivity({ conversationId: run.conversationId, runId: run.runId, agent: run.agent, ...toolFrame });
         }
         if (event.type === "extension_ui_request" && typeof event.id === "string") {
             // C5-3: a reserved conversation-handoff control request is consumed only

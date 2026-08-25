@@ -155,9 +155,16 @@ describe("declared C2 endpoints (static)", () => {
     const sources = await readAllTs();
     for (const name of conversationModuleFiles()) {
       const content = sources.get(name) ?? "";
-      for (const forbidden of ["thinking", "provider", "secret"]) {
+      for (const forbidden of ["thinking", "provider"]) {
         expect(content, `${name} must not contain '${forbidden}'`).not.toContain(forbidden);
       }
+      // VR-3: "secret" is only permitted as a fail-closed TOOL_FORBIDDEN_KEYS
+      // denylist entry (a payload field name to REJECT), never as a UI string.
+      const withoutDenylist = content.replace(
+        /TOOL_FORBIDDEN_KEYS: readonly string\[\] = \[[\s\S]*?\];/,
+        "",
+      );
+      expect(withoutDenylist, `${name} must not contain 'secret'`).not.toContain("secret");
     }
   });
 });
