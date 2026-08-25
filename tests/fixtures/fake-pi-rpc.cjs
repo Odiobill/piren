@@ -189,6 +189,14 @@ function handle(cmd) {
       const section = sectionIndex >= 0 ? cmd.message.slice(sectionIndex + "Handoff request:".length) : cmd.message;
       const match = section.match(/conversationhandoff\s*->\s*([a-z0-9-]+)\s*:\s*([\s\S]*)/);
       if (match) {
+        // VR-5: a workflow stage whose section also names "toolwork" first
+        // emits bounded streamed text + safe tool events (so the stage work
+        // card is visible) BEFORE raising its handoff request.
+        if (typeof cmd.message === "string" && cmd.message.includes("toolwork")) {
+          emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Reviewing, then handing back." } });
+          emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "vault_read", args: {} });
+          emit({ type: "tool_execution_end", toolCallId: "t1", toolName: "vault_read", isError: false, result: "content" });
+        }
         waitingConversationHandoffId = "convhandoff-req-" + Date.now() + "-" + process.pid + "-" + ++conversationHandoffSeq;
         emit({
           type: "message_update",
@@ -326,6 +334,31 @@ function handle(cmd) {
         setTimeout(tryRelease, 25);
       };
       tryRelease();
+      return;
+    }
+
+    // VR-5: deterministic tool-work script (bounded streamed text + safe tool
+    // lifecycle events with raw args/results present to prove they never
+    // reach the browser work-card projection). Trigger word "toolwork" in the
+    // CURRENT request section only (never prior-context replay); a
+    // "conversationhandoff" message never reaches here — that branch runs
+    // earlier and emits its own bounded tool deltas before its gate.
+    const toolworkSectionIndex = typeof cmd.message === "string" ? cmd.message.lastIndexOf("Handoff request:") : -1;
+    const toolworkSection = toolworkSectionIndex >= 0 ? cmd.message.slice(toolworkSectionIndex + "Handoff request:".length) : cmd.message;
+    if (typeof toolworkSection === "string" && toolworkSection.includes("toolwork")) {
+      emit({ type: "message_update", role: "assistant", assistantMessageEvent: { type: "text_delta", delta: "Working on it." } });
+      emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "vault_read", args: { path: "/secret.md" } });
+      emit({ type: "tool_execution_end", toolCallId: "t1", toolName: "vault_read", isError: false, result: "secret file contents" });
+      emit({ type: "tool_execution_start", toolCallId: "t2", toolName: "bash", args: { command: "rm -rf" } });
+      emit({ type: "tool_execution_end", toolCallId: "t2", toolName: "bash", isError: true, result: "permission denied" });
+      // VR-5: hold briefly so the mounted panel deterministically renders the
+      // bounded tail + tool lines before the durable reply clears the card.
+      const finishToolwork = () => {
+        emit({ type: "queue_update", steering: [], followUp: [] });
+        emit({ type: "agent_end", messages: [] });
+        emit({ type: "agent_settled" });
+      };
+      setTimeout(finishToolwork, Number(process.env.FAKE_PI_TOOLWORK_HOLD_MS ?? 600));
       return;
     }
 
