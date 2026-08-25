@@ -43,6 +43,7 @@ let handle: GatewayHandle;
 let base = "";
 const token = "vr5-panel";
 const telemetryFetches: string[] = [];
+const abortRequests: Array<{ path: string; body: Record<string, unknown> }> = [];
 
 beforeEach(async () => {
   vault = mkdtempSync(join(tmpdir(), "piren-vr5-panel-"));
@@ -59,9 +60,13 @@ beforeEach(async () => {
   handle = await server.start();
   base = `http://${handle.hostname}:${handle.port}`;
   telemetryFetches.length = 0;
+  abortRequests.length = 0;
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : String(input);
     if (url.includes("/telemetry")) telemetryFetches.push(url);
+    if (url.includes("/abort") && init?.method === "POST") {
+      abortRequests.push({ path: url, body: (init.body !== undefined ? JSON.parse(String(init.body)) : {}) as Record<string, unknown> });
+    }
     const target = typeof input === "string" && input.startsWith("/") ? `${base}${input}` : input;
     return realFetch(target, init);
   }) as typeof fetch;
@@ -150,6 +155,13 @@ describe("VR-5 mounted panel capture-readiness (fake Pi, real gateway)", () => {
     );
     const card = container.querySelector(".activity-card")!;
     expect(card.textContent).toContain("Working on it.");
+    // VR-5 final: the work card's scoped Abort control is present, reachable
+    // (enabled), and exactly scoped to conversation + sam.
+    const abort = card.querySelector<HTMLButtonElement>(".transient-run-abort");
+    expect(abort).not.toBeNull();
+    expect(abort!.disabled).toBe(false);
+    expect(abort!.getAttribute("aria-label")).toBe("Abort sam's current work");
+    expect(abort!.getAttribute("data-activity-abort-run-id")).not.toBeNull();
     const toolLines = Array.from(card.querySelectorAll(".activity-card-tools li")).map((n) => n.textContent);
     expect(toolLines.length).toBeGreaterThanOrEqual(2);
     expect(toolLines.join(" ")).toContain("vault_read");
@@ -187,6 +199,42 @@ describe("VR-5 mounted panel capture-readiness (fake Pi, real gateway)", () => {
     expect(container.querySelector(".conversation-context-cards")).toBeNull();
     expect(container.querySelector(".context-card")).toBeNull();
     expect(container.querySelector(".telemetry-popup")).toBeNull();
+  });
+
+  it("the work card Abort targets exactly conversation + sam and cancels a hanging run", { timeout: 30_000 }, async () => {
+    const created = await post("/api/conversations", { text: "Seed abort" });
+    const id = ((await created.json()) as { conversation?: { id: string } }).conversation?.id ?? "";
+
+    window.location.hash = `#conversation/${id}`;
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(ConversationNavigator, { token, onUnauthorized, onValidated: () => {}, onConversationsChanged: () => {} }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor("composer", () => container.querySelector<HTMLTextAreaElement>("textarea") !== null);
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => typeText(textarea, "@sam hang"));
+    act(() => key(textarea, "Enter"));
+
+    await waitFor("hanging work card abort", () => container.querySelector<HTMLButtonElement>(".transient-run-abort") !== null, 20_000);
+    const abort = container.querySelector<HTMLButtonElement>(".transient-run-abort")!;
+    expect(abort.getAttribute("aria-label")).toBe("Abort sam's current work");
+
+    await act(async () => {
+      abort.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // Exactly one abort request to the conversation, scoped to agent sam.
+    await waitFor("abort request", () => abortRequests.length === 1);
+    expect(abortRequests[0]?.path).toBe(`/api/conversations/${id}/abort`);
+    expect(abortRequests[0]?.body).toEqual({ agent: "sam" });
+
+    // The card clears as the run is cancelled (never timed_out/retried).
+    await waitFor("card cleared after abort", () => container.querySelector(".activity-card") === null, 20_000);
+    const events = await readConversationEvents({ vaultRoot: vault, conversationId: id });
+    expect(events.some((e) => e.kind === "run_cancelled" && e.runAgent === "sam")).toBe(true);
+    expect(events.filter((e) => e.kind === "run_started")).toHaveLength(1);
   });
 
   it("settle-time Context rehydrates across switching from memory without a telemetry fetch", { timeout: 30_000 }, async () => {
