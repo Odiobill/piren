@@ -177,7 +177,16 @@ describe("VR-5 mounted panel capture-readiness (fake Pi, real gateway)", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     await waitFor("read-only inspection", () => container.querySelector("textarea") === null);
+    // VR-5 correction: read-only/archived inspection has NONE of the
+    // transient or live surfaces.
     expect(container.querySelector(".activity-card")).toBeNull();
+    expect(container.querySelector(".conversation-activity-cards")).toBeNull();
+    expect(container.querySelector(".transient-run-abort")).toBeNull();
+    expect(container.querySelector(".approval-card")).toBeNull();
+    expect(container.querySelector(".approval-cards")).toBeNull();
+    expect(container.querySelector(".conversation-context-cards")).toBeNull();
+    expect(container.querySelector(".context-card")).toBeNull();
+    expect(container.querySelector(".telemetry-popup")).toBeNull();
   });
 
   it("settle-time Context rehydrates across switching from memory without a telemetry fetch", { timeout: 30_000 }, async () => {
@@ -212,5 +221,27 @@ describe("VR-5 mounted panel capture-readiness (fake Pi, real gateway)", () => {
     expect(container.querySelector(".context-card-state")?.textContent).toBe("30.00%");
     // VR-4: rehydration never fetches telemetry.
     expect(telemetryFetches).toEqual([]);
+
+    // The compact card shows NO stale label; only the modal does.
+    const card = container.querySelector(".context-card")!;
+    expect(card.textContent).not.toContain("Last observed");
+    await act(async () => {
+      (card as HTMLButtonElement).click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor("telemetry popup", () => container.querySelector(".telemetry-popup") !== null);
+    const popup = container.querySelector(".telemetry-popup")!;
+    expect(popup.textContent).toContain("Last observed");
+    expect(popup.textContent).toMatch(/Last observed\d{2}:\d{2}:\d{2} UTC/);
+
+    // Explicit Refresh is the only fetch and supersedes the restored label.
+    const refresh = popup.querySelector<HTMLButtonElement>('button[aria-label^="Refresh context telemetry for zai"]');
+    expect(refresh).not.toBeNull();
+    await act(async () => {
+      refresh!.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor("restored label removed", () => !(container.querySelector(".telemetry-popup")?.textContent?.includes("Last observed") ?? false));
+    expect(telemetryFetches.length).toBe(1);
   });
 });
