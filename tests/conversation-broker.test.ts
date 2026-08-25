@@ -289,11 +289,15 @@ afterEach(async () => {
 function makeTimers() {
   let nextHandle = 1;
   const pending = new Map<number, () => void>();
+  // VR-2: record the requested delay so tests can pin the armed deadline.
+  const delays = new Map<number, number>();
   return {
     pending,
-    setTimeout(callback: () => void): number {
+    delays,
+    setTimeout(callback: () => void, ms: number): number {
       const handle = nextHandle++;
       pending.set(handle, callback);
+      delays.set(handle, ms);
       return handle;
     },
     clearTimeout(handle: number): void {
@@ -318,6 +322,8 @@ function makeBroker(options?: {
   timers?: ReturnType<typeof makeTimers>;
   approvalMethods?: string[];
   clientSetup?: (client: FakeConversationClient) => void;
+  /** VR-2: omit runTimeoutMs entirely to exercise the broker's own default. */
+  useDefaultTimeout?: boolean;
 }): { broker: ConversationBroker; clients: FakeConversationClient[]; timers: ReturnType<typeof makeTimers>; targets: RpcSpawnTarget[] } {
   const behaviors = options?.behaviors ?? [];
   const approvalMethods = options?.approvalMethods ?? [];
@@ -339,7 +345,7 @@ function makeBroker(options?: {
     now: tick,
     nonce: () => `n${++nonceSeq}`,
     timers,
-    runTimeoutMs: 60_000,
+    ...(options?.useDefaultTimeout === true ? {} : { runTimeoutMs: 60_000 }),
   });
   return { broker, clients, timers, targets };
 }
@@ -458,6 +464,61 @@ describe("ConversationBroker dispatch outcomes", () => {
     expect(outcome?.status).toBe("timed_out");
     const events = await readConversationEvents({ vaultRoot: root, conversationId });
     expect(events.at(-1)?.runStatus).toBe("timed_out");
+    await broker.close();
+  });
+
+  it("VR-2: absent runTimeoutMs option arms exactly one 3_600_000 ms deadline per run and clears it on settle", async () => {
+    const timers = makeTimers();
+    const { broker } = makeBroker({ behaviors: ["hang"], timers, useDefaultTimeout: true });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    let outcome: ConversationDispatchOutcome | undefined;
+    const pending = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [],
+    }).then((value) => {
+      outcome = value;
+    });
+    const deadline = Date.now() + 2000;
+    while (timers.pending.size === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    // Exactly ONE deadline timer is armed, at the 60-minute default.
+    expect(timers.pending.size).toBe(1);
+    expect([...timers.delays.values()]).toEqual([3_600_000]);
+    for (const handle of [...timers.pending.keys()]) timers.fire(handle);
+    await pending;
+    expect(outcome?.status).toBe("timed_out");
+    // The deadline cleared on settle: no dangling timer, no retry/re-dispatch.
+    expect(timers.pending.size).toBe(0);
+    await broker.close();
+  });
+
+  it("VR-2: an explicit abort wins over the armed deadline and no retry occurs", async () => {
+    const timers = makeTimers();
+    const { broker, clients } = makeBroker({ behaviors: ["hang"], timers, useDefaultTimeout: true });
+    const conversationId = await makeConversation();
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    let outcome: ConversationDispatchOutcome | undefined;
+    const pending = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [],
+    }).then((value) => {
+      outcome = value;
+    });
+    const deadline = Date.now() + 2000;
+    while (timers.pending.size === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    // Abort BEFORE the deadline fires: cancellation wins, deadline cleared.
+    const abortOutcome = await broker.abort(conversationId, "zai");
+    expect(abortOutcome.status).toBe("cancelled");
+    await pending;
+    expect(outcome?.status).toBe("cancelled");
+    expect(timers.pending.size).toBe(0);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.at(-1)?.runStatus).toBe("cancelled");
+    // No re-dispatch/retry: exactly one client prompt happened.
+    expect(clients).toHaveLength(1);
+    expect(clients[0]?.prompts).toHaveLength(1);
     await broker.close();
   });
 

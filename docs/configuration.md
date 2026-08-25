@@ -257,6 +257,19 @@ scheduler:
 
 Absent or malformed class values resolve disabled (fail closed). A retired `scheduler.enabled` key is never a gate: `true` is inert-to-ignore, and `false` or a malformed value gates every class off until an operator-confirmed `piren scheduler configure` migration removes the stale key; Settings and doctor report that state read-only and never migrate it. Supervision stays separate: a running scheduler with every class disabled is an inert supervisor. `piren scheduler configure` is the guided interactive writer (current-state display, preview, confirmation, atomic write; never starts anything). The Workbench Settings page offers the same typed fields over the same atomic, fail-closed write discipline; saving never installs, starts, or ticks anything. See [scheduler.md](scheduler.md) for the full semantics, including the non-persistent `piren scheduler --once --force` override (a disabled inbox automation class only, one tick, never cron, never the legacy gate).
 
+## Workbench config (workbench.yml)
+
+The optional vault-root `workbench.yml` file is steward-managed: Piren reads it and never writes it, so any unrelated keys you keep there are preserved. It currently defines exactly one key:
+
+```yaml
+conversation:
+  run_timeout_seconds: 3600
+```
+
+`run_timeout_seconds` is the hard deadline for one Workbench Conversation agent run (the exact `conversation × agent` run is settled as `timed_out`; abort stays available; there is no retry, fallback, reroute, or re-dispatch). Valid values are whole numbers from `1` to `3600`. When the file, the `conversation` block, or the key is absent, the default is `3600` seconds (60 minutes).
+
+The value is read once when the gateway process starts and applies to runs started after that; restart the gateway (`piren gateway`) to apply a change. If the YAML is malformed, the value has the wrong type, or it is out of range, the gateway logs one bounded warning naming only the key path and a reason category, then uses the default — raw file content and values are never echoed. The browser never reads or edits this file.
+
 ## Environment variables
 
 Common overrides:

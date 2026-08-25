@@ -110,6 +110,9 @@ export type ConversationSteerOutcome =
   | { status: "no-active-run" }
   | { status: "steer-failed" };
 
+/** VR-2: absent-option fallback run deadline — the accepted 60-minute hard cap. */
+export const DEFAULT_WORKBENCH_RUN_TIMEOUT_MS = 3_600_000;
+
 export interface ConversationBrokerTimers {
   setTimeout(callback: () => void, ms: number): unknown;
   clearTimeout(handle: unknown): void;
@@ -521,7 +524,10 @@ export class ConversationBroker {
     this.now = options.now ?? (() => new Date());
     this.nonce = options.nonce;
     this.timers = options.timers ?? defaultTimers();
-    this.runTimeoutMs = options.runTimeoutMs ?? 120_000;
+    // VR-2: the absent-option fallback is the accepted 60-minute hard run
+    // deadline (workbench video-capture readiness contract §6); production
+    // wiring passes the vault-root workbench.yml-resolved value instead.
+    this.runTimeoutMs = options.runTimeoutMs ?? DEFAULT_WORKBENCH_RUN_TIMEOUT_MS;
     this.io = options.io;
     this.conversationReader = options.conversationReader ?? readConversation;
     // TB6: production default reads the agent-local config best-effort; an

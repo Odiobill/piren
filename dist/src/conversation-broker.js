@@ -31,6 +31,8 @@ import { loadAgentFallbackPolicy, splitFallbackModelId, } from "./model-fallback
 /** C2 committed context budget (contract §5). */
 export const CONVERSATION_CONTEXT_MAX_ITEMS = 8;
 export const CONVERSATION_CONTEXT_MAX_CHARS = 16384;
+/** VR-2: absent-option fallback run deadline — the accepted 60-minute hard cap. */
+export const DEFAULT_WORKBENCH_RUN_TIMEOUT_MS = 3_600_000;
 function defaultTimers() {
     return {
         setTimeout: (callback, ms) => setTimeout(callback, ms),
@@ -211,7 +213,10 @@ export class ConversationBroker {
         this.now = options.now ?? (() => new Date());
         this.nonce = options.nonce;
         this.timers = options.timers ?? defaultTimers();
-        this.runTimeoutMs = options.runTimeoutMs ?? 120_000;
+        // VR-2: the absent-option fallback is the accepted 60-minute hard run
+        // deadline (workbench video-capture readiness contract §6); production
+        // wiring passes the vault-root workbench.yml-resolved value instead.
+        this.runTimeoutMs = options.runTimeoutMs ?? DEFAULT_WORKBENCH_RUN_TIMEOUT_MS;
         this.io = options.io;
         this.conversationReader = options.conversationReader ?? readConversation;
         // TB6: production default reads the agent-local config best-effort; an

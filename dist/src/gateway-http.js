@@ -17,6 +17,8 @@ import { CONVERSATION_AGENT_NAME_PATTERN, checkActiveGate, formatActiveGateRejec
 import { appendConversationEvent, createConversation, createConversationForAgentStart, createConversationForPeerStart, listConversations, readConversation, readConversationEvents, renameConversation, transitionConversationLifecycle, updateConversationAudience, } from "./conversations.js";
 import { parsePeerAudienceStartRequest, peerStartOriginBody, validatePeerRunnability, } from "./conversation-peer-start.js";
 import { classifyRunOutcome, isFallbackEligibleOutcome } from "./model-fallback-outcome.js";
+import { DEFAULT_WORKBENCH_RUN_TIMEOUT_MS } from "./conversation-broker.js";
+import { createNodeWorkbenchConfigReader, formatWorkbenchConfigWarning, parseWorkbenchConfig, workbenchRunDeadlineMs, } from "./workbench-config.js";
 import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
 import { buildModelFallbackNotice, loadAgentFallbackPolicy, splitFallbackModelId, } from "./model-fallback-gateway.js";
 import { SERVICE_OBSERVATION_TARGETS, } from "./service-observability.js";
@@ -157,6 +159,8 @@ export class GatewayServer {
     currentTarget;
     streams = new Map();
     vaultRoot;
+    /** VR-2: resolved Conversation run deadline in ms (workbench.yml or 60-minute default). */
+    conversationRunTimeoutMs;
     runnableAgents;
     vaultAgents;
     agentConfiguredModels;
@@ -199,12 +203,24 @@ export class GatewayServer {
         // global gateway chat client. (The retired room broker is gone — no
         // Rooms product surface remains, ADR-0043.)
         if (options.vaultRoot !== undefined && options.targetBuilder !== undefined && this.runnableAgents.length > 0) {
+            // VR-2: resolve the optional workbench.yml run deadline EXACTLY ONCE
+            // before broker construction; never re-read or changed mid-process.
+            const warn = options.workbenchWarn ?? ((message) => console.warn(message));
+            const readWorkbenchYaml = options.workbenchConfigReader ?? createNodeWorkbenchConfigReader(options.vaultRoot);
+            const resolution = parseWorkbenchConfig(readWorkbenchYaml());
+            for (const warning of resolution.warnings)
+                warn(formatWorkbenchConfigWarning(warning));
+            this.conversationRunTimeoutMs = workbenchRunDeadlineMs(resolution);
             this.conversationBroker = new ConversationBroker({
                 vaultRoot: options.vaultRoot,
                 runnableAgents: this.runnableAgents,
                 targetBuilder: options.targetBuilder,
                 nonce: () => randomUUID().slice(0, 8),
+                runTimeoutMs: this.conversationRunTimeoutMs,
             });
+        }
+        else {
+            this.conversationRunTimeoutMs = DEFAULT_WORKBENCH_RUN_TIMEOUT_MS;
         }
         if (options.initialAgent !== undefined) {
             this.currentAgent = options.initialAgent;

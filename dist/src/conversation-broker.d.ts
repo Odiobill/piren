@@ -63,6 +63,8 @@ export type ConversationSteerOutcome = {
 } | {
     status: "steer-failed";
 };
+/** VR-2: absent-option fallback run deadline — the accepted 60-minute hard cap. */
+export declare const DEFAULT_WORKBENCH_RUN_TIMEOUT_MS = 3600000;
 export interface ConversationBrokerTimers {
     setTimeout(callback: () => void, ms: number): unknown;
     clearTimeout(handle: unknown): void;

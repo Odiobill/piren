@@ -66,6 +66,13 @@ import {
 } from "./conversation-peer-start.js";
 import type { VaultDirReader } from "./okf.js";
 import { classifyRunOutcome, isFallbackEligibleOutcome, type RunOutcome } from "./model-fallback-outcome.js";
+import { DEFAULT_WORKBENCH_RUN_TIMEOUT_MS } from "./conversation-broker.js";
+import {
+  createNodeWorkbenchConfigReader,
+  formatWorkbenchConfigWarning,
+  parseWorkbenchConfig,
+  workbenchRunDeadlineMs,
+} from "./workbench-config.js";
 import { planFallbackAttempt, buildFallbackHandoffPrompt } from "./model-fallback-rotation.js";
 import {
   buildModelFallbackNotice,
@@ -245,6 +252,14 @@ export interface GatewayServerOptions {
    */
   publicDir?: string | undefined;
   /**
+   * VR-2: startup reader for optional vault-root `workbench.yml`. Defaults to
+   * a node reader over vaultRoot; tests inject fakes. Called at most once,
+   * only when a ConversationBroker will be constructed.
+   */
+  workbenchConfigReader?: (() => string | null) | undefined;
+  /** VR-2: bounded non-secret startup warning sink. Defaults to console.warn. */
+  workbenchWarn?: ((message: string) => void) | undefined;
+  /**
    * Resolves the agent-local model-fallback policy (TB4). Defaults to
    * reading `team/<agent>/config.yml` best-effort under vaultRoot; absent/
    * malformed/disabled policies keep existing single-run behavior. Tests
@@ -337,6 +352,8 @@ export class GatewayServer {
   private currentTarget: RpcSpawnTarget;
   private readonly streams = new Map<string, ChatStream>();
   private readonly vaultRoot: string | undefined;
+  /** VR-2: resolved Conversation run deadline in ms (workbench.yml or 60-minute default). */
+  readonly conversationRunTimeoutMs: number;
   private readonly runnableAgents: string[];
   private readonly vaultAgents: string[];
   private readonly agentConfiguredModels: Record<string, string | null>;
@@ -380,12 +397,23 @@ export class GatewayServer {
     // global gateway chat client. (The retired room broker is gone — no
     // Rooms product surface remains, ADR-0043.)
     if (options.vaultRoot !== undefined && options.targetBuilder !== undefined && this.runnableAgents.length > 0) {
+      // VR-2: resolve the optional workbench.yml run deadline EXACTLY ONCE
+      // before broker construction; never re-read or changed mid-process.
+      const warn = options.workbenchWarn ?? ((message: string) => console.warn(message));
+      const readWorkbenchYaml =
+        options.workbenchConfigReader ?? createNodeWorkbenchConfigReader(options.vaultRoot);
+      const resolution = parseWorkbenchConfig(readWorkbenchYaml());
+      for (const warning of resolution.warnings) warn(formatWorkbenchConfigWarning(warning));
+      this.conversationRunTimeoutMs = workbenchRunDeadlineMs(resolution);
       this.conversationBroker = new ConversationBroker({
         vaultRoot: options.vaultRoot,
         runnableAgents: this.runnableAgents,
         targetBuilder: options.targetBuilder,
         nonce: () => randomUUID().slice(0, 8),
+        runTimeoutMs: this.conversationRunTimeoutMs,
       });
+    } else {
+      this.conversationRunTimeoutMs = DEFAULT_WORKBENCH_RUN_TIMEOUT_MS;
     }
     if (options.initialAgent !== undefined) {
       this.currentAgent = options.initialAgent;

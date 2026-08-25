@@ -54,6 +54,14 @@ export interface GatewayServerOptions {
      */
     publicDir?: string | undefined;
     /**
+     * VR-2: startup reader for optional vault-root `workbench.yml`. Defaults to
+     * a node reader over vaultRoot; tests inject fakes. Called at most once,
+     * only when a ConversationBroker will be constructed.
+     */
+    workbenchConfigReader?: (() => string | null) | undefined;
+    /** VR-2: bounded non-secret startup warning sink. Defaults to console.warn. */
+    workbenchWarn?: ((message: string) => void) | undefined;
+    /**
      * Resolves the agent-local model-fallback policy (TB4). Defaults to
      * reading `team/<agent>/config.yml` best-effort under vaultRoot; absent/
      * malformed/disabled policies keep existing single-run behavior. Tests
@@ -103,6 +111,8 @@ export declare class GatewayServer {
     private currentTarget;
     private readonly streams;
     private readonly vaultRoot;
+    /** VR-2: resolved Conversation run deadline in ms (workbench.yml or 60-minute default). */
+    readonly conversationRunTimeoutMs: number;
     private readonly runnableAgents;
     private readonly vaultAgents;
     private readonly agentConfiguredModels;
