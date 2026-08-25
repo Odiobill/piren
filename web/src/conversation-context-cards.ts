@@ -12,7 +12,8 @@
  * attention, availability, or progress.
  */
 
-import type { ConversationTelemetryEntry, ConversationTelemetryState } from "./conversation-telemetry.js";
+import type { ConversationTelemetryEntry, ConversationTelemetryLiveFacts, ConversationTelemetryState } from "./conversation-telemetry.js";
+import { formatObservedTime, type ContextContinuityEntry } from "./context-continuity-store.js";
 
 /** The exact truthful states a card/popup can present. */
 export type ContextCardStateKey = "ok" | "post_compaction_pending" | "no_window" | "no_live_session" | "not_sampled";
@@ -131,10 +132,24 @@ function contextCardViewModel(agent: string, entry: ConversationTelemetryEntry |
 export function contextCardsForSelection(
   selection: { phase: "active"; audience: readonly string[] } | { phase: "read-only" } | { phase: "none" },
   telemetry: ConversationTelemetryState,
+  restored?: ReadonlyMap<string, ContextContinuityEntry>,
 ): ContextCardViewModel[] {
   if (selection.phase !== "active") return [];
-  const agents = [...selection.audience, ...[...telemetry.keys()].filter((agent) => !selection.audience.includes(agent))];
-  return agents.map((agent) => contextCardViewModel(agent, telemetry.get(agent)));
+  const liveExtras = [...telemetry.keys()].filter((agent) => !selection.audience.includes(agent));
+  const restoredExtras = [...(restored?.keys() ?? [])].filter(
+    (agent) => !selection.audience.includes(agent) && !liveExtras.includes(agent),
+  );
+  const agents = [...selection.audience, ...liveExtras, ...restoredExtras];
+  return agents.map((agent) => {
+    const live = telemetry.get(agent);
+    if (live !== undefined) return contextCardViewModel(agent, live);
+    const entry = restored?.get(agent);
+    if (entry !== undefined) {
+      // Rehydrated entry: the SAME concise card presentation (no stale label).
+      return contextCardViewModel(agent, { kind: "live", agent, runId: null, facts: entry.facts });
+    }
+    return contextCardViewModel(agent, undefined);
+  });
 }
 
 /**
@@ -144,7 +159,11 @@ export function contextCardsForSelection(
  * ids, token totals, cost, transcripts, raw errors/RPC are never present in
  * the bounded entry and never re-derived here.
  */
-export function telemetryPopupViewModel(agent: string, entry: ConversationTelemetryEntry | undefined): TelemetryPopupViewModel {
+export function telemetryPopupViewModel(
+  agent: string,
+  entry: ConversationTelemetryEntry | undefined,
+  restoredObservedAt?: number,
+): TelemetryPopupViewModel {
   const presentation = presentEntry(entry);
   // U3 concise popup (amendment §6.3): the bounded field set renders as short
   // labelled lines — agent and truthful state first (always present), then
@@ -167,6 +186,12 @@ export function telemetryPopupViewModel(agent: string, entry: ConversationTeleme
     }
     if (facts.thinkingLevel !== undefined) fields.push({ label: "Thinking", value: facts.thinkingLevel });
     if (facts.autoCompactionEnabled !== undefined) fields.push({ label: "Auto-compaction", value: facts.autoCompactionEnabled ? "on" : "off" });
+  }
+  // VR-4: ONLY the popup identifies rehydrated data as last observed. Fresh
+  // cards/popups never show this label; a live frame or explicit Refresh
+  // supersedes it.
+  if (restoredObservedAt !== undefined) {
+    fields.push({ label: "Last observed", value: `${formatObservedTime(restoredObservedAt)} UTC` });
   }
   return {
     title: `Context telemetry for ${agent}`,

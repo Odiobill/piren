@@ -69,6 +69,7 @@ import {
   type ConversationTelemetryState,
 } from "./conversation-telemetry";
 import { contextCardsForSelection, telemetryPopupViewModel } from "./conversation-context-cards";
+import { contextContinuityStore, type ContextContinuityEntry } from "./context-continuity-store";
 import { ConversationTelemetryPopup } from "./ConversationTelemetryPopup";
 
 /**
@@ -253,6 +254,16 @@ export function ConversationNavigator({
   const [telemetryByAgent, setTelemetryByAgent] = useState<ConversationTelemetryState>(emptyConversationTelemetryState());
   const handleTelemetry = useCallback((frame: ConversationTelemetryFrame) => {
     setTelemetryByAgent((previous) => applyConversationTelemetryFrame(previous, frame));
+    // VR-4: a fresh accepted live frame supersedes any restored entry for the
+    // exact pair (and becomes the newest continuity observation).
+    const { conversationId, agent, runId, ...facts } = frame;
+    contextContinuityStore.remember(conversationId, agent, facts, Date.now());
+    setRestoredByAgent((previous) => {
+      if (!previous.has(agent)) return previous;
+      const next = new Map(previous);
+      next.delete(agent);
+      return next;
+    });
   }, []);
   /** T6: explicit refresh control state (one click → one exact GET; never a retry). */
   const [telemetryRefresh, setTelemetryRefresh] = useState<
@@ -266,6 +277,8 @@ export function ConversationNavigator({
    * one), plus one ref per card button for focus return on dismissal.
    */
   const [telemetryPopupAgent, setTelemetryPopupAgent] = useState<string | null>(null);
+  /** VR-4: rehydrated continuity entries for the CURRENT selection (agent-keyed). */
+  const [restoredByAgent, setRestoredByAgent] = useState<ReadonlyMap<string, ContextContinuityEntry>>(new Map());
   const telemetryCardRefs = useRef(new Map<string, HTMLButtonElement>());
   /**
    * T6 correction: selection generation guard. Incremented on EVERY
@@ -283,6 +296,22 @@ export function ConversationNavigator({
         const result = await fetchConversationTelemetry(conversationId, agent, token);
         if (telemetryGenerationRef.current !== generation) return; // stale: fully inert
         setTelemetryByAgent((previous) => applyConversationTelemetryRead(previous, agent, result));
+        // VR-4: a validated explicit refresh supersedes continuity state for
+        // the exact pair — a live result replaces the stored observation, and
+        // an explicit no_live_session result forgets it (never rehydrate stale
+        // facts after the gateway says the session is gone).
+        if (result.sessionState === "live") {
+          const { sessionState: _sessionState, ...facts } = result;
+          contextContinuityStore.remember(conversationId, agent, facts, Date.now());
+        } else {
+          contextContinuityStore.forget(conversationId, agent);
+        }
+        setRestoredByAgent((previous) => {
+          if (!previous.has(agent)) return previous;
+          const next = new Map(previous);
+          next.delete(agent);
+          return next;
+        });
         setTelemetryRefresh(null);
       } catch (error) {
         if (error instanceof UnauthorizedError) {
@@ -328,7 +357,11 @@ export function ConversationNavigator({
    */
   const contextCards =
     selection.phase === "active"
-      ? contextCardsForSelection({ phase: "active", audience: selection.conversation.audience }, telemetryByAgent)
+      ? contextCardsForSelection(
+          { phase: "active", audience: selection.conversation.audience },
+          telemetryByAgent,
+          restoredByAgent,
+        )
       : [];
 
   useEffect(() => {
@@ -348,6 +381,21 @@ export function ConversationNavigator({
     // Context cards: the popup is bound to the exact selected pair, so every
     // selection change closes it together with the session-only reset.
     setTelemetryPopupAgent(null);
+  }, [surfaceKey]);
+
+  // VR-4: rehydrate ONLY the new selection's stored observations from browser
+  // memory (never a fetch, never history reconstruction). A fresh live frame
+  // or explicit Refresh supersedes each entry later. This is a passive effect
+  // so the generation-bump layout effect above stays structurally minimal.
+  useEffect(() => {
+    const next = new Map<string, ContextContinuityEntry>();
+    if (selection.phase === "active") {
+      for (const { agent, entry } of contextContinuityStore.listConversation(selection.conversation.id)) {
+        next.set(agent, entry);
+      }
+    }
+    setRestoredByAgent(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surfaceKey]);
 
   useLayoutEffect(() => {
@@ -833,6 +881,17 @@ export function ConversationNavigator({
     }
   }
 
+  // VR-4: the continuity store never outlives the Workbench or a token
+  // handover. Reload naturally yields a fresh module; unmount and token-loss/
+  // typed-401 handover clear it explicitly.
+  useEffect(() => {
+    return () => contextContinuityStore.clear();
+  }, []);
+  useEffect(() => {
+    contextContinuityStore.clear();
+    setRestoredByAgent(new Map());
+  }, [token]);
+
   function openTelemetryPopup(agent: string) {
     // Explicit card activation is the ONLY way the popup opens; opening it
     // never fetches (Refresh inside the popup is the sole explicit read).
@@ -1065,7 +1124,14 @@ export function ConversationNavigator({
             {telemetryPopupAgent !== null && (
               <ConversationTelemetryPopup
                 key={telemetryPopupAgent}
-                viewModel={telemetryPopupViewModel(telemetryPopupAgent, telemetryByAgent.get(telemetryPopupAgent))}
+                viewModel={telemetryPopupViewModel(
+                  telemetryPopupAgent,
+                  telemetryByAgent.get(telemetryPopupAgent) ??
+                    (restoredByAgent.has(telemetryPopupAgent)
+                      ? { kind: "live", agent: telemetryPopupAgent, runId: null, facts: restoredByAgent.get(telemetryPopupAgent)!.facts }
+                      : undefined),
+                  telemetryByAgent.has(telemetryPopupAgent) ? undefined : restoredByAgent.get(telemetryPopupAgent)?.observedAt,
+                )}
                 busy={telemetryRefresh?.agent === telemetryPopupAgent && telemetryRefresh.phase === "busy"}
                 error={telemetryRefresh?.agent === telemetryPopupAgent && telemetryRefresh.phase === "error" ? telemetryRefresh.message : null}
                 onRefresh={() => void refreshTelemetry(selection.conversation.id, telemetryPopupAgent)}

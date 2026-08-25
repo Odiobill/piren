@@ -84,6 +84,7 @@
     "tests/web-sr3-settings-controls-polish.test.ts",
     "tests/web-vr3-work-cards-layout.test.ts",
     "tests/web-vr3-work-cards.test.ts",
-    "tests/web-vr3-work-cards-timeline.test.ts"
+    "tests/web-vr3-work-cards-timeline.test.ts",
+    "tests/web-vr4-context-continuity-ui.test.ts"
   ]
 }
