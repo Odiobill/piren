@@ -54,11 +54,6 @@ export const WORK_CARD_TOOLS_MAX = 5;
 /** VR-3: a tool frame name must already be exactly this shape (no stripping). */
 const TOOL_NAME_PATTERN = /^[A-Za-z0-9 _:-]{1,80}$/;
 const TOOL_STATUSES: readonly ConversationToolStatus[] = ["started", "completed", "failed"];
-/** VR-3: payload-shaped keys a tool frame must NEVER carry (fail closed). */
-const TOOL_FORBIDDEN_KEYS: readonly string[] = [
-  "args", "arguments", "input", "result", "output", "partialResult",
-  "env", "environment", "token", "secret", "key", "content", "delta", "outcome", "text",
-];
 
 const ACTIVITY_OUTCOMES: readonly ConversationActivityOutcome[] = ["completed", "failed", "timed_out", "cancelled"];
 
@@ -101,9 +96,12 @@ export function parseConversationActivityFrame(json: unknown, conversationId: st
     if (json.delta !== undefined || json.outcome !== undefined) {
       return { ok: false, reason: "tool carries no delta/outcome" };
     }
-    // Payload-shaped fields fail closed on tool frames.
-    for (const forbidden of TOOL_FORBIDDEN_KEYS) {
-      if (json[forbidden] !== undefined) return { ok: false, reason: `tool carries ${forbidden}` };
+    // Closed own-key schema: a tool frame may carry EXACTLY the six own
+    // keys — any additional/unknown own field (arbitrary scalars, nested
+    // details, or raw result/output aliases) fails closed.
+    const allowedKeys = ["conversationId", "runId", "agent", "kind", "toolName", "status"];
+    for (const key of Object.keys(json)) {
+      if (!allowedKeys.includes(key)) return { ok: false, reason: `unknown tool field ${key}` };
     }
     const toolName = json.toolName;
     if (typeof toolName !== "string" || !TOOL_NAME_PATTERN.test(toolName)) {

@@ -497,9 +497,10 @@ export class ConversationBroker {
         if (typeof raw !== "string")
             return null;
         const toolName = raw.trim();
-        // Bounded: non-empty, no control characters, at most 128 chars. The
-        // browser's stricter [A-Za-z0-9 _:-]{1,80} check remains authoritative.
-        if (toolName === "" || toolName.length > 128 || /[\u0000-\u001f\u007f]/.test(toolName))
+        // VR-3 correction: the SAME safe syntax gate as the browser parser —
+        // exactly [A-Za-z0-9 _:-]{1,80}; unsafe, control, or 81+ names are
+        // dropped here so raw inputs never enter the browser SSE payload.
+        if (!/^[A-Za-z0-9 _:-]{1,80}$/.test(toolName))
             return null;
         if (event.type === "tool_execution_start") {
             return { kind: "tool", toolName, status: "started" };

@@ -31,6 +31,7 @@ type FakeBehavior =
   | "exit-mid-run"
   | "with-text"
   | "with-tools"
+  | "with-tools-hostile"
   | "provider-error-empty"
   | "approval"
   | "approval-hang"
@@ -149,6 +150,14 @@ class FakeConversationClient implements ConversationRpcClient {
       this.emit({ type: "tool_execution_end", toolCallId: "t1", toolName: "vault_read", isError: false, result: "secret file contents" });
       this.emit({ type: "tool_execution_start", toolCallId: "t2", toolName: "bash", args: { command: "rm -rf" } });
       this.emit({ type: "tool_execution_end", toolCallId: "t2", toolName: "bash", isError: true, result: "permission denied" });
+    }
+    if (this.behavior === "with-tools-hostile") {
+      // VR-3 correction: unsafe/oversized/control-containing names must be
+      // dropped at the broker boundary; only the safe valid name publishes.
+      this.emit({ type: "tool_execution_start", toolCallId: "h1", toolName: "vault_read; rm -rf /" });
+      this.emit({ type: "tool_execution_start", toolCallId: "h2", toolName: "a".repeat(81) });
+      this.emit({ type: "tool_execution_start", toolCallId: "h3", toolName: "bad\u0007name" });
+      this.emit({ type: "tool_execution_start", toolCallId: "h4", toolName: "vault_read" });
     }
     if (this.behavior === "provider-error-empty") {
       // P6: the pilot's real shape — a fully settled run whose final assistant
@@ -2133,6 +2142,24 @@ describe("broker-authoritative live activity (U4)", () => {
         expect(entry).not.toHaveProperty(forbidden);
       }
     }
+    await broker.close();
+  });
+
+  it("VR-3 correction: unsafe/oversized/control tool names are dropped at the broker boundary; only safe names publish", async () => {
+    const { broker } = makeBroker({ behaviors: ["with-tools-hostile"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Reply");
+    const tools: Array<Record<string, unknown>> = [];
+    broker.onConversationActivity(conversationId, (a) => {
+      if (a.kind === "tool") tools.push(a as unknown as Record<string, unknown>);
+    });
+
+    const outcome = await broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Reply", stewardEventId, priorEvents: [] });
+    expect(outcome.status).toBe("completed");
+    // Exactly ONE safe tool frame: the hostile names never reached the SSE payload.
+    expect(tools).toEqual([
+      { conversationId, runId: expect.any(String), agent: "zai", kind: "tool", toolName: "vault_read", status: "started" },
+    ]);
     await broker.close();
   });
 

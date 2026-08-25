@@ -102,10 +102,24 @@ describe("VR-3 tool frames — strict fail-closed parsing", () => {
     ["carries environment field", { ...valid, env: { TOKEN: "x" } }],
     ["carries input field", { ...valid, input: "raw" }],
     ["carries token field", { ...valid, token: "secret" }],
+    ["carries unknown scalar own field", { ...valid, note: "x" }],
+    ["carries unknown nested details field", { ...valid, details: { path: "leak" } }],
+    ["carries unknown own field alongside valid shape", { ...valid, extra: true }],
     ["foreign conversation", { ...valid, conversationId: "other" }],
     ["invalid runId", { ...valid, runId: "" }],
   ])("rejects %s fail-closed", (_label, bad) => {
     expect(parseConversationActivityFrame(bad, CID).ok).toBe(false);
+  });
+});
+
+describe("VR-3 correction — tool frame closed own-key schema", () => {
+  it("accepts ONLY the exact own-key shape {conversationId,runId,agent,kind,toolName,status}", () => {
+    const exact = { conversationId: CID, runId: "r9", agent: "zai", kind: "tool", toolName: "vault_read", status: "started" };
+    const parsed = parseConversationActivityFrame(exact, CID);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.frame.kind === "tool") {
+      expect(Object.keys(parsed.frame).sort()).toEqual(["agent", "conversationId", "kind", "runId", "status", "toolName"]);
+    }
   });
 });
 
