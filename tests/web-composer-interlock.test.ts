@@ -9,18 +9,21 @@ import {
 } from "../web/src/composer-interlock.js";
 
 /**
- * U2 — selected-Conversation composer interlock state machine (0.2.0
- * amendment §6.2). Pure reducer for the exact 8 transitions:
- * editable · interlocked-draft · interlocked-ack, with byte-for-byte draft
- * preservation/restoration and a non-resendable acknowledgement. The reason
- * derivation reflects broker state only (active run / pending approval).
+ * U2 + VR-1 — selected-Conversation composer interlock state machine.
+ * Pure reducer: editable · interlocked-draft, with byte-for-byte unsent-draft
+ * preservation/restoration. VR-1 removed the sent-message acknowledgement
+ * state entirely: a submitted message clears from the composer immediately
+ * and its durable timeline event is the only evidence — no accepted send is
+ * ever retained or re-shown. A send that fails while a REAL interlock is
+ * active preserves its exact draft inside that read-only interlock (never an
+ * editable bypass) until the interlock clears.
  */
 
 function editable(): ComposerInterlockState {
   return { state: "editable" };
 }
 
-describe("reduceComposerInterlock (transitions 1-8)", () => {
+describe("reduceComposerInterlock", () => {
   it("transition 1: interlock begins from editable with an unsent draft preserves it byte-for-byte", () => {
     const draft = "please @dipu review this\u0000draft \ud83d\ude80";
     const next = reduceComposerInterlock(editable(), { type: "interlock-begin", draft });
@@ -35,24 +38,31 @@ describe("reduceComposerInterlock (transitions 1-8)", () => {
     expect(composerInterlockVisibleText(next, "anything")).toBe("");
   });
 
-  it("transition 3: an accepted send that immediately enters interlock becomes a non-resendable acknowledgement", () => {
-    const next = reduceComposerInterlock(editable(), { type: "send-accepted", text: "do this task", interlockFollows: true });
-    expect(next).toEqual({ state: "interlocked-ack", ack: "do this task" });
-    expect(composerInterlockVisibleText(next, "")).toBe("do this task");
-    // The ack is never a draft: clearing it yields an empty composer.
-    const cleared = reduceComposerInterlock(next, { type: "interlock-clear" });
-    expect(cleared).toEqual({ state: "editable" });
+  it("VR-1: no acknowledgement state exists — an accepted send never enters the reducer as retained text", () => {
+    // The reducer's state space is closed: editable or interlocked-draft.
+    const states: Array<ComposerInterlockState["state"]> = ["editable", "interlocked-draft"];
+    for (const state of states) {
+      const current: ComposerInterlockState = state === "editable" ? { state: "editable" } : { state: "interlocked-draft", draft: "d" };
+      // Clearing any state yields plain editable with NO retained text.
+      expect(reduceComposerInterlock(current, { type: "interlock-clear" })).toEqual({ state: "editable" });
+    }
   });
 
-  it("transition 4: an accepted send with no following interlock stays editable (clear-on-success)", () => {
-    expect(reduceComposerInterlock(editable(), { type: "send-accepted", text: "hi", interlockFollows: false })).toEqual({ state: "editable" });
+  it("VR-1: a send that fails while a REAL interlock is active preserves the exact failed draft read-only until clear", () => {
+    const draft = "failed while running \u2026";
+    const interlocked = reduceComposerInterlock(editable(), { type: "interlock-begin", draft: "" });
+    const preserved = reduceComposerInterlock(interlocked, { type: "send-failed-interlocked", draft });
+    expect(preserved).toEqual({ state: "interlocked-draft", draft });
+    // Still read-only protected (not editable), and the exact bytes survive.
+    expect(isComposerInterlocked(preserved)).toBe(true);
+    expect(composerInterlockVisibleText(preserved, "")).toBe(draft);
+    // It becomes editable only when the real interlock clears.
+    expect(reduceComposerInterlock(preserved, { type: "interlock-clear" })).toEqual({ state: "editable" });
   });
 
-  it("transition 5: a failed/rejected send stays editable (no acknowledgement state)", () => {
+  it("transition 5: a failed/rejected send with no interlock collapses to editable", () => {
     expect(reduceComposerInterlock(editable(), { type: "send-rejected" })).toEqual({ state: "editable" });
-    // Even from a prior interlocked state, a rejected send collapses to editable
-    // (a rejected send can only be initiated while editable in the component).
-    expect(reduceComposerInterlock({ state: "interlocked-ack", ack: "x" }, { type: "send-rejected" })).toEqual({ state: "editable" });
+    expect(reduceComposerInterlock({ state: "interlocked-draft", draft: "x" }, { type: "send-rejected" })).toEqual({ state: "editable" });
   });
 
   it("transition 6: interlock clears from interlocked-draft and the draft is restored byte-for-byte to editable", () => {
@@ -64,16 +74,8 @@ describe("reduceComposerInterlock (transitions 1-8)", () => {
     expect(composerInterlockVisibleText(interlocked, "")).toBe(draft);
   });
 
-  it("transition 7: interlock clears from interlocked-ack and the acknowledgement is cleared (empty, not restored)", () => {
-    const ack = reduceComposerInterlock(editable(), { type: "send-accepted", text: "sent message", interlockFollows: true });
-    const cleared = reduceComposerInterlock(ack, { type: "interlock-clear" });
-    expect(cleared).toEqual({ state: "editable" });
-    // The ack is NOT restored as a draft: the component sets empty text.
-  });
-
-  it("transition 8: selection change discards interlock/ack state (back to editable)", () => {
+  it("selection change discards interlock state (back to editable)", () => {
     expect(reduceComposerInterlock({ state: "interlocked-draft", draft: "x" }, { type: "selection-change" })).toEqual({ state: "editable" });
-    expect(reduceComposerInterlock({ state: "interlocked-ack", ack: "x" }, { type: "selection-change" })).toEqual({ state: "editable" });
     expect(reduceComposerInterlock(editable(), { type: "selection-change" })).toEqual({ state: "editable" });
   });
 
@@ -88,7 +90,6 @@ describe("composer interlock projections", () => {
   it("isComposerInterlocked is true exactly when not editable", () => {
     expect(isComposerInterlocked(editable())).toBe(false);
     expect(isComposerInterlocked({ state: "interlocked-draft", draft: "" })).toBe(true);
-    expect(isComposerInterlocked({ state: "interlocked-ack", ack: "" })).toBe(true);
   });
 
   it("composerInterlockVisibleText returns the editable text only while editable", () => {

@@ -1,6 +1,5 @@
 /**
- * U2 — selected-Conversation composer interlock state machine (0.2.0
- * amendment §6.2).
+ * U2 + VR-1 — selected-Conversation composer interlock state machine.
  *
  * The interlock is an honest browser reflection of authoritative selected-
  * Conversation broker state (an active broker run OR a steward-scoped
@@ -10,33 +9,42 @@
  * abort authority. Read-only inspection surfaces keep their existing
  * disabled-composer semantics, distinct from interlock.
  *
- * The visible composer text is derived from the interlock state, so the
- * draft is preserved/restored byte-for-byte across interlock and a send
- * acknowledgement is retained read-only (never resendable) until the
- * interlock clears.
+ * The visible composer text is derived from the interlock state, so an
+ * UNSENT draft is preserved/restored byte-for-byte across interlock.
+ *
+ * VR-1 removed the sent-message acknowledgement entirely: a submitted
+ * message clears from the composer immediately (before the POST resolves)
+ * and its durable timeline event is the only evidence — no accepted send is
+ * retained or re-shown. A send that FAILS while a REAL interlock is active
+ * preserves its exact failed draft INSIDE that read-only interlock (never an
+ * editable bypass) until the interlock clears; without an active interlock a
+ * failure restores the exact draft immediately as editable.
  */
 import { conversationActivityRunStateLabel } from "./conversation-activity.js";
 
 export type ComposerInterlockState =
   | { state: "editable" }
-  | { state: "interlocked-draft"; draft: string }
-  | { state: "interlocked-ack"; ack: string };
+  | { state: "interlocked-draft"; draft: string };
 
 export type ComposerInterlockEvent =
   | { type: "interlock-begin"; draft: string }
   | { type: "interlock-clear" }
-  | { type: "send-accepted"; text: string; interlockFollows: boolean }
   | { type: "send-rejected" }
+  /** Only dispatchable while a REAL authoritative interlock is active. */
+  | { type: "send-failed-interlocked"; draft: string }
   | { type: "selection-change" };
 
 /**
- * The exact 8-transition reducer (§6.2):
- *  1/2 interlock-begin from editable -> interlocked-draft (byte-for-byte);
- *  3   send-accepted with interlockFollows -> interlocked-ack;
- *  4   send-accepted without interlock -> editable (clear-on-success);
- *  5   send-rejected -> editable (draft stays editable);
- *  6/7 interlock-clear -> editable (component restores draft / clears ack);
- *  8   selection-change -> editable (discard session-only interlock/ack).
+ * The exact reducer transitions:
+ *  1/2 interlock-begin from editable -> interlocked-draft (byte-for-byte;
+ *      idempotent — an existing preserved draft is never clobbered);
+ *  3   interlock-clear -> editable (component restores the draft / leaves a
+ *      cleared composer empty);
+ *  4   send-rejected -> editable (component restores the exact draft
+ *      immediately as editable; only dispatched while not interlocked);
+ *  5   send-failed-interlocked -> interlocked-draft with the EXACT failed
+ *      draft, staying read-only under the real interlock until it clears;
+ *  6   selection-change -> editable (discard session-only interlock state).
  */
 export function reduceComposerInterlock(state: ComposerInterlockState, event: ComposerInterlockEvent): ComposerInterlockState {
   switch (event.type) {
@@ -45,10 +53,12 @@ export function reduceComposerInterlock(state: ComposerInterlockState, event: Co
       return state.state === "editable" ? { state: "interlocked-draft", draft: event.draft } : state;
     case "interlock-clear":
       return state.state === "editable" ? state : { state: "editable" };
-    case "send-accepted":
-      return event.interlockFollows ? { state: "interlocked-ack", ack: event.text } : { state: "editable" };
     case "send-rejected":
       return { state: "editable" };
+    case "send-failed-interlocked":
+      // Preserve the byte-exact failed draft under the ACTIVE real interlock;
+      // the component keeps readOnly until the authoritative interlock clears.
+      return { state: "interlocked-draft", draft: event.draft };
     case "selection-change":
       return { state: "editable" };
   }
@@ -60,8 +70,9 @@ export function isComposerInterlocked(state: ComposerInterlockState): boolean {
 
 /**
  * The exact visible textarea text: editable shows the live draft; an
- * interlocked composer shows its preserved draft or read-only acknowledgement
- * (never the live draft, which is held separately while interlocked).
+ * interlocked composer shows its preserved unsent draft (never the live
+ * draft, which is held separately while interlocked). VR-1: there is no
+ * acknowledgement state — an accepted send is never re-shown here.
  */
 export function composerInterlockVisibleText(state: ComposerInterlockState, editableText: string): string {
   switch (state.state) {
@@ -69,8 +80,6 @@ export function composerInterlockVisibleText(state: ComposerInterlockState, edit
       return editableText;
     case "interlocked-draft":
       return state.draft;
-    case "interlocked-ack":
-      return state.ack;
   }
 }
 

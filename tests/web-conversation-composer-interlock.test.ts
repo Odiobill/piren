@@ -118,26 +118,46 @@ describe("ConversationComposer interlock (U2)", () => {
     expect(onAnnounce).toHaveBeenLastCalledWith("Composer available.");
   });
 
-  it("an accepted send that enters interlock becomes a read-only acknowledgement, cleared (not restored) on clear", async () => {
+  it("VR-1: clears the composer IMMEDIATELY on submit, before the deferred POST resolves", async () => {
+    let resolveSend: (() => void) | undefined;
+    vi.mocked(sendConversationMessage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSend = () => resolve({ event: { id: "e1", conversationId: "c1", kind: "steward_message", created: "2026-08-11T00:00:00.000Z" } });
+        }),
+    );
+    render(createElement(Harness, { conversationId: "c1" }));
+    await act(async () => typeText(textarea(), "sent while in flight"));
+    act(() => key(textarea(), "Enter"));
+    // The visible text is already gone BEFORE the POST resolves.
+    expect(textarea().value).toBe("");
+    await act(async () => resolveSend?.());
+    // Accepted: still empty; nothing is retained for later display.
+    expect(textarea().value).toBe("");
+    expect(textarea().readOnly).toBe(false);
+  });
+
+  it("VR-1: an accepted send followed by interlock shows an EMPTY read-only composer, then an empty editable composer", async () => {
     const onAnnounce = vi.fn();
     render(createElement(Harness, { conversationId: "c1", onAnnounce }));
     await act(async () => typeText(textarea(), "please do this"));
     await act(async () => key(textarea(), "Enter"));
-    // Accepted: cleared (clear-on-success), pending acknowledgement retained.
     expect(textarea().value).toBe("");
 
-    // The run the send caused now interlocks the composer.
+    // The run the send caused now interlocks the composer: EMPTY, never the
+    // accepted message re-shown as a read-only acknowledgement.
     act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…", onAnnounce })));
     expect(textarea().readOnly).toBe(true);
-    expect(textarea().value).toBe("please do this");
+    expect(textarea().value).toBe("");
 
-    // Interlock clears: the acknowledgement is cleared, never restored as a draft.
+    // Interlock clears: empty editable composer; the durable timeline item
+    // remains the only evidence of the send.
     act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: false, onAnnounce })));
     expect(textarea().readOnly).toBe(false);
     expect(textarea().value).toBe("");
   });
 
-  it("treats an interlock that begins while an accepted send is in flight as a non-resendable acknowledgement", async () => {
+  it("VR-1: an interlock beginning mid-flight shows an empty read-only composer before resolution and never resurrects the sent text", async () => {
     let resolveSend: (() => void) | undefined;
     vi.mocked(sendConversationMessage).mockImplementationOnce(
       () =>
@@ -149,16 +169,56 @@ describe("ConversationComposer interlock (U2)", () => {
     await act(async () => typeText(textarea(), "in-flight accepted send"));
     act(() => key(textarea(), "Enter"));
 
-    // Broker activity may arrive while the existing POST is in flight. Once
-    // that POST is accepted, its retained text is acknowledgement-only, not
-    // an unsent draft to restore when the authoritative interlock clears.
+    // Broker activity arrives while the POST is in flight: empty read-only
+    // composer (the cleared state is protected), NOT the sent message.
     act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" })));
     await act(async () => resolveSend?.());
     expect(textarea().readOnly).toBe(true);
-    expect(textarea().value).toBe("in-flight accepted send");
+    expect(textarea().value).toBe("");
 
     act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: false })));
     expect(textarea().readOnly).toBe(false);
+    expect(textarea().value).toBe("");
+  });
+
+  it("VR-1: a send failing while a real mid-flight interlock is active preserves the exact draft READ-ONLY until the interlock clears", async () => {
+    let rejectSend: ((cause: unknown) => void) | undefined;
+    vi.mocked(sendConversationMessage).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSend = (cause) => reject(cause);
+        }),
+    );
+    render(createElement(Harness, { conversationId: "c1" }));
+    await act(async () => typeText(textarea(), "failed under protection \u2026"));
+    act(() => key(textarea(), "Enter"));
+
+    // A REAL interlock begins mid-flight: the composer is read-only empty.
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" })));
+    expect(textarea().readOnly).toBe(true);
+
+    // The POST fails while the real interlock holds: the exact failed draft
+    // is preserved INSIDE the read-only interlock — never an editable bypass.
+    await act(async () => rejectSend?.(new Error("boom")));
+    expect(container.querySelector("[role='status']")?.textContent).toBe("boom");
+    expect(textarea().readOnly).toBe(true);
+    expect(textarea().value).toBe("failed under protection \u2026");
+
+    // It becomes editable only when the real interlock clears, byte-for-byte.
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: false })));
+    expect(textarea().readOnly).toBe(false);
+    expect(textarea().value).toBe("failed under protection \u2026");
+  });
+
+  it("VR-1: a later unrelated interlock after an accepted send does not resurrect the accepted text", async () => {
+    render(createElement(Harness, { conversationId: "c1" }));
+    await act(async () => typeText(textarea(), "accepted earlier"));
+    await act(async () => key(textarea(), "Enter"));
+    expect(sendConversationMessage).toHaveBeenCalledTimes(1);
+    expect(textarea().value).toBe("");
+    // An independent later run interlocks: nothing of the old send returns.
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "zai is typing…" })));
+    expect(textarea().readOnly).toBe(true);
     expect(textarea().value).toBe("");
   });
 

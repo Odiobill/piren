@@ -94,10 +94,8 @@ export function ConversationComposer({
   const [submitPolicy, setSubmitPolicy] = useState<ConversationSubmitPolicy>("enter");
   /** Explicit popup visibility: Escape dismisses it until the draft changes. */
   const [mentionVisible, setMentionVisible] = useState(false);
-  /** U2: the interlock state machine (editable / interlocked-draft / interlocked-ack). */
+  /** U2: the interlock state machine (editable / interlocked-draft). */
   const [interlockState, setInterlockState] = useState<ComposerInterlockState>({ state: "editable" });
-  /** U2: the accepted-send text retained until authoritative interlock follows. */
-  const pendingAckRef = useRef<string | null>(null);
   /** U2: the latest live draft (byte-for-byte interlock capture). */
   const textRef = useRef("");
   /** U2: synchronous view of the interlock state for the transition effect. */
@@ -167,7 +165,7 @@ export function ConversationComposer({
   /**
    * U2 — the interlock transition effect. It NEVER moves focus, scrolls,
    * fetches, or mutates anything beyond the interlock state, the draft
-   * restoration/acknowledgement text, and ONE polite announcement per
+   * preserved-draft restoration, and ONE polite announcement per
    * transition (begin/clear; never per event tick).
    */
   useEffect(() => {
@@ -176,23 +174,20 @@ export function ConversationComposer({
     if (interlocked === was) return;
     if (interlocked) {
       if (interlockReason !== "") onAnnounce(interlockReason);
-      if (pendingAckRef.current !== null) {
-        setInterlockState(reduceComposerInterlock(interlockStateRef.current, { type: "send-accepted", text: pendingAckRef.current, interlockFollows: true }));
-        pendingAckRef.current = null;
-      } else {
-        setInterlockState(reduceComposerInterlock(interlockStateRef.current, { type: "interlock-begin", draft: textRef.current }));
-      }
+      setInterlockState(reduceComposerInterlock(interlockStateRef.current, { type: "interlock-begin", draft: textRef.current }));
     } else {
       onAnnounce(COMPOSER_INTERLOCK_CLEARED_ANNOUNCEMENT);
       const prev = interlockStateRef.current;
       setInterlockState(reduceComposerInterlock(prev, { type: "interlock-clear" }));
-      if (prev.state === "interlocked-draft") setText(prev.draft); // transition 6: restore byte-for-byte
-      else if (prev.state === "interlocked-ack") setText(""); // transition 7: clear the ack
+      // VR-1: only an UNSENT preserved draft is restored; a composer cleared
+      // by a submitted send stays empty (the durable timeline item is the
+      // evidence — no acknowledgement is ever restored).
+      if (prev.state === "interlocked-draft" && prev.draft !== "") setText(prev.draft);
     }
   }, [interlocked]);
 
   // Auto-grow: content height bounded by the composer range; scrolls once
-  // capped. Driven by the VISIBLE text so an interlocked draft/acknowledgement
+  // capped. Driven by the VISIBLE text so an interlocked preserved draft
   // still grows the box correctly.
   useEffect(() => {
     const input = inputRef.current;
@@ -244,42 +239,49 @@ export function ConversationComposer({
     // P8 (§1): record where focus was when the send started — a deliberate
     // user focus move during the in-flight request always wins.
     activeAtSubmitRef.current = document.activeElement;
+    // VR-1: capture the exact outgoing message and clear the composer
+    // IMMEDIATELY, before the POST resolves. The durable timeline event of an
+    // accepted send is its only evidence; it is never retained for display.
+    const raw = toConversationMessageRequest(text).text;
+    setText("");
+    setCaret(0);
+    // Synchronous ref update so a mid-flight interlock captures the already-
+    // cleared state deterministically (never the pre-submit draft).
+    textRef.current = "";
     setBusy(true);
     try {
       // The browser sends ONLY the existing raw {text} body; the gateway
       // alone parses/validates mentions and rejects invalid ones atomically.
-      const raw = toConversationMessageRequest(text).text;
       await sendConversationMessage(conversationId, raw, token);
       // Quiet success: durable events arrive via the live stream / re-gate.
-      // The composer only clears its input; the P2 navigator refresh is a
-      // separate gateway-truth read (onSent), never an optimistic write.
-      setText("");
-      setCaret(0);
-      // U2: retain the accepted text so a following authoritative interlock
-      // presents it as a non-resendable read-only acknowledgement (transition
-      // 3); when no interlock follows the composer simply stays cleared
-      // (transition 4 clear-on-success).
-      // If broker activity interlocked while the existing POST was in flight,
-      // acceptance converts the preserved text into an acknowledgement now.
-      // Otherwise retain it only for the immediately following interlock.
-      // In both cases it is never restored as an unsent draft on clear.
-      if (wasInterlockedRef.current) {
-        setInterlockState(reduceComposerInterlock(interlockStateRef.current, { type: "send-accepted", text: raw, interlockFollows: true }));
-        pendingAckRef.current = null;
-      } else {
-        pendingAckRef.current = raw;
-      }
-      // P8 (§1): only an ACCEPTED send requests focus restoration.
+      // Nothing is retained; the P2 navigator refresh is a separate
+      // gateway-truth read (onSent), never an optimistic write.
       restoreFocusRef.current = true;
       onSent?.();
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
+        // Preserve the byte-exact failed draft before handing over to the
+        // shell so nothing is lost across re-authentication.
+        setText(raw);
+        textRef.current = raw;
         onUnauthorized();
         return;
       }
       const message = cause instanceof Error ? cause.message : String(cause);
       setError(message);
       onAnnounce(message);
+      if (wasInterlockedRef.current) {
+        // VR-1 race rule: the POST failed while a REAL authoritative interlock
+        // is active. The exact failed draft is preserved INSIDE that read-only
+        // interlock (no editable bypass of active-run/approval protection) and
+        // becomes editable only when that interlock clears.
+        setInterlockState(reduceComposerInterlock(interlockStateRef.current, { type: "send-failed-interlocked", draft: raw }));
+      } else {
+        // No interlock: restore the exact draft immediately as editable.
+        setText(raw);
+        textRef.current = raw;
+        setCaret(raw.length);
+      }
     } finally {
       setBusy(false);
     }
@@ -359,11 +361,6 @@ export function ConversationComposer({
             ref={inputRef}
             value={visibleText}
             onChange={(event) => {
-              // An explicit new draft supersedes any accepted message that
-              // did not immediately enter authoritative interlock. A later,
-              // unrelated run must preserve this draft, never resurrect the
-              // old send as a read-only acknowledgement.
-              pendingAckRef.current = null;
               setText(event.target.value);
               setCaret(event.target.selectionStart ?? event.target.value.length);
             }}
