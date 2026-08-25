@@ -442,7 +442,7 @@ describe("explicit-only popup Refresh", () => {
     expect(popup()?.textContent).toContain("No context window information for this session");
   });
 
-  it("401 routes through onUnauthorized; bounded failure keeps prior truthful data and reports in the popup", async () => {
+  it("401 routes through onUnauthorized and closes the popup + clears Context (VR-4 correction)", async () => {
     const onUnauthorized = vi.fn();
     root = createRoot(container);
     await act(async () => {
@@ -467,16 +467,41 @@ describe("explicit-only popup Refresh", () => {
     });
     await flush();
     expect(onUnauthorized).toHaveBeenCalled();
+    // VR-4 correction: the typed 401 clears live Context and closes the popup
+    // synchronously, rather than leaving stale facts visible.
+    expect(popup()).toBeNull();
+    expect(cardProgressbar("dipu")?.getAttribute("aria-valuenow")).toBeNull();
+  });
+
+  it("a bounded refresh failure keeps prior truthful data and reports in the popup", async () => {
+    const onUnauthorized = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(ConversationNavigator, {
+          token: "t",
+          onUnauthorized,
+          onValidated: () => {},
+          onConversationsChanged: () => {},
+        }),
+      );
+    });
+    await flush();
+    await act(async () => deliverTelemetry(OK_FRAME));
+    await flush();
+    const dialog = await openPopup("dipu");
+    expect(dialog.textContent).toContain("30.00%");
 
     vi.mocked(fetchConversationTelemetry).mockRejectedValueOnce(new Error("conversation telemetry HTTP 500"));
     await act(async () => {
-      popupRefresh(popup() as HTMLElement, "dipu").click();
+      popupRefresh(dialog, "dipu").click();
     });
     await flush();
     // The prior good value stays (not relabeled as fresh) and the failure is
     // visible inside the popup.
     expect(popup()?.textContent).toContain("30.00%");
     expect(popup()?.querySelector('[role="alert"]')?.textContent).toContain("500");
+    expect(onUnauthorized).not.toHaveBeenCalled();
   });
 });
 

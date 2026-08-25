@@ -279,6 +279,22 @@ export function ConversationNavigator({
   const [telemetryPopupAgent, setTelemetryPopupAgent] = useState<string | null>(null);
   /** VR-4: rehydrated continuity entries for the CURRENT selection (agent-keyed). */
   const [restoredByAgent, setRestoredByAgent] = useState<ReadonlyMap<string, ContextContinuityEntry>>(new Map());
+  /**
+   * VR-4 correction: ONE idempotent unauthorized-handover helper. It clears
+   * ALL session-only Context memory — the continuity store, current live
+   * telemetry, restored entries, the open popup, and any in-flight refresh —
+   * BEFORE forwarding to the parent (which may not immediately rerender or
+   * unmount the Navigator). Used by the Timeline callback, the explicit
+   * Refresh 401 path, and every navigator-internal typed 401.
+   */
+  const handleUnauthorized = useCallback(() => {
+    contextContinuityStore.clear();
+    setTelemetryByAgent(emptyConversationTelemetryState());
+    setRestoredByAgent(new Map());
+    setTelemetryPopupAgent(null);
+    setTelemetryRefresh(null);
+    onUnauthorized();
+  }, [onUnauthorized]);
   const telemetryCardRefs = useRef(new Map<string, HTMLButtonElement>());
   /**
    * T6 correction: selection generation guard. Incremented on EVERY
@@ -318,7 +334,7 @@ export function ConversationNavigator({
           // Truthful 401: the gateway rejected the token (selection-global);
           // surface it without rendering any stale state.
           if (telemetryGenerationRef.current === generation) setTelemetryRefresh(null);
-          onUnauthorized();
+          handleUnauthorized();
           return;
         }
         if (telemetryGenerationRef.current !== generation) return; // stale: fully inert
@@ -508,7 +524,7 @@ export function ConversationNavigator({
       } catch (error) {
         if (cancelled) return;
         if (error instanceof UnauthorizedError) {
-          onUnauthorized();
+          handleUnauthorized();
           return;
         }
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -605,7 +621,7 @@ export function ConversationNavigator({
         if (seq !== openSeqRef.current) return;
         if (error instanceof UnauthorizedError) {
           lifecycleNoticeRef.current = null;
-          onUnauthorized();
+          handleUnauthorized();
           return;
         }
         // The open flow failed: no selection is presented, so no lifecycle
@@ -688,7 +704,7 @@ export function ConversationNavigator({
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
         lifecycleNoticeRef.current = null;
-        onUnauthorized();
+        handleUnauthorized();
         return;
       }
       if (cause instanceof LifecycleHttpError) {
@@ -760,7 +776,7 @@ export function ConversationNavigator({
       setAnnouncement(approvalResponseAnnouncement(approval.agent));
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
-        onUnauthorized();
+        handleUnauthorized();
         return;
       }
       if (cause instanceof ConversationControlHttpError) {
@@ -795,7 +811,7 @@ export function ConversationNavigator({
       setAnnouncement(abortAnnouncement(outcome));
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
-        onUnauthorized();
+        handleUnauthorized();
         return;
       }
       setAbortState({
@@ -844,7 +860,7 @@ export function ConversationNavigator({
         );
       } catch (cause) {
         if (cause instanceof UnauthorizedError) {
-          onUnauthorized();
+          handleUnauthorized();
           return;
         }
         // Bounded: keep the last known gateway manifest; never fabricate.
@@ -871,7 +887,7 @@ export function ConversationNavigator({
       return null;
     } catch (cause) {
       if (cause instanceof UnauthorizedError) {
-        onUnauthorized();
+        handleUnauthorized();
         return null;
       }
       if (cause instanceof RenameHttpError) {
@@ -888,8 +904,14 @@ export function ConversationNavigator({
     return () => contextContinuityStore.clear();
   }, []);
   useEffect(() => {
+    // VR-4 correction: an ordinary token change performs the SAME complete
+    // clear as a typed 401 — both current live telemetry and restored
+    // presentation must disappear, never survive a token handover.
     contextContinuityStore.clear();
+    setTelemetryByAgent(emptyConversationTelemetryState());
     setRestoredByAgent(new Map());
+    setTelemetryPopupAgent(null);
+    setTelemetryRefresh(null);
   }, [token]);
 
   function openTelemetryPopup(agent: string) {
@@ -977,7 +999,7 @@ export function ConversationNavigator({
                   conversationId={selection.conversation.id}
                   token={token}
                   live={true}
-                  onUnauthorized={onUnauthorized}
+                  onUnauthorized={handleUnauthorized}
                   onLifecycleTransition={handleLifecycleEvent}
                   onApproval={handleApprovalFrame}
                   onActivityChange={handleActivityChange}
@@ -1059,7 +1081,7 @@ export function ConversationNavigator({
                     conversationId={selection.conversation.id}
                     token={token}
                     agents={load.phase === "ready" ? load.agents : []}
-                    onUnauthorized={onUnauthorized}
+                    onUnauthorized={handleUnauthorized}
                     onAnnounce={setAnnouncement}
                     onSent={handleMessageSent}
                     interlocked={interlocked}
@@ -1150,7 +1172,7 @@ export function ConversationNavigator({
               conversationId={selection.conversation.id}
               token={token}
               live={false}
-              onUnauthorized={onUnauthorized}
+              onUnauthorized={handleUnauthorized}
               onHistoryLoaded={() => {
                 scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
                 bumpContentVersion();

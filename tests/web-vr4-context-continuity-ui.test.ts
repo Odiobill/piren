@@ -246,3 +246,101 @@ describe("ConversationNavigator VR-4 context continuity", () => {
     expect(contextContinuityStore.listConversation("c1")).toHaveLength(0);
   });
 });
+
+// --- VR-4 correction: complete immediate token-loss / typed-401 clearing ---
+import { UnauthorizedError } from "../web/src/api.js";
+
+describe("ConversationNavigator VR-4 immediate token-loss/401 clearing", () => {
+  const onUnauthorized = vi.fn();
+
+  beforeEach(() => {
+    onUnauthorized.mockClear();
+  });
+
+  async function mountWithSpy(): Promise<void> {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(ConversationNavigator, {
+          token: "t",
+          onUnauthorized,
+          onValidated: () => {},
+          onConversationsChanged: () => {},
+        }),
+      );
+    });
+    await flush();
+  }
+
+  it("an explicit Refresh 401 clears popup/store/live+restored cards synchronously and hands to the parent once", async () => {
+    await mountWithSpy();
+    deliverTelemetry(OK_FRAME);
+    await flush();
+    await switchTo("c2");
+    await switchTo("c1");
+    const dialog = await openPopup("dipu");
+    expect(dialog.textContent).toContain("Last observed");
+
+    vi.mocked(fetchConversationTelemetry).mockRejectedValueOnce(new UnauthorizedError());
+    await act(async () => popupRefresh(dialog, "dipu").click());
+    await flush();
+
+    // Popup closed, store cleared, no live/restored facts remain rendered.
+    expect(popup()).toBeNull();
+    expect(contextContinuityStore.listConversation("c1")).toEqual([]);
+    expect(cardShortText("dipu")).toBe("not sampled");
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("a Timeline stream 401 clears store/popup/live+restored synchronously even without a parent rerender", async () => {
+    await mountWithSpy();
+    deliverTelemetry(OK_FRAME);
+    await flush();
+    await switchTo("c2");
+    await switchTo("c1");
+    await openPopup("dipu");
+
+    // The navigator must hand its OWN complete-clear helper to the Timeline;
+    // invoking it must clear everything and forward to the parent.
+    const timelineOnUnauthorized = timelineProps.onUnauthorized as (() => void) | undefined;
+    if (timelineOnUnauthorized === undefined) throw new Error("timeline onUnauthorized not wired");
+    await act(async () => timelineOnUnauthorized());
+
+    expect(popup()).toBeNull();
+    expect(contextContinuityStore.listConversation("c1")).toEqual([]);
+    expect(cardShortText("dipu")).toBe("not sampled");
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ordinary token change clears BOTH current live telemetry and restored presentation", async () => {
+    await mountWithSpy();
+    // Stage dipu as a RESTORED observation (switch away and back), then zai as
+    // a LIVE observation so both presentation kinds coexist at token-change time.
+    deliverTelemetry(OK_FRAME);
+    await flush();
+    await switchTo("c2");
+    await switchTo("c1");
+    expect(cardShortText("dipu")).toBe("30.00%");
+    deliverTelemetry({ ...OK_FRAME, agent: "zai", runId: "run-zai", context: { tokens: 5, contextWindow: 100, percent: 5 } });
+    await flush();
+    expect(cardShortText("dipu")).toBe("30.00%"); // restored
+    expect(cardShortText("zai")).toBe("5.00%"); // live
+
+    await act(async () => {
+      root.render(
+        createElement(ConversationNavigator, {
+          token: "t2",
+          onUnauthorized,
+          onValidated: () => {},
+          onConversationsChanged: () => {},
+        }),
+      );
+    });
+    await flush();
+
+    expect(contextContinuityStore.listConversation("c1")).toEqual([]);
+    expect(cardShortText("dipu")).toBe("not sampled");
+    expect(cardShortText("zai")).toBe("not sampled");
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+});
