@@ -68,4 +68,25 @@ describe("public documentation preferred-path ordering", () => {
       "## Local scheduler config",
     ]);
   });
+
+  it("configuration gives model fallback a titled subsection with a per-surface table", () => {
+    const doc = read("docs/configuration.md");
+    expect(doc).toContain("### Model fallback");
+    // Every delivered run surface is covered by the table.
+    for (const row of [
+      "Gateway chat",
+      "OpenAI-compatible API",
+      "Conversations",
+      "Telegram and Discord transports",
+      "`piren ask`",
+      "Scheduler claimed inbox tasks and agent cron",
+      "Script-mode cron",
+      "`piren run`",
+    ]) {
+      expect(doc, `missing surface row: ${row}`).toContain(row);
+    }
+    // Critical no-wiring fact appears inside the fallback section.
+    const section = doc.slice(doc.indexOf("### Model fallback"));
+    expect(section).toContain("Not wired");
+  });
 });
