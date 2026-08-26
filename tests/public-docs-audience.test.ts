@@ -53,6 +53,12 @@ describe("public documentation audience", () => {
     ]) {
       expect(tasks).toContain(anchor);
     }
+    // R4a correction pins: claim uses a sanitized hostname; --result replaces
+    // the task's Result section rather than appending.
+    expect(tasks).toContain("sanitized hostname");
+    expect(tasks).toContain("replacing any previous result content");
+    expect(tasks).not.toContain("appends the file's content");
+    expect(tasks).not.toContain("your hostname is used");
     for (const rel of ["README.md", "docs/getting-started.md", "docs/troubleshooting.md", "docs/vault-layout.md"]) {
       expect(read(rel), `${rel} must link docs/tasks.md`).toContain("tasks.md");
     }

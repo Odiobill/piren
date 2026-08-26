@@ -47,8 +47,8 @@ Notes:
 
 - `send` accepts `--body <vault-file>` for the instructions and `--priority normal|high|urgent`. The body file must live inside the vault.
 - `show`, `complete`, and `cancel` accept either the vault-relative path or the bare task id. Ids are matched across claimed and unclaimed files; if the same id exists under more than one agent, pass `--agent <agent>` to disambiguate.
-- `claim` renames the file atomically to `<task>.claimed.<device>.md`, so two devices can never silently take the same task. Without `--device`, your hostname is used.
-- `complete` sets `status: completed` and, with `--result <vault-file>`, appends the file's content as the result record (also vault-scoped). `cancel` marks the task `cancelled`.
+- `claim` renames the file atomically to `<task>.claimed.<device>.md`, so two devices can never silently take the same task. Without `--device`, a sanitized hostname is used.
+- `complete` sets `status: completed` and, with `--result <vault-file>`, writes the file's content into the task's `## Result` section, replacing any previous result content (the file is also vault-scoped). `cancel` marks the task `cancelled`.
 
 ## A typical operator workflow
 
