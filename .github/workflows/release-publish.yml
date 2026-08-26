@@ -28,6 +28,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Immutable release tag to verify and publish (e.g. v0.2.0)"
+        required: true
+        type: string
 
 # Default minimal permissions for every job. The publish job widens to
 # id-token: write only after verify succeeds and approval is granted.
@@ -37,11 +43,37 @@ permissions:
 jobs:
   verify:
     name: Verify release artifact
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout tag source
+      - name: Resolve the exact release tag
+        id: resolve-tag
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_REF: ${{ github.ref_name }}
+          MANUAL_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            tag="$PUSH_REF"
+          else
+            tag="$MANUAL_TAG"
+          fi
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "Invalid release tag: must start with 'v' followed by a digit."; exit 1 ;;
+          esac
+          case "$tag" in
+            *[!0-9A-Za-z._-]*) echo "Invalid release tag: unsafe characters."; exit 1 ;;
+          esac
+          case "$tag" in
+            *..*) echo "Invalid release tag: path traversal."; exit 1 ;;
+          esac
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact release tag source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve-tag.outputs.release_tag }}
 
       - name: Setup Node 22.14.0 (trusted-publishing floor) with npm lockfile cache
         uses: actions/setup-node@v4
@@ -90,13 +122,15 @@ jobs:
       - name: Quality gate - smoke
         run: npm run smoke
 
-      # Fail before any publish if the tag and package.json versions disagree.
-      # GITHUB_REF_NAME is the tag (e.g. v0.1.1); strip the leading "v".
+      # Fail before any publish if the resolved tag and package.json versions disagree.
+      # RELEASE_TAG is the exact push tag or manual dispatch input; strip the leading "v".
       - name: Check tag and package version agreement
+        env:
+          RELEASE_TAG: ${{ steps.resolve-tag.outputs.release_tag }}
         run: |
           set -euo pipefail
           pkg_version="$(node -p "require('./package.json').version")"
-          tag_version="${GITHUB_REF_NAME#v}"
+          tag_version="${RELEASE_TAG#v}"
           echo "package version: $pkg_version"
           echo "tag version: $tag_version"
           if [ "$pkg_version" != "$tag_version" ]; then
@@ -143,7 +177,9 @@ jobs:
     # Skip the publish job for exactly those three tags so the workflow still
     # verifies the artifact (verify runs) but never attempts an npm publish for
     # any of them. v0.1.4 and later use the normal provenance path below.
-    if: github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3'
+    if: >-
+      (github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != 'v0.1.1' && inputs.release_tag != 'v0.1.2' && inputs.release_tag != 'v0.1.3')
     # Protected GitHub Environment: a steward approves this job in GitHub before
     # it runs. Because publish needs verify, approval happens AFTER the
     # tag-triggered verification path has completed. Configured in P2.

@@ -40,6 +40,7 @@ interface Step {
   uses?: string;
   run?: string;
   with?: Record<string, string>;
+  env?: Record<string, string>;
 }
 interface Job {
   name?: string;
@@ -114,17 +115,25 @@ describe("ADR-0033 P1: registry publication workflow", () => {
     expect(raw.length).toBeGreaterThan(0);
   });
 
-  describe("trigger (tag-only)", () => {
-    it("runs release jobs only on version-tag pushes", () => {
+  describe("trigger (tag push plus exact-tag manual dispatch)", () => {
+    it("runs verify on version-tag pushes and on explicit manual dispatch", () => {
       const blob = normalize(raw);
       expect(blob).toMatch(/\bon:/);
       expect(blob).toMatch(/\bpush\b/);
       expect(blob).toMatch(/\btags\b/);
       expect(blob).toMatch(/v\*+|v\[0-9\]/);
-      expect(blob).not.toMatch(/\bworkflow_dispatch\b/);
+      expect(blob).toMatch(/\bworkflow_dispatch\b/);
       expect(blob).not.toMatch(/\bbranches\b/);
-      expect(wf.jobs?.verify?.if).toBe("github.event_name == 'push'");
+      expect(wf.jobs?.verify?.if).toBeUndefined();
       expect(wf.jobs?.publish?.if).toContain("github.event_name == 'push'");
+    });
+
+    it("declares a required release_tag string input for manual dispatch", () => {
+      const blob = normalize(stripComments(raw));
+      expect(blob).toMatch(/workflow_dispatch/);
+      expect(blob).toMatch(/release_tag/);
+      expect(blob).toMatch(/required:\s*true/);
+      expect(blob).toMatch(/type:\s*string/);
     });
   });
 
@@ -140,8 +149,14 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   });
 
   describe("ADR-0035/0036/0037 bootstrap exception (P1c + P3c + P3e)", () => {
-    it("the publish job is skipped for the three manual-bootstrap tags v0.1.1, v0.1.2, v0.1.3", () => {
-      expect(wf.jobs?.publish?.if).toBe("github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3'");
+    it("the publish job is skipped for the three manual-bootstrap tags on push and manual dispatch", () => {
+      const expr = wf.jobs?.publish?.if ?? "";
+      expect(expr).toContain("github.ref_name != 'v0.1.1'");
+      expect(expr).toContain("github.ref_name != 'v0.1.2'");
+      expect(expr).toContain("github.ref_name != 'v0.1.3'");
+      expect(expr).toContain("inputs.release_tag != 'v0.1.1'");
+      expect(expr).toContain("inputs.release_tag != 'v0.1.2'");
+      expect(expr).toContain("inputs.release_tag != 'v0.1.3'");
     });
 
     it("the guard skips only those three tags, not later tags", () => {
@@ -155,8 +170,8 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(expr).not.toMatch(/v0\.\*|v\*/);
     });
 
-    it("the verify job runs only for a tag push, never a manual diagnostic", () => {
-      expect(wf.jobs?.verify?.if).toBe("github.event_name == 'push'");
+    it("the verify job runs for both a tag push and an explicit manual dispatch", () => {
+      expect(wf.jobs?.verify?.if).toBeUndefined();
     });
 
     it("normal later-tag publication still depends on verify", () => {
@@ -197,9 +212,10 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(t).toContain("npm run smoke");
     });
 
-    it("checks tag/package version agreement", () => {
+    it("checks the resolved tag against package version", () => {
       const t = runText(wf.jobs?.verify);
-      expect(t).toMatch(/GITHUB_REF_NAME/);
+      expect(t).toMatch(/RELEASE_TAG/);
+      expect(t).toMatch(/tag_version/);
       expect(t).toMatch(/package\.json/);
     });
 
@@ -325,8 +341,8 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   });
 
   describe("hard boundaries: no credentials and no production Pi installer", () => {
-    it("contains no manual dispatch or temporary OIDC diagnostic", () => {
-      expect(raw).not.toContain("workflow_dispatch");
+    it("adds exact-tag manual dispatch but no temporary OIDC diagnostic", () => {
+      expect(raw).toContain("workflow_dispatch");
       expect(raw).not.toContain("diagnose_oidc_exchange");
       expect(raw).not.toContain("oidc/token/exchange");
     });
@@ -348,6 +364,34 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       const blob = normalize(raw);
       expect(blob).toMatch(/GITHUB_PATH/);
       expect(blob.toLowerCase()).toMatch(/fake|shim|stub|ci-only/);
+    });
+  });
+  describe("manual dispatch recovery (exact-tag, fail-closed)", () => {
+    it("resolves one exact tag from the push ref or the manual input", () => {
+      const t = runText(wf.jobs?.verify);
+      expect(t).toContain('$EVENT');
+      expect(t).toContain('$PUSH_REF');
+      expect(t).toContain('$MANUAL_TAG');
+      expect(t).toContain('echo "release_tag=$tag" >> "$GITHUB_OUTPUT"');
+    });
+
+    it("fails closed on an invalid manual release tag", () => {
+      const resolve = wf.jobs?.verify?.steps?.find((s) => (s.name ?? "").includes("Resolve"))?.run ?? "";
+      expect(resolve).toContain("exit 1");
+      expect(resolve).toMatch(/v\[0-9\]/);
+      expect(resolve).toMatch(/unsafe characters/);
+      expect(resolve).toMatch(/path traversal/);
+    });
+
+    it("checks out the exact resolved tag, never the default branch", () => {
+      const checkout = wf.jobs?.verify?.steps?.find((s) => s.uses === "actions/checkout@v4");
+      expect(checkout?.with?.ref).toBe("${{ steps.resolve-tag.outputs.release_tag }}");
+    });
+
+    it("feeds the resolved tag into version agreement, not the caller ref", () => {
+      const agree = wf.jobs?.verify?.steps?.find((s) => /tag_version/.test(s.run ?? ""));
+      expect(agree?.env?.RELEASE_TAG).toBe("${{ steps.resolve-tag.outputs.release_tag }}");
+      expect(agree?.run).not.toContain("GITHUB_REF_NAME");
     });
   });
 });
