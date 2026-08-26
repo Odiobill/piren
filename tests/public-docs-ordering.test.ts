@@ -114,7 +114,7 @@ describe("public documentation preferred-path ordering", () => {
     expect(matrix).toContain("Pi-native");
     // Every applicable row links to its detailed section/page.
     for (const link of [
-      "(#local-installation-config)",
+      "(getting-started.md#configure-the-local-installation)",
       "(#transport-config)",
       "(#scheduler-config)",
       "(#agent-local-config)",
