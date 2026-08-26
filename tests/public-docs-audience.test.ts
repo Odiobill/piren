@@ -90,4 +90,14 @@ describe("public documentation audience", () => {
       expect(doc).toContain("adds that agent to the audience before dispatch");
     }
   });
+
+  it("documents conservative multi-device continuity without promising failover", () => {
+    // R4e boundary pin: the shared-vault section states the conservative
+    // continuity boundary plainly and never promises automatic failover.
+    const fresh = read("docs/fresh-vault.md");
+    expect(fresh).toContain("## Multiple devices, one vault");
+    expect(fresh).toContain("No automatic failover");
+    expect(fresh).toContain("No resumption or re-execution of interrupted work");
+    expect(fresh).toContain("claim-first");
+  });
 });

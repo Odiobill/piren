@@ -57,6 +57,21 @@ allowed_agents:
 
 The agent identity, memory, inbox, skills, and project knowledge travel with the vault. Local installation policy (which agents this device may run) stays outside the vault.
 
+## Multiple devices, one vault
+
+Several Piren installations can point at the same shared or synced vault. The vault carries the durable team state: agent identities, memory, inboxes, skills, cron jobs, and project knowledge. Each machine keeps its own `~/.config/piren/config.yml` with its own `allowed_agents` and `excluded_agents`, so sharing a vault never grants execution authority on a machine. An installation runs only the agents its local policy permits, and only when you start it.
+
+Pointing two devices at one vault does not make one machine take over another machine's process. When a device disappears, work does not fail over by itself. An eligible device that is running the scheduler with an automation class enabled can claim eligible pending work, but only after the existing active-device and stale-heartbeat rules permit it. Claims are visible vault file renames and always claim-first, so two devices never silently pick up the same item.
+
+What does not happen:
+
+- No automatic failover between devices.
+- No silent retry.
+- No resumption or re-execution of interrupted work.
+- No cross-agent rerouting.
+
+See [Scheduler](scheduler.md) for the exact execution gates, heartbeat, claim, and at-least-once rules, and [Recovery](recovery.md) for the manual triage procedures. This section states the model only; it does not repeat those policies.
+
 ## Packaging a vault for a new team
 
 A vault is just a directory. To hand a vault to a new team member:
