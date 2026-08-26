@@ -151,7 +151,7 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   describe("ADR-0035/0036/0037 bootstrap exception (P1c + P3c + P3e)", () => {
     it("the publish job is skipped for the unpublished tags on push and manual dispatch", () => {
       const expr = wf.jobs?.publish?.if ?? "";
-      for (const t of ["v0.1.1", "v0.1.2", "v0.1.3", "v0.2.0"]) {
+      for (const t of ["v0.1.1", "v0.1.2", "v0.1.3", "v0.2.0", "v0.2.1"]) {
         expect(expr).toContain(`github.ref_name != '${t}'`);
         expect(expr).toContain(`inputs.release_tag != '${t}'`);
       }
@@ -165,8 +165,9 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(expr).toContain("v0.1.2");
       expect(expr).toContain("v0.1.3");
       expect(expr).toContain("v0.2.0");
+      expect(expr).toContain("v0.2.1");
       expect(expr).not.toContain("v0.1.4");
-      expect(expr).not.toContain("v0.2.1");
+      expect(expr).not.toContain("v0.2.2");
       expect(expr).not.toMatch(/v0\.\*|v\*/);
     });
 
@@ -416,9 +417,9 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 });
 
 describe("ADR-0033: release artifact and public-surface guards", () => {
-  it("package version is the public 0.2.1 release", () => {
+  it("package version is the public 0.2.2 release", () => {
     const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
-    expect(pkg.version).toBe("0.2.1");
+    expect(pkg.version).toBe("0.2.2");
   });
 
   it("does not add a pi runtime dependency to the package", () => {

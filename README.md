@@ -132,7 +132,7 @@ Online landing page: **https://piren.org/**
 
 ## Releases and updates
 
-Piren 0.2.1 is the current stable release on npm. Update an existing global install with:
+Piren 0.2.2 is the current stable release on npm. Update an existing global install with:
 
 ```bash
 piren update

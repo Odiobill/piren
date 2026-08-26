@@ -5,9 +5,9 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] - 2026-08-26
+## [0.2.2] - 2026-08-26
 
-The 0.2.1 release adds the Conversation-native Workbench and a broad operator-surface refresh.
+The 0.2.2 release adds the Conversation-native Workbench and a broad operator-surface refresh.
 
 ### Added
 
@@ -21,9 +21,13 @@ The 0.2.1 release adds the Conversation-native Workbench and a broad operator-su
 
 - **Public documentation and landing page:** refreshed for the 0.2 product, with conservative shared-vault multi-device boundaries stated plainly (no automatic failover, silent re-execution, or resumed interrupted work).
 
+## [0.2.1] - 2026-08-26
+
+Unpublished candidate, superseded by 0.2.2. The tagged release failed its verification gate (a conversation-broker concurrency test timed out) and was never published. Do not move, recreate, or publish `v0.2.1`.
+
 ## [0.2.0] - 2026-08-26
 
-Unpublished candidate, superseded by 0.2.1. The committed release artifact was incomplete (a generated gateway module was missing from the tracked distribution tree), so the tagged release could not pass verification and was never published. Do not move, recreate, or publish `v0.2.0`.
+Unpublished candidate, superseded by 0.2.2. The committed release artifact was incomplete (a generated gateway module was missing from the tracked distribution tree), so the tagged release could not pass verification and was never published. Do not move, recreate, or publish `v0.2.0`.
 
 ## [0.1.7] - 2026-08-02
 

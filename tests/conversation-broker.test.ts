@@ -698,19 +698,28 @@ describe("ConversationBroker dispatch outcomes", () => {
     const conversationId = await makeConversation();
     const stewardEventId = await makeStewardEvent(conversationId, "Go");
     let first: ConversationDispatchOutcome | undefined;
+    let firstError: Error | undefined;
     const pending = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] })
       .then((value) => {
         first = value;
+      })
+      .catch((error: Error) => {
+        firstError = error;
       });
+    // Deterministic ordering: wait for the first dispatch to reserve the active
+    // run before issuing the concurrent second dispatch, so the second is the
+    // one that rejects rather than racing to reserve first and hang.
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
     await expect(
       broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Again", stewardEventId, priorEvents: [] }),
     ).rejects.toThrow(/already active/i);
     const deadline = Date.now() + 2000;
-    while (first === undefined && Date.now() < deadline) {
+    while (first === undefined && firstError === undefined && Date.now() < deadline) {
       for (const handle of [...timers.pending.keys()]) timers.fire(handle);
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     await pending;
+    expect(firstError).toBeUndefined();
     expect(first?.status).toBe("timed_out");
     await broker.close();
   });
