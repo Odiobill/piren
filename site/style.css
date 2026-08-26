@@ -1,10 +1,10 @@
 /* Piren landing page.
  *
- * The palette and design tokens intentionally mirror the integrated web UI
- * (public/style.css) so the landing page and the gateway web UI read as one
- * brand: same dark base, same purple accent, same borders, same monospace
- * touches. The landing page only adds the layout, spacing, and sections a
- * marketing page needs. */
+ * The palette and design tokens implement the light editorial marketing
+ * identity aligned with the accepted 0.2 presentation (Paper, Ink, Piren Red,
+ * Apricot, Mist, Charcoal), while the gateway Workbench keeps its own dark
+ * product styling. This stylesheet provides the static, no-framework layout,
+ * spacing, and section styling for the marketing page. */
 
 :root {
   /* Light editorial identity (0.2 landing, aligned with the accepted
