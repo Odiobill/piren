@@ -18,9 +18,9 @@ import { readVersion } from "../src/version.js";
  * the same protected tag-only OIDC workflow from immutable tag `v0.1.6`.
  * `@odiobill/piren@0.1.7` restores Discord gateway availability after transient
  * WebSocket disconnects through the same protected OIDC workflow from `v0.1.7`.
- * `0.2.0` is the final release prepared locally; it is not yet published
- * until the `v0.2.0` tag is pushed and the OIDC workflow verifies/publishes
- * the exact artifact. It must not be asserted as already on npm or tagged. These guards keep package metadata,
+ * `0.2.1` is the public release. `v0.2.0` was tagged but never published (its
+ * committed release artifact was incomplete); it is superseded by `v0.2.1` and
+ * must never be moved, recreated, or published. These guards keep package metadata,
  * version, and changelog truthful across the manual-bootstrap 0.1.3 and later
  * OIDC releases.
  */
@@ -31,15 +31,15 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("scoped @odiobill/piren releases (0.2.0 prepared locally; 0.1.7/0.1.6/0.1.5/0.1.4 OIDC; 0.1.3 bootstrap)", () => {
+describe("scoped @odiobill/piren releases (0.2.1 public release; 0.2.0 unpublished; 0.1.7/0.1.6/0.1.5/0.1.4 OIDC; 0.1.3 bootstrap)", () => {
   it("package.json name is the scoped @odiobill/piren identity", () => {
     const pkg = JSON.parse(read("package.json")) as { name: string };
     expect(pkg.name).toBe("@odiobill/piren");
   });
 
-  it("package.json version is the prepared 0.2.0 final release", () => {
+  it("package.json version is the public 0.2.1 release", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
-    expect(pkg.version).toBe("0.2.0");
+    expect(pkg.version).toBe("0.2.1");
   });
 
   it("the executable bin name stays piren (scoped package, unchanged command)", () => {
@@ -62,8 +62,8 @@ describe("scoped @odiobill/piren releases (0.2.0 prepared locally; 0.1.7/0.1.6/0
     expect(pkg.private === undefined || pkg.private === false).toBe(true);
   });
 
-  it("readVersion reports 0.2.0 from the real package.json", () => {
-    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.2.0");
+  it("readVersion reports 0.2.1 from the real package.json", () => {
+    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.2.1");
   });
 
   it("package-lock.json name and version agree with package.json", () => {
@@ -73,24 +73,36 @@ describe("scoped @odiobill/piren releases (0.2.0 prepared locally; 0.1.7/0.1.6/0
       packages?: Record<string, { name?: string; version?: string }>;
     };
     expect(lock.name).toBe("@odiobill/piren");
-    expect(lock.version).toBe("0.2.0");
+    expect(lock.version).toBe("0.2.1");
     expect(lock.packages?.[""]?.name).toBe("@odiobill/piren");
-    expect(lock.packages?.[""]?.version).toBe("0.2.0");
+    expect(lock.packages?.[""]?.version).toBe("0.2.1");
   });
 
-  it("CHANGELOG has a dated [0.2.0] entry above 0.1.7", () => {
+  it("CHANGELOG has a dated public [0.2.1] entry above 0.1.7", () => {
+    const cl = read("CHANGELOG.md");
+    const start = cl.indexOf("## [0.2.1]");
+    const next = cl.indexOf("## [0.1.7]");
+    expect(start).toBeGreaterThan(-1);
+    expect(next).toBeGreaterThan(start);
+    const section = cl.slice(start, next);
+    expect(section).toMatch(/## \[0\.2\.1\] - 2026-08-26/);
+    expect(section).toMatch(/Workbench/i);
+    expect(section).toMatch(/Settings/i);
+    expect(section).toMatch(/model fallback/i);
+    expect(section).toMatch(/scheduler/i);
+    expect(section).not.toMatch(/not yet tagged or published|unreleased|internal pilot/i);
+  });
+
+  it("CHANGELOG records v0.2.0 as an unpublished superseded candidate", () => {
     const cl = read("CHANGELOG.md");
     const start = cl.indexOf("## [0.2.0]");
     const next = cl.indexOf("## [0.1.7]");
     expect(start).toBeGreaterThan(-1);
     expect(next).toBeGreaterThan(start);
     const section = cl.slice(start, next);
-    expect(section).toMatch(/## \[0\.2\.0\] - 2026-08-26/);
-    expect(section).toMatch(/Workbench/i);
-    expect(section).toMatch(/Settings/i);
-    expect(section).toMatch(/model fallback/i);
-    expect(section).toMatch(/scheduler/i);
-    expect(section).not.toMatch(/not yet tagged or published|unreleased|internal pilot/i);
+    expect(section).toMatch(/unpublished/i);
+    expect(section).toMatch(/superseded/i);
+    expect(section).toMatch(/incomplete/i);
   });
 
   it("CHANGELOG has a dated published [0.1.7] Discord reconnect entry with OIDC provenance", () => {

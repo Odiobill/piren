@@ -31,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Immutable release tag to verify and publish (e.g. v0.2.0)"
+        description: "Immutable release tag to verify and publish (e.g. v0.2.1)"
         required: true
         type: string
 
@@ -178,8 +178,8 @@ jobs:
     # verifies the artifact (verify runs) but never attempts an npm publish for
     # any of them. v0.1.4 and later use the normal provenance path below.
     if: >-
-      (github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3') ||
-      (github.event_name == 'workflow_dispatch' && inputs.release_tag != 'v0.1.1' && inputs.release_tag != 'v0.1.2' && inputs.release_tag != 'v0.1.3')
+      (github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3' && github.ref_name != 'v0.2.0') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != 'v0.1.1' && inputs.release_tag != 'v0.1.2' && inputs.release_tag != 'v0.1.3' && inputs.release_tag != 'v0.2.0')
     # Protected GitHub Environment: a steward approves this job in GitHub before
     # it runs. Because publish needs verify, approval happens AFTER the
     # tag-triggered verification path has completed. Configured in P2.
