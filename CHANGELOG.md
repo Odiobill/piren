@@ -5,6 +5,22 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-26
+
+The 0.2.0 release adds the Conversation-native Workbench and a broad operator-surface refresh.
+
+### Added
+
+- **Conversation-native Workbench:** a Dashboard default page with the local-policy agent roster, single-agent and peer-audience Conversation start (two to eight locally runnable agents, created without dispatch), an immutable timeline with scoped live streaming, approval cards and per-agent abort, archive/reopen lifecycle, and read-only inspection when a member is not locally runnable.
+- **Typed Settings:** three tabs (This installation, Agent settings, Agent groups) that edit configuration through typed workflows with write-only transport tokens. Settings is not a generic editor; it cannot edit provider credentials, the gateway token, or the runnable-agent policy, and it never starts services.
+- **Read-only Vault Explorer:** a companion for browsing vault files beside a Conversation, with no writes or cache authority.
+- **Bounded model fallback:** an optional per-agent ordered fallback that continues only an eligible settled provider-error case on the same session, in declaration order; absent, malformed, or disabled declarations are inert, and fallback never re-dispatches or reroutes.
+- **Scheduler and task safety:** explicit one-file inbox task coordination via `piren task`, and an opt-in claim-first scheduler with one item per tick and inspectable run records. There is no automatic reassignment, silent retry, resumption or re-execution of interrupted work, or cross-agent rerouting.
+
+### Changed
+
+- **Public documentation and landing page:** refreshed for the 0.2 product, with conservative shared-vault multi-device boundaries stated plainly (no automatic failover, silent re-execution, or resumed interrupted work).
+
 ## [0.1.7] - 2026-08-02
 
 Discord gateway resiliency patch. Published as `@odiobill/piren@0.1.7` to npm `latest` through the protected tag-only OIDC trusted-publishing workflow from immutable tag `v0.1.7` (`30c5e88`); registry metadata carries a SLSA provenance attestation (`npm publish --provenance`, `https://slsa.dev/provenance/v1`).
