@@ -138,11 +138,11 @@ OpenAI-compatible:
 
 - `POST /api/v1/chat/completions`
 
-Local runnable-agent roster (replacement for the retired `/api/room-agents` route, which is removed without an alias):
+Local runnable-agent roster:
 
 - `GET /api/conversation-agents` — the vault-agent roster for the workbench: `{agents: [{name, online}]}`, deterministically sorted by name. Names come from the vault-defined `team/<agent>/` roster supplied to the gateway at startup; `online` is local installation policy only — membership in this gateway's resolved runnable set — never Pi-process presence, provider reachability, transport state, or identity. An empty supplied roster returns `[]`. The route reveals no config, tokens, groups, or diagnostics and starts no Pi clients.
 
-Piren no longer ships the Rooms collaboration feature (room routes, room broker, `room_mention` tool, room web surface).
+Piren does not ship a Rooms feature; the Workbench is Conversation-only.
 
 Conversations (available when the gateway is wired with a vault root, runnable agents, and an agent target builder; otherwise all conversation routes return 404):
 

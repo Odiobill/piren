@@ -163,7 +163,7 @@
       </div>
       <div class="portability-text">
         <p class="lead">Think of the vault as the office building and each Piren installation as an office in the same building on the same network. The agent is an employee whose identity, memory, and tools live in the building, not in any single office.</p>
-        <p>So when an engineer has the laptop and skills they need, they can do their job from any office. Install Piren on a Raspberry Pi in the closet, a desktop, and a laptop, point all three at one synced vault, and <code>heimdall</code> is the same agent on every machine: same <code>SOUL.md</code>, same pending inbox, same skills, same cron jobs.</p>
+        <p>So when an engineer has the laptop and skills they need, they can do their job from any office. Install Piren on a Raspberry Pi in the closet, a desktop, and a laptop, point all three at one synced vault, and <code>atlas</code> is the same agent on every machine: same <code>SOUL.md</code>, same pending inbox, same skills, same cron jobs.</p>
         <p>That makes the work portable rather than locked to one machine. Tasks and cron jobs are claimed by <strong>atomic file operations</strong> with active-device priority, so if a device goes dark, an eligible device that is <strong>running the opt-in scheduler</strong> can pick up its pending inbox and due cron jobs &mdash; not automatically, and not out of the box. Install and start the scheduler on the devices you want on call (<code>piren service install scheduler</code>, then <code>piren service start scheduler</code>), and <code>piren scheduler --dry-run</code> previews exactly which claims a device would take next. Execution stays claim-first and bounded: one item per tick, no silent cross-agent rerouting.</p>
         <p>Which machines may host which agents is an installation policy (<code>allowed_agents</code>), kept outside the vault. The vault carries the team; the installation decides which office it runs in today.</p>
       </div>
@@ -310,7 +310,7 @@ vault/
 │   ├── <span class="t-dir">concepts/</span>
 │   └── <span class="t-dir">runbooks/</span>
 └── <span class="t-dir">team/</span>
-    ├── <span class="t-dir">heimdall/</span>   <span class="t-comment"># one agent</span>
+    ├── <span class="t-dir">atlas/</span>      <span class="t-comment"># one agent</span>
     │   ├── <span class="t-file">SOUL.md</span>
     │   ├── <span class="t-file">config.yml</span>
     │   ├── <span class="t-dir">inbox/</span>
@@ -320,7 +320,7 @@ vault/
       </div>
       <div class="practice-card">
         <h3>A team of agents</h3>
-        <div class="agent-list"><span class="a-name">heimdall</span>  <span class="a-role">homelab sentinel</span>
+        <div class="agent-list"><span class="a-name">atlas</span>    <span class="a-role">homelab sentinel</span>
   watches disks, power, backups;
   flags the steward when a
   threshold is crossed.
@@ -330,7 +330,7 @@ vault/
   promotes concepts into the
   shared wiki.
 
-<span class="a-name">thor</span>     <span class="a-role">builder</span>
+<span class="a-name">rook</span>     <span class="a-role">builder</span>
   picks up build tasks from the
   inbox, runs them, records a
   decision and a runbook when

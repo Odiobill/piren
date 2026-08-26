@@ -92,9 +92,9 @@ The browser is read-only, hides dotfiles, caps listings and reads, and enforces 
 
 ## Local runnable-agent roster
 
-The gateway serves the shared local-policy roster at `GET /api/conversation-agents` (documented in [API reference](api.md)): the vault-defined `team/<agent>/` names with `online` set exactly for members of the locally resolved runnable set. This replaces the retired `/api/room-agents` route, which is removed without an alias.
+The gateway serves the shared local-policy roster at `GET /api/conversation-agents` (documented in [API reference](api.md)): the vault-defined `team/<agent>/` names with `online` set exactly for members of the locally resolved runnable set.
 
-Piren no longer ships the Rooms collaboration feature (room routes, room broker, `room_mention` tool, room web surface). The Workbench is Conversation-only.
+Piren does not ship a Rooms feature; the Workbench is Conversation-only.
 
 ## Conversations
 

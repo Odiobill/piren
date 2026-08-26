@@ -56,7 +56,7 @@ interface Surface {
 }
 
 function collectSurfaces(): Surface[] {
-  const paths: string[] = ["README.md"];
+  const paths: string[] = ["README.md", "site/index.html"];
   for (const f of walk(join(root, "docs"))) if (f.endsWith(".md")) paths.push(f);
   for (const f of walk(join(root, "templates"))) {
     if (f.endsWith(".md") || f.endsWith(".yml")) paths.push(f);
