@@ -22,7 +22,7 @@ piren group show research                     # one group's config and skills
 piren group create research                   # scaffold config.yml + skills/
 piren group add-agent research analyst        # add an existing vault agent
 piren group remove-agent research analyst     # remove a member
-piren group fallback set reviewer analyst writer  # ordered fallback for reviewer
+piren group fallback set research reviewer analyst writer  # reviewer falls back to analyst, then writer
 piren group validate                          # read-only cross-group report
 ```
 

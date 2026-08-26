@@ -54,9 +54,17 @@ describe("public documentation preferred-path ordering", () => {
     ]);
   });
 
-  it("scheduler presents guided configuration before raw local YAML", () => {
+  it("agent-groups shows the exact valid group fallback command syntax", () => {
+    // Real syntax: piren group fallback set <group> <agent> <candidate...>
+    expect(read("docs/agent-groups.md")).toContain(
+      "piren group fallback set research reviewer analyst writer",
+    );
+  });
+
+  it("scheduler presents the Workbench tab, then guided configure, then raw YAML reference", () => {
     expectAnchorOrder(read("docs/scheduler.md"), "docs/scheduler.md", [
-      "## Guided configuration (`piren scheduler configure`)",
+      "Scheduler tab of the Settings module",
+      "is an interactive, guided writer",
       "## Local scheduler config",
     ]);
   });
