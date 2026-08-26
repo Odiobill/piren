@@ -112,4 +112,13 @@ describe("public documentation audience", () => {
     expect(readme).not.toContain("root lead");
     expect(gateway).not.toContain("root lead");
   });
+
+  it("keeps internal contract labels out of the Gateway Workbench prose", () => {
+    // R5 pin: the Gateway Workbench section describes behavior in user terms,
+    // not implementation-contract labels.
+    const gateway = read("docs/gateway.md");
+    expect(gateway).not.toContain("runnable-roster-gated attach");
+    expect(gateway).not.toContain("broker-authoritative transient live activity");
+    expect(gateway).not.toContain("cache authority");
+  });
 });
