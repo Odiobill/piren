@@ -89,4 +89,28 @@ describe("public documentation preferred-path ordering", () => {
     const section = doc.slice(doc.indexOf("### Model fallback"));
     expect(section).toContain("Not wired");
   });
+
+  it("configuration opens with a Where do I change X matrix and pins no-UI boundaries", () => {
+    const doc = read("docs/configuration.md");
+    expect(doc).toContain("## Where do I change X?");
+    const matrix = doc.slice(
+      doc.indexOf("## Where do I change X?"),
+      doc.indexOf("## Local installation config"),
+    );
+    // Preferred-path ordering: Settings first where it exists, then guided
+    // CLI, then manual reference.
+    for (const anchor of [
+      "Workbench Settings",
+      "piren scheduler configure",
+      "piren telegram configure",
+      "piren group",
+    ]) {
+      expect(matrix, `matrix missing: ${anchor}`).toContain(anchor);
+    }
+    // Critical no-UI boundaries.
+    expect(matrix).toContain("not editable from Workbench Settings");
+    expect(matrix).toContain("CLI only");
+    expect(matrix).toContain("browser never reads or edits");
+    expect(matrix).toContain("Pi-native");
+  });
 });
