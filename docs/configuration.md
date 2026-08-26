@@ -8,14 +8,14 @@ This table is the quick way to pick the right authority and preferred path. Use 
 
 | What you want to change | Preferred path | Authority and location |
 | --- | --- | --- |
-| First local installation (vault root, runnable agents) | `piren setup` (interactive) or `piren setup --apply`; then `piren agent add/remove` | `~/.config/piren/config.yml` (machine-local). The runnable-agent policy is not editable from Workbench Settings. |
-| Transport configuration and write-only bot tokens | Workbench Settings **This installation** tab, then `piren telegram configure` / `piren discord configure` | `~/.config/piren/config.yml`; tokens stay machine-local and write-only |
-| Scheduler automation and settings | Workbench Settings **This installation** tab, then `piren scheduler configure` | `~/.config/piren/config.yml` `scheduler:` block (the guided writer is the only migration path for a retired key) |
-| Agent preferences (model fallback, context injection, self-improvement) | Workbench Settings **Agent settings** tab, then edit the file | `team/<agent>/config.yml` (vault-owned) |
-| Agent groups and group-scoped fallback | Workbench Settings **Agent groups** tab, then `piren group` | `agent-groups/<group>/config.yml` (vault-owned) |
-| Services (install, start, stop, status) | CLI only: `piren service <action> <target>` | `~/.config/piren/services/`; the Workbench shows a read-only inventory and never acts on services |
-| Provider credentials and custom providers | Pi-native: `/login` and `~/.pi/agent/` files; `piren setup --apply --api-key` merges keys | There is no Workbench Settings workflow for provider credentials |
-| `workbench.yml` Conversation timeout | Manual edit of the vault-root file | `workbench.yml` is steward-managed: Piren reads it and never writes it, and the browser never reads or edits it |
+| [First local installation](#local-installation-config) (vault root, runnable agents) | `piren setup` (interactive) or `piren setup --apply`; then `piren agent add/remove` | `~/.config/piren/config.yml` (machine-local). The runnable-agent policy is not editable from Workbench Settings. |
+| [Transport configuration](#transport-config) and write-only bot tokens | Workbench Settings **This installation** tab, then `piren telegram configure` / `piren discord configure` | `~/.config/piren/config.yml`; tokens stay machine-local and write-only |
+| [Scheduler automation](#scheduler-config) and settings | Workbench Settings **This installation** tab, then `piren scheduler configure` | `~/.config/piren/config.yml` `scheduler:` block (the guided writer is the only migration path for a retired key) |
+| [Agent preferences](#agent-local-config) (model fallback, context injection, self-improvement) | Workbench Settings **Agent settings** tab, then edit the file | `team/<agent>/config.yml` (vault-owned) |
+| [Agent groups](agent-groups.md) and group-scoped fallback | Workbench Settings **Agent groups** tab, then `piren group` | `agent-groups/<group>/config.yml` (vault-owned) |
+| [Services](service-management.md) (install, start, stop, status) | CLI only: `piren service <action> <target>` | `~/.config/piren/services/`; the Workbench shows a read-only inventory and never acts on services |
+| [Provider credentials](getting-started.md#configure-pi) and custom providers | Pi-native: `/login` and `~/.pi/agent/` files; `piren setup --apply --api-key` merges keys | There is no Workbench Settings workflow for provider credentials |
+| [`workbench.yml`](#workbench-config-workbenchyml) Conversation timeout | Manual edit of the vault-root file | `workbench.yml` is steward-managed: Piren reads it and never writes it, and the browser never reads or edits it |
 
 ## Local installation config
 

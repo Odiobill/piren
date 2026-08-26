@@ -112,5 +112,18 @@ describe("public documentation preferred-path ordering", () => {
     expect(matrix).toContain("CLI only");
     expect(matrix).toContain("browser never reads or edits");
     expect(matrix).toContain("Pi-native");
+    // Every applicable row links to its detailed section/page.
+    for (const link of [
+      "(#local-installation-config)",
+      "(#transport-config)",
+      "(#scheduler-config)",
+      "(#agent-local-config)",
+      "(agent-groups.md)",
+      "(service-management.md)",
+      "(getting-started.md#configure-pi)",
+      "(#workbench-config-workbenchyml)",
+    ]) {
+      expect(matrix, `matrix missing link: ${link}`).toContain(link);
+    }
   });
 });
