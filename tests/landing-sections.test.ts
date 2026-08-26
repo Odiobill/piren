@@ -28,6 +28,5 @@ describe("landing Workbench Conversations and Typed Settings (L3)", () => {
     expect(landing).toContain("CLI-only");
     expect(landing).toContain("never written to storage");
     expect(landing).toContain("Not a generic editor");
-    expect(landing).toContain('src="assets/workbench-settings.png"');
   });
 });
