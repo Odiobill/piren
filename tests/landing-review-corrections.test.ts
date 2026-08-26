@@ -34,4 +34,15 @@ describe("landing review corrections", () => {
     expect(start).toContain("gateway token");
     expect(start).toContain("runnable-agent policy");
   });
+
+  it("keeps a four-step quickstart with labelled post-setup guidance", () => {
+    const start = landing.slice(landing.indexOf('id="start"'), landing.indexOf("<footer>"));
+    for (const n of ["1.", "2.", "3.", "4."]) {
+      expect(start).toContain(`>${n}<`);
+    }
+    expect(start).not.toContain(">5.<");
+    expect(start).not.toContain(">6.<");
+    expect(start).toContain(">Then<");
+    expect(start).toContain(">Optional<");
+  });
 });
