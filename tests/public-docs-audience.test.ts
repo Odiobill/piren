@@ -63,4 +63,25 @@ describe("public documentation audience", () => {
       expect(read(rel), `${rel} must link docs/tasks.md`).toContain("tasks.md");
     }
   });
+
+  it("documents the peer-audience conversation start on gateway and API surfaces", () => {
+    // R4b discoverability/boundary pin: the delivered peer-audience start is
+    // documented user-facing with its no-dispatch boundary.
+    const gateway = read("docs/gateway.md");
+    for (const anchor of [
+      "POST /api/conversations/start-peer",
+      "dispatches no agent",
+      "two to eight locally runnable agents",
+    ]) {
+      expect(gateway).toContain(anchor);
+    }
+    const api = read("docs/api.md");
+    for (const anchor of [
+      "POST /api/conversations/start-peer",
+      "not in the local runnable set",
+      "201 {conversation, event}",
+    ]) {
+      expect(api).toContain(anchor);
+    }
+  });
 });
