@@ -5,9 +5,9 @@ import { join, relative } from "node:path";
 /**
  * T7: packaged documentation boundary regression.
  *
- * README.md, docs/**\/*.md, and the fresh-vault starter-skill templates
- * (templates/** -> dist/templates/** via scripts/copy-templates.ts) must serve
- * Piren users and their agents only. This narrow, deterministic test pins the
+ * README.md, site/index.html, docs/**\/*.md, and the fresh-vault
+ * starter-skill templates (templates/** -> dist/templates/** via
+ * scripts/copy-templates.ts) must serve Piren users and their agents only. This narrow, deterministic test pins the
  * specific forbidden internal references identified by the T7 audit inventory:
  *
  *   - internal slice/tracer-bullet labels (C1, C3-A, C4-A, C5, U2-U5, P1-P5,
@@ -143,10 +143,11 @@ function findingsFor(content: string): string[] {
 }
 
 describe("T7 packaged documentation boundary (internal references)", () => {
-  it("audits README.md, docs/, and templates/ surfaces", () => {
+  it("audits README.md, site/index.html, docs/, and templates/ surfaces", () => {
     expect(SURFACES.length).toBeGreaterThan(0);
     const rels = SURFACES.map((s) => s.rel);
     expect(rels).toContain("README.md");
+    expect(rels).toContain("site/index.html");
     expect(rels.some((r) => r.startsWith("docs/"))).toBe(true);
     expect(rels.some((r) => r.startsWith("templates/"))).toBe(true);
   });
