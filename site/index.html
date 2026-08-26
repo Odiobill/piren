@@ -125,8 +125,8 @@
 
 <section id="portability">
   <div class="container">
-    <h2 class="section-title">The agent lives in the vault, not the machine</h2>
-    <p class="section-sub">Install Piren on several devices, point them at one vault, and your agent is the same agent everywhere. If a device dies, the work continues on another.</p>
+    <h2 class="section-title">One team, several offices</h2>
+    <p class="section-sub">Point several installations at one shared vault. Each machine keeps its own local runnable-agent policy.</p>
     <div class="portability-grid">
       <div class="portability-diagram">
         <svg viewBox="0 0 360 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A vault in the center connected to three devices, one offline">
@@ -163,7 +163,8 @@
       <div class="portability-text">
         <p class="lead">Think of the vault as the office building and each Piren installation as an office in the same building on the same network. The agent is an employee whose identity, memory, and tools live in the building, not in any single office.</p>
         <p>So when an engineer has the laptop and skills they need, they can do their job from any office. Install Piren on a Raspberry Pi in the closet, a desktop, and a laptop, point all three at one synced vault, and <code>atlas</code> is the same agent on every machine: same <code>SOUL.md</code>, same pending inbox, same skills, same cron jobs.</p>
-        <p>That makes the work portable rather than locked to one machine. Tasks and cron jobs are claimed by <strong>atomic file operations</strong> with active-device priority, so if a device goes dark, an eligible device that is <strong>running the opt-in scheduler</strong> can pick up its pending inbox and due cron jobs &mdash; not automatically, and not out of the box. Install and start the scheduler on the devices you want on call (<code>piren service install scheduler</code>, then <code>piren service start scheduler</code>), and <code>piren scheduler --dry-run</code> previews exactly which claims a device would take next. Execution stays claim-first and bounded: one item per tick, no silent cross-agent rerouting.</p>
+        <p>Work does not fail over by itself. An eligible device that is running the scheduler can explicitly claim eligible pending work or a due cron job, but only after the active-device and stale-heartbeat rules permit it. Claims are visible vault file renames and always claim-first.</p>
+        <p>What does not happen: no automatic failover, no silent re-execution, no resumed interrupted work, and no cross-agent rerouting.</p>
         <p>Which machines may host which agents is an installation policy (<code>allowed_agents</code>), kept outside the vault. The vault carries the team; the installation decides which office it runs in today.</p>
       </div>
     </div>
@@ -261,6 +262,55 @@
       <div class="feature"><h3>Not a generic editor</h3><p>Settings never edits provider credentials or the gateway token, and it never changes the runnable-agent policy. Those stay in their own local or Pi-native locations.</p></div>
       <div class="feature"><h3>Services stay CLI-only</h3><p>The Workbench shows a read-only service snapshot, but install, start, stop, and restart are explicit <code>piren service</code> commands.</p></div>
       <div class="feature"><h3>No token persistence</h3><p>The bearer token stays in browser memory only. It is never written to storage.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="groups">
+  <div class="container">
+    <h2 class="section-title">Agent groups and scoped skills</h2>
+    <p class="section-sub">Groups share procedures by scope; execution authority stays local and explicit.</p>
+    <div class="features">
+      <div class="feature"><h3>Scoped precedence</h3><p>Skills load shared, then group, then agent. An agent-specific skill always wins, and a group skill overrides a shared one of the same name.</p></div>
+      <div class="feature"><h3>Procedures, not permission</h3><p>Groups share skill packs and a fallback policy, never execution authority. Membership in a group does not let an agent run on a machine.</p></div>
+      <div class="feature"><h3>Read-only recommendation</h3><p><code>piren agents --fallback &lt;agent&gt;</code> recommends an eligible teammate, filtered by local policy and same-group membership. It never reassigns or reroutes work.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="coordination">
+  <div class="container">
+    <h2 class="section-title">Task coordination and the scheduler</h2>
+    <p class="section-sub">Explicit inbox task files, and an opt-in scheduler that claims one item per tick.</p>
+    <div class="features">
+      <div class="feature"><h3>One file per task</h3><p>Tasks are Markdown files in an agent's inbox. <code>piren task</code> lists, sends, shows, claims, completes, and cancels them; every step is a visible file change.</p></div>
+      <div class="feature"><h3>Opt-in scheduler</h3><p><code>piren scheduler</code> is off by default. <code>--dry-run</code> previews claims with no model calls, <code>--once</code> runs one bounded tick, and the loop runs until you stop it.</p></div>
+      <div class="feature"><h3>Claim-first and recorded</h3><p>Each tick claims at most one item by atomic rename, then records the run in the vault. There is no automatic reassignment, no silent retry, and no resumption of interrupted work.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="fallback">
+  <div class="container">
+    <h2 class="section-title">Bounded model fallback</h2>
+    <p class="section-sub">An optional per-agent fallback list for provider errors, scoped to one session.</p>
+    <div class="features">
+      <div class="feature"><h3>Ordered and bounded</h3><p>A declared fallback rotates in order, at most once per entry, only after a run fully settles as an eligible provider error on the same session.</p></div>
+      <div class="feature"><h3>Inert by default</h3><p>An absent, malformed, or disabled declaration does nothing. Nothing re-dispatches or reroutes to another agent.</p></div>
+      <div class="feature"><h3>Explicit control</h3><p>An explicit live model selection disables automatic fallback for that session.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="transports">
+  <div class="container">
+    <h2 class="section-title">Transports</h2>
+    <p class="section-sub">Several doorways into the same visible team state.</p>
+    <div class="features">
+      <div class="feature"><h3>Workbench</h3><p>The web Workbench for Conversations, Settings, and the Vault Explorer.</p></div>
+      <div class="feature"><h3>Telegram and Discord</h3><p>Bots route conversations to your locally runnable agents with machine-local allowlists.</p></div>
+      <div class="feature"><h3>OpenAI-compatible API</h3><p>A drop-in <code>/api/v1/chat/completions</code> endpoint for any OpenAI-compatible client.</p></div>
+      <div class="feature"><h3>Fail-closed</h3><p>Transport authorization is machine-local and fail-closed; nothing is reachable unless it is explicitly allowed.</p></div>
     </div>
   </div>
 </section>
