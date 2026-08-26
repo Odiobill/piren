@@ -473,11 +473,8 @@ describe("ConversationBroker dispatch outcomes", () => {
     }).then((value) => {
       outcome = value;
     });
-    const deadline = Date.now() + 2000;
-    while (outcome === undefined && Date.now() < deadline) {
-      for (const handle of [...timers.pending.keys()]) timers.fire(handle);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await waitFor(() => timers.pendingCount() > 0);
+    for (const handle of [...timers.pending.keys()]) timers.fire(handle);
     await pending;
     expect(outcome?.status).toBe("timed_out");
     const events = await readConversationEvents({ vaultRoot: root, conversationId });
@@ -713,11 +710,8 @@ describe("ConversationBroker dispatch outcomes", () => {
     await expect(
       broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Again", stewardEventId, priorEvents: [] }),
     ).rejects.toThrow(/already active/i);
-    const deadline = Date.now() + 2000;
-    while (first === undefined && firstError === undefined && Date.now() < deadline) {
-      for (const handle of [...timers.pending.keys()]) timers.fire(handle);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await waitFor(() => timers.pendingCount() > 0);
+    for (const handle of [...timers.pending.keys()]) timers.fire(handle);
     await pending;
     expect(firstError).toBeUndefined();
     expect(first?.status).toBe("timed_out");
@@ -1265,6 +1259,7 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
       });
     await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
     await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    await waitFor(() => timers.pendingCount() > 0);
     for (const handle of [...timers.pending.keys()]) timers.fire(handle);
     await pending;
     expect(outcome?.status).toBe("timed_out");
@@ -1689,6 +1684,7 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
     const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
     if (gate.status !== "pending") throw new Error("expected pending");
 
+    await waitFor(() => timers.pendingCount() > 0);
     for (const handle of [...timers.pending.keys()]) timers.fire(handle);
     const outcome = await dispatch;
     expect(outcome.status).toBe("timed_out");
@@ -2209,11 +2205,8 @@ describe("broker-authoritative live activity (U4)", () => {
     const pending = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] }).then((value) => {
       outcome = value;
     });
-    const deadline = Date.now() + 2000;
-    while (outcome === undefined && Date.now() < deadline) {
-      for (const handle of [...timers.pending.keys()]) timers.fire(handle);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await waitFor(() => timers.pendingCount() > 0);
+    for (const handle of [...timers.pending.keys()]) timers.fire(handle);
     await pending;
     expect(outcome?.status).toBe("timed_out");
     expect(activity.map((a) => a.kind)).toEqual(["working", "settled"]);
