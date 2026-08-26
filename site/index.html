@@ -234,6 +234,40 @@
   </div>
 </section>
 
+<section id="conversations">
+  <div class="container">
+    <h2 class="section-title">Workbench Conversations</h2>
+    <p class="section-sub">One visible workspace for a team's Conversations: the Dashboard, a durable timeline, and a scoped live stream.</p>
+    <div class="screenshot-wrap">
+      <img src="assets/workbench-conversation.png" alt="Piren Workbench showing an active Conversation beside the Vault Explorer">
+    </div>
+    <div class="features">
+      <div class="feature"><h3>Dashboard roster</h3><p>The Dashboard lists your vault's agents and marks which are runnable on this installation. Start a Conversation with one agent you select, or a peer Conversation with two to eight locally runnable agents.</p></div>
+      <div class="feature"><h3>Peer start without dispatch</h3><p>A peer Conversation is created with its initial audience recorded, but no agent is dispatched: no greeting, no lead, and no fan-out. An agent starts working only when a message mentions it.</p></div>
+      <div class="feature"><h3>Durable timeline, live stream</h3><p>Each Conversation shows an immutable whole-history timeline plus a scoped live stream. When a member is not locally runnable, it opens as read-only inspection instead.</p></div>
+      <div class="feature"><h3>Approvals and abort</h3><p>Approve or reject requests with Confirm, Cancel, or a value, and abort one agent's active run. Recipient mentions are validated at the gateway, never in the browser, and the browser never fabricates an agent outcome.</p></div>
+      <div class="feature"><h3>Archive and reopen</h3><p>Archive a Conversation to make it read-only, or reopen an archived one. Neither action cancels a running turn.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="settings">
+  <div class="container">
+    <h2 class="section-title">Typed Settings and independent services</h2>
+    <p class="section-sub">Three focused tabs edit your configuration through typed workflows; services stay separate, explicit commands.</p>
+    <div class="screenshot-wrap">
+      <img src="assets/workbench-settings.png" alt="Piren Workbench Settings showing typed configuration tabs">
+    </div>
+    <div class="features">
+      <div class="feature"><h3>Three tabs</h3><p>This installation (transport tokens and scheduler gates), Agent settings (model, context, self-improvement), and Agent groups. Each tab edits a specific configuration family through typed, validated workflows.</p></div>
+      <div class="feature"><h3>Write-only tokens</h3><p>Transport bot tokens are write-only: the browser never shows them after saving. Non-secret values are prefilled from a redacted read.</p></div>
+      <div class="feature"><h3>Not a generic editor</h3><p>Settings never edits provider credentials or the gateway token, and it never changes the runnable-agent policy. Those stay in their own local or Pi-native locations.</p></div>
+      <div class="feature"><h3>Services stay CLI-only</h3><p>The Workbench shows a read-only service snapshot, but install, start, stop, and restart are explicit <code>piren service</code> commands.</p></div>
+      <div class="feature"><h3>No token persistence</h3><p>The bearer token stays in browser memory only. It is never written to storage.</p></div>
+    </div>
+  </div>
+</section>
+
 <section id="knowledge">
   <div class="container">
     <h2 class="section-title">Team knowledge that compounds</h2>
