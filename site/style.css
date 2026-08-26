@@ -325,40 +325,6 @@ section { padding: 4rem 0; }
 }
 .feature p { font-size: 0.9rem; color: var(--text-muted); }
 
-/* ---- Comparison ---- */
-.compare-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem;
-}
-.compare-card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 1.6rem;
-}
-.compare-card h3 {
-  font-size: 1.05rem;
-  color: var(--text-bright);
-  margin-bottom: 0.3rem;
-}
-.compare-card .compare-tag {
-  display: inline-block;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  margin-bottom: 0.9rem;
-}
-.compare-card p { font-size: 0.9rem; color: var(--text); line-height: 1.6; }
-.compare-card .vs-note {
-  margin-top: 0.85rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--border);
-  font-size: 0.86rem;
-  color: var(--text-muted);
-}
-.compare-card .vs-note strong { color: var(--green); font-weight: 600; }
-
 /* ---- Architecture block ---- */
 .arch {
   background: var(--bg-panel);

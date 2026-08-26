@@ -23,7 +23,6 @@
       <a href="#portability">Portability</a>
       <a href="#features">Features</a>
       <a href="#knowledge">Knowledge</a>
-      <a href="#compare">Compare</a>
       <a href="#start">Get started</a>
       <a href="https://github.com/Odiobill/piren" target="_blank" rel="noopener">GitHub</a>
     </div>
@@ -52,9 +51,9 @@
   <noscript>
     <img class="hero-logo" src="assets/piren-logo-dark.svg" alt="Piren logo" style="margin-top:-1rem">
   </noscript>
-  <h1 class="hero-tagline">A lightweight runtime for a team of local agents you actually understand.</h1>
-  <p class="hero-audience">Built for developers and homelab enthusiasts who want full control over a local fleet of agents, without hidden state or heavyweight frameworks.</p>
-  <p class="hero-sub">Piren starts with Pi Coding Agent and adds what a multi-device fleet needs: inspectable state, explicit tools, safe gateways, and edge-device operations. All grounded in a Markdown vault you can read and debug.</p>
+  <h1 class="hero-tagline">A stewarded team of agents, grounded in a shared vault.</h1>
+  <p class="hero-audience">Local-first, vault-native, edge-friendly. Full control over a team of local agents, without hidden state or heavyweight frameworks.</p>
+  <p class="hero-sub">Piren starts with Pi Coding Agent and adds the missing local-first runtime layer: inspectable state, explicit tools, safe gateways, and edge-device operations. Everything lives in a Markdown vault you can read and debug.</p>
   <div class="hero-actions">
     <a href="https://github.com/Odiobill/piren" target="_blank" rel="noopener" class="btn btn-primary">View on GitHub</a>
     <a href="#start" class="btn btn-secondary">Read the docs</a>
@@ -85,9 +84,9 @@
   <div class="container">
     <h2 class="section-title">Why Piren exists</h2>
     <div class="origin-story">
-      <p>A few months ago I was running ten agents across three devices using Hermes Agent. When I tried to get agents on different machines to collaborate, sharing a Kanban board and picking up each other's tasks, things broke in ways Hermes was never designed to handle.</p>
-      <p>What I needed was not a more powerful framework. I needed something lighter: explicit task hand-off, shared state that lives in a file system I can read and debug, and a runtime small enough to run on a Raspberry Pi. I needed to be in charge, not the framework.</p>
-      <p>That is what Piren is. A vault-native runtime for a stewarded team of agents, built from the bottom up so you only carry the complexity you actually need.</p>
+      <p>A team of local agents works best when everyone shares one source of truth: a plain Markdown vault, not a hidden database or a private memory layer.</p>
+      <p>Piren keeps agent identity, tasks, skills, logs, and cumulative knowledge in that vault. Explicit tools read and write it; nothing is hidden, and you can debug the whole team from a terminal.</p>
+      <p>That is what Piren is. A local-first, vault-native runtime for a stewarded team of agents, built so you stay in charge and only carry the complexity you actually need.</p>
     </div>
   </div>
 </section>
@@ -235,37 +234,10 @@
   </div>
 </section>
 
-<section id="compare">
-  <div class="container">
-    <h2 class="section-title">How it compares</h2>
-    <p class="section-sub">Piren borrows the best ideas from heavier systems while staying vault-native and edge-friendly.</p>
-    <div class="compare-grid">
-      <div class="compare-card">
-        <h3>vs Hermes Agent</h3>
-        <span class="compare-tag">self-improving, vault-native, light</span>
-        <p>Hermes is a powerful, self-improving agent with database-backed memory and a rich TUI. Piren borrows its self-improvement thesis but realizes it as inspectable Markdown artifacts you can read in Obsidian, on hardware a Raspberry Pi can run.</p>
-        <div class="vs-note"><strong>Same ideas, lighter substrate.</strong> Handoffs, runbooks, and skill candidates are files, not hidden memories.</div>
-      </div>
-      <div class="compare-card">
-        <h3>vs OpenClaw</h3>
-        <span class="compare-tag">team substrate, not one assistant</span>
-        <p>OpenClaw is a single personal assistant with full system access and persistent memory that builds its own skills. Piren is a team knowledge substrate for a stewarded fleet: every agent's state is an auditable Markdown file, and operations stay local and fail-safe.</p>
-        <div class="vs-note"><strong>A fleet you can inspect</strong>, where each agent's work leaves durable, navigable artifacts.</div>
-      </div>
-      <div class="compare-card">
-        <h3>vs database-backed agents</h3>
-        <span class="compare-tag">inspectable over opaque</span>
-        <p>Most agent platforms hide operational state in databases. Piren keeps it in the vault: tasks are one Markdown file each, logs are append-only, sessions are summarized in place. You can debug the whole system from a terminal.</p>
-        <div class="vs-note"><strong>Readable in Obsidian.</strong> The same substrate agents use is the one you browse.</div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <section id="knowledge">
   <div class="container">
     <h2 class="section-title">Team knowledge that compounds</h2>
-    <p class="section-sub">Piren natively merges Karpathy's LLM-Wiki and Second Brain workflows with multi-agent task execution, backed by an Open Knowledge Format v0.1 compliant vault that is portable outside Piren.</p>
+    <p class="section-sub">Piren natively merges LLM-Wiki and Second Brain workflows with multi-agent task execution, backed by an Open Knowledge Format v0.1 compliant vault that is portable outside Piren.</p>
 
     <div class="okf-card">
       <span class="okf-label">Open Knowledge Format</span>
