@@ -25,6 +25,9 @@ describe("landing L4 capability sections", () => {
     expect(landing).toContain("resumption of interrupted work");
     // Fallback: same-session, no redispatch/reroute.
     expect(landing).toContain("Nothing re-dispatches or reroutes");
+    expect(landing).toContain("on the same session");
+    // Coordination: no silent retry.
+    expect(landing).toContain("no silent retry");
     // Transports: machine-local fail-closed authorization.
     expect(landing).toContain("fail-closed");
   });
@@ -34,6 +37,9 @@ describe("landing L4 capability sections", () => {
     expect(landing).toContain("no silent re-execution");
     expect(landing).toContain("no resumed interrupted work");
     expect(landing).toContain("no cross-agent rerouting");
+    // Async-synced vault copies do not provide a distributed claim-exclusivity
+    // guarantee.
+    expect(landing).toContain("distributed claim-exclusivity guarantee");
     // The legacy auto-continuation claim must be gone.
     expect(landing).not.toContain("the work continues on another");
   });

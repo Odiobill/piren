@@ -164,6 +164,7 @@
         <p class="lead">Think of the vault as the office building and each Piren installation as an office in the same building on the same network. The agent is an employee whose identity, memory, and tools live in the building, not in any single office.</p>
         <p>So when an engineer has the laptop and skills they need, they can do their job from any office. Install Piren on a Raspberry Pi in the closet, a desktop, and a laptop, point all three at one synced vault, and <code>atlas</code> is the same agent on every machine: same <code>SOUL.md</code>, same pending inbox, same skills, same cron jobs.</p>
         <p>Work does not fail over by itself. An eligible device that is running the scheduler can explicitly claim eligible pending work or a due cron job, but only after the active-device and stale-heartbeat rules permit it. Claims are visible vault file renames and always claim-first.</p>
+        <p>Synchronized vault copies do not provide a distributed claim-exclusivity guarantee: asynchronous sync means two machines can briefly observe different states. Local claim-first renames and stale-heartbeat checks are the coordination Piren provides.</p>
         <p>What does not happen: no automatic failover, no silent re-execution, no resumed interrupted work, and no cross-agent rerouting.</p>
         <p>Which machines may host which agents is an installation policy (<code>allowed_agents</code>), kept outside the vault. The vault carries the team; the installation decides which office it runs in today.</p>
       </div>
