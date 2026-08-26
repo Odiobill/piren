@@ -30,10 +30,12 @@ function expectAnchorOrder(content: string, file: string, anchors: string[]): vo
     return index;
   });
   for (let i = 1; i < indexes.length; i++) {
+    const current = indexes[i]!;
+    const previous = indexes[i - 1]!;
     expect(
-      indexes[i],
+      current,
       `${file}: "${anchors[i]}" must appear after "${anchors[i - 1]}"`,
-    ).toBeGreaterThan(indexes[i - 1]);
+    ).toBeGreaterThan(previous);
   }
 }
 
