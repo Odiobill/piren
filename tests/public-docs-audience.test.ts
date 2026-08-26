@@ -83,5 +83,11 @@ describe("public documentation audience", () => {
     ]) {
       expect(api).toContain(anchor);
     }
+    // R4b correction pins: mention of an existing audience member dispatches
+    // it; only a previously absent runnable agent is added before dispatch.
+    for (const doc of [gateway, api]) {
+      expect(doc).toContain("dispatches an existing audience member");
+      expect(doc).toContain("adds that agent to the audience before dispatch");
+    }
   });
 });
