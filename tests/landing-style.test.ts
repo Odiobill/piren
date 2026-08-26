@@ -36,13 +36,12 @@ describe("landing page light editorial visual system (L1)", () => {
     }
   });
 
-  it("uses the paper canvas for the page and keeps the logo wordmark readable on it", () => {
+  it("uses the paper canvas for the page and shows the full logo image", () => {
     const css = read("site/style.css");
     expect(css).toContain("background: var(--paper)");
-    // The animated wordmark draws white by default; the light shell must
-    // recolor it to ink so it stays readable on paper.
-    expect(css).toContain("#piren-hero-text text");
-    expect(css).toContain("fill: var(--ink)");
+    // The hero is the full original logo image; the animated wordmark and its
+    // ink recolor rule are gone.
+    expect(css).not.toContain("#piren-hero-text text");
   });
 
   it("disables logo and transition motion under reduced motion", () => {

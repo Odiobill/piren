@@ -30,27 +30,7 @@
 </nav>
 
 <header class="hero">
-  <svg class="hero-logo" width="680" height="260" viewBox="0 0 680 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Piren animated logo">
-    <title>Piren</title>
-    <desc>The word Pi draws in, morphs into Piren, then stays with orbiting particles</desc>
-    <g transform="translate(340,130)">
-      <ellipse cx="0" cy="0" rx="68" ry="24" fill="none" stroke="#D85A30" stroke-width="0.5" stroke-opacity="0.18"/>
-      <ellipse cx="0" cy="0" rx="88" ry="32" fill="none" stroke="#7F77DD" stroke-width="0.5" stroke-opacity="0.18"/>
-      <ellipse cx="0" cy="0" rx="114" ry="44" fill="none" stroke="#1D9E75" stroke-width="0.5" stroke-opacity="0.18"/>
-      <ellipse cx="0" cy="0" rx="138" ry="54" fill="none" stroke="#378ADD" stroke-width="0.5" stroke-opacity="0.18"/>
-      <ellipse class="hring3" cx="0" cy="0" rx="68" ry="24" fill="none" stroke="#D85A30" stroke-width="0.9" stroke-opacity="0.4" stroke-dasharray="34 393"/>
-      <ellipse class="hring1" cx="0" cy="0" rx="88" ry="32" fill="none" stroke="#7F77DD" stroke-width="0.9" stroke-opacity="0.4" stroke-dasharray="44 509"/>
-      <ellipse class="hring2" cx="0" cy="0" rx="114" ry="44" fill="none" stroke="#1D9E75" stroke-width="0.9" stroke-opacity="0.35" stroke-dasharray="57 659"/>
-      <g class="hdot3"><circle r="4.5" fill="#D85A30" fill-opacity="0.95"/><circle r="8" fill="#D85A30" fill-opacity="0.2"/></g>
-      <g class="hdot1"><circle r="5" fill="#7F77DD" fill-opacity="0.95"/><circle r="9" fill="#7F77DD" fill-opacity="0.2"/></g>
-      <g class="hdot2"><circle r="5.5" fill="#1D9E75" fill-opacity="0.95"/><circle r="9.5" fill="#1D9E75" fill-opacity="0.18"/></g>
-      <g class="hdot4"><circle r="4" fill="#378ADD" fill-opacity="0.9"/><circle r="7.5" fill="#378ADD" fill-opacity="0.16"/></g>
-      <g id="piren-hero-text"></g>
-    </g>
-  </svg>
-  <noscript>
-    <img class="hero-logo" src="assets/piren-logo-dark.svg" alt="Piren logo" style="margin-top:-1rem">
-  </noscript>
+  <img class="hero-logo" src="assets/piren-full-logo.png" alt="Piren full logo">
   <h1 class="hero-tagline">A stewarded team of agents, grounded in a shared vault.</h1>
   <p class="hero-audience">Local-first, vault-native, edge-friendly. Full control over a team of local agents, without hidden state or heavyweight frameworks.</p>
   <p class="hero-sub">Piren starts with Pi Coding Agent and adds the missing local-first runtime layer: inspectable state, explicit tools, safe gateways, and edge-device operations. Everything lives in a Markdown vault you can read and debug.</p>
@@ -230,7 +210,7 @@
     <h2 class="section-title">The integrated web UI</h2>
     <p class="section-sub">The Workbench: a Dashboard with your local agent roster, streaming Conversations with approval gates and scoped abort, a read-only Vault Explorer, and a typed Settings page. No live-session model controls and no browser token storage, by design.</p>
     <div class="screenshot-wrap">
-      <img src="assets/webui-screenshot.png" alt="Piren web UI showing an agent reading a teammate's session and leaving durable artifacts">
+      <img src="assets/workbench-vault.png" alt="Piren Workbench showing the Vault Explorer">
     </div>
     <p class="screenshot-caption">Every action is an explicit, inspectable tool call: <code>vault_read</code>, <code>decision_record</code>, <code>flag_steward</code>. The agent's work leaves artifacts in the vault, not hidden memory.</p>
   </div>
@@ -241,7 +221,7 @@
     <h2 class="section-title">Workbench Conversations</h2>
     <p class="section-sub">One visible workspace for a team's Conversations: the Dashboard, a durable timeline, and a scoped live stream.</p>
     <div class="screenshot-wrap">
-      <img src="assets/workbench-conversation.png" alt="Piren Workbench showing an active Conversation beside the Vault Explorer">
+      <img src="assets/workbench-conversation.png" alt="Piren Workbench showing an active Conversation">
     </div>
     <div class="features">
       <div class="feature"><h3>Dashboard roster</h3><p>The Dashboard lists your vault's agents and marks which are runnable on this installation. Start a Conversation with one agent you select, or a peer Conversation with two to eight locally runnable agents.</p></div>
@@ -425,8 +405,9 @@ vault/
       <div class="step"><span class="step-num">2.</span><div><span class="cmd">pi</span> &nbsp;then run <span class="cmd">/login</span> and <span class="cmd">/quit</span></div></div>
       <div class="step"><span class="step-num">3.</span><div><span class="cmd">npm install -g @odiobill/piren</span></div></div>
       <div class="step"><span class="step-num">4.</span><div><span class="cmd">piren setup</span></div></div>
-      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">+</span><div style="color:var(--text-muted);font-size:0.88rem;"><strong>Optional messaging:</strong> after setup, run <span class="cmd">piren telegram configure</span> or <span class="cmd">piren discord configure</span>. Each flow keeps the bot token and allowlist on this machine, shows a redacted preview, and asks before writing. Then use <span class="cmd">piren doctor</span> and start the selected transport in the foreground before installing a service.</div></div>
-      <div class="step"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Start your agent with <span class="cmd">piren run</span>, or open the local gateway with <span class="cmd">piren gateway</span>.</div></div>
+      <div class="step" style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid var(--border);"><span class="step-num">5.</span><div style="color:var(--text-muted);font-size:0.88rem;"><strong>Configure in the Workbench:</strong> run <span class="cmd">piren gateway</span>, open <span class="cmd">http://127.0.0.1:7317/</span>, and use its typed Settings workflows. Settings manages existing configuration, not first-run bootstrap. It cannot edit provider credentials, the gateway token, or the runnable-agent policy, and it does not start services.</div></div>
+      <div class="step"><span class="step-num">6.</span><div style="color:var(--text-muted);font-size:0.88rem;"><strong>Optional messaging:</strong> add a bot later with <span class="cmd">piren telegram configure</span> or <span class="cmd">piren discord configure</span>. Each flow keeps the bot token and allowlist on this machine, shows a redacted preview, asks before writing, and starts no daemon or service.</div></div>
+      <div class="step"><span class="step-num">→</span><div style="color:var(--text-muted);font-size:0.88rem;">Start an agent from the terminal with <span class="cmd">piren run</span>.</div></div>
     </div>
     <p style="text-align:center;margin:1.25rem auto 0;max-width:44rem;color:var(--text-muted);font-size:0.9rem;"><strong>Upgrading from 0.1.3?</strong> Run <span class="cmd">npm install -g @odiobill/piren</span> once. That older <span class="cmd">piren update</span> command uses the retired GitHub install path.</p>
     <p style="text-align:center;margin-top:1.75rem;">
@@ -454,6 +435,5 @@ vault/
   </div>
 </footer>
 
-<script src="hero-logo.js" defer></script>
 </body>
 </html>
