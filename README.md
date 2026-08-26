@@ -110,6 +110,7 @@ Online landing page: **https://piren.org/**
 - [Open Knowledge Format (OKF)](docs/okf.md)
 - [Cron jobs](docs/cron.md)
 - [Scheduler](docs/scheduler.md)
+- [Task coordination](docs/tasks.md)
 - [Token discipline](docs/token-discipline.md)
 - [Migrating from Hermes](docs/migrating-from-hermes.md)
 - [Operations](docs/operations.md)

@@ -212,6 +212,8 @@ piren run -- --print "hello"
 
 If no model is configured in `team/<agent>/config.yml`, Pi falls back to its native settings under `~/.pi/agent/`.
 
+To hand an agent work explicitly, create a task record with `piren task send`; see [Task coordination](tasks.md).
+
 ## Start the web gateway
 
 ```bash

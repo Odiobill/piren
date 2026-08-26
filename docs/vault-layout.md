@@ -88,7 +88,7 @@ For imports from an older vault or project folder, do not only copy the source t
 
 ## Task files
 
-Inbox tasks are Markdown files with frontmatter and body. Agents claim tasks by atomic rename to a `.claimed.<device>.md` path. Status updates mutate explicit frontmatter fields and optional result sections.
+Inbox tasks are Markdown files with frontmatter and body. Agents claim tasks by atomic rename to a `.claimed.<device>.md` path. Status updates mutate explicit frontmatter fields and optional result sections. See [Task coordination](tasks.md) for the human-facing workflow.
 
 Default interactive sessions do not poll inboxes. Worker mode is opt-in and only allowed for locally runnable agents.
 

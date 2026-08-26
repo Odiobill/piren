@@ -40,4 +40,21 @@ describe("public documentation audience", () => {
     }
     expect(landing).not.toMatch(/choose a Pi provider and API key, select a model, and configure gateways/i);
   });
+
+  it("links the task coordination guide from the main surfaces", () => {
+    // R4a discoverability pin: docs/tasks.md is the user-facing home for task
+    // coordination and the primary docs surfaces point at it.
+    const tasks = read("docs/tasks.md");
+    for (const anchor of [
+      "piren task send",
+      ".claimed.<device>.md",
+      "(scheduler.md)",
+      "(recovery.md#stuck-inbox-task-claim)",
+    ]) {
+      expect(tasks).toContain(anchor);
+    }
+    for (const rel of ["README.md", "docs/getting-started.md", "docs/troubleshooting.md", "docs/vault-layout.md"]) {
+      expect(read(rel), `${rel} must link docs/tasks.md`).toContain("tasks.md");
+    }
+  });
 });
