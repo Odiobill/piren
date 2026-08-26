@@ -103,4 +103,13 @@ describe("public documentation audience", () => {
     // vaults, so it must never promise distributed claim exclusivity.
     expect(fresh).not.toContain("never silently pick up the same item");
   });
+
+  it("keeps internal role terminology out of Workbench prose", () => {
+    // R5 pin: the Workbench/Conversation rewrite removed internal
+    // collaboration-role wording; it must not return.
+    const readme = read("README.md");
+    const gateway = read("docs/gateway.md");
+    expect(readme).not.toContain("root lead");
+    expect(gateway).not.toContain("root lead");
+  });
 });
