@@ -99,5 +99,8 @@ describe("public documentation audience", () => {
     expect(fresh).toContain("No automatic failover");
     expect(fresh).toContain("No resumption or re-execution of interrupted work");
     expect(fresh).toContain("claim-first");
+    // Safety pin: the shared-vault section supports asynchronously synced
+    // vaults, so it must never promise distributed claim exclusivity.
+    expect(fresh).not.toContain("never silently pick up the same item");
   });
 });

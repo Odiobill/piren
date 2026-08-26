@@ -61,7 +61,7 @@ The agent identity, memory, inbox, skills, and project knowledge travel with the
 
 Several Piren installations can point at the same shared or synced vault. The vault carries the durable team state: agent identities, memory, inboxes, skills, cron jobs, and project knowledge. Each machine keeps its own `~/.config/piren/config.yml` with its own `allowed_agents` and `excluded_agents`, so sharing a vault never grants execution authority on a machine. An installation runs only the agents its local policy permits, and only when you start it.
 
-Pointing two devices at one vault does not make one machine take over another machine's process. When a device disappears, work does not fail over by itself. An eligible device that is running the scheduler with an automation class enabled can claim eligible pending work, but only after the existing active-device and stale-heartbeat rules permit it. Claims are visible vault file renames and always claim-first, so two devices never silently pick up the same item.
+Pointing two devices at one vault does not make one machine take over another machine's process. When a device disappears, work does not fail over by itself. An eligible device that is running the scheduler with an automation class enabled can claim eligible pending work, but only after the existing active-device and stale-heartbeat rules permit it. Claims are visible vault file renames and always claim-first.
 
 What does not happen:
 
