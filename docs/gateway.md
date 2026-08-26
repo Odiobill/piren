@@ -54,14 +54,16 @@ The Workbench is Piren's steward-facing, Conversation-native workspace. It provi
 
 - a responsive app shell: the **Dashboard** default page (local-policy agent roster plus explicit single-agent and peer Conversation start), a persistent desktop sidebar for switching Conversations, and a mobile/portrait hamburger drawer
 - public auth probe and an in-memory Bearer token entry when the gateway requires one; a rejected token returns to the entry without being persisted
-- the Conversation surface: an immutable whole-history timeline plus a scoped live stream, with a Discord-like raw-text composer on the active surface (Enter submits, Shift+Enter newline, IME-safe, and a `@` mention convenience list that inserts text only)
+- the Conversation surface: an immutable whole-history timeline plus a scoped live stream, with a Discord-like raw-text composer on the active surface (Enter submits, Shift+Enter newline, IME-safe, a `@` mention convenience list that inserts text only, a disabled `+` upload affordance, a details icon, and a page-local Enter-vs-Ctrl+Enter submit toggle)
 - runnable-roster-gated attach: a Conversation opens active only when every durable member is locally runnable; otherwise it stays visibly read-only inspection with history only, no composer, and no live stream
 - broker-authoritative transient live activity: `<agent> is working…` only after the durable `run_started`, `<agent> is typing…` only after a real Pi text delta, with a bounded plain-text streamed tail and sanitized tool lines; activity cards clear on terminal/error/reconnect/history reread and are never reconstructed from history or shown in read-only inspection
 - composer interlock: while a Conversation has live agent work or a pending approval, the composer is read-only with a visible reason and preserves any unsent draft until the work settles
+- per-agent **Context cards** below the composer: session-only context usage with an explicit Refresh only, held in browser memory and cleared on reload
 - a read-only **Vault Explorer** companion beside the selected Conversation (or full-page with no selection) over the existing vault list/read routes; no writes, no cache authority, and no Knowledge Graph presentation
 - a full-page typed **Settings** module (see [Settings](#settings))
 - a focus-managed **Conversation details** modal with the editable title, metadata, and the Archive/Reopen controls
 - stable `#conversation/<id>` deep links that re-read the manifest and re-run the attach gate on load and Back/Forward
+- switching views keeps the Conversation navigator mounted; a view change never cancels a conversation run
 - a per-agent run deadline: 60 minutes by default, configurable per vault via `workbench.yml` `conversation.run_timeout_seconds`; see [Configuration](configuration.md#workbench-config-workbenchyml)
 
 The Workbench intentionally has no live-session model or thinking controls; those API routes stay available for external integrations, and durable model preferences belong to vault agent config.
