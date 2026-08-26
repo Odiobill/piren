@@ -68,34 +68,11 @@ piren init --vault-root /tmp/piren-vault --agent analyst
 
 ## Configure the local installation
 
-The preferred local config is `~/.config/piren/config.yml`:
+A new installation needs local configuration before anything runs. The Workbench Settings page can only edit an existing configuration; it cannot bootstrap one, so create the configuration once from the command line, then manage ongoing changes from the browser.
 
-```yaml
-vault_root: /tmp/piren-vault
-allowed_agents:
-  - piren
-```
+### Interactive first-run setup
 
-You can scaffold it safely:
-
-```bash
-piren setup --apply --vault-root /tmp/piren-vault --agent piren
-```
-
-To configure the first model and provider key in the same non-interactive step:
-
-```bash
-piren setup --apply \
-  --vault-root /tmp/piren-vault \
-  --agent piren \
-  --provider anthropic \
-  --model claude-sonnet-4-6 \
-  --thinking medium \
-  --api-key sk-...
-```
-
-`setup --apply` does not overwrite existing local installation config values. When `--provider` and `--model` are supplied it writes the selected agent's model block; otherwise a fresh agent config is left without a model so Pi can use native defaults. Running `piren setup`
-with no flags launches the minimal first-run flow. It requires `pi` on PATH and
+The guided path is to run `piren setup` with no flags. It requires `pi` on PATH and
 Pi-native auth first, then:
 
 1. Detects an existing vault and asks which agents to enable, or initializes a
@@ -119,6 +96,40 @@ auth, `piren setup --apply` for scripted model provisioning, and
 service targets.
 
 For the full live model list after setup, run `pi --list-models`.
+
+### Scripted setup (`--apply`)
+
+For non-interactive provisioning, scaffold the same configuration in one step:
+
+```bash
+piren setup --apply --vault-root /tmp/piren-vault --agent piren
+```
+
+To configure the first model and provider key at the same time:
+
+```bash
+piren setup --apply \
+  --vault-root /tmp/piren-vault \
+  --agent piren \
+  --provider anthropic \
+  --model claude-sonnet-4-6 \
+  --thinking medium \
+  --api-key sk-...
+```
+
+`setup --apply` does not overwrite existing local installation config values. When `--provider` and `--model` are supplied it writes the selected agent's model block; otherwise a fresh agent config is left without a model so Pi can use native defaults.
+
+### Manual local config
+
+Hand editing is the reference path, useful for scripted machines or fixing a broken install. Local installation config lives outside the vault at `~/.config/piren/config.yml`; prefer the flows above for everyday changes:
+
+```yaml
+vault_root: /tmp/piren-vault
+allowed_agents:
+  - piren
+```
+
+See [Configuration](configuration.md) for the full file format.
 
 ## Add an optional messaging transport
 
@@ -207,7 +218,7 @@ If no model is configured in `team/<agent>/config.yml`, Pi falls back to its nat
 piren gateway
 ```
 
-Open `http://127.0.0.1:7317/`. The Workbench offers the Dashboard, Conversations, the read-only Vault Explorer, and a typed Settings page; see [Gateway and web UI](gateway.md).
+Open `http://127.0.0.1:7317/`. The Workbench offers the Dashboard, Conversations, the read-only Vault Explorer, and a typed Settings page; see [Gateway and web UI](gateway.md). Once the gateway is running, that Settings page is the easiest place for ongoing configuration such as transport tokens, scheduler automation classes, and per-agent preferences.
 
 For LAN exposure, bind a non-localhost address and use a token:
 

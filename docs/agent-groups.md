@@ -4,7 +4,31 @@ Agent groups let you share a skill set and a fallback policy between agents with
 
 Fallback recommendations are read-only and diagnostic: they report and recommend, but do not reassign work automatically. Approval is always required before a task changes hands.
 
-## Group configuration
+## Managing groups
+
+All management paths edit the same vault-owned files; choose whichever fits how you work. Nothing here assigns work, reroutes tasks, or changes which agents a machine may run.
+
+### Manage groups in the Workbench
+
+With the gateway running, the Settings module's **Agent groups** tab is the easiest path: typed workflows for listing, showing, creating, and editing groups, including adding and removing members and setting each member's ordered fallback list, plus a read-only cross-group validation report. Writes are revision-checked and atomic; create, remove-member, and fallback-set changes ask for explicit confirmation before anything is written. Membership comes from the vault-defined `team/<agent>/` roster only, members that are not locally runnable on this installation are visibly marked rather than actionable, and no group action mutates local runnable policy. See [Gateway and web UI](gateway.md#settings).
+
+### Manage groups with the `piren group` command
+
+For terminals and scripts, the `piren group` command covers the same lifecycle without hand-editing YAML:
+
+```bash
+piren group list                              # all groups and members
+piren group show research                     # one group's config and skills
+piren group create research                   # scaffold config.yml + skills/
+piren group add-agent research analyst        # add an existing vault agent
+piren group remove-agent research analyst     # remove a member
+piren group fallback set reviewer analyst writer  # ordered fallback for reviewer
+piren group validate                          # read-only cross-group report
+```
+
+`create` refuses to touch an existing group unless you pass `--force`. `fallback set` replaces the whole candidate list for that member and refuses a member that is not in the group. `validate` reports missing configs, dangling fallback references, missing agent directories, and duplicate-across-group notes, and exits non-zero only on error-severity issues.
+
+### Group configuration reference
 
 A group lives under `agent-groups/<group>/`. Group membership and fallback order are declared in `agent-groups/<group>/config.yml`:
 

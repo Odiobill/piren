@@ -170,9 +170,20 @@ A claimed task requires manual triage: it may be active, interrupted, or ambiguo
 
 The `authority:` line for each category is fixed and non-action: triage states the vault-state uncertainty; invalid retry metadata states Piren will not infer it (the task stays unclaimable); exhausted attempts state Piren will not automatically requeue them; and cycles state Piren leaves affected tasks fail-closed rather than infer a dependency repair. The `next:` line is always the single read command `piren task show <path>`; follow the relevant section below for the governing procedure. An empty report (no findings) prints no `authority:`/`next:` lines and the same footer.
 
+## Guided configuration (`piren scheduler configure`)
+
+If the Workbench is running, the easiest path is the Scheduler tab of the Settings module: the same closed inventory of fields over the same atomic, fail-closed write discipline, and saving never installs, starts, stops, or ticks anything (a retired-key legacy gate state renders read-only there and refuses saves until migrated). From the command line, `piren scheduler configure` is an interactive, guided writer for the `scheduler:` block (the same pattern as `piren telegram configure`) and the **only** writer that can clear a gated retired key:
+
+1. It displays the **current effective state** resolved from your existing config (all classes off on fresh installs; a retired-key legacy block shows its bounded inert/gated notice).
+2. It prompts for exactly the closed inventory: the three automation classes, poll/stale/concurrency values, and an optional device id (blank keeps the sanitized-hostname fallback); the retired `scheduler.enabled` key is never prompted for.
+3. It shows a bounded **preview** of the exact scheduler block, then requires an explicit **confirmation**.
+4. Only then does it write **atomically** (temp file plus rename), preserving every unrelated block (`telegram:`, `discord:`, `allowed_agents`, and so on) and any unknown scheduler fields. Confirming over a gated legacy block removes the stale `scheduler.enabled` key and writes your explicit class choices; the migration never turns a disabled class on by itself.
+
+Cancellation, a malformed existing config, invalid input, or a write failure leaves the old config **byte-for-byte intact**. The flow never starts or installs a service, never runs or ticks the scheduler, never contacts a platform, and never writes the vault. Installing/starting the service remains a separate explicit action (`piren service install scheduler`).
+
 ## Local scheduler config
 
-Scheduler runtime config is local installation authority and lives in `~/.config/piren/config.yml` under `scheduler:`. It is never placed in the vault, agent `SOUL.md`, Web UI, gateway state, or `.env` files.
+Scheduler runtime config is local installation authority and lives in `~/.config/piren/config.yml` under `scheduler:`. It is never placed in the vault, agent `SOUL.md`, Web UI, gateway state, or `.env` files. This section is the raw file reference; prefer the guided paths above for everyday changes.
 
 ```yaml
 vault_root: /path/to/vault
@@ -195,17 +206,6 @@ scheduler:
 Defaults are fail-closed: absent `automation` keys resolve **off**, and present-but-malformed values fail closed with deterministic non-secret warnings. A retired `scheduler.enabled` key has no meaning as a gate: `true` is inert-to-ignore, and `false` or a malformed value gates every class off (fail closed) until the operator-confirmed `piren scheduler configure` migration removes the stale key. Settings and doctor surface that state read-only; neither migrates it. Interval values default to 30s poll, 300s stale-after, effective concurrency 1; invalid/non-positive values fall back deterministically with warnings in the loop's startup summary. An explicit `device_id` is passed verbatim (not sanitized); when absent, the loop uses a sanitized-hostname fallback so hosts like `workstation` or `workstation.local` work out of the box.
 
 The loop reads this config once at startup; each tick re-reads local config for `vault_root` and `allowed_agents`, so agent-set changes take effect without restarting the scheduler.
-
-## Guided configuration (`piren scheduler configure`)
-
-`piren scheduler configure` is an interactive, guided writer for the `scheduler:` block (the same pattern as `piren telegram configure`) and the **only** writer that can clear a gated retired key:
-
-1. It displays the **current effective state** resolved from your existing config (all classes off on fresh installs; a retired-key legacy block shows its bounded inert/gated notice).
-2. It prompts for exactly the closed inventory: the three automation classes, poll/stale/concurrency values, and an optional device id (blank keeps the sanitized-hostname fallback); the retired `scheduler.enabled` key is never prompted for.
-3. It shows a bounded **preview** of the exact scheduler block, then requires an explicit **confirmation**.
-4. Only then does it write **atomically** (temp file plus rename), preserving every unrelated block (`telegram:`, `discord:`, `allowed_agents`, and so on) and any unknown scheduler fields. Confirming over a gated legacy block removes the stale `scheduler.enabled` key and writes your explicit class choices; the migration never turns a disabled class on by itself.
-
-Cancellation, a malformed existing config, invalid input, or a write failure leaves the old config **byte-for-byte intact**. The flow never starts or installs a service, never runs or ticks the scheduler, never contacts a platform, and never writes the vault. Installing/starting the service remains a separate explicit action (`piren service install scheduler`).
 
 ## Device ownership model
 

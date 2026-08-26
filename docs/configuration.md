@@ -68,6 +68,8 @@ team/<agent>/config.yml
 
 Use it for runtime preferences such as model and polling. Do not put `allowed_agents` here.
 
+With the gateway running, the Workbench Settings **Agent settings** tab is the easiest way to edit these preferences (model and fallback, context injection, self-improvement); it writes this same file through typed, atomic workflows and never changes a live session. This section documents the file format.
+
 Model examples:
 
 ```yaml
@@ -241,7 +243,7 @@ Gateway token can be passed through `--token`, `PIREN_TOKEN`, or `~/.config/pire
 
 ## Scheduler config
 
-The device-local scheduler is **disabled by default** and configured under `scheduler:` in the same local file:
+The device-local scheduler is **disabled by default** and configured under `scheduler:` in the same local file. Preferred paths first: the Workbench Settings **Scheduler** tab or `piren scheduler configure` (guided, and the only writer that can clear a gated retired key). The block below is the file reference:
 
 ```yaml
 scheduler:
