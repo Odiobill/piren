@@ -383,9 +383,11 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(resolve).toMatch(/path traversal/);
     });
 
-    it("checks out the exact resolved tag, never the default branch", () => {
+    it("checks out the exact resolved tag in refs/tags, never the default branch or a bare ref", () => {
       const checkout = wf.jobs?.verify?.steps?.find((s) => s.uses === "actions/checkout@v4");
-      expect(checkout?.with?.ref).toBe("${{ steps.resolve-tag.outputs.release_tag }}");
+      const ref = checkout?.with?.ref ?? "";
+      expect(ref).toBe("refs/tags/${{ steps.resolve-tag.outputs.release_tag }}");
+      expect(ref).toContain("refs/tags/");
     });
 
     it("feeds the resolved tag into version agreement, not the caller ref", () => {

@@ -73,7 +73,7 @@ jobs:
       - name: Checkout exact release tag source
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.resolve-tag.outputs.release_tag }}
+          ref: refs/tags/${{ steps.resolve-tag.outputs.release_tag }}
 
       - name: Setup Node 22.14.0 (trusted-publishing floor) with npm lockfile cache
         uses: actions/setup-node@v4
