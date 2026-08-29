@@ -47,6 +47,7 @@ import {
   deriveConversationWorkflowState,
   parseConversationHandoffRequest,
   planConversationHandoffEdge,
+  resolveLatestRunWorkflowAssociation,
   type ConversationHandoffRequest,
 } from "./conversation-handoff.js";
 import {
@@ -523,6 +524,39 @@ export function parseConversationApprovalResponse(value: unknown): ExtensionUiRe
  * browser-derived workflow/usage/run facts are accepted — the broker derives
  * everything from the durable event chain under the mutation lock.
  */
+/**
+ * B4: derived per-root budget facts exposed by the status/budgets reads.
+ * All values are broker-derived from durable records — never browser state.
+ */
+export type AgentWorkflowBudgetFacts = {
+  root_event_id: string;
+  association: "active-run" | "latest-run";
+  base: HandoffBudgetValue;
+  effective: HandoffBudgetValue;
+  consumed: { edges: number };
+  worstPairOccurrences: number;
+  low: boolean;
+  exhausted: boolean;
+  warnings: string[];
+};
+
+/** B4 closed status shape (contract §4.1). */
+export type AgentWorkflowStatus =
+  | { run_active: boolean; workflow: null }
+  | { run_active: boolean; workflow: AgentWorkflowBudgetFacts };
+
+/** B4: one durable workflow root's budget view (durable sequence order). */
+export type ConversationWorkflowBudgetRootView = Omit<AgentWorkflowBudgetFacts, "association">;
+
+/** B4: conversation-wide budgets read with the server-resolved association map. */
+export type ConversationWorkflowBudgetsView = {
+  roots: ConversationWorkflowBudgetRootView[];
+  association: Record<string, { root_event_id: string; association: "active-run" | "latest-run" } | null>;
+};
+
+/** Bounded number of durable roots the budgets read derives (contract: bounded roots). */
+export const WORKFLOW_BUDGETS_MAX_ROOTS = 20;
+
 export type ConversationBudgetUpdateInput = {
   conversationId: string;
   /** The exact workflow root steward_message event id. */
@@ -1970,6 +2004,95 @@ export class ConversationBroker {
     } finally {
       await lock.release();
     }
+  }
+
+  /** Shared derivation: usage + durable B2 evidence -> B1 facts for one root. */
+  private deriveRootBudgetFacts(events: readonly ConversationEventRecord[], rootEventId: string, association: "active-run" | "latest-run"): AgentWorkflowBudgetFacts {
+    const workflow = deriveConversationWorkflowState(events, rootEventId);
+    let worstPairOccurrences = 0;
+    for (const occurrences of workflow.pairOccurrences.values()) {
+      if (occurrences > worstPairOccurrences) worstPairOccurrences = occurrences;
+    }
+    const budget = deriveHandoffBudget({
+      rootEventId,
+      updates: events
+        .filter((event) => event.kind === "handoff_budget_updated")
+        .map((event) => handoffBudgetEvidenceFromRecord(event, rootEventId)),
+      usage: { consumedEdges: workflow.edges.length, worstPairOccurrences },
+    });
+    return {
+      root_event_id: rootEventId,
+      association,
+      base: { ...budget.base },
+      effective: { ...budget.effective },
+      consumed: { edges: workflow.edges.length },
+      worstPairOccurrences,
+      low: budget.low,
+      exhausted: budget.exhausted,
+      warnings: budget.ignored.map((entry) => entry.reason),
+    };
+  }
+
+  /**
+   * B4: broker-authoritative per-agent workflow status for one exact
+   * `conversation × agent` pair. `run_active` is an independent snapshot
+   * over EVERY run type (including non-C5 agent-first runs); the workflow
+   * association precedence is active/deferred C5 run first, then the most
+   * recent durably attributed run event, then null. All facts derive from
+   * durable records through the B1 pure core — never from browser input.
+   */
+  async getAgentWorkflowStatus(conversationId: string, agent: string): Promise<AgentWorkflowStatus> {
+    const key = `${conversationId}:${agent}`;
+    const activeRun = this.activeRuns.get(key);
+    const runActive = activeRun !== undefined;
+    const events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+    let rootEventId: string | undefined;
+    let association: "active-run" | "latest-run" | undefined;
+    if (activeRun?.c5?.rootEventId !== undefined) {
+      rootEventId = activeRun.c5.rootEventId;
+      association = "active-run";
+    } else {
+      const latest = resolveLatestRunWorkflowAssociation(events, agent);
+      if (latest !== null) {
+        rootEventId = latest.rootEventId;
+        association = "latest-run";
+      }
+    }
+    if (rootEventId === undefined || association === undefined) {
+      return { run_active: runActive, workflow: null };
+    }
+    return { run_active: runActive, workflow: this.deriveRootBudgetFacts(events, rootEventId, association) };
+  }
+
+  /**
+   * B4: conversation-wide budgets read — every durable workflow root in
+   * durable sequence order (bounded to the most recent
+   * WORKFLOW_BUDGETS_MAX_ROOTS) plus the server-resolved per-agent
+   * association map for the durable audience. No client root selection.
+   */
+  async getConversationWorkflowBudgets(conversationId: string): Promise<ConversationWorkflowBudgetsView> {
+    const manifest = await this.conversationReader({ vaultRoot: this.vaultRoot, conversationId });
+    const events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+    const stewardRoots = events
+      .filter((event) => event.kind === "steward_message")
+      .sort((a, b) => a.sequence - b.sequence);
+    const boundedRoots = stewardRoots.slice(-WORKFLOW_BUDGETS_MAX_ROOTS);
+    const roots = boundedRoots.map((rootEvent) => {
+      const facts = this.deriveRootBudgetFacts(events, rootEvent.id, "latest-run");
+      const { association: _association, ...rest } = facts;
+      return rest;
+    });
+    const association: ConversationWorkflowBudgetsView["association"] = {};
+    for (const agent of manifest.audience) {
+      const activeRun = this.activeRuns.get(`${conversationId}:${agent}`);
+      if (activeRun?.c5?.rootEventId !== undefined) {
+        association[agent] = { root_event_id: activeRun.c5.rootEventId, association: "active-run" };
+        continue;
+      }
+      const latest = resolveLatestRunWorkflowAssociation(events, agent);
+      association[agent] = latest === null ? null : { root_event_id: latest.rootEventId, association: "latest-run" };
+    }
+    return { roots, association };
   }
 
   /**

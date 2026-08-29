@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -3400,6 +3400,237 @@ describe("ConversationBroker B3 final correction: test seams never leak the visi
 
     await broker.abort(conversationId, "zai");
     await dispatch;
+    await broker.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B4 — broker-owned workflow association, status, and budgets reads
+// ---------------------------------------------------------------------------
+
+describe("ConversationBroker B4: agent workflow status + budgets reads", () => {
+  async function seedEdgesFor(conversationId: string, stewardEventId: string, count = 2): Promise<void> {
+    const targets = ["dipu", "kimi"];
+    for (let i = 0; i < count; i += 1) {
+      await appendConversationEvent({
+        vaultRoot: root, conversationId, kind: "agent_message", authorKind: "agent", author: "zai",
+        body: `edge ${i}`, addressedAgent: targets[i % targets.length] as string,
+        correlationId: stewardEventId, now: tick, nonce: () => `e${i}`,
+      });
+    }
+  }
+
+  it("active-run precedence: an active C5 root run reports active-run with derived base facts", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    await seedEdgesFor(conversationId, stewardEventId, 2);
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+
+    const status = await broker.getAgentWorkflowStatus(conversationId, "zai");
+    expect(status.run_active).toBe(true);
+    if (status.workflow === null) throw new Error("expected workflow");
+    expect(status.workflow.association).toBe("active-run");
+    expect(status.workflow.root_event_id).toBe(stewardEventId);
+    expect(status.workflow.base).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(status.workflow.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(status.workflow.consumed).toEqual({ edges: 2 });
+    expect(status.workflow.worstPairOccurrences).toBe(1);
+    expect(status.workflow.low).toBe(false);
+    expect(status.workflow.exhausted).toBe(false);
+    expect(status.workflow.warnings).toEqual([]);
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("gate-pending zero-edge root: a pending gate still associates as active-run with consumed 0", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    const status = await broker.getAgentWorkflowStatus(conversationId, "zai");
+    expect(status.run_active).toBe(true);
+    if (status.workflow === null) throw new Error("expected workflow");
+    expect(status.workflow.association).toBe("active-run");
+    expect(status.workflow.consumed).toEqual({ edges: 0 });
+    expect(status.workflow.effective).toEqual({ edges: 8, reworkRounds: 2 });
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("latest-run: a settled attributed root associates durably; a stage run resolves through its handoff to the root", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "handoff to dipu" });
+    clients[0]?.settleCompleted();
+    const outcome = await dispatch;
+    expect(outcome.status).toBe("completed");
+    await waitFor(() => clients.length >= 2 && (clients[1]?.prompts.length ?? 0) > 0);
+    // The child behavior is "complete": it settles on its own.
+    await waitFor(() => !broker.hasActiveRun(conversationId, "dipu"));
+
+    // The source agent's association survives settlement via durable attribution.
+    const status = await broker.getAgentWorkflowStatus(conversationId, "zai");
+    expect(status.run_active).toBe(false);
+    if (status.workflow === null) throw new Error("expected workflow for zai");
+    expect(status.workflow.association).toBe("latest-run");
+    expect(status.workflow.root_event_id).toBe(stewardEventId);
+
+    // The stage agent (dipu) resolves through its handoff agent_message to the root.
+    const childStatus = await broker.getAgentWorkflowStatus(conversationId, "dipu");
+    expect(childStatus.run_active).toBe(false);
+    if (childStatus.workflow === null) throw new Error("expected workflow for dipu");
+    expect(childStatus.workflow.association).toBe("latest-run");
+    expect(childStatus.workflow.root_event_id).toBe(stewardEventId);
+    await broker.close();
+  });
+
+  it("no association: an audience agent with no runs and no attributed history reports workflow null", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai", "dipu"], "Hello @zai @dipu");
+    await makeStewardEvent(conversationId, "Context only");
+    const status = await broker.getAgentWorkflowStatus(conversationId, "dipu");
+    expect(status).toEqual({ run_active: false, workflow: null });
+    await broker.close();
+  });
+
+  it("busy independence: a non-C5 agent-first active run reports run_active true with workflow null", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang"] });
+    const conversationId = await makeConversation(["zai", "dipu"], "Hello @zai @dipu");
+    const origin = await appendConversationEvent({
+      vaultRoot: root, conversationId, kind: "conversation_start_requested",
+      authorKind: "system", author: "system", body: "Agent-first start.", now: tick, nonce: () => "o1",
+    });
+    const runPromise = broker.startConversationAgentRun({ conversationId, agent: "dipu", originEventId: origin.id });
+    await waitFor(() => broker.hasActiveRun(conversationId, "dipu"));
+
+    const status = await broker.getAgentWorkflowStatus(conversationId, "dipu");
+    expect(status.run_active).toBe(true);
+    expect(status.workflow).toBeNull();
+
+    await broker.abort(conversationId, "dipu");
+    await runPromise;
+    await broker.close();
+  });
+
+  it("unattributed child launch-failure terminal gives no historical association", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai", "dipu"], "Hello @zai @dipu");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const handoff = await appendConversationEvent({
+      vaultRoot: root, conversationId, kind: "agent_message", authorKind: "agent", author: "zai",
+      body: "handoff to dipu", addressedAgent: "dipu", correlationId: stewardEventId, now: tick, nonce: () => "h1",
+    });
+    // A launch-failure terminal for the child carries NO runAgent attribution.
+    await appendConversationEvent({
+      vaultRoot: root, conversationId, kind: "run_finished", authorKind: "system", author: "system",
+      body: "The handoff child could not be started.", runStatus: "failed", failureKind: "launch_failure",
+      correlationId: handoff.id, now: tick, nonce: () => "lf1",
+    });
+    const status = await broker.getAgentWorkflowStatus(conversationId, "dipu");
+    expect(status).toEqual({ run_active: false, workflow: null });
+    await broker.close();
+  });
+
+  it("budgets read: every durable root in sequence order with per-root derivation and the association map", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai", "dipu"], "Hello @zai @dipu");
+    const rootOne = await makeStewardEvent(conversationId, "First workflow");
+    await seedEdgesFor(conversationId, rootOne, 1);
+    const rootTwo = await makeStewardEvent(conversationId, "Second workflow");
+    await seedEdgesFor(conversationId, rootTwo, 2);
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId: rootOne, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+
+    const view = await broker.getConversationWorkflowBudgets(conversationId);
+    expect(view.roots.map((r) => r.root_event_id)).toEqual([rootOne, rootTwo]);
+    expect(view.roots[0]?.consumed).toEqual({ edges: 1 });
+    expect(view.roots[1]?.consumed).toEqual({ edges: 2 });
+    expect(view.association["zai"]).toEqual({ root_event_id: rootOne, association: "active-run" });
+    expect(view.association["dipu"]).toBeNull();
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("reopened conversation: latest-run association persists across archive/reopen from durable events", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "handoff to dipu" });
+    clients[0]?.settleCompleted();
+    await dispatch;
+    await waitFor(() => !broker.hasActiveRun(conversationId, "dipu"));
+    await transitionConversationLifecycle({ vaultRoot: root, conversationId, transition: "archive", now: tick });
+    await transitionConversationLifecycle({ vaultRoot: root, conversationId, transition: "reopen", now: tick });
+
+    const status = await broker.getAgentWorkflowStatus(conversationId, "zai");
+    expect(status.run_active).toBe(false);
+    if (status.workflow === null) throw new Error("expected workflow");
+    expect(status.workflow.association).toBe("latest-run");
+    expect(status.workflow.root_event_id).toBe(stewardEventId);
+    await broker.close();
+  });
+
+  it("invalid durable budget evidence surfaces as bounded warnings without widening the effective budget", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    // Hand-write a value-level malformed budget record (B1 fails it closed).
+    const eventsDir = join(root, "collaboration", "conversations", conversationId, "events");
+    const seq = (await readdir(eventsDir)).length + 1;
+    await writeFile(
+      join(eventsDir, `${String(seq).padStart(8, "0")}.md`),
+      [
+        "---",
+        "type: Conversation Event",
+        `id: 20260805T140000001Z-bad`,
+        `conversationId: ${conversationId}`,
+        "kind: handoff_budget_updated",
+        "authorKind: steward",
+        "author: steward",
+        "created: 2026-08-05T14:00:00.000Z",
+        `sequence: ${seq}`,
+        `correlationId: ${stewardEventId}`,
+        `handoffBudget: '${JSON.stringify({ edges: { from: "8", to: 12 } })}'`,
+        "---",
+        "",
+        "Hand-edited malformed values.",
+        "",
+      ].join("\n"),
+    );
+    // The budgets read derives EVERY durable root regardless of association,
+    // so the malformed evidence surfaces here as a bounded warning.
+    const view = await broker.getConversationWorkflowBudgets(conversationId);
+    expect(view.roots).toHaveLength(1);
+    expect(view.roots[0]?.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(view.roots[0]?.warnings).toHaveLength(1);
+    expect(view.roots[0]?.warnings[0]).toContain("finite integers");
     await broker.close();
   });
 });
