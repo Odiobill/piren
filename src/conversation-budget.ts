@@ -55,6 +55,8 @@ export interface HandoffBudgetUpdateEvidence {
   sequence: number;
   /** Must be exactly the budget-update kind. */
   kind: string;
+  /** Must be exactly the durable steward author identity. */
+  author: string;
   /** Must be exactly the steward author kind: only stewards raise budgets. */
   authorKind: string;
   /** The deriving workflow root this update claims to target. */
@@ -112,6 +114,7 @@ export interface DerivedHandoffBudget {
 }
 
 const HANDOFF_BUDGET_UPDATE_KIND = "handoff_budget_updated";
+const HANDOFF_BUDGET_AUTHOR = "steward";
 const HANDOFF_BUDGET_AUTHOR_KIND = "steward";
 /** Contract §2.4: the low threshold for remaining edges. */
 const HANDOFF_BUDGET_LOW_EDGES_REMAINING = 2;
@@ -223,12 +226,30 @@ export function deriveHandoffBudget(input: {
   const ignored: IgnoredHandoffBudgetUpdate[] = [];
 
   const ordered = [...input.updates].sort((a, b) => a.sequence - b.sequence);
+
+  // Duplicate durable identity/order is corrupt/replay evidence and fails
+  // closed as a whole group (contract §3.2; B1 correction): a durable event
+  // id or a durable sequence position identifies exactly one record. Counts
+  // are computed over usable identities/sequences only, so the rejection is
+  // deterministic and caller-order-independent.
+  const identityCounts = new Map<string, number>();
+  const sequenceCounts = new Map<number, number>();
+  for (const update of ordered) {
+    if (typeof update.eventId === "string" && update.eventId !== "") {
+      identityCounts.set(update.eventId, (identityCounts.get(update.eventId) ?? 0) + 1);
+    }
+    if (isFiniteInteger(update.sequence) && (update.sequence as number) >= 1) {
+      const seq = update.sequence as number;
+      sequenceCounts.set(seq, (sequenceCounts.get(seq) ?? 0) + 1);
+    }
+  }
+
   for (const update of ordered) {
     const sequence: number | null = isFiniteInteger(update.sequence) && update.sequence >= 1 ? update.sequence : null;
     const eventId = typeof update.eventId === "string" && update.eventId !== "" ? update.eventId : "(unidentified)";
 
-    // Shape validity: usable identity, exact kind, steward authorship,
-    // exact-root correlation.
+    // Shape validity: usable identity, exact kind, durable steward author
+    // identity and kind, exact-root correlation.
     if (eventId === "(unidentified)") {
       ignored.push({ eventId, sequence: null, reason: "budget update evidence id is missing or malformed" });
       continue;
@@ -237,11 +258,19 @@ export function deriveHandoffBudget(input: {
       ignored.push({ eventId, sequence, reason: "budget update sequence is malformed" });
       continue;
     }
+    if ((identityCounts.get(update.eventId) ?? 0) > 1) {
+      ignored.push({ eventId, sequence, reason: "duplicate evidence identity (replay or corruption); the whole group is rejected" });
+      continue;
+    }
+    if ((sequenceCounts.get(update.sequence as number) ?? 0) > 1) {
+      ignored.push({ eventId, sequence, reason: "duplicate durable sequence (corrupt ordering); the whole sequence group is rejected" });
+      continue;
+    }
     if (update.kind !== HANDOFF_BUDGET_UPDATE_KIND) {
       ignored.push({ eventId, sequence, reason: "evidence kind is not a budget update" });
       continue;
     }
-    if (update.authorKind !== HANDOFF_BUDGET_AUTHOR_KIND) {
+    if (update.author !== HANDOFF_BUDGET_AUTHOR || update.authorKind !== HANDOFF_BUDGET_AUTHOR_KIND) {
       ignored.push({ eventId, sequence, reason: "budget updates are steward-authored only" });
       continue;
     }

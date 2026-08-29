@@ -16,6 +16,7 @@ function evidence(overrides: Partial<HandoffBudgetUpdateEvidence> = {}): Handoff
     eventId: "u1",
     sequence: 1,
     kind: "handoff_budget_updated",
+    author: "steward",
     authorKind: "steward",
     rootEventId: ROOT,
     correlationId: ROOT,
@@ -204,7 +205,7 @@ describe("conversation-budget: fail-closed evidence (B1 §3.2)", () => {
     expect(empty.ignored).toHaveLength(1);
   });
 
-  it("ignores evidence with a wrong root, correlation, author kind, or event kind", () => {
+  it("ignores evidence with a wrong root, correlation, author, author kind, or event kind", () => {
     const wrongRoot = deriveWith({ rootEventId: "other-root" });
     expect(wrongRoot.effective).toEqual({ edges: 8, reworkRounds: 2 });
     expect(wrongRoot.ignored).toHaveLength(1);
@@ -213,9 +214,15 @@ describe("conversation-budget: fail-closed evidence (B1 §3.2)", () => {
     expect(wrongCorrelation.effective).toEqual({ edges: 8, reworkRounds: 2 });
     expect(wrongCorrelation.ignored).toHaveLength(1);
 
-    const wrongAuthor = deriveWith({ authorKind: "agent" });
+    const wrongAuthor = deriveWith({ author: "someone-else" });
     expect(wrongAuthor.effective).toEqual({ edges: 8, reworkRounds: 2 });
     expect(wrongAuthor.ignored).toHaveLength(1);
+    expect(wrongAuthor.ignored[0]?.reason).toContain("steward");
+    expect(wrongAuthor.ignored[0]?.reason).not.toContain("someone-else");
+
+    const wrongAuthorKind = deriveWith({ authorKind: "agent" });
+    expect(wrongAuthorKind.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(wrongAuthorKind.ignored).toHaveLength(1);
 
     const wrongKind = deriveWith({ kind: "agent_message" });
     expect(wrongKind.effective).toEqual({ edges: 8, reworkRounds: 2 });
@@ -263,6 +270,78 @@ describe("conversation-budget: fail-closed evidence (B1 §3.2)", () => {
     expect(derived.effective).toEqual({ edges: 11, reworkRounds: 2 });
     expect(derived.validUpdateEventIds).toEqual(["u1", "u3"]);
     expect(derived.ignored.map((i) => i.eventId)).toEqual(["u2"]);
+  });
+});
+
+describe("conversation-budget: duplicate durable identity/order fail closed (B1 correction)", () => {
+  it("a replayed eventId at a later sequence with a chained from never produces a second raise", () => {
+    const replayed = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [
+        evidence({ eventId: "u1", sequence: 1, edges: { from: 8, to: 10 } }),
+        evidence({ eventId: "u1", sequence: 2, edges: { from: 10, to: 12 } }),
+      ],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    // Durable identity is one record: both occurrences are rejected as a
+    // group (safe fail-closed policy) and the budget never widens.
+    expect(replayed.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(replayed.validUpdateEventIds).toEqual([]);
+    expect(replayed.ignored.map((i) => i.eventId).sort()).toEqual(["u1", "u1"]);
+    for (const entry of replayed.ignored) {
+      expect(entry.reason).toContain("duplicate");
+    }
+  });
+
+  it("conflicting records at the same valid sequence reject the whole sequence regardless of input order", () => {
+    const updates = [
+      evidence({ eventId: "u1", sequence: 1, edges: { from: 8, to: 10 } }),
+      evidence({ eventId: "u2", sequence: 1, edges: { from: 8, to: 12 } }),
+    ];
+    const forward = deriveHandoffBudget({ rootEventId: ROOT, updates, usage: { consumedEdges: 0, worstPairOccurrences: 0 } });
+    const backward = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [...updates].reverse(),
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    for (const derived of [forward, backward]) {
+      expect(derived.effective).toEqual({ edges: 8, reworkRounds: 2 });
+      expect(derived.validUpdateEventIds).toEqual([]);
+      expect(derived.ignored).toHaveLength(2);
+      for (const entry of derived.ignored) {
+        expect(entry.reason).toContain("sequence");
+      }
+    }
+    expect(forward.ignored.map((i) => i.eventId).sort()).toEqual(backward.ignored.map((i) => i.eventId).sort());
+  });
+
+  it("later valid uniquely identified and ordered evidence still applies after an unrelated duplicate group", () => {
+    const derived = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [
+        evidence({ eventId: "u1", sequence: 1, edges: { from: 8, to: 10 } }),
+        evidence({ eventId: "u1", sequence: 2, edges: { from: 10, to: 12 } }),
+        evidence({ eventId: "u3", sequence: 3, edges: undefined, reworkRounds: { from: 2, to: 3 } }),
+      ],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    // The u1 group is rejected; u3 is uniquely identified/ordered and applies.
+    expect(derived.effective).toEqual({ edges: 8, reworkRounds: 3 });
+    expect(derived.validUpdateEventIds).toEqual(["u3"]);
+    expect(derived.ignored.map((i) => i.eventId)).toEqual(["u1", "u1"]);
+  });
+
+  it("reasons never echo the conflicting values", () => {
+    const derived = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [
+        evidence({ eventId: "u1", sequence: 1, edges: { from: 8, to: 10 } }),
+        evidence({ eventId: "u2", sequence: 1, edges: { from: 8, to: 24 } }),
+      ],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    const reasons = derived.ignored.map((i) => i.reason).join("\n");
+    expect(reasons).not.toContain("24");
   });
 });
 
