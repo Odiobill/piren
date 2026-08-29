@@ -116,23 +116,30 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-describe("SplitWorkspaceShell: pass-through (closed / no companion)", () => {
-  it("closed with a companion is a DOM pass-through of the chat only", async () => {
+describe("SplitWorkspaceShell: closed-state layout equivalence (W1 fix)", () => {
+  it("closed with a companion renders the stable closed shell: chat in the pane path, no companion surface, resizer hidden", async () => {
     const { chat, companion, separator } = await renderShell();
-    expect(container.querySelector(".split-workspace")).toBeNull();
-    expect(chat).not.toBeNull();
+    // The stable-tree shell always renders; closed mode is the `split-closed`
+    // layout-neutralized variant (display: contents — layout-equivalent to
+    // the old pass-through), so the live chat instance is never remounted.
+    expect(container.querySelector(".split-workspace.split-closed")).not.toBeNull();
+    expect(container.querySelector(".split-workspace:not(.split-closed)")).toBeNull();
+    expect(chat?.closest(".split-closed > .split-chat-pane")).not.toBeNull();
     expect(companion).toBeNull();
-    expect(separator).toBeNull();
+    // Resizer exists in the stable tree but is hidden (non-interactive).
+    expect(separator).not.toBeNull();
+    expect(separator?.closest<HTMLElement>(".split-resizer-host")?.hidden).toBe(true);
     expect(container.children.length).toBe(1);
-    expect(container.firstElementChild?.className).toBe("fake-chat");
+    expect(container.firstElementChild?.className).toBe("split-workspace split-closed");
   });
 
-  it("open without a companion is still a pass-through (no placeholder surface in W1)", async () => {
+  it("open without a companion is still the closed shell (no placeholder surface in W1)", async () => {
     const { chat, companion, separator } = await renderShell({ state: openState(), companion: undefined });
-    expect(container.querySelector(".split-workspace")).toBeNull();
+    expect(container.querySelector(".split-workspace.split-closed")).not.toBeNull();
+    expect(container.querySelector(".split-workspace:not(.split-closed)")).toBeNull();
     expect(chat).not.toBeNull();
     expect(companion).toBeNull();
-    expect(separator).toBeNull();
+    expect(separator?.closest<HTMLElement>(".split-resizer-host")?.hidden).toBe(true);
   });
 
   it("does not install viewport listeners or media observers while the inert shell is a pass-through", async () => {

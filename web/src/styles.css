@@ -2184,6 +2184,29 @@ code {
   min-height: 0;
 }
 
+/* W1 fix (0.2.3): the shell now always renders the same tree so the live
+   Conversation surface is never remounted across closed <-> split Explorer
+   transitions. In the closed state the wrappers neutralize themselves:
+   display: contents makes both the wrapper and the chat pane generate no box
+   of their own, so the Conversation surface's boxes become direct flex
+   children of the workspace panel — layout-equivalent to the previous DOM
+   pass-through in BOTH scroll regimes (conversation-active constrained pane
+   and no-selection document flow). The companion chrome is removed from
+   layout and the accessibility tree exactly as before. */
+.split-workspace.split-closed {
+  display: contents;
+}
+
+.split-closed .split-chat-pane {
+  display: contents;
+}
+
+.split-closed .split-companion-pane,
+.split-closed .split-mobile-toggle,
+.split-closed .split-resizer-host {
+  display: none;
+}
+
 .split-companion-pane {
   flex: 1 1 0;
   min-height: 200px;

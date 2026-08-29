@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // React 19 requires the act environment flag for component-test state flushing.
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
-import { act, createElement } from "react";
+import { act, createElement, useState, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { AppShell } from "../web/src/AppShell.js";
 import {
@@ -27,10 +27,29 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
 
 // Capture the navigator props so the test can drive the selection signal.
 let navigatorProps: Record<string, unknown> = {};
+
+/**
+ * W1 probe: a stateful stand-in for the live Conversation surface. Its
+ * internal state ("sampled" once marked) and its DOM node identity model
+ * session-only in-memory Conversation state: a remount resets both.
+ */
+function NavigatorProbe(): ReactElement {
+  const [probe, setProbe] = useState("unset");
+  return createElement(
+    "div",
+    { className: "mock-navigator", "data-probe": probe },
+    createElement(
+      "button",
+      { type: "button", className: "probe-mark", onClick: () => setProbe("sampled") },
+      "probe-mark",
+    ),
+  );
+}
+
 vi.mock("../web/src/ConversationNavigator.js", () => ({
   ConversationNavigator: (props: Record<string, unknown>) => {
     navigatorProps = props;
-    return createElement("div", { className: "mock-navigator" });
+    return createElement(NavigatorProbe);
   },
 }));
 vi.mock("../web/src/DashboardView.js", () => ({
@@ -106,7 +125,10 @@ describe("AppShell Vault Explorer wiring (W2)", () => {
     await renderShell();
     const toggle = toggleButton();
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(container.querySelector(".split-workspace")).toBeNull();
+    // W1 fix: the stable-tree shell renders in closed mode, but only as the
+    // layout-neutralized `split-closed` variant — never an active split.
+    expect(container.querySelector(".split-workspace.split-closed")).not.toBeNull();
+    expect(container.querySelector(".split-workspace:not(.split-closed)")).toBeNull();
   });
 
   it("no selected Conversation: opening shows the full-page Explorer; the chat stays mounted behind; close restores the view and returns focus", async () => {
@@ -122,7 +144,10 @@ describe("AppShell Vault Explorer wiring (W2)", () => {
     const fullpage = container.querySelector<HTMLElement>(".vault-explorer-fullpage");
     expect(fullpage).not.toBeNull();
     expect(fullpage?.hidden).toBe(false);
-    expect(container.querySelector(".split-resizer-host")).toBeNull();
+    // The stable-tree shell stays in closed mode; its resizer host is hidden.
+    expect(container.querySelector(".split-workspace.split-closed")).not.toBeNull();
+    expect(container.querySelector(".split-workspace:not(.split-closed)")).toBeNull();
+    expect(container.querySelector<HTMLElement>(".split-resizer-host")?.hidden).toBe(true);
     expect(document.activeElement).toBe(toggle);
     // The conversations panel is hidden but the Conversation UI stays mounted;
     // the dashboard panel is also hidden while the full-page surface shows.
@@ -229,6 +254,48 @@ describe("AppShell Vault Explorer wiring (W2)", () => {
     // The chat stays mounted underneath (hidden, not unmounted).
     expect(container.querySelector(".split-chat-pane .mock-navigator")).not.toBeNull();
     expect(container.querySelector<HTMLElement>(".split-chat-pane")?.hidden).toBe(true);
+  });
+});
+
+describe("W1 live Conversation mount continuity (0.2.3 W1)", () => {
+  async function markProbe(): Promise<void> {
+    const mark = container.querySelector<HTMLButtonElement>(".mock-navigator .probe-mark");
+    if (mark === null) throw new Error("missing probe mark control");
+    await act(async () => mark.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+  }
+
+  it("opening and closing the Explorer beside the SAME selected Conversation preserves the live Conversation surface (stateful probe + node identity)", async () => {
+    await renderShell();
+    await flush();
+    navigateToSelection();
+    await flush();
+
+    // Record a stateful probe value inside the live Conversation surface.
+    await markProbe();
+    const navigatorNodeBefore = container.querySelector(".mock-navigator");
+    expect(navigatorNodeBefore?.getAttribute("data-probe")).toBe("sampled");
+
+    // Open the Explorer beside the SAME selected Conversation (split mode).
+    const toggle = toggleButton();
+    toggle.focus();
+    await act(async () => toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector(".vault-explorer-fullpage")).toBeNull();
+    expect(container.querySelector(".split-workspace")).not.toBeNull();
+
+    // The SAME live surface instance survives: state value and DOM node identity.
+    const navigatorDuring = container.querySelector(".mock-navigator");
+    expect(navigatorDuring?.getAttribute("data-probe")).toBe("sampled");
+    expect(navigatorDuring).toBe(navigatorNodeBefore);
+
+    // Close: the live surface still survives open/close/return.
+    await act(async () => toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(container.querySelector(".split-workspace.split-closed")).not.toBeNull();
+    const navigatorAfter = container.querySelector(".mock-navigator");
+    expect(navigatorAfter?.getAttribute("data-probe")).toBe("sampled");
+    expect(navigatorAfter).toBe(navigatorNodeBefore);
   });
 });
 

@@ -13,16 +13,20 @@ import { FolderIcon, MessageIcon } from "./icons.js";
 
 /**
  * W1 (0.2.0 scope amendment §3; accepted companion split architecture §2/§4/
- * §6) — the split-shell component. A shell-level layout wrapper only:
- * closed or companion-less it is a DOM pass-through of the chat, so the
- * Conversation lifecycle, selection, SSE, dispatch, approval/abort, composer,
- * timeline, anchoring, focus, and run-summary behavior are untouched. Open
- * with a companion it renders the upper companion pane, the accessible
- * horizontal resizer, and the lower live chat pane (one scroll owner per
- * pane). Mobile/portrait shows one pane at a time via a labelled toggle; the
- * chat stays mounted and live underneath. All state is in-memory; nothing is
- * fetched, stored, or persisted. A resizer commit fires the smallest existing
- * chat content-version re-anchor signal through `onReAnchor` (anchor core
+ * §6) — the split-shell component. A shell-level layout wrapper only.
+ * 0.2.3 W1 fix: the shell renders the SAME tree shape in every mode (closed
+ * mode neutralizes itself via the `split-closed` class), so the live
+ * ConversationNavigator instance and its session-only state survive closed
+ * Explorer <-> split Explorer transitions. Closed mode is otherwise a
+ * layout-equivalent pass-through: the Conversation lifecycle, selection,
+ * SSE, dispatch, approval/abort, composer, timeline, anchoring, focus, and
+ * run-summary behavior are untouched. Open with a companion it renders the
+ * upper companion pane, the accessible horizontal resizer, and the lower
+ * live chat pane (one scroll owner per pane). Mobile/portrait shows one pane
+ * at a time via a labelled toggle; the chat stays mounted and live
+ * underneath. All state is in-memory; nothing is fetched, stored, or
+ * persisted. A resizer commit fires the smallest existing chat
+ * content-version re-anchor signal through `onReAnchor` (anchor core
  * unchanged).
  */
 
@@ -86,11 +90,22 @@ export function SplitWorkspaceShell({
     return () => mql.removeEventListener("change", apply);
   }, [active]);
 
-  if (!active) return <>{chat}</>;
+  // W1 fix (0.2.3): the shell renders the SAME tree shape in EVERY mode
+  // (same wrapper, same children order, chat as the last child). In the
+  // closed state the companion chrome is hidden and the wrappers neutralize
+  // themselves via the `split-closed` CSS class (display: contents — see
+  // styles.css). This keeps the exact same live ConversationNavigator
+  // instance mounted across closed Explorer <-> split Explorer transitions,
+  // so session-only state (e.g. sampled per-agent telemetry) never resets.
+  // Layout, authority, and a11y behavior are equivalent to the previous DOM
+  // pass-through.
 
-  const { min, max } = splitBounds(availableHeight);
-  const chatPx = chatPaneHeight(state, availableHeight);
-  const hiddenForMobile = (pane: MobileSplitPane): boolean => isMobile && state.mobilePane !== pane;
+  // In the closed state measurement is meaningless: bound the resizer to the
+  // deterministic zero-height defaults (it is hidden and non-interactive).
+  const bounds = splitBounds(active ? availableHeight : 0);
+  const chatPx = chatPaneHeight(state, active ? availableHeight : 0);
+  const hiddenForMobile = (pane: MobileSplitPane): boolean =>
+    active && isMobile && state.mobilePane !== pane;
 
   const commit = (next: number): void => {
     onStateChange(setChatPaneHeight(state, next, availableHeight));
@@ -101,15 +116,18 @@ export function SplitWorkspaceShell({
   };
 
   return (
-    <div className="split-workspace" ref={containerRef}>
+    <div
+      className={active ? "split-workspace" : "split-workspace split-closed"}
+      ref={containerRef}
+    >
       <section
         className="split-companion-pane"
         aria-label={companionLabel}
-        hidden={hiddenForMobile("companion")}
+        hidden={!active || hiddenForMobile("companion")}
       >
-        {companion}
+        {active ? companion : null}
       </section>
-      <div className="split-mobile-toggle" role="group" aria-label="Companion view toggle">
+      <div className="split-mobile-toggle" role="group" aria-label="Companion view toggle" hidden={!active}>
         <button
           type="button"
           aria-pressed={state.mobilePane === "chat"}
@@ -127,12 +145,12 @@ export function SplitWorkspaceShell({
           {companionLabel}
         </button>
       </div>
-      <div className="split-resizer-host">
+      <div className="split-resizer-host" hidden={!active}>
         <SplitResizer
           label={resizerLabel}
           value={chatPx}
-          min={min}
-          max={max}
+          min={bounds.min}
+          max={bounds.max}
           onChange={change}
           onCommit={commit}
         />
@@ -141,7 +159,7 @@ export function SplitWorkspaceShell({
         className="split-chat-pane"
         aria-label={chatLabel}
         hidden={hiddenForMobile("chat")}
-        style={isMobile ? undefined : { flexBasis: `${chatPx}px` }}
+        style={active && !isMobile ? { flexBasis: `${chatPx}px` } : undefined}
       >
         {chat}
       </section>

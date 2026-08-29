@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationNavigator } from "../web/src/ConversationNavigator.js";
+import { SplitWorkspaceShell } from "../web/src/SplitWorkspaceShell.js";
+import { initialSplitWorkspaceState, openSplitWorkspace } from "../web/src/split-workspace.js";
 import { UnauthorizedError, attachConversation, fetchConversation, fetchConversationAgents, fetchConversationTelemetry } from "../web/src/api.js";
 
 /**
@@ -679,5 +681,70 @@ describe("commit-window race guard (T6 final correction, preserved)", () => {
     expect(cardsRow()?.textContent).not.toContain("Refreshing…");
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("W1: sampled telemetry survives Vault Explorer open/close (0.2.3 W1)", () => {
+  // AppShell-faithful stable props/element: production passes stable
+  // callbacks, so the chat element identity does not churn across renders.
+  const NAV_PROPS = {
+    token: "t",
+    onValidated: () => {},
+    onUnauthorized: () => {},
+    onConversationsChanged: () => {},
+  };
+  const CHAT_ELEMENT = createElement(ConversationNavigator, NAV_PROPS);
+
+  function ShellHost({ open }: { open: boolean }) {
+    return createElement(SplitWorkspaceShell, {
+      state: open ? openSplitWorkspace(initialSplitWorkspaceState(), 800) : initialSplitWorkspaceState(),
+      onStateChange: () => {},
+      companion: open ? createElement("div", { className: "mock-explorer" }) : undefined,
+      chat: CHAT_ELEMENT,
+      resizerLabel: "Resize chat pane",
+      chatLabel: "Chat",
+      companionLabel: "Vault Explorer",
+      onReAnchor: () => {},
+    });
+  }
+
+  async function renderShellHost(open: boolean): Promise<void> {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(ShellHost, { open }));
+    });
+    await flush();
+  }
+
+  it("opening and closing the Explorer beside the SAME selected Conversation never remounts the navigator or resets sampled telemetry", async () => {
+    await renderShellHost(false);
+
+    // Sample telemetry for the selected Conversation (live SSE frame).
+    await act(async () => deliverTelemetry(OK_FRAME));
+    await flush();
+    const cardsNodeBefore = cardsRow();
+    expect(cardProgressbar("dipu")?.getAttribute("aria-valuetext")).toBe("Context usage: 30.00% of 200.0k window");
+    expect(vi.mocked(fetchConversationTelemetry)).not.toHaveBeenCalled();
+
+    // Open the Explorer beside the SAME selected Conversation.
+    await act(async () => {
+      root.render(createElement(ShellHost, { open: true }));
+    });
+    await flush();
+
+    // The live navigator instance survives: same cards node, same sampled value.
+    expect(container.querySelector(".mock-explorer")).not.toBeNull();
+    expect(cardsRow()).toBe(cardsNodeBefore);
+    expect(cardProgressbar("dipu")?.getAttribute("aria-valuetext")).toBe("Context usage: 30.00% of 200.0k window");
+
+    // Close/return: still preserved, still no compensating fetch.
+    await act(async () => {
+      root.render(createElement(ShellHost, { open: false }));
+    });
+    await flush();
+    expect(container.querySelector(".mock-explorer")).toBeNull();
+    expect(cardsRow()).toBe(cardsNodeBefore);
+    expect(cardProgressbar("dipu")?.getAttribute("aria-valuetext")).toBe("Context usage: 30.00% of 200.0k window");
+    expect(vi.mocked(fetchConversationTelemetry)).not.toHaveBeenCalled();
   });
 });
