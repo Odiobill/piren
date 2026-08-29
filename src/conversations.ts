@@ -50,6 +50,12 @@ export const CONVERSATION_EVENT_KINDS = [
   // anchor for the greeting run's run_started/agent_message/terminal events.
   // It is never a steward_message and carries no steward-authored text.
   "conversation_start_requested",
+  // B2 (accepted W2/W3 contract §3.1): additive steward-authored budget
+  // update evidence. One immutable event per accepted raise, correlated to
+  // the exact workflow root; append is gated to the durable steward identity
+  // and a well-formed payload, and value-level malformed payloads stay
+  // parseable so the B1 pure core fail-closes them.
+  "handoff_budget_updated",
 ] as const;
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 
@@ -1066,11 +1072,31 @@ export interface AppendConversationEventOptions {
   title?: string | undefined;
   /** U4 durable run-agent attribution for run events (optional, additive; U5 consumes it). */
   runAgent?: string | undefined;
+  /** B2 handoff-budget update evidence (optional; kind-gated at append). */
+  handoffBudget?: HandoffBudgetEventPayload | undefined;
   now?: () => Date;
   nonce?: () => string;
   io?: ConversationWriteIo | undefined;
   /** Injected sequence counter (testable); production derives it from the event count. */
   sequence?: number | undefined;
+}
+
+/**
+ * B2: durable handoff-budget update payload (accepted contract §3.1). The
+ * SHAPE is validated at append (steward identity, root correlation, at
+ * least one dimension, plain-object dimensions) while the VALUES are
+ * deliberately unconstrained (`unknown`): hand-edited value-level garbage
+ * must survive parsing so the B1 pure core — not the parser — fail-closes
+ * it with a bounded ignored result.
+ */
+export interface HandoffBudgetDimensionPayload {
+  from: unknown;
+  to: unknown;
+}
+
+export interface HandoffBudgetEventPayload {
+  edges?: HandoffBudgetDimensionPayload | undefined;
+  reworkRounds?: HandoffBudgetDimensionPayload | undefined;
 }
 
 /** C2 context-handoff selection metadata (shape mirrors C1 selection metadata). */
@@ -1116,6 +1142,8 @@ function renderConversationEvent(options: {
   title?: string | undefined;
   /** U4 durable run-agent attribution for run events (additive, optional). */
   runAgent?: string | undefined;
+  /** B2 handoff-budget update evidence (additive, optional; kind-gated). */
+  handoffBudget?: HandoffBudgetEventPayload | undefined;
   body: string;
 }): string {
   const fields: string[] = [
@@ -1145,6 +1173,9 @@ function renderConversationEvent(options: {
   if (options.title !== undefined) fields.push(`title: ${JSON.stringify(options.title)}`);
   // U4 run-agent attribution (plain agent-name scalar).
   if (options.runAgent !== undefined) fields.push(`runAgent: ${options.runAgent}`);
+  // B2 budget update evidence: a single-quoted YAML scalar wrapping the JSON
+  // payload (contextMetadata precedent) so it round-trips exactly.
+  if (options.handoffBudget !== undefined) fields.push(`handoffBudget: '${JSON.stringify(options.handoffBudget)}'`);
   fields.push("---", "", options.body, "");
   return fields.join("\n");
 }
@@ -1152,6 +1183,44 @@ function renderConversationEvent(options: {
 function assertValidLifecycleMetadata(lifecycleState: ConversationStatus | undefined): void {
   if (lifecycleState !== undefined && lifecycleState !== "open" && lifecycleState !== "archived") {
     throw new Error(`Invalid conversation lifecycleState: '${String(lifecycleState)}'.`);
+  }
+}
+
+/**
+ * B2: a `handoff_budget_updated` event is gated at append to the exact
+ * durable steward identity, a non-empty workflow-root correlation, and a
+ * structurally well-formed payload with at least one dimension. Dimension
+ * VALUES are deliberately not validated here: hand-edited value-level
+ * garbage stays parseable so the B1 pure core fail-closes it (contract
+ * §3.1/§3.2). No route, browser input, or generic authoring path exists.
+ */
+function assertValidHandoffBudgetMetadata(options: {
+  kind: ConversationEventKind;
+  author: string;
+  authorKind: ConversationAuthorKind;
+  correlationId?: string | undefined;
+  handoffBudget?: HandoffBudgetEventPayload | undefined;
+}): void {
+  if (options.kind !== "handoff_budget_updated") return;
+  if (options.author !== "steward" || options.authorKind !== "steward") {
+    throw new Error("Invalid conversation handoff budget event: only the durable steward identity may author it.");
+  }
+  if (options.correlationId === undefined || options.correlationId.trim() === "") {
+    throw new Error("Invalid conversation handoff budget event: a non-empty workflow-root correlationId is required.");
+  }
+  const payload = options.handoffBudget;
+  if (payload === undefined || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Invalid conversation handoff budget event: a handoffBudget payload is required.");
+  }
+  const hasEdges = payload.edges !== undefined;
+  const hasRework = payload.reworkRounds !== undefined;
+  if (!hasEdges && !hasRework) {
+    throw new Error("Invalid conversation handoff budget event: at least one budget dimension is required.");
+  }
+  for (const dimension of [payload.edges, payload.reworkRounds] as const) {
+    if (dimension !== undefined && (typeof dimension !== "object" || Array.isArray(dimension))) {
+      throw new Error("Invalid conversation handoff budget event: each budget dimension must be an object.");
+    }
   }
 }
 
@@ -1248,6 +1317,7 @@ export async function appendConversationEvent(
   assertValidLifecycleMetadata(options.lifecycleState);
   assertValidRenameMetadata(options.previousTitle, options.title);
   assertValidRunAgentMetadata(options.runAgent);
+  assertValidHandoffBudgetMetadata(options);
 
   const root = resolve(options.vaultRoot);
   const created = (options.now ?? (() => new Date()))().toISOString();
@@ -1289,6 +1359,7 @@ export async function appendConversationEvent(
       ...(options.previousTitle !== undefined ? { previousTitle: options.previousTitle } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
       ...(options.runAgent !== undefined ? { runAgent: options.runAgent } : {}),
+      ...(options.handoffBudget !== undefined ? { handoffBudget: options.handoffBudget } : {}),
       body: options.body,
     });
     try {
@@ -1401,6 +1472,8 @@ export interface ConversationEventRecord {
   title?: string | undefined;
   /** U4 durable run-agent attribution for run events (additive, optional). */
   runAgent?: string | undefined;
+  /** B2 handoff-budget update evidence (additive, optional; kind-gated). */
+  handoffBudget?: HandoffBudgetEventPayload | undefined;
   body: string;
   path: string;
 }
@@ -1563,6 +1636,41 @@ function parseConversationEvent(content: string, path: string, expectedConversat
     record.runAgent = runAgent;
   } else if (runAgent !== undefined) {
     throw new Error(`Invalid conversation event at ${path}: runAgent must be a string`);
+  }
+  // B2 budget update evidence: rendered as a single-quoted JSON scalar; a
+  // hand-edited YAML block mapping is also tolerated. The payload SHAPE is
+  // normalized here while VALUES are preserved verbatim (including
+  // hand-edited garbage) so the B1 pure core fail-closes them with bounded
+  // ignored metadata. A present-but-non-object payload normalizes to a
+  // dimensionless payload ("mentions no dimension") rather than dropping the
+  // evidence silently.
+  const handoffBudgetRaw = fields.handoffBudget;
+  if (handoffBudgetRaw !== undefined) {
+    let parsed: unknown;
+    if (typeof handoffBudgetRaw === "string") {
+      try {
+        parsed = JSON.parse(handoffBudgetRaw) as unknown;
+      } catch {
+        throw new Error(`Invalid conversation event at ${path}: handoffBudget must be valid JSON`);
+      }
+    } else {
+      parsed = handoffBudgetRaw;
+    }
+    const payload: HandoffBudgetEventPayload = {};
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const object = parsed as Record<string, unknown>;
+      for (const key of ["edges", "reworkRounds"] as const) {
+        const value = object[key];
+        if (value === undefined) continue;
+        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          const dimension = value as Record<string, unknown>;
+          payload[key] = { from: dimension.from, to: dimension.to };
+        } else {
+          payload[key] = { from: undefined, to: undefined };
+        }
+      }
+    }
+    record.handoffBudget = payload;
   }
   return record;
 }

@@ -20,7 +20,7 @@
 import { type ConversationLifecycleTransition, type ValidatedRecipients } from "./conversation-contract.js";
 export declare const CONVERSATION_STATUSES: readonly ["open", "archived"];
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
-export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition", "conversation_renamed", "conversation_start_requested"];
+export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition", "conversation_renamed", "conversation_start_requested", "handoff_budget_updated"];
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 export declare const CONVERSATION_AUTHOR_KINDS: readonly ["steward", "agent", "system"];
 export type ConversationAuthorKind = (typeof CONVERSATION_AUTHOR_KINDS)[number];
@@ -371,11 +371,29 @@ export interface AppendConversationEventOptions {
     title?: string | undefined;
     /** U4 durable run-agent attribution for run events (optional, additive; U5 consumes it). */
     runAgent?: string | undefined;
+    /** B2 handoff-budget update evidence (optional; kind-gated at append). */
+    handoffBudget?: HandoffBudgetEventPayload | undefined;
     now?: () => Date;
     nonce?: () => string;
     io?: ConversationWriteIo | undefined;
     /** Injected sequence counter (testable); production derives it from the event count. */
     sequence?: number | undefined;
+}
+/**
+ * B2: durable handoff-budget update payload (accepted contract §3.1). The
+ * SHAPE is validated at append (steward identity, root correlation, at
+ * least one dimension, plain-object dimensions) while the VALUES are
+ * deliberately unconstrained (`unknown`): hand-edited value-level garbage
+ * must survive parsing so the B1 pure core — not the parser — fail-closes
+ * it with a bounded ignored result.
+ */
+export interface HandoffBudgetDimensionPayload {
+    from: unknown;
+    to: unknown;
+}
+export interface HandoffBudgetEventPayload {
+    edges?: HandoffBudgetDimensionPayload | undefined;
+    reworkRounds?: HandoffBudgetDimensionPayload | undefined;
 }
 /** C2 context-handoff selection metadata (shape mirrors C1 selection metadata). */
 export interface ConversationContextMetadata {
@@ -438,6 +456,8 @@ export interface ConversationEventRecord {
     title?: string | undefined;
     /** U4 durable run-agent attribution for run events (additive, optional). */
     runAgent?: string | undefined;
+    /** B2 handoff-budget update evidence (additive, optional; kind-gated). */
+    handoffBudget?: HandoffBudgetEventPayload | undefined;
     body: string;
     path: string;
 }

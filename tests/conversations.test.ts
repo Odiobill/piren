@@ -11,7 +11,10 @@ import {
   updateConversationAudience,
   conversationIdFromText,
   conversationTitleFromText,
+  appendConversationEvent as appendConversationEventBase,
+  type AppendConversationEventResult,
   type ConversationEventRecord,
+  type HandoffBudgetEventPayload,
 } from "../src/conversations.js";
 import { resolveStewardMentions } from "../src/conversation-contract.js";
 
@@ -549,5 +552,212 @@ describe("U4 optional runAgent metadata on run events", () => {
       "utf8",
     );
     await expect(readConversationEvents({ vaultRoot: root, conversationId: conversation.id })).rejects.toThrow(/runAgent/);
+  });
+});
+
+describe("handoff_budget_updated durable evidence (B2)", () => {
+  const ROOT = "20260805T131530000Z-root-event";
+
+  async function appendBudgetEvent(overrides: Record<string, unknown> = {}): Promise<AppendConversationEventResult> {
+    const conversation = await createConversation({ vaultRoot: root, text: "Workflow", audience: [], now: () => NOW });
+    return appendConversationEvent({
+      vaultRoot: root,
+      conversationId: conversation.id,
+      kind: "handoff_budget_updated",
+      authorKind: "steward",
+      author: "steward",
+      body: "Raise the workflow budget.",
+      correlationId: ROOT,
+      handoffBudget: { edges: { from: 8, to: 10 } },
+      now: () => NOW,
+      nonce: () => "nb1",
+      ...overrides,
+    } as Parameters<typeof appendConversationEvent>[0]);
+  }
+
+  it("appends a valid budget update exactly once and round-trips the payload", async () => {
+    const event = await appendBudgetEvent();
+    expect(event.kind).toBe("handoff_budget_updated");
+
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: event.conversationId });
+    expect(events).toHaveLength(1);
+    const record = events[0] as ConversationEventRecord;
+    expect(record.kind).toBe("handoff_budget_updated");
+    expect(record.author).toBe("steward");
+    expect(record.authorKind).toBe("steward");
+    expect(record.correlationId).toBe(ROOT);
+    expect(record.handoffBudget).toEqual({ edges: { from: 8, to: 10 } });
+  });
+
+  it("round-trips both dimensions and a raise to the cap", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Both", audience: [], now: () => NOW });
+    await appendConversationEvent({
+      vaultRoot: root,
+      conversationId: conversation.id,
+      kind: "handoff_budget_updated",
+      authorKind: "steward",
+      author: "steward",
+      body: "Raise both.",
+      correlationId: ROOT,
+      handoffBudget: { edges: { from: 8, to: 24 }, reworkRounds: { from: 2, to: 6 } },
+      now: () => NOW,
+    });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events[0]?.handoffBudget).toEqual({ edges: { from: 8, to: 24 }, reworkRounds: { from: 2, to: 6 } });
+  });
+
+  it("rejects a non-steward author or authorKind without writing an event", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Gate", audience: [], now: () => NOW });
+    const before = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    await expect(
+      appendConversationEvent({
+        vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+        authorKind: "steward", author: "agent-pretending", body: "x", correlationId: ROOT,
+        handoffBudget: { edges: { from: 8, to: 10 } }, now: () => NOW,
+      }),
+    ).rejects.toThrow(/steward/i);
+    await expect(
+      appendConversationEvent({
+        vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+        authorKind: "agent", author: "steward", body: "x", correlationId: ROOT,
+        handoffBudget: { edges: { from: 8, to: 10 } }, now: () => NOW,
+      }),
+    ).rejects.toThrow(/steward/i);
+    const after = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(after).toHaveLength(before.length);
+  });
+
+  it("rejects a missing/empty root correlation without writing an event", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Gate", audience: [], now: () => NOW });
+    await expect(
+      appendConversationEvent({
+        vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+        authorKind: "steward", author: "steward", body: "x",
+        handoffBudget: { edges: { from: 8, to: 10 } }, now: () => NOW,
+      }),
+    ).rejects.toThrow(/correlation/i);
+    await expect(
+      appendConversationEvent({
+        vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+        authorKind: "steward", author: "steward", body: "x", correlationId: "  ",
+        handoffBudget: { edges: { from: 8, to: 10 } }, now: () => NOW,
+      }),
+    ).rejects.toThrow(/correlation/i);
+  });
+
+  it("rejects a missing, dimensionless, or structurally malformed payload without writing an event", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Gate", audience: [], now: () => NOW });
+    await expect(
+      appendConversationEvent({
+        vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+        authorKind: "steward", author: "steward", body: "x", correlationId: ROOT, now: () => NOW,
+      }),
+    ).rejects.toThrow(/handoffBudget/i);
+    await expect(
+      appendConversationEvent({
+        vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+        authorKind: "steward", author: "steward", body: "x", correlationId: ROOT,
+        handoffBudget: {}, now: () => NOW,
+      }),
+    ).rejects.toThrow(/dimension/i);
+    await expect(
+      appendConversationEvent({
+        vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+        authorKind: "steward", author: "steward", body: "x", correlationId: ROOT,
+        handoffBudget: { edges: 5 } as unknown as HandoffBudgetEventPayload, now: () => NOW,
+      }),
+    ).rejects.toThrow(/dimension/i);
+  });
+
+  it("preserves hand-edited value-level malformed payloads through parse for B1 fail-closing", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Hand-edited", audience: [], now: () => NOW });
+    const eventsDir = join(root, "collaboration", "conversations", conversation.id, "events");
+    await writeFile(
+      join(eventsDir, "00000001.md"),
+      [
+        "---",
+        "type: Conversation Event",
+        `id: 20260805T131530000Z-hand`,
+        `conversationId: ${conversation.id}`,
+        "kind: handoff_budget_updated",
+        "authorKind: steward",
+        "author: steward",
+        "created: 2026-08-05T13:15:30.000Z",
+        "sequence: 1",
+        `correlationId: ${ROOT}`,
+        `handoffBudget: '${JSON.stringify({ edges: { from: "8", to: true } })}'`,
+        "---",
+        "",
+        "Hand-edited malformed values.",
+        "",
+      ].join("\n"),
+    );
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    const record = events[0] as ConversationEventRecord;
+    // Value-level garbage survives the parse so the B1 pure core — not the
+    // parser — fail-closes it with a bounded ignored result.
+    expect(record.handoffBudget).toEqual({ edges: { from: "8", to: true } });
+  });
+
+  it("keeps the parser strict: an unknown kind is rejected with invalid kind (no tolerance path)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Strict", audience: [], now: () => NOW });
+    const eventsDir = join(root, "collaboration", "conversations", conversation.id, "events");
+    await writeFile(
+      join(eventsDir, "00000001.md"),
+      [
+        "---",
+        "type: Conversation Event",
+        "id: 20260805T131530000Z-unknown",
+        `conversationId: ${conversation.id}`,
+        "kind: totally_unknown_kind",
+        "authorKind: steward",
+        "author: steward",
+        "created: 2026-08-05T13:15:30.000Z",
+        "sequence: 1",
+        "---",
+        "",
+        "Unknown.",
+        "",
+      ].join("\n"),
+    );
+    await expect(readConversationEvents({ vaultRoot: root, conversationId: conversation.id })).rejects.toThrow(/invalid kind/);
+  });
+
+  it("a frozen pre-B2 kind set rejects handoff_budget_updated (mixed-version rolling readers unsupported)", async () => {
+    // The exact kind list a pre-B2 binary ships, frozen here as evidence.
+    const PRE_B2_EVENT_KINDS = [
+      "steward_message",
+      "run_started",
+      "agent_message",
+      "model_fallback",
+      "run_finished",
+      "run_cancelled",
+      "lifecycle_transition",
+      "conversation_renamed",
+      "conversation_start_requested",
+    ] as const;
+    expect((PRE_B2_EVENT_KINDS as readonly string[]).includes("handoff_budget_updated")).toBe(false);
+    // The shipped parser uses the same membership check shape: anything
+    // outside its kind set throws `invalid kind`.
+    const shipped = await import("../src/conversations.js");
+    expect((shipped.CONVERSATION_EVENT_KINDS as readonly string[]).includes("handoff_budget_updated")).toBe(true);
+  });
+
+  it("parses legacy event chains unchanged (no budget metadata on legacy kinds)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Legacy", audience: [], now: () => NOW });
+    await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "steward_message",
+      authorKind: "steward", author: "steward", body: "Legacy dispatch", now: () => NOW,
+    });
+    await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "agent_message",
+      authorKind: "agent", author: "zai", body: "Legacy reply", addressedAgent: "steward",
+      correlationId: conversation.id, now: () => NOW,
+    });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events.map((e) => e.kind)).toEqual(["steward_message", "agent_message"]);
+    for (const event of events) {
+      expect(event.handoffBudget).toBeUndefined();
+    }
   });
 });

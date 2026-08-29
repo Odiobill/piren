@@ -4,6 +4,7 @@ import {
   HANDOFF_BUDGET_MAX_REWORK_ROUNDS,
   deriveHandoffBudget,
   validateHandoffBudgetUpdateCandidate,
+  handoffBudgetEvidenceFromRecord,
   type HandoffBudgetUpdateEvidence,
 } from "../src/conversation-budget.js";
 import { CONVERSATION_HANDOFF_MAX_EDGES, CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS } from "../src/conversation-handoff.js";
@@ -484,5 +485,126 @@ describe("conversation-budget: rework-only pressure stays non-red (B1 §2.4/§6)
     });
     expect(derived.exhausted).toBe(true);
     expect(derived.remainingEdges).toBe(0);
+  });
+});
+
+describe("conversation-budget: durable-record adapter (B2)", () => {
+  // Minimal structural mirror of a parsed durable record (ConversationEventRecord).
+  function durableRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "20260829T120000000Z-u1",
+      conversationId: "c1",
+      kind: "handoff_budget_updated",
+      authorKind: "steward",
+      author: "steward",
+      created: "2026-08-29T12:00:00.000Z",
+      sequence: 1,
+      mentions: [],
+      correlationId: ROOT,
+      handoffBudget: { edges: { from: CONVERSATION_HANDOFF_MAX_EDGES, to: 10 } },
+      body: "",
+      path: "collaboration/conversations/c1/events/00000001.md",
+      ...overrides,
+    };
+  }
+
+  it("maps a durable record onto the B1 evidence seam and derives a valid raise", () => {
+    const derived = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [handoffBudgetEvidenceFromRecord(durableRecord() as never, ROOT)],
+      usage: { consumedEdges: 9, worstPairOccurrences: 0 },
+    });
+    expect(derived.effective).toEqual({ edges: 10, reworkRounds: 2 });
+    expect(derived.validUpdateEventIds).toEqual(["20260829T120000000Z-u1"]);
+    expect(derived.remainingEdges).toBe(1);
+  });
+
+  it("carries id, sequence, kind, author, authorKind, exact root/correlation, and raw dimensions", () => {
+    const evidence = handoffBudgetEvidenceFromRecord(
+      durableRecord({ id: "ev-9", sequence: 7 }) as never,
+      ROOT,
+    );
+    expect(evidence.eventId).toBe("ev-9");
+    expect(evidence.sequence).toBe(7);
+    expect(evidence.kind).toBe("handoff_budget_updated");
+    expect(evidence.author).toBe("steward");
+    expect(evidence.authorKind).toBe("steward");
+    expect(evidence.rootEventId).toBe(ROOT);
+    expect(evidence.correlationId).toBe(ROOT);
+    expect(evidence.edges).toEqual({ from: 8, to: 10 });
+  });
+
+  it("fail-closes wrong author/authorKind/correlation durable records without widening or lowering", () => {
+    for (const overrides of [
+      { author: "agent-pretending" },
+      { authorKind: "agent" },
+      { correlationId: "other-root" },
+      { correlationId: undefined },
+    ]) {
+      const derived = deriveHandoffBudget({
+        rootEventId: ROOT,
+        updates: [handoffBudgetEvidenceFromRecord(durableRecord(overrides) as never, ROOT)],
+        usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+      });
+      expect(derived.effective).toEqual({ edges: 8, reworkRounds: 2 });
+      expect(derived.validUpdateEventIds).toEqual([]);
+      expect(derived.ignored).toHaveLength(1);
+    }
+  });
+
+  it("fail-closes stale from, lowering, and value-level malformed durable records", () => {
+    const stale = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [
+        handoffBudgetEvidenceFromRecord(durableRecord({ id: "a", handoffBudget: { edges: { from: 8, to: 10 } } }) as never, ROOT),
+        handoffBudgetEvidenceFromRecord(durableRecord({ id: "b", sequence: 2, handoffBudget: { edges: { from: 8, to: 12 } } }) as never, ROOT),
+      ],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    expect(stale.effective).toEqual({ edges: 10, reworkRounds: 2 });
+    expect(stale.ignored.map((i) => i.eventId)).toEqual(["b"]);
+
+    const lowered = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [handoffBudgetEvidenceFromRecord(durableRecord({ handoffBudget: { edges: { from: 8, to: 4 } } }) as never, ROOT)],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    expect(lowered.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(lowered.ignored).toHaveLength(1);
+
+    // Hand-edited value-level garbage survives the durable parse and is
+    // fail-closed by the pure core (never treated as a valid raise).
+    const malformed = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [handoffBudgetEvidenceFromRecord(durableRecord({ handoffBudget: { edges: { from: "8", to: true } } }) as never, ROOT)],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    expect(malformed.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(malformed.ignored).toHaveLength(1);
+  });
+
+  it("fail-closes duplicate/replayed durable identity and order (whole-group, order-independent)", () => {
+    const updates = [
+      handoffBudgetEvidenceFromRecord(durableRecord({ id: "dup", sequence: 1, handoffBudget: { edges: { from: 8, to: 10 } } }) as never, ROOT),
+      handoffBudgetEvidenceFromRecord(durableRecord({ id: "dup", sequence: 2, handoffBudget: { edges: { from: 10, to: 12 } } }) as never, ROOT),
+    ];
+    const forward = deriveHandoffBudget({ rootEventId: ROOT, updates, usage: { consumedEdges: 0, worstPairOccurrences: 0 } });
+    const backward = deriveHandoffBudget({ rootEventId: ROOT, updates: [...updates].reverse(), usage: { consumedEdges: 0, worstPairOccurrences: 0 } });
+    for (const derived of [forward, backward]) {
+      expect(derived.effective).toEqual({ edges: 8, reworkRounds: 2 });
+      expect(derived.validUpdateEventIds).toEqual([]);
+    }
+    expect(backward).toEqual(forward);
+
+    const sameSequence = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [
+        handoffBudgetEvidenceFromRecord(durableRecord({ id: "x", sequence: 3, handoffBudget: { edges: { from: 8, to: 10 } } }) as never, ROOT),
+        handoffBudgetEvidenceFromRecord(durableRecord({ id: "y", sequence: 3, handoffBudget: { edges: { from: 8, to: 12 } } }) as never, ROOT),
+      ],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    expect(sameSequence.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(sameSequence.ignored).toHaveLength(2);
   });
 });

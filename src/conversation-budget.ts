@@ -23,6 +23,7 @@ import {
   CONVERSATION_HANDOFF_MAX_EDGES,
   CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS,
 } from "./conversation-handoff.js";
+import type { ConversationEventRecord } from "./conversations.js";
 
 /** Fixed hard cap for the adjustable per-root edges budget (contract §2.2). */
 export const HANDOFF_BUDGET_MAX_EDGES = 24;
@@ -63,10 +64,12 @@ export interface HandoffBudgetUpdateEvidence {
   rootEventId: string;
   /** Must equal `rootEventId` (the update is correlated to the exact root). */
   correlationId: string;
-  /** Optional edges raise: `from` must equal the prior effective edges value. */
-  edges?: { from: number; to: number } | undefined;
+  /** Optional edges raise: `from` must equal the prior effective edges value.
+   *  Values are `unknown` so hand-edited durable garbage survives into the
+   *  fail-closed validation instead of being dropped by a narrower type. */
+  edges?: { from: unknown; to: unknown } | undefined;
   /** Optional rework raise: `from` must equal the prior effective rework value. */
-  reworkRounds?: { from: number; to: number } | undefined;
+  reworkRounds?: { from: unknown; to: unknown } | undefined;
 }
 
 /** Injected workflow usage facts (later supplied by the C5 workflow derivation). */
@@ -177,6 +180,37 @@ export function validateHandoffBudgetUpdateCandidate(input: {
   if (edges !== undefined) result.edges = edges;
   if (reworkRounds !== undefined) result.reworkRounds = reworkRounds;
   return result;
+}
+
+/**
+ * B2 adapter: map one parsed durable `handoff_budget_updated`
+ * `ConversationEventRecord` onto the B1 pure evidence seam. Pure and total:
+ * the record's `correlationId` is carried verbatim (a missing/mismatched
+ * correlation fail-closes in the B1 derivation against `rootEventId`), and
+ * the raw dimension payload (including hand-edited value-level garbage) is
+ * passed through unchanged so the B1 derivation — never this adapter —
+ * decides validity. `deriveConversationWorkflowState` is untouched; B3
+ * alone wires planner/broker consumption.
+ */
+export function handoffBudgetEvidenceFromRecord(
+  record: ConversationEventRecord,
+  rootEventId: string,
+): HandoffBudgetUpdateEvidence {
+  const evidence: HandoffBudgetUpdateEvidence = {
+    eventId: record.id,
+    sequence: record.sequence,
+    kind: record.kind,
+    author: record.author,
+    authorKind: record.authorKind,
+    rootEventId,
+    correlationId: record.correlationId ?? "",
+  };
+  const payload = record.handoffBudget;
+  if (payload !== undefined) {
+    if (payload.edges !== undefined) evidence.edges = payload.edges;
+    if (payload.reworkRounds !== undefined) evidence.reworkRounds = payload.reworkRounds;
+  }
+  return evidence;
 }
 
 interface DimensionUpdate {
