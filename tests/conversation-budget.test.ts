@@ -608,3 +608,30 @@ describe("conversation-budget: durable-record adapter (B2)", () => {
     expect(sameSequence.ignored).toHaveLength(2);
   });
 });
+
+describe("conversation-budget: malformed stored scalar normalization (B2 correction)", () => {
+  it("a dimensionless payload from a valid-YAML invalid-JSON scalar is ignored once, with no effective raise/lower", () => {
+    const derived = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [handoffBudgetEvidenceFromRecord({
+        id: "scalar-1",
+        conversationId: "c1",
+        kind: "handoff_budget_updated",
+        authorKind: "steward",
+        author: "steward",
+        created: "2026-08-29T12:00:00.000Z",
+        sequence: 1,
+        mentions: [],
+        correlationId: ROOT,
+        handoffBudget: {},
+        body: "",
+        path: "collaboration/conversations/c1/events/00000001.md",
+      } as never, ROOT)],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    expect(derived.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(derived.validUpdateEventIds).toEqual([]);
+    expect(derived.ignored).toHaveLength(1);
+    expect(derived.ignored[0]?.reason).toContain("dimension");
+  });
+});

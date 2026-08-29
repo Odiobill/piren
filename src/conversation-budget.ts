@@ -6,10 +6,13 @@
  * update candidate is validated against the current effective values, and
  * the per-root effective budget is derived from injected typed update
  * evidence plus injected workflow usage facts — never from filesystem,
- * broker, gateway, browser, or local-config state. Later layers (B2 durable
- * event mapping, B3 broker/gateway adapter, B5/B6 UI) compose with this
- * core; nothing here casts evidence into production Conversation types or
- * touches event parsing/rendering.
+ * broker, gateway, browser, or local-config state. Later layers (B3
+ * broker/gateway adapter, B5/B6 UI) compose with this core; B1 itself adds
+ * no durable kinds and no event parsing/rendering. (B2 correction: the
+ * `handoffBudgetEvidenceFromRecord` adapter below is the deliberately
+ * type-only durable-record seam — it maps parsed production
+ * `ConversationEventRecord`s onto the B1 evidence shape without any runtime
+ * dependency; B2 owns that mapping and B1's derivation policy is unchanged.)
  *
  * Fail-closed semantics (contract §3.2): an evidence update applies per the
  * whole-event rule only when its shape is valid (root/kind/steward author/

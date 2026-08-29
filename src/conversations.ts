@@ -23,6 +23,7 @@ import { link, mkdir, open, readdir, readFile, rm, rename, writeFile } from "nod
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { applyMembershipChange, transitionLifecycle, type ConversationLifecycleTransition, type ValidatedRecipients } from "./conversation-contract.js";
+import { HANDOFF_BUDGET_MAX_EDGES, HANDOFF_BUDGET_MAX_REWORK_ROUNDS } from "./conversation-budget.js";
 
 export const CONVERSATION_STATUSES = ["open", "archived"] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
@@ -1217,9 +1218,28 @@ function assertValidHandoffBudgetMetadata(options: {
   if (!hasEdges && !hasRework) {
     throw new Error("Invalid conversation handoff budget event: at least one budget dimension is required.");
   }
-  for (const dimension of [payload.edges, payload.reworkRounds] as const) {
-    if (dimension !== undefined && (typeof dimension !== "object" || Array.isArray(dimension))) {
-      throw new Error("Invalid conversation handoff budget event: each budget dimension must be an object.");
+  for (const [name, dimension] of [["edges", payload.edges], ["reworkRounds", payload.reworkRounds]] as const) {
+    if (dimension === undefined) continue;
+    if (typeof dimension !== "object" || Array.isArray(dimension)) {
+      throw new Error(`Invalid conversation handoff budget event: the ${name} dimension must be an object.`);
+    }
+    // Strict NEW-append value validation (B2 correction): both values must be
+    // finite positive integers, the update must strictly raise, and the target
+    // must stay within the B1 fixed caps (cap constants are reused, never
+    // duplicated). Current-effective chain/CAS validation is B3, not here.
+    const cap = name === "edges" ? HANDOFF_BUDGET_MAX_EDGES : HANDOFF_BUDGET_MAX_REWORK_ROUNDS;
+    const from = dimension.from;
+    const to = dimension.to;
+    const isFinitePositiveInteger = (value: unknown): value is number =>
+      typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0;
+    if (!isFinitePositiveInteger(from) || !isFinitePositiveInteger(to)) {
+      throw new Error(`Invalid conversation handoff budget event: the ${name} dimension values must be finite positive integers.`);
+    }
+    if (to <= from) {
+      throw new Error(`Invalid conversation handoff budget event: the ${name} dimension must strictly raise (to must exceed from).`);
+    }
+    if (to > cap) {
+      throw new Error(`Invalid conversation handoff budget event: the ${name} dimension exceeds the fixed cap.`);
     }
   }
 }
@@ -1651,7 +1671,11 @@ function parseConversationEvent(content: string, path: string, expectedConversat
       try {
         parsed = JSON.parse(handoffBudgetRaw) as unknown;
       } catch {
-        throw new Error(`Invalid conversation event at ${path}: handoffBudget must be valid JSON`);
+        // B2 correction: a hand-edited valid-YAML invalid-JSON scalar is
+        // preserved evidence, not a parse failure — normalize it to a
+        // dimensionless payload so the B1 pure core returns its bounded
+        // ignored outcome (never a raise/lower, never a dropped record).
+        parsed = null;
       }
     } else {
       parsed = handoffBudgetRaw;

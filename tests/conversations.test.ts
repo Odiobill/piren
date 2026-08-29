@@ -669,6 +669,68 @@ describe("handoff_budget_updated durable evidence (B2)", () => {
     ).rejects.toThrow(/dimension/i);
   });
 
+  it("rejects structurally empty dimensions, missing keys, and wrong types without writing an event", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "ValueGate", audience: [], now: () => NOW });
+    const badPayloads = [
+      { edges: {} },
+      { edges: { to: 10 } },
+      { edges: { from: 8 } },
+      { edges: { from: "8", to: 10 } },
+      { edges: { from: 8.5, to: 10 } },
+      { edges: { from: 0, to: 10 } },
+      { edges: { from: -2, to: 10 } },
+      { edges: { from: NaN, to: 10 } },
+      { edges: { from: Infinity, to: 10 } },
+      { reworkRounds: { from: 2, to: "3" } },
+      { edges: { from: 8, to: 10 }, reworkRounds: {} },
+    ];
+    for (const handoffBudget of badPayloads) {
+      await expect(
+        appendConversationEvent({
+          vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+          authorKind: "steward", author: "steward", body: "x", correlationId: ROOT,
+          handoffBudget: handoffBudget as never, now: () => NOW,
+        }),
+      ).rejects.toThrow(/dimension/i);
+    }
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events).toHaveLength(0);
+  });
+
+  it("rejects non-raising, lowering, and cap-exceeding values without writing an event", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "ValueGate2", audience: [], now: () => NOW });
+    const badPayloads = [
+      { edges: { from: 8, to: 8 } },
+      { edges: { from: 8, to: 4 } },
+      { edges: { from: 8, to: 25 } },
+      { reworkRounds: { from: 2, to: 2 } },
+      { reworkRounds: { from: 2, to: 1 } },
+      { reworkRounds: { from: 2, to: 7 } },
+    ];
+    for (const handoffBudget of badPayloads) {
+      await expect(
+        appendConversationEvent({
+          vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+          authorKind: "steward", author: "steward", body: "x", correlationId: ROOT,
+          handoffBudget: handoffBudget as never, now: () => NOW,
+        }),
+      ).rejects.toThrow(/dimension/i);
+    }
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events).toHaveLength(0);
+  });
+
+  it("accepts an in-cap valid raise at the exact cap boundary (append gate, not clamped)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Boundary", audience: [], now: () => NOW });
+    await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "handoff_budget_updated",
+      authorKind: "steward", author: "steward", body: "x", correlationId: ROOT,
+      handoffBudget: { edges: { from: 8, to: 24 }, reworkRounds: { from: 2, to: 6 } }, now: () => NOW,
+    });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events[0]?.handoffBudget).toEqual({ edges: { from: 8, to: 24 }, reworkRounds: { from: 2, to: 6 } });
+  });
+
   it("preserves hand-edited value-level malformed payloads through parse for B1 fail-closing", async () => {
     const conversation = await createConversation({ vaultRoot: root, text: "Hand-edited", audience: [], now: () => NOW });
     const eventsDir = join(root, "collaboration", "conversations", conversation.id, "events");
@@ -699,6 +761,37 @@ describe("handoff_budget_updated durable evidence (B2)", () => {
     expect(record.handoffBudget).toEqual({ edges: { from: "8", to: true } });
   });
 
+  it("normalizes a valid-YAML invalid-JSON handoffBudget scalar to a dimensionless payload (B1 fail-closes it)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Scalar", audience: [], now: () => NOW });
+    const eventsDir = join(root, "collaboration", "conversations", conversation.id, "events");
+    await writeFile(
+      join(eventsDir, "00000001.md"),
+      [
+        "---",
+        "type: Conversation Event",
+        "id: 20260805T131530000Z-scalar",
+        `conversationId: ${conversation.id}`,
+        "kind: handoff_budget_updated",
+        "authorKind: steward",
+        "author: steward",
+        "created: 2026-08-05T13:15:30.000Z",
+        "sequence: 1",
+        `correlationId: ${ROOT}`,
+        "handoffBudget: not-json",
+        "---",
+        "",
+        "Hand-edited scalar.",
+        "",
+      ].join("\n"),
+    );
+    // Valid YAML, invalid JSON: the parser must NOT throw — the payload
+    // normalizes to a dimensionless payload so the B1 pure core returns its
+    // bounded ignored outcome (no effective raise/lower).
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.handoffBudget).toEqual({});
+  });
+
   it("keeps the parser strict: an unknown kind is rejected with invalid kind (no tolerance path)", async () => {
     const conversation = await createConversation({ vaultRoot: root, text: "Strict", audience: [], now: () => NOW });
     const eventsDir = join(root, "collaboration", "conversations", conversation.id, "events");
@@ -723,8 +816,11 @@ describe("handoff_budget_updated durable evidence (B2)", () => {
     await expect(readConversationEvents({ vaultRoot: root, conversationId: conversation.id })).rejects.toThrow(/invalid kind/);
   });
 
-  it("a frozen pre-B2 kind set rejects handoff_budget_updated (mixed-version rolling readers unsupported)", async () => {
-    // The exact kind list a pre-B2 binary ships, frozen here as evidence.
+  it("a frozen pre-B2 kind validator actually rejects a handoff_budget_updated fixture with invalid kind (mixed-version rolling readers unsupported)", async () => {
+    // The exact kind list a pre-B2 binary ships, frozen here as evidence, and
+    // a test-local validator seam applying the SAME membership rule the
+    // shipped parser uses (`!(KINDS as readonly string[]).includes(kind)` ->
+    // throw `invalid kind`). No production compatibility mode exists.
     const PRE_B2_EVENT_KINDS = [
       "steward_message",
       "run_started",
@@ -736,9 +832,17 @@ describe("handoff_budget_updated durable evidence (B2)", () => {
       "conversation_renamed",
       "conversation_start_requested",
     ] as const;
-    expect((PRE_B2_EVENT_KINDS as readonly string[]).includes("handoff_budget_updated")).toBe(false);
-    // The shipped parser uses the same membership check shape: anything
-    // outside its kind set throws `invalid kind`.
+    const preB2ParseKind = (kind: string, path: string): void => {
+      if (!(PRE_B2_EVENT_KINDS as readonly string[]).includes(kind)) {
+        throw new Error(`Invalid conversation event at ${path}: invalid kind`);
+      }
+    };
+    expect(() => preB2ParseKind("handoff_budget_updated", "00000001.md")).toThrow(/invalid kind/);
+    // Sanity: the frozen validator still accepts every pre-B2 kind.
+    for (const kind of PRE_B2_EVENT_KINDS) {
+      expect(() => preB2ParseKind(kind, "00000001.md")).not.toThrow();
+    }
+    // And the shipped parser keeps the same strict membership rule.
     const shipped = await import("../src/conversations.js");
     expect((shipped.CONVERSATION_EVENT_KINDS as readonly string[]).includes("handoff_budget_updated")).toBe(true);
   });
