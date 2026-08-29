@@ -312,6 +312,24 @@ export function ConversationDetailsModal({
             setBudgetView(await fetchConversationWorkflowBudgets(conversation.id, token));
             return true;
           }}
+          // B5 final correction: the INITIAL-LOAD Retry owns and catches its
+          // own fetch failure — it refreshes the bounded error on another
+          // failure and clears it only on success, so no rejection ever
+          // escapes unhandled, and the state machine stays separate from the
+          // post-accepted-POST reload Retry (which must never replay a
+          // mutation).
+          onReloadInitial={async () => {
+            try {
+              setBudgetView(await fetchConversationWorkflowBudgets(conversation.id, token));
+              setBudgetLoadError(null);
+            } catch (cause) {
+              setBudgetLoadError(
+                cause instanceof WorkflowBudgetHttpError
+                  ? `Workflow budgets unavailable (HTTP ${cause.status}).`
+                  : "Workflow budgets unavailable. Check the gateway and retry.",
+              );
+            }
+          }}
           onWorkflowBudgetsChanged={onWorkflowBudgetsChanged}
           onSavingChange={(_, busy) => setSavingBudget(busy)}
           onRequestError={(rootEventId, message) =>
@@ -489,6 +507,7 @@ function WorkflowBudgetSection({
   reloadError,
   onDraftChange,
   onReload,
+  onReloadInitial,
   onWorkflowBudgetsChanged,
   onSavingChange,
   onRequestError,
@@ -504,6 +523,7 @@ function WorkflowBudgetSection({
   reloadError: { rootEventId: string; message: string } | null;
   onDraftChange: (rootEventId: string, patch: Partial<WorkflowBudgetDraft>) => void;
   onReload: () => Promise<boolean>;
+  onReloadInitial: () => Promise<void>;
   onWorkflowBudgetsChanged: (conversationId: string) => void;
   onSavingChange: (rootEventId: string, busy: boolean) => void;
   onRequestError: (rootEventId: string, message: string | null) => void;
@@ -514,7 +534,11 @@ function WorkflowBudgetSection({
       <div className="workflow-budget" role="alert">
         <h3>Workflow budget</h3>
         <p className="error-message">{loadError}</p>
-        <button type="button" className="button button-small" onClick={() => void onReload()}>
+        {/* B5 final correction: the initial-load Retry uses the self-catching
+            owner (never the throwing post-success re-read) so a failed retry
+            refreshes the bounded error instead of escaping unhandled, and a
+            successful retry clears it and renders the truthful view. */}
+        <button type="button" className="button button-small" onClick={() => void onReloadInitial()}>
           <RetryIcon size={14} />
           Retry
         </button>

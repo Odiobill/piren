@@ -448,3 +448,68 @@ describe("ConversationDetailsModal Workflow budget section (B5 correction)", () 
     expect(container.querySelector(".workflow-budget-reload-error")).toBeNull();
   });
 });
+
+describe("ConversationDetailsModal Workflow budget section (B5 final correction: initial-load Retry recovery)", () => {
+  it("initial-load Retry owns its failure: a failed GET then a successful GET clears the alert, renders the truthful view, and never POSTs or re-gates", async () => {
+    // 1. The initial open GET rejects.
+    mockedFetchBudgets
+      .mockRejectedValueOnce(new WorkflowBudgetHttpError(500, "internal error"))
+      .mockResolvedValueOnce(budgetsView()); // 2. Retry's GET succeeds.
+    const onWorkflowBudgetsChanged = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(Harness, { budgets: budgetsView(), onWorkflowBudgetsChanged }));
+    });
+    await flush();
+
+    // Bounded initial-load alert with Retry.
+    const loadAlert = container.querySelector<HTMLElement>(".workflow-budget[role='alert']");
+    expect(loadAlert).not.toBeNull();
+    expect(loadAlert?.textContent).toContain("Workflow budgets unavailable (HTTP 500)");
+    expect(mockedUpdateBudget).not.toHaveBeenCalled();
+
+    // 3. Retry's next GET succeeds.
+    const retryButton = loadAlert?.querySelector<HTMLButtonElement>("button");
+    expect(retryButton).not.toBeNull();
+    await act(async () => {
+      retryButton?.click();
+    });
+    await flush();
+
+    // 4. The alert cleared and the truthful workflow root view renders; no
+    // rejected/unhandled path escapes the Retry (the retry callback owns its
+    // failure and would have refreshed the bounded error otherwise).
+    expect(container.querySelector(".workflow-budget[role='alert']")).toBeNull();
+    const section = budgetSection();
+    expect(section).not.toBeNull();
+    expect(section?.querySelectorAll<HTMLElement>(".workflow-budget-root")).toHaveLength(2);
+    expect(section?.textContent).toContain("consumed 6 of 8 effective");
+
+    // 5. An ordinary initial-load recovery never POSTs and never re-gates.
+    expect(mockedUpdateBudget).not.toHaveBeenCalled();
+    expect(onWorkflowBudgetsChanged).not.toHaveBeenCalled();
+    expect(mockedFetchBudgets).toHaveBeenCalledTimes(2);
+  });
+
+  it("initial-load Retry that fails again refreshes the bounded error instead of leaking an unhandled rejection", async () => {
+    mockedFetchBudgets
+      .mockRejectedValueOnce(new WorkflowBudgetHttpError(500, "internal error"))
+      .mockRejectedValueOnce(new WorkflowBudgetHttpError(503, "workflow budgets HTTP 503"));
+    const onWorkflowBudgetsChanged = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(Harness, { budgets: budgetsView(), onWorkflowBudgetsChanged }));
+    });
+    await flush();
+    const loadAlert = container.querySelector<HTMLElement>(".workflow-budget[role='alert']");
+    await act(async () => {
+      loadAlert?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+    await flush();
+    // The bounded error is REFRESHED (truthful) and stays visible.
+    const refreshed = container.querySelector<HTMLElement>(".workflow-budget[role='alert']");
+    expect(refreshed).not.toBeNull();
+    expect(refreshed?.textContent).toContain("HTTP 503");
+    expect(onWorkflowBudgetsChanged).not.toHaveBeenCalled();
+  });
+});
