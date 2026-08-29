@@ -1,10 +1,25 @@
-import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactElement, type RefObject } from "react";
 import type { ConversationRecord } from "./conversations";
 import { classifyAudienceMembers } from "./attach";
 import type { ConversationAgentEntry } from "./conversation-agents";
 import type { ConversationLifecycleAction, LifecycleActionError } from "./conversation-lifecycle";
 import { normalizeConversationTitle, type RenameError } from "./conversation-details";
 import { ArchiveIcon, CheckIcon, ReopenIcon, RetryIcon, XIcon } from "./icons";
+import {
+  fetchConversationWorkflowBudgets,
+  updateConversationWorkflowBudget,
+  WorkflowBudgetHttpError,
+} from "./api";
+import {
+  buildWorkflowBudgetUpdateRequest,
+  isWorkflowBudgetSaveEnabled,
+  remainingEdges,
+  remainingReworkRounds,
+  WORKFLOW_BUDGET_FIXED_DEPTH,
+  type ConversationWorkflowBudgetsView,
+  type WorkflowBudgetDraft,
+  type WorkflowBudgetRootView,
+} from "./conversation-workflow-budget";
 
 /**
  * U2 — Conversation details modal (accepted
@@ -46,6 +61,8 @@ export function ConversationDetailsModal({
   onLifecycleRetry,
   onRename,
   onClose,
+  token,
+  onWorkflowBudgetsChanged,
 }: {
   conversation: ConversationRecord;
   agents: ConversationAgentEntry[];
@@ -62,6 +79,10 @@ export function ConversationDetailsModal({
   /** Returns a bounded error on failure, null on success (navigator re-gates). */
   onRename: (title: string) => Promise<RenameError | null>;
   onClose: () => void;
+  /** B5: in-memory Bearer token for the two bounded workflow-budget routes. */
+  token: string;
+  /** B5: narrow navigator re-read/re-gate callback after a successful save. */
+  onWorkflowBudgetsChanged: (conversationId: string) => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -75,6 +96,41 @@ export function ConversationDetailsModal({
   // identity and must not close over a stale render's `busy`).
   const busyRef = useRef(busy);
   busyRef.current = busy;
+
+  // B5: workflow-budget section state (bounded server view + per-root drafts).
+  const [budgetView, setBudgetView] = useState<ConversationWorkflowBudgetsView | null>(null);
+  const [budgetLoadError, setBudgetLoadError] = useState<string | null>(null);
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<string, WorkflowBudgetDraft>>({});
+  const [savingRoot, setSavingRoot] = useState<string | null>(null);
+  const [budgetRequestError, setBudgetRequestError] = useState<{ rootEventId: string; message: string } | null>(null);
+  // Ref mirror for the keydown listener: a budget save is in flight.
+  const budgetBusyRef = useRef(false);
+  budgetBusyRef.current = savingRoot !== null;
+
+  useEffect(() => {
+    let cancelled = false;
+    // B5: ONE explicit bounded fetch on open (never polling, never a retry
+    // loop); failures render with explicit Retry.
+    const load = async (): Promise<void> => {
+      setBudgetLoadError(null);
+      try {
+        const view = await fetchConversationWorkflowBudgets(conversation.id, token);
+        if (cancelled) return;
+        setBudgetView(view);
+      } catch (cause) {
+        if (cancelled) return;
+        setBudgetLoadError(
+          cause instanceof WorkflowBudgetHttpError
+            ? `Workflow budgets unavailable (HTTP ${cause.status}).`
+            : "Workflow budgets unavailable. Check the gateway and retry.",
+        );
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversation.id, token]);
   const normalized = normalizeConversationTitle(titleDraft);
   // Truthful Save gate: the normalized value must differ from the last
   // gateway-authoritative title, and no request may be in flight.
@@ -94,10 +150,11 @@ export function ConversationDetailsModal({
       );
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        // While a rename Save is in flight, Escape must never dismiss the
-        // modal: if the request then fails, the bounded failure and explicit
-        // Retry must stay visible on the mounted modal (U2 correction).
-        if (busyRef.current) return;
+        // While a rename Save or a workflow-budget Save is in flight, Escape
+        // must never dismiss the modal: if the request then fails, the
+        // bounded failure and explicit Retry must stay visible on the
+        // mounted modal (U2 correction; B5 same discipline).
+        if (busyRef.current || budgetBusyRef.current) return;
         event.preventDefault();
         onClose();
         return;
@@ -160,7 +217,7 @@ export function ConversationDetailsModal({
             className="button button-small details-close"
             aria-label="Close conversation details"
             onClick={onClose}
-            disabled={busy}
+            disabled={busy || budgetBusyRef.current}
           >
             <XIcon size={14} />
           </button>
@@ -186,7 +243,7 @@ export function ConversationDetailsModal({
               <CheckIcon size={14} />
               Save
             </button>
-            <button type="button" className="button" onClick={onClose} disabled={busy}>
+            <button type="button" className="button" onClick={onClose} disabled={busy || budgetBusyRef.current}>
               <XIcon size={14} />
               Cancel
             </button>
@@ -228,6 +285,37 @@ export function ConversationDetailsModal({
         </dl>
 
         <AudienceMembers audience={conversation.audience} agents={agents} />
+
+        <WorkflowBudgetSection
+          conversationId={conversation.id}
+          token={token}
+          view={budgetView}
+          loadError={budgetLoadError}
+          drafts={budgetDrafts}
+          savingRoot={savingRoot}
+          requestError={budgetRequestError}
+          onDraftChange={(rootEventId, patch) =>
+            setBudgetDrafts((previous) => ({
+              ...previous,
+              [rootEventId]: { edges: "", reworkRounds: "", ...previous[rootEventId], ...patch },
+            }))
+          }
+          onReload={async () => {
+            setBudgetLoadError(null);
+            try {
+              setBudgetView(await fetchConversationWorkflowBudgets(conversation.id, token));
+              return true;
+            } catch {
+              setBudgetLoadError("Workflow budgets unavailable. Check the gateway and retry.");
+              return false;
+            }
+          }}
+          onWorkflowBudgetsChanged={onWorkflowBudgetsChanged}
+          onSavingChange={(rootEventId, busy) => setSavingRoot(busy ? rootEventId : null)}
+          onRequestError={(rootEventId, message) =>
+            setBudgetRequestError(message === null ? null : { rootEventId, message })
+          }
+        />
 
         <ConversationLifecycleControls
           status={conversation.status}
@@ -374,3 +462,228 @@ function archiveConfirmationCopy(): { intro: string; confirm: string; cancel: st
 }
 
 export type { ConversationLifecycleAction };
+
+/**
+ * B5 — W2 Conversation-level "Workflow budget" section (accepted contract
+ * §5). Renders the bounded B4 server view as a distinct root list; Save
+ * applies to one explicitly rendered server root only, sends the exact
+ * closed B4 CAS body using the last fetched effective values, suppresses
+ * Escape/Close while in flight, renders bounded failures as role="alert"
+ * with explicit Retry only, and re-reads/re-gates through the navigator
+ * callback on success. Zero roots render nothing; there is never a
+ * per-agent budget, no storage, no polling, and no auto retry.
+ */
+function WorkflowBudgetSection({
+  conversationId,
+  token,
+  view,
+  loadError,
+  drafts,
+  savingRoot,
+  requestError,
+  onDraftChange,
+  onReload,
+  onWorkflowBudgetsChanged,
+  onSavingChange,
+  onRequestError,
+}: {
+  conversationId: string;
+  token: string;
+  view: ConversationWorkflowBudgetsView | null;
+  loadError: string | null;
+  drafts: Record<string, WorkflowBudgetDraft>;
+  savingRoot: string | null;
+  requestError: { rootEventId: string; message: string } | null;
+  onDraftChange: (rootEventId: string, patch: Partial<WorkflowBudgetDraft>) => void;
+  onReload: () => Promise<boolean>;
+  onWorkflowBudgetsChanged: (conversationId: string) => void;
+  onSavingChange: (rootEventId: string, busy: boolean) => void;
+  onRequestError: (rootEventId: string, message: string | null) => void;
+}): ReactElement | null {
+  if (loadError !== null) {
+    return (
+      <div className="workflow-budget" role="alert">
+        <h3>Workflow budget</h3>
+        <p className="error-message">{loadError}</p>
+        <button type="button" className="button button-small" onClick={() => void onReload()}>
+          <RetryIcon size={14} />
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (view === null || view.roots.length === 0) {
+    // Zero roots: no fabricated budget, list, or control.
+    return null;
+  }
+  return (
+    <div className="workflow-budget">
+      <h3>Workflow budget</h3>
+      <p className="field-help">
+        One finite budget per workflow root. This is a workflow coordination
+        limit, not Pi context usage, and never a per-agent budget.
+      </p>
+      {view.roots.map((rootView) => (
+        <WorkflowBudgetRoot
+          key={rootView.root_event_id}
+          conversationId={conversationId}
+          token={token}
+          root={rootView}
+          draft={drafts[rootView.root_event_id] ?? { edges: "", reworkRounds: "" }}
+          saving={savingRoot === rootView.root_event_id}
+          requestError={requestError?.rootEventId === rootView.root_event_id ? requestError.message : null}
+          onDraftChange={onDraftChange}
+          onReload={onReload}
+          onWorkflowBudgetsChanged={onWorkflowBudgetsChanged}
+          onSavingChange={onSavingChange}
+          onRequestError={onRequestError}
+        />
+      ))}
+      {view.omitted > 0 && (
+        <p className="field-help">
+          Showing the {view.roots.length} most recent of {view.total} workflow roots ({view.omitted} older omitted).
+        </p>
+      )}
+    </div>
+  );
+}
+
+function WorkflowBudgetRoot({
+  conversationId,
+  token,
+  root,
+  draft,
+  saving,
+  requestError,
+  onDraftChange,
+  onReload,
+  onWorkflowBudgetsChanged,
+  onSavingChange,
+  onRequestError,
+}: {
+  conversationId: string;
+  token: string;
+  root: WorkflowBudgetRootView;
+  draft: WorkflowBudgetDraft;
+  saving: boolean;
+  requestError: string | null;
+  onDraftChange: (rootEventId: string, patch: Partial<WorkflowBudgetDraft>) => void;
+  onReload: () => Promise<boolean>;
+  onWorkflowBudgetsChanged: (conversationId: string) => void;
+  onSavingChange: (rootEventId: string, busy: boolean) => void;
+  onRequestError: (rootEventId: string, message: string | null) => void;
+}): ReactElement | null {
+  const busy = saving;
+  const saveEnabled = isWorkflowBudgetSaveEnabled({ draft, effective: root.effective, busy });
+
+  async function handleSave(): Promise<void> {
+    const request = buildWorkflowBudgetUpdateRequest({
+      rootEventId: root.root_event_id,
+      draft,
+      effective: root.effective,
+      busy,
+    });
+    if (request === null) return;
+    onSavingChange(root.root_event_id, true);
+    onRequestError(root.root_event_id, null);
+    try {
+      await updateConversationWorkflowBudget(conversationId, request, token);
+      // Success: re-read the workflow view and re-gate through the narrow
+      // navigator callback. Local durable state is never mutated.
+      const reloaded = await onReload();
+      onWorkflowBudgetsChanged(conversationId);
+      if (!reloaded) {
+        onRequestError(root.root_event_id, "Workflow budgets could not be re-read. Check the gateway and retry.");
+      }
+    } catch (cause) {
+      onRequestError(
+        root.root_event_id,
+        cause instanceof WorkflowBudgetHttpError
+          ? cause.message
+          : "The workflow budget update failed. Check the gateway and retry.",
+      );
+    } finally {
+      onSavingChange(root.root_event_id, false);
+    }
+  }
+
+  return (
+    <div className="workflow-budget-root">
+      <p className="workflow-budget-root-id">
+        Root <code>{root.root_event_id}</code>
+      </p>
+      <dl className="workflow-budget-facts">
+        <div className="workflow-budget-fact">
+          <dt>Edges</dt>
+          <dd>
+            consumed {root.consumed.edges} of {root.effective.edges} effective (base {root.base.edges}, remaining{" "}
+            {remainingEdges(root)})
+          </dd>
+        </div>
+        <div className="workflow-budget-fact">
+          <dt>Rework rounds</dt>
+          <dd>
+            {root.effective.reworkRounds} effective (base {root.base.reworkRounds}); worst pair has used{" "}
+            {root.worstPairOccurrences} of {1 + root.effective.reworkRounds} allowed (remaining{" "}
+            {remainingReworkRounds(root)})
+          </dd>
+        </div>
+        <div className="workflow-budget-fact">
+          <dt>Depth</dt>
+          <dd>Depth: {WORKFLOW_BUDGET_FIXED_DEPTH} (fixed)</dd>
+        </div>
+      </dl>
+      <div className="workflow-budget-edit">
+        <label htmlFor={`workflow-budget-edges-${root.root_event_id}`}>New edges limit</label>
+        <input
+          id={`workflow-budget-edges-${root.root_event_id}`}
+          data-root={root.root_event_id}
+          data-dimension="edges"
+          type="text"
+          inputMode="numeric"
+          value={draft.edges}
+          onChange={(event) => onDraftChange(root.root_event_id, { edges: event.target.value })}
+          disabled={busy}
+        />
+        <label htmlFor={`workflow-budget-rework-${root.root_event_id}`}>New rework rounds limit</label>
+        <input
+          id={`workflow-budget-rework-${root.root_event_id}`}
+          data-root={root.root_event_id}
+          data-dimension="rework"
+          type="text"
+          inputMode="numeric"
+          value={draft.reworkRounds}
+          onChange={(event) => onDraftChange(root.root_event_id, { reworkRounds: event.target.value })}
+          disabled={busy}
+        />
+        <button
+          type="button"
+          className="button button-small"
+          aria-label={`Save workflow budget for root ${root.root_event_id}`}
+          disabled={!saveEnabled}
+          onClick={() => void handleSave()}
+        >
+          <CheckIcon size={14} />
+          Save
+        </button>
+      </div>
+      {root.warnings.length > 0 && (
+        <ul className="workflow-budget-warnings">
+          {root.warnings.map((warning, index) => (
+            <li key={index}>{warning}</li>
+          ))}
+          {root.omittedWarnings > 0 && <li>{root.omittedWarnings} more ignored budget update(s) not shown</li>}
+        </ul>
+      )}
+      {requestError !== null && (
+        <div className="workflow-budget-error" role="alert">
+          <p className="error-message">{requestError}</p>
+          <button type="button" className="button button-small" onClick={() => void handleSave()}>
+            <RetryIcon size={14} />
+            Retry
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

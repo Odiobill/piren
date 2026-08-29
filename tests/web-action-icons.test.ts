@@ -266,6 +266,8 @@ describe("workbench action icons (decorative only)", () => {
           confirmingArchive: false,
           archiveButtonRef: createRef<HTMLButtonElement | null>(),
           confirmArchiveRef: createRef<HTMLButtonElement | null>(),
+          token: "t",
+          onWorkflowBudgetsChanged: () => {},
           onArchiveRequest: () => {},
           onCancelArchive: () => {},
           onConfirmArchive: () => {},

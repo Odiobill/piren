@@ -1210,6 +1210,8 @@ export function ConversationNavigator({
             }}
             onRename={handleRenameRequest}
             onClose={closeDetails}
+            token={token}
+            onWorkflowBudgetsChanged={(conversationId) => void openConversationById(conversationId)}
           />
         )}
       </section>

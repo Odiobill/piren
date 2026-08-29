@@ -46,6 +46,7 @@
     "tests/web-dashboard-service-observation.test.ts",
     "tests/web-d4-activity-handoff.test.ts",
     "tests/web-conversation-telemetry-ui.test.ts",
+    "tests/web-conversation-workflow-budget.test.ts",
     "tests/web-conversation-telemetry-timeline.test.ts",
     "tests/web-tracer-b-history-tray.test.ts",
     "tests/web-tracer-b-navigator.test.ts",

@@ -1,5 +1,11 @@
 import { parseAuthInfo, buildAuthHeaders, type AuthInfoResponse } from "./auth";
 import {
+  parseConversationWorkflowBudgetsView,
+  type ConversationWorkflowBudgetsView,
+  type WorkflowBudgetDimensionView,
+  type WorkflowBudgetUpdateRequest,
+} from "./conversation-workflow-budget.js";
+import {
   parseConversationAgents,
   type ConversationAgentsResponse,
 } from "./conversation-agents";
@@ -418,6 +424,74 @@ export async function fetchConversationEvents(id: string, token: string, signal?
  * SSE receipt, timer, reconnect, or failure retry. A 401 surfaces through
  * UnauthorizedError; any other non-200 or an invalid/leaking payload throws.
  */
+/**
+ * B5 — typed failure for the workflow-budget update route: carries the HTTP
+ * status and the bounded non-secret server reason so the modal can render
+ * the exact bounded 400/404/409/500 outcome with explicit Retry.
+ */
+export class WorkflowBudgetHttpError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "WorkflowBudgetHttpError";
+  }
+}
+
+/** B5 — GET /api/conversations/<id>/workflow-budgets (bounded server view). */
+export async function fetchConversationWorkflowBudgets(
+  id: string,
+  token: string,
+): Promise<ConversationWorkflowBudgetsView> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/workflow-budgets`, token);
+  if (!res.ok) throw new WorkflowBudgetHttpError(res.status, `workflow budgets HTTP ${res.status}`);
+  return parseConversationWorkflowBudgetsView(await res.json());
+}
+
+/**
+ * B5 — POST /api/conversations/<id>/workflow-budget with the exact closed
+ * B4 body ({root_event_id, edges?, rework_rounds?, expected_effective}).
+ * 200 returns the server-confirmed effective values; every non-200 is a
+ * WorkflowBudgetHttpError carrying the bounded server reason.
+ */
+export async function updateConversationWorkflowBudget(
+  id: string,
+  request: WorkflowBudgetUpdateRequest,
+  token: string,
+): Promise<{ status: "updated"; effective: WorkflowBudgetDimensionView }> {
+  const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/workflow-budget`, token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (res.status !== 200) {
+    let reason = `workflow budget update HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error.trim() !== "") reason = body.error;
+    } catch {
+      // Bounded fallback reason already set.
+    }
+    throw new WorkflowBudgetHttpError(res.status, reason);
+  }
+  const body = (await res.json()) as { status?: unknown; effective?: unknown };
+  if (body.status !== "updated") throw new WorkflowBudgetHttpError(res.status, "unexpected workflow budget update response");
+  const effective = parseWorkflowBudgetEffective(body.effective);
+  return { status: "updated", effective };
+}
+
+function parseWorkflowBudgetEffective(value: unknown): WorkflowBudgetDimensionView {
+  if (typeof value !== "object" || value === null) {
+    throw new WorkflowBudgetHttpError(200, "unexpected workflow budget update response");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    !Number.isFinite(record.edges) || !Number.isInteger(record.edges) || (record.edges as number) < 0 ||
+    !Number.isFinite(record.reworkRounds) || !Number.isInteger(record.reworkRounds) || (record.reworkRounds as number) < 0
+  ) {
+    throw new WorkflowBudgetHttpError(200, "unexpected workflow budget update response");
+  }
+  return { edges: record.edges as number, reworkRounds: record.reworkRounds as number };
+}
+
 export async function fetchConversationTelemetry(id: string, agent: string, token: string): Promise<ConversationTelemetryReadResult> {
   const res = await authedFetch(`/api/conversations/${encodeURIComponent(id)}/agents/${encodeURIComponent(agent)}/telemetry`, token);
   if (!res.ok) throw new Error(`conversation telemetry HTTP ${res.status}`);

@@ -3062,3 +3062,95 @@ code {
 .settings-agent-fallback-add-row > select {
   flex: 1 1 220px;
 }
+
+/* ===========================================================================
+   B5 — W2 Conversation "Workflow budget" section in the details modal
+   (accepted workbench-handoff-budget-and-agent-status-contract §5). Bounded
+   root list; one Save per explicitly rendered server root; no new scroll
+   owner/region (the modal keeps its own); no animation (reduced-motion safe).
+   =========================================================================== */
+.workflow-budget {
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.workflow-budget h3 {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+
+.workflow-budget-root {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-block: 8px;
+}
+
+.workflow-budget-root-id {
+  margin: 0 0 6px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.workflow-budget-facts {
+  margin: 0 0 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.workflow-budget-fact {
+  display: flex;
+  gap: 10px;
+  font-size: 0.875rem;
+}
+
+.workflow-budget-fact dt {
+  color: var(--muted);
+  flex: none;
+  width: 110px;
+}
+
+.workflow-budget-fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-budget-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 320px;
+}
+
+.workflow-budget-edit label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.workflow-budget-edit input[type="text"] {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.875rem;
+  font-family: inherit;
+}
+
+.workflow-budget-edit .button {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.workflow-budget-warnings {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.workflow-budget-error {
+  margin-top: 8px;
+}
