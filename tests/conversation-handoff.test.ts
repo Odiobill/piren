@@ -344,3 +344,54 @@ describe("buildConversationStagePrompt C6 task-directed paragraph (T2, ADR-0045)
     expect(prompt.indexOf("task-directed")).toBeLessThan(prompt.indexOf("Handoff request:"));
   });
 });
+
+describe("planConversationHandoffEdge: derived effective limits input (B3-C)", () => {
+  const ROOT = "root-1";
+  const RUNNABLE = ["zai", "dipu", "kimi", "sam"];
+  const workflowFor = (edges: Array<[string, string]>): ReturnType<typeof deriveConversationWorkflowState> => {
+    const events: ConversationEventRecord[] = [event({ id: ROOT, sequence: 1, mentions: ["zai"] })];
+    edges.forEach(([s, t], i) => events.push(handoffEvent(i + 2, s, t, ROOT, `h${i + 1}`)));
+    return deriveConversationWorkflowState(events, ROOT);
+  };
+  const planWithLimits = (
+    workflow: ReturnType<typeof deriveConversationWorkflowState>,
+    source: string,
+    to: string,
+    limits?: { edges: number; reworkRounds: number },
+  ) =>
+    planConversationHandoffEdge({
+      conversationId: "c1",
+      sourceAgent: source,
+      request: { to, text: "help" },
+      runnableAgents: RUNNABLE,
+      activeKeys: [],
+      workflow,
+      ...(limits !== undefined ? { limits } : {}),
+    });
+
+  it("absent limits preserve the existing fixed C5 base behavior byte-for-byte", () => {
+    const fullEdges = Array.from({ length: CONVERSATION_HANDOFF_MAX_EDGES }, (_, i) => ["zai", `a${i}`] as [string, string]);
+    expect(planWithLimits(workflowFor(fullEdges), "zai", "dipu")).toMatchObject({ ok: false, reason: /budget exhausted: edges/ });
+  });
+
+  it("a raised effective edges limit enables an otherwise-edge-exhausted handoff", () => {
+    const fullEdges = Array.from({ length: CONVERSATION_HANDOFF_MAX_EDGES }, (_, i) => ["zai", `a${i}`] as [string, string]);
+    expect(planWithLimits(workflowFor(fullEdges), "zai", "dipu", { edges: CONVERSATION_HANDOFF_MAX_EDGES + 2, reworkRounds: 2 })).toEqual({ ok: true, depth: 1 });
+  });
+
+  it("exhausted effective edges still reject with the existing bounded reason", () => {
+    const raised = Array.from({ length: 10 }, (_, i) => ["zai", `a${i}`] as [string, string]);
+    expect(planWithLimits(workflowFor(raised), "zai", "dipu", { edges: 10, reworkRounds: 2 })).toMatchObject({ ok: false, reason: /budget exhausted: edges/ });
+  });
+
+  it("a raised effective rework limit enables an otherwise-rework-exhausted handoff", () => {
+    const reworked = [["zai", "dipu"], ["zai", "dipu"], ["zai", "dipu"]] as Array<[string, string]>;
+    expect(planWithLimits(workflowFor(reworked), "zai", "dipu")).toMatchObject({ ok: false, reason: /budget exhausted: rework/ });
+    expect(planWithLimits(workflowFor(reworked), "zai", "dipu", { edges: 8, reworkRounds: 3 })).toEqual({ ok: true, depth: 1 });
+  });
+
+  it("depth remains the fixed C5 constant regardless of limits", () => {
+    const depthWorkflow = workflowFor([["zai", "dipu"], ["dipu", "kimi"], ["kimi", "sam"]]);
+    expect(planWithLimits(depthWorkflow, "sam", "zai", { edges: 24, reworkRounds: 6 })).toMatchObject({ ok: false, reason: /budget exhausted: depth/ });
+  });
+});

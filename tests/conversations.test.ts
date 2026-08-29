@@ -9,6 +9,10 @@ import {
   listConversations,
   readConversationEvents,
   updateConversationAudience,
+  updateConversationAudienceUnderLock,
+  acquireConversationMutationLock,
+  acquireAudienceLock,
+  isConversationMutationBusyError,
   conversationIdFromText,
   conversationTitleFromText,
   appendConversationEvent as appendConversationEventBase,
@@ -946,5 +950,60 @@ describe("handoff_budget_updated durable evidence (B2)", () => {
     for (const event of events) {
       expect(event.handoffBudget).toBeUndefined();
     }
+  });
+});
+
+describe("conversation mutation lock (B3-A)", () => {
+  it("the under-lock audience helper reuses an already-held lock (no re-acquisition) and performs the C1 union", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "UnderLock", audience: ["zai"], now: () => NOW });
+    // Hold the mutation lock ourselves: if the under-lock helper tried to
+    // re-acquire, it would throw busy (EEXIST) instead of succeeding.
+    const lock = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });
+    try {
+      const manifest = await updateConversationAudienceUnderLock({
+        vaultRoot: root,
+        conversationId: conversation.id,
+        additions: { __validatedRecipients: true, recipients: ["dipu"] },
+        kind: "handoff",
+        now: () => NOW,
+      });
+      expect(manifest.audience).toEqual(["zai", "dipu"]);
+    } finally {
+      await lock.release();
+    }
+    const reread = await readConversation({ vaultRoot: root, conversationId: conversation.id });
+    expect(reread.audience).toEqual(["zai", "dipu"]);
+  });
+
+  it("acquireConversationMutationLock is the same vault-visible authority: contention is bounded and token release is ownership-verified", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Contend", audience: [], now: () => NOW });
+    const lock = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });
+    try {
+      await expect(acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW })).rejects.toThrow(/busy/);
+    } finally {
+      await lock.release();
+    }
+    // Available again after release.
+    const second = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });
+    await second.release();
+    expect(isConversationMutationBusyError(new Error("Conversation c1 audience update is busy (another update holds the lock); retry after it completes."))).toBe(true);
+    expect(isConversationMutationBusyError(new Error("some other failure"))).toBe(false);
+    // Legacy alias still exported for existing callers.
+    expect(acquireAudienceLock).toBe(acquireConversationMutationLock);
+  });
+
+  it("standalone updateConversationAudience still acquires/releases around the under-lock helper", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Standalone", audience: ["zai"], now: () => NOW });
+    const manifest = await updateConversationAudience({
+      vaultRoot: root,
+      conversationId: conversation.id,
+      additions: { __validatedRecipients: true, recipients: ["dipu"] },
+      kind: "handoff",
+      now: () => NOW,
+    });
+    expect(manifest.audience).toEqual(["zai", "dipu"]);
+    // Lock released: a fresh acquisition succeeds.
+    const lock = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });
+    await lock.release();
   });
 });

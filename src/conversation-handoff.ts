@@ -179,6 +179,14 @@ export interface PlanConversationHandoffEdgeInput {
   /** `conversationId:agent` keys currently holding an active run. */
   activeKeys: readonly string[];
   workflow: ConversationWorkflowState;
+  /**
+   * B3-C: derived effective budget limits for this workflow root (B1
+   * derivation output). Absent/undefined preserves the fixed C5 base
+   * constants exactly, so Conversations without accepted updates behave
+   * byte-compatibly. Depth is NOT adjustable: it stays the fixed C5
+   * constant regardless of limits.
+   */
+  limits?: { edges: number; reworkRounds: number } | undefined;
 }
 
 export type PlanConversationHandoffEdgeResult =
@@ -207,7 +215,11 @@ export function planConversationHandoffEdge(input: PlanConversationHandoffEdgeIn
   if (sourceDepth === undefined) {
     return { ok: false, reason: "source agent is not part of the conversation handoff workflow" };
   }
-  if (input.workflow.edges.length >= CONVERSATION_HANDOFF_MAX_EDGES) {
+  // B3-C: derived effective limits (B1 output) with the fixed C5 base as the
+  // absent-input default. Depth stays the fixed constant.
+  const effectiveEdges = input.limits !== undefined ? input.limits.edges : CONVERSATION_HANDOFF_MAX_EDGES;
+  const effectiveReworkRounds = input.limits !== undefined ? input.limits.reworkRounds : CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS;
+  if (input.workflow.edges.length >= effectiveEdges) {
     return { ok: false, reason: "conversation handoff workflow budget exhausted: edges" };
   }
   if (sourceDepth + 1 > CONVERSATION_HANDOFF_MAX_DEPTH) {
@@ -215,7 +227,7 @@ export function planConversationHandoffEdge(input: PlanConversationHandoffEdgeIn
   }
   const pairKey = `${input.sourceAgent}->${to}`;
   const occurrences = input.workflow.pairOccurrences.get(pairKey) ?? 0;
-  if (occurrences >= 1 + CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS) {
+  if (occurrences >= 1 + effectiveReworkRounds) {
     return { ok: false, reason: "conversation handoff workflow budget exhausted: rework" };
   }
   return { ok: true, depth: sourceDepth + 1 };

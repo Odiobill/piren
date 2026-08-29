@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createConversation, appendConversationEvent, readConversation, readConversationEvents, transitionConversationLifecycle, acquireAudienceLock } from "../src/conversations.js";
+import { createConversation, appendConversationEvent, readConversation, readConversationEvents, transitionConversationLifecycle, acquireAudienceLock, acquireConversationMutationLock } from "../src/conversations.js";
 import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse, RpcSessionState, RpcSessionStats } from "../src/gateway-rpc.js";
 import {
   ConversationBroker,
@@ -1336,7 +1336,9 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
     const rejected = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
     expect(rejected).toMatchObject({ status: "rejected" });
     if (rejected.status === "rejected") {
-      expect(rejected.reason).toMatch(/could not grow the audience/i);
+      // B3-B: contention is now rejected at mutation-lock acquisition, before
+      // any read/derive/plan work — a stronger, earlier bounded rejection.
+      expect(rejected.reason).toMatch(/conversation mutation lock is busy/i);
     }
     await lock.release();
     const events = await readConversationEvents({ vaultRoot: root, conversationId });
@@ -2759,6 +2761,324 @@ describe("T2 C6 prompt additions (root note + broker-wired stage paragraph, ADR-
     expect(childPrompt).toContain("task-directed");
     expect(childPrompt).toContain("task_claim");
     expect(childPrompt).toContain("team/<agent>/inbox/<task>.md");
+    await broker.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B3 — vault-visible mutation serialization + derived budget consumption
+// ---------------------------------------------------------------------------
+
+describe("ConversationBroker B3: handoff acceptance under the conversation mutation lock", () => {
+  it("lock contention returns a bounded rejected handoff with zero side effects; the winner yields one durable ordering", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    await waitFor(() => (clients[0]?.prompts.length ?? 0) > 0);
+
+    // Another process (simulated) holds the conversation mutation lock.
+    const external = await acquireConversationMutationLock({ vaultRoot: root, conversationId, now: tick });
+    const rejected = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "Please review the diff" });
+    expect(rejected).toMatchObject({ status: "rejected" });
+    if (rejected.status === "rejected") expect(rejected.reason).toMatch(/busy|lock/i);
+    // Zero side effects: no handoff event, no audience mutation, no dispatch.
+    const eventsDuring = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(eventsDuring.some((e) => e.kind === "agent_message")).toBe(false);
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["zai"]);
+    expect(clients).toHaveLength(1);
+    await external.release();
+
+    // Winner ordering: after release the same acceptance succeeds exactly once.
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "Please review the diff" });
+    expect(accepted).toMatchObject({ status: "accepted" });
+    const eventsAfter = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(eventsAfter.filter((e) => e.kind === "agent_message")).toHaveLength(1);
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("acceptance rejects on an archived conversation under the lock (bounded, no write)", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    await transitionConversationLifecycle({ vaultRoot: root, conversationId, transition: "archive", now: tick });
+
+    const rejected = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(rejected).toMatchObject({ status: "rejected" });
+    if (rejected.status === "rejected") expect(rejected.reason).toMatch(/not open|archived/i);
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+});
+
+describe("ConversationBroker B3: derived budget consumed at acceptance time", () => {
+  async function makeEdgeExhaustedWorkflow(conversationId: string, stewardEventId: string): Promise<void> {
+    // Eight durable edges from zai across four runnable targets (max pair
+    // occurrences 2, within the base rework budget) exhaust the base edges
+    // budget exactly.
+    const targets = ["dipu", "kimi", "sam", "nora"];
+    for (let i = 0; i < 8; i += 1) {
+      await appendConversationEvent({
+        vaultRoot: root,
+        conversationId,
+        kind: "agent_message",
+        authorKind: "agent",
+        author: "zai",
+        body: `edge ${i}`,
+        addressedAgent: targets[i % targets.length] as string,
+        correlationId: stewardEventId,
+        now: tick,
+        nonce: () => `e${i}`,
+      });
+    }
+  }
+
+  it("an edge-exhausted workflow rejects at base limits, then a raised budget enables the same handoff", async () => {
+    const { broker, clients } = makeBroker({
+      runnableAgents: ["zai", "dipu", "kimi", "sam", "nora"],
+      behaviors: ["hang", "complete"],
+    });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    await makeEdgeExhaustedWorkflow(conversationId, stewardEventId);
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    await waitFor(() => (clients[0]?.prompts.length ?? 0) > 0);
+
+    const rejected = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(rejected).toMatchObject({ status: "rejected", reason: "conversation handoff workflow budget exhausted: edges" });
+
+    // Steward raises the budget via the B3 mutation seam (CAS exact).
+    const updated = await broker.updateConversationWorkflowBudget({
+      conversationId,
+      rootEventId: stewardEventId,
+      edges: 10,
+      expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(updated).toMatchObject({ status: "updated", effective: { edges: 10, reworkRounds: 2 } });
+
+    // The same handoff now accepts under the derived raised limits.
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(accepted).toMatchObject({ status: "accepted" });
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("no-update conversations keep base-compatible behavior (fake-Pi normal path unchanged)", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(accepted).toMatchObject({ status: "accepted" });
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+});
+
+describe("ConversationBroker B3: budget-update mutation seam", () => {
+  it("happy path appends exactly one immutable steward-authored B2 event with correct from/to", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+
+    const outcome = await broker.updateConversationWorkflowBudget({
+      conversationId,
+      rootEventId: stewardEventId,
+      edges: 12,
+      expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(outcome).toMatchObject({ status: "updated", effective: { edges: 12, reworkRounds: 2 } });
+    if (outcome.status !== "updated") throw new Error("expected updated");
+
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const budgetEvents = events.filter((e) => e.kind === "handoff_budget_updated");
+    expect(budgetEvents).toHaveLength(1);
+    expect(budgetEvents[0]?.author).toBe("steward");
+    expect(budgetEvents[0]?.authorKind).toBe("steward");
+    expect(budgetEvents[0]?.correlationId).toBe(stewardEventId);
+    expect(budgetEvents[0]?.handoffBudget).toEqual({ edges: { from: 8, to: 12 } });
+    await broker.close();
+  });
+
+  it("CAS mismatch is a bounded typed conflict carrying current facts, with no write", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+
+    const outcome = await broker.updateConversationWorkflowBudget({
+      conversationId,
+      rootEventId: stewardEventId,
+      edges: 12,
+      expectedEffective: { edges: 9, reworkRounds: 2 },
+    });
+    expect(outcome).toMatchObject({ status: "conflict", currentEffective: { edges: 8, reworkRounds: 2 } });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "handoff_budget_updated")).toBe(false);
+    await broker.close();
+  });
+
+  it("malformed/non-raising/out-of-cap candidates are bounded rejections with no write", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    for (const candidate of [{ edges: 8 }, { edges: 4 }, { edges: 25 }, { reworkRounds: 7 }, {}]) {
+      const outcome = await broker.updateConversationWorkflowBudget({
+        conversationId,
+        rootEventId: stewardEventId,
+        edges: (candidate as { edges?: number }).edges,
+        reworkRounds: (candidate as { reworkRounds?: number }).reworkRounds,
+        expectedEffective: { edges: 8, reworkRounds: 2 },
+      });
+      expect(outcome).toMatchObject({ status: "rejected" });
+    }
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "handoff_budget_updated")).toBe(false);
+    await broker.close();
+  });
+
+  it("archived conversations and unknown roots are bounded non-success results with no write", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    await transitionConversationLifecycle({ vaultRoot: root, conversationId, transition: "archive", now: tick });
+    const archived = await broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(archived).toMatchObject({ status: "not-open" });
+
+    const other = await makeConversation(["zai"], "Another @zai");
+    const unknownRoot = await broker.updateConversationWorkflowBudget({
+      conversationId: other, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(unknownRoot).toMatchObject({ status: "unknown-root" });
+    await broker.close();
+  });
+
+  it("lock contention is a bounded busy result with no write (both contention orders)", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+
+    // Order A: budget update contends with an external holder.
+    const externalA = await acquireConversationMutationLock({ vaultRoot: root, conversationId, now: tick });
+    const busyA = await broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(busyA).toMatchObject({ status: "busy" });
+    await externalA.release();
+    const updated = await broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(updated).toMatchObject({ status: "updated" });
+
+    // Order B: a later budget update contends while the previous write's lock
+    // is (deterministically) already released; contention is still bounded.
+    const externalB = await acquireConversationMutationLock({ vaultRoot: root, conversationId, now: tick });
+    const busyB = await broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 12, expectedEffective: { edges: 10, reworkRounds: 2 },
+    });
+    expect(busyB).toMatchObject({ status: "busy" });
+    await externalB.release();
+    const updatedB = await broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 12, expectedEffective: { edges: 10, reworkRounds: 2 },
+    });
+    expect(updatedB).toMatchObject({ status: "updated" });
+    await broker.close();
+  });
+
+  it("a budget update between gate request and confirmation takes effect at confirmation", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu", "kimi", "sam", "nora"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    // Exhaust the base edges budget before dispatch.
+    const targets = ["dipu", "kimi", "sam", "nora"];
+    for (let i = 0; i < 8; i += 1) {
+      await appendConversationEvent({
+        vaultRoot: root, conversationId, kind: "agent_message", authorKind: "agent", author: "zai",
+        body: `edge ${i}`, addressedAgent: targets[i % targets.length] as string,
+        correlationId: stewardEventId, now: tick, nonce: () => `e${i}`,
+      });
+    }
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    // Raise BEFORE confirmation; the update lands while the gate is pending.
+    const updated = await broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(updated).toMatchObject({ status: "updated" });
+
+    // Confirmation now accepts the edge under the derived raised limits.
+    await broker.respondToConversationApproval({
+      conversationId, agent: "zai", requestId: gate.requestId, response: { confirmed: true },
+    });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "agent_message" && e.addressedAgent === "dipu")).toBe(true);
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("a gate whose confirmation cannot be allowed by current effective state still rejects", async () => {
+    const { broker, clients } = makeBroker({ runnableAgents: ["zai", "dipu", "kimi", "sam", "nora"], behaviors: ["hang", "complete"] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const targets = ["dipu", "kimi", "sam", "nora"];
+    for (let i = 0; i < 8; i += 1) {
+      await appendConversationEvent({
+        vaultRoot: root, conversationId, kind: "agent_message", authorKind: "agent", author: "zai",
+        body: `edge ${i}`, addressedAgent: targets[i % targets.length] as string,
+        correlationId: stewardEventId, now: tick, nonce: () => `e${i}`,
+      });
+    }
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    // No update: confirmation revalidates against the still-exhausted budget.
+    const eventsBeforeConfirmation = await readConversationEvents({ vaultRoot: root, conversationId });
+    await expect(
+      broker.respondToConversationApproval({
+        conversationId, agent: "zai", requestId: gate.requestId, response: { confirmed: true },
+      }),
+    ).rejects.toThrow(/could not be accepted/);
+    // Zero side effects: exactly the pre-existing events (steward_message,
+    // run_started, and the 8 fabricated edges), no acceptance event.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events).toHaveLength(eventsBeforeConfirmation.length);
+    expect(events.filter((e) => e.kind === "agent_message")).toHaveLength(8);
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
     await broker.close();
   });
 });

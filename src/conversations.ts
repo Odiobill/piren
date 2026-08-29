@@ -592,21 +592,30 @@ export interface UpdateConversationAudienceOptions {
 const AUDIENCE_LOCK_FILENAME = ".audience.lock";
 
 /**
- * Acquire the per-conversation audience-update lock (vault-visible,
- * no-clobber, cross-process safe): an atomic no-clobber create of
- * `collaboration/conversations/<id>/.audience.lock`. A held/contended lock
- * rejects with a deterministic non-secret conflict — the CALLER surfaces it
- * as 409 BEFORE creating any steward event or dispatch (no false delivery
- * claim). There is NO automatic stale recovery; a crashed holder's lock is
- * recovered manually (see the C2 contract): inspect the lock content, then
- * remove the file after triage. The release removes ONLY our own lock
- * (token-verified) so a manually replaced lock is never deleted by a stale
- * holder. No hidden DB, queue, retry, or fallback.
+ * Acquire the per-conversation MUTATION lock (vault-visible, no-clobber,
+ * cross-process safe): an atomic no-clobber create of
+ * `collaboration/conversations/<id>/.audience.lock` — the exact historical
+ * filename is PRESERVED so old/new binaries contend on the same lock file
+ * (a second lock filename would be a split-brain). This is the ONE
+ * serialized Conversation mutation authority (accepted W2/W3 contract
+ * §4.3): audience growth, lifecycle transitions, renames, handoff
+ * acceptance, and budget updates all exclude each other through it. A
+ * held/contended lock rejects with a deterministic non-secret conflict —
+ * the CALLER surfaces it as 409 (or a bounded typed rejection) BEFORE
+ * creating any event or dispatch (no false delivery claim). There is NO
+ * automatic stale recovery; a crashed holder's lock is recovered manually
+ * (see the C2 contract): inspect the lock content, then remove the file
+ * after triage. The release removes ONLY our own lock (token-verified) so
+ * a manually replaced lock is never deleted by a stale holder. No hidden
+ * DB, queue, retry, or fallback.
+ *
+ * `acquireAudienceLock` remains exported as the exact same function for the
+ * established audience callers and tests.
  *
  * Exported as a test seam (C5-1 lock-failure containment): tests hold the
- * lock to prove a busy audience append is contained.
+ * lock to prove a busy mutation is contained.
  */
-export async function acquireAudienceLock(options: {
+export async function acquireConversationMutationLock(options: {
   vaultRoot: string;
   conversationId: string;
   now?: () => Date;
@@ -687,45 +696,65 @@ export async function updateConversationAudience(
   const absolutePath = join(conversationDir, "index.md");
   assertInside(root, conversationDir);
 
-  // Cross-process-safe coordination: acquire the vault-visible lock BEFORE any
-  // read, hold it through the read -> C1 union -> atomic manifest replacement,
-  // and release it in a finally (token-verified). A contended lock rejects
-  // with a deterministic non-secret conflict surfaced as 409 by the gateway
-  // before any steward event or dispatch.
+  // Cross-process-safe coordination: acquire the vault-visible mutation lock
+  // BEFORE any read, hold it through the read -> C1 union -> atomic manifest
+  // replacement, and release it in a finally (token-verified). A contended
+  // lock rejects with a deterministic non-secret conflict surfaced as 409 by
+  // the gateway before any steward event or dispatch.
   const lockOptions: { vaultRoot: string; conversationId: string; now?: () => Date; token?: () => string } = {
     vaultRoot: root,
     conversationId: options.conversationId,
   };
   if (options.now !== undefined) lockOptions.now = options.now;
   if (options.lockToken !== undefined) lockOptions.token = options.lockToken;
-  const lock = await acquireAudienceLock(lockOptions);
+  const lock = await acquireConversationMutationLock(lockOptions);
   try {
     if (options.holdBarrier !== undefined) {
       await options.holdBarrier;
     }
-    const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
-    const kind = options.kind ?? "steward";
-    const membershipChange = kind === "handoff" ? { kind: "handoff" as const, recipients: options.additions } : { kind: "steward" as const, recipients: options.additions };
-    const audience = applyMembershipChange(current.audience, membershipChange);
-    const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
-
-    const content = renderConversationManifest({
-      id: current.id,
-      title: current.title,
-      audience,
-      // L1 status-safe rewrite: every manifest mutation preserves the parsed
-      // status, so an audience update never silently reopens an archived
-      // conversation (accepted archive/reopen contract §5.2).
-      status: current.status,
-      timestamp: updatedStamp,
-      created: current.created,
-    });
-    await atomicReplaceManifest(conversationDir, absolutePath, content);
-
-    return readConversation({ vaultRoot: root, conversationId: options.conversationId });
+    return await updateConversationAudienceUnderLock(options);
   } finally {
     await lock.release();
   }
+}
+
+/**
+ * B3-A: the under-lock audience mutation — read -> C1 additive union ->
+ * atomic manifest replace -> re-read — for callers that ALREADY hold the
+ * conversation mutation lock (the broker's handoff-acceptance and
+ * budget-update critical sections). It NEVER re-acquires the lock: calling
+ * it inside an already-held section is the whole point, and re-acquiring
+ * the same `.audience.lock` would self-deadlock by construction.
+ */
+export async function updateConversationAudienceUnderLock(
+  options: UpdateConversationAudienceOptions,
+): Promise<ConversationManifest> {
+  assertValidConversationId(options.conversationId);
+  const root = resolve(options.vaultRoot);
+  const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
+  const absolutePath = join(conversationDir, "index.md");
+  assertInside(root, conversationDir);
+
+  const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
+  const kind = options.kind ?? "steward";
+  const membershipChange = kind === "handoff" ? { kind: "handoff" as const, recipients: options.additions } : { kind: "steward" as const, recipients: options.additions };
+  const audience = applyMembershipChange(current.audience, membershipChange);
+  const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
+
+  const content = renderConversationManifest({
+    id: current.id,
+    title: current.title,
+    audience,
+    // L1 status-safe rewrite: every manifest mutation preserves the parsed
+    // status, so an audience update never silently reopens an archived
+    // conversation (accepted archive/reopen contract §5.2).
+    status: current.status,
+    timestamp: updatedStamp,
+    created: current.created,
+  });
+  await atomicReplaceManifest(conversationDir, absolutePath, content);
+
+  return readConversation({ vaultRoot: root, conversationId: options.conversationId });
 }
 
 /**
@@ -1080,6 +1109,25 @@ export interface AppendConversationEventOptions {
   io?: ConversationWriteIo | undefined;
   /** Injected sequence counter (testable); production derives it from the event count. */
   sequence?: number | undefined;
+}
+
+/**
+ * Legacy name for the conversation mutation lock (exact same function):
+ * existing audience callers and tests keep working unchanged.
+ */
+export const acquireAudienceLock = acquireConversationMutationLock;
+
+/**
+ * Deterministic busy-contention predicate for the conversation mutation
+ * lock: true exactly for the bounded non-secret contention rejection the
+ * lock itself throws on a held/contended `.audience.lock` — never for raw
+ * filesystem errors, which propagate to the caller unchanged.
+ */
+export function isConversationMutationBusyError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("audience update is busy (another update holds the lock)")
+  );
 }
 
 /**
