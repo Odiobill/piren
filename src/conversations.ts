@@ -1188,12 +1188,17 @@ function assertValidLifecycleMetadata(lifecycleState: ConversationStatus | undef
 }
 
 /**
- * B2: a `handoff_budget_updated` event is gated at append to the exact
- * durable steward identity, a non-empty workflow-root correlation, and a
- * structurally well-formed payload with at least one dimension. Dimension
- * VALUES are deliberately not validated here: hand-edited value-level
- * garbage stays parseable so the B1 pure core fail-closes it (contract
- * §3.1/§3.2). No route, browser input, or generic authoring path exists.
+ * B2: event-kind-bound budget authoring. A `handoff_budget_updated` event is
+ * gated at append to the exact durable steward identity, a non-empty
+ * workflow-root correlation, and a structurally well-formed payload with at
+ * least one dimension; NEW-append dimension VALUES are strictly validated
+ * (finite positive integers, strict raise, within the B1 fixed caps — see
+ * below). Every OTHER kind must not carry a `handoffBudget` payload at all:
+ * that would create an unauthorized generic durable budget-metadata path
+ * (B2 final correction). Only hand-edited STORED values remain tolerant,
+ * via the parser's shape-normalizing read that lets the B1 pure core
+ * fail-close them. No route, browser input, or generic authoring path
+ * exists.
  */
 function assertValidHandoffBudgetMetadata(options: {
   kind: ConversationEventKind;
@@ -1202,7 +1207,14 @@ function assertValidHandoffBudgetMetadata(options: {
   correlationId?: string | undefined;
   handoffBudget?: HandoffBudgetEventPayload | undefined;
 }): void {
-  if (options.kind !== "handoff_budget_updated") return;
+  if (options.kind !== "handoff_budget_updated") {
+    if (options.handoffBudget !== undefined) {
+      throw new Error(
+        `Invalid conversation event: a handoffBudget payload is only allowed on handoff_budget_updated events.`,
+      );
+    }
+    return;
+  }
   if (options.author !== "steward" || options.authorKind !== "steward") {
     throw new Error("Invalid conversation handoff budget event: only the durable steward identity may author it.");
   }

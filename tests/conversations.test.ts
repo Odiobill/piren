@@ -16,6 +16,7 @@ import {
   type ConversationEventRecord,
   type HandoffBudgetEventPayload,
 } from "../src/conversations.js";
+import { handoffBudgetEvidenceFromRecord, deriveHandoffBudget } from "../src/conversation-budget.js";
 import { resolveStewardMentions } from "../src/conversation-contract.js";
 
 let root: string;
@@ -575,6 +576,46 @@ describe("handoff_budget_updated durable evidence (B2)", () => {
     } as Parameters<typeof appendConversationEvent>[0]);
   }
 
+  it("forbids a handoffBudget payload on every non-budget kind (agent-authored agent_message included) without writing an event", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "KindGate", audience: [], now: () => NOW });
+    const validPayload = { edges: { from: 8, to: 10 } };
+    for (const [kind, authorKind, author] of [
+      ["agent_message", "agent", "zai"],
+      ["steward_message", "steward", "steward"],
+      ["run_started", "system", "system"],
+    ] as const) {
+      await expect(
+        appendConversationEvent({
+          vaultRoot: root,
+          conversationId: conversation.id,
+          kind,
+          authorKind,
+          author,
+          body: "x",
+          correlationId: kind === "agent_message" ? ROOT : undefined,
+          addressedAgent: kind === "agent_message" ? "steward" : undefined,
+          runStatus: kind === "run_started" ? "running" : undefined,
+          handoffBudget: validPayload,
+          now: () => NOW,
+        } as Parameters<typeof appendConversationEvent>[0]),
+      ).rejects.toThrow(/handoff budget|handoffBudget/i);
+    }
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events).toHaveLength(0);
+  });
+
+  it("still appends legacy kinds that simply omit the payload field", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Legacy omit", audience: [], now: () => NOW });
+    await appendConversationEvent({
+      vaultRoot: root, conversationId: conversation.id, kind: "agent_message",
+      authorKind: "agent", author: "zai", body: "ordinary reply", addressedAgent: "steward",
+      correlationId: ROOT, now: () => NOW,
+    });
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.handoffBudget).toBeUndefined();
+  });
+
   it("appends a valid budget update exactly once and round-trips the payload", async () => {
     const event = await appendBudgetEvent();
     expect(event.kind).toBe("handoff_budget_updated");
@@ -790,6 +831,48 @@ describe("handoff_budget_updated durable evidence (B2)", () => {
     const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
     expect(events).toHaveLength(1);
     expect(events[0]?.handoffBudget).toEqual({});
+  });
+
+  it("end-to-end: a valid-YAML invalid-JSON scalar flows parser -> adapter -> B1 derive to exactly one bounded ignored result", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "E2E scalar", audience: [], now: () => NOW });
+    const eventsDir = join(root, "collaboration", "conversations", conversation.id, "events");
+    await writeFile(
+      join(eventsDir, "00000001.md"),
+      [
+        "---",
+        "type: Conversation Event",
+        "id: 20260805T131530000Z-e2e",
+        `conversationId: ${conversation.id}`,
+        "kind: handoff_budget_updated",
+        "authorKind: steward",
+        "author: steward",
+        "created: 2026-08-05T13:15:30.000Z",
+        "sequence: 1",
+        `correlationId: ${ROOT}`,
+        "handoffBudget: not-json",
+        "---",
+        "",
+        "Hand-edited scalar.",
+        "",
+      ].join("\n"),
+    );
+
+    // ONE chain over the ACTUAL parsed durable record: no throw anywhere,
+    // base effective values, zero valid updates, exactly one bounded
+    // ignored outcome.
+    const events = await readConversationEvents({ vaultRoot: root, conversationId: conversation.id });
+    expect(events).toHaveLength(1);
+    const evidence = handoffBudgetEvidenceFromRecord(events[0] as ConversationEventRecord, ROOT);
+    const derived = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [evidence],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    expect(derived.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(derived.validUpdateEventIds).toEqual([]);
+    expect(derived.ignored).toHaveLength(1);
+    expect(derived.ignored[0]?.eventId).toBe("20260805T131530000Z-e2e");
+    expect(derived.ignored[0]?.reason).toContain("dimension");
   });
 
   it("keeps the parser strict: an unknown kind is rejected with invalid kind (no tolerance path)", async () => {
