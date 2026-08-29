@@ -478,6 +478,87 @@ export async function updateConversationWorkflowBudget(
   return { status: "updated", effective };
 }
 
+/**
+ * B6 — the strictly parsed exact-pair workflow-status snapshot consumed by
+ * the pure status view model. The full B4 workflow facts are validated, but
+ * only the status-relevant projection is carried.
+ */
+export interface ConversationWorkflowStatusSnapshot {
+  runActive: boolean;
+  workflow: {
+    rootEventId: string;
+    association: "active-run" | "latest-run";
+    effectiveEdges: number;
+    consumedEdges: number;
+    low: boolean;
+    exhausted: boolean;
+  } | null;
+}
+
+const WORKFLOW_STATUS_ASSOCIATIONS: readonly string[] = ["active-run", "latest-run"];
+
+function parseWorkflowStatusFacts(value: unknown): NonNullable<ConversationWorkflowStatusSnapshot["workflow"]> {
+  if (typeof value !== "object" || value === null) throw new Error("unexpected workflow status payload");
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.root_event_id !== "string" ||
+    record.root_event_id === "" ||
+    !WORKFLOW_STATUS_ASSOCIATIONS.includes(record.association as string) ||
+    typeof record.low !== "boolean" ||
+    typeof record.exhausted !== "boolean"
+  ) {
+    throw new Error("unexpected workflow status payload");
+  }
+  const effective = parseWorkflowBudgetEffective(record.effective);
+  if (typeof record.consumed !== "object" || record.consumed === null) {
+    throw new Error("unexpected workflow status payload");
+  }
+  const consumedEdges = (record.consumed as Record<string, unknown>).edges;
+  if (typeof consumedEdges !== "number" || !Number.isFinite(consumedEdges) || !Number.isInteger(consumedEdges) || consumedEdges < 0) {
+    throw new Error("unexpected workflow status payload");
+  }
+  return {
+    rootEventId: record.root_event_id,
+    association: record.association as "active-run" | "latest-run",
+    effectiveEdges: effective.edges,
+    consumedEdges: consumedEdges as number,
+    low: record.low as boolean,
+    exhausted: record.exhausted as boolean,
+  };
+}
+
+/**
+ * Strict allowlist parser for the bounded B4 exact-pair status response
+ * (contract §4.1). Any malformed payload throws — the browser never renders
+ * or sends a fabricated run/workflow fact.
+ */
+export function parseConversationWorkflowStatus(payload: unknown): ConversationWorkflowStatusSnapshot {
+  if (typeof payload !== "object" || payload === null) throw new Error("unexpected workflow status payload");
+  const record = payload as Record<string, unknown>;
+  if (typeof record.run_active !== "boolean") throw new Error("unexpected workflow status payload");
+  return {
+    runActive: record.run_active as boolean,
+    workflow: record.workflow === null ? null : parseWorkflowStatusFacts(record.workflow),
+  };
+}
+
+/**
+ * B6 — GET /api/conversations/<id>/agents/<agent>/workflow-status: one
+ * explicit, authenticated, read-only exact-pair status read. Called ONLY at
+ * the contract's explicit moments (fresh attach, durable reread, details
+ * modal close, after a budget update) — never on a timer, SSE frame, card
+ * activation, or failure retry. A 401 surfaces through UnauthorizedError;
+ * any other non-200 or malformed payload throws a typed bounded error.
+ */
+export async function fetchConversationWorkflowStatus(id: string, agent: string, token: string): Promise<ConversationWorkflowStatusSnapshot> {
+  const res = await authedFetch(
+    `/api/conversations/${encodeURIComponent(id)}/agents/${encodeURIComponent(agent)}/workflow-status`,
+    token,
+  );
+  if (!res.ok) throw new WorkflowBudgetHttpError(res.status, `workflow status HTTP ${res.status}`);
+  return parseConversationWorkflowStatus(await res.json());
+}
+
 function parseWorkflowBudgetEffective(value: unknown): WorkflowBudgetDimensionView {
   if (typeof value !== "object" || value === null) {
     throw new WorkflowBudgetHttpError(200, "unexpected workflow budget update response");
