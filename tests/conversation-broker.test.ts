@@ -3312,3 +3312,94 @@ describe("ConversationBroker B3 correction: real two-broker interleavings over o
     await loser.broker.close();
   });
 });
+
+describe("ConversationBroker B3 final correction: test seams never leak the visible lock", () => {
+  it("a throwing acquisition signal releases the lock: no leak, subsequent mutations succeed", async () => {
+    // The seam throws exactly TWICE (once per mutation path: acceptance and
+    // budget update); later acquisitions behave normally so the no-leak +
+    // subsequent-success assertions are meaningful.
+    let throwsLeft = 2;
+    const throwingSignal = (): void => {
+      if (throwsLeft > 0) {
+        throwsLeft -= 1;
+        throw new Error("signal blew up (test seam)");
+      }
+    };
+    const { broker, clients } = makeBroker({
+      runnableAgents: ["zai", "dipu"],
+      behaviors: ["hang", "complete"],
+      mutationLockAcquiredSignal: throwingSignal,
+    });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    await waitFor(() => (clients[0]?.prompts.length ?? 0) > 0);
+
+    // Acceptance path: the seam throws after acquisition; the operation
+    // fails but the lock MUST be released (no leak).
+    await expect(
+      broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" }),
+    ).rejects.toThrow(/signal blew up/);
+    // No lock leak: an independent acquire succeeds immediately.
+    const probe = await acquireConversationMutationLock({ vaultRoot: root, conversationId, now: tick });
+    await probe.release();
+
+    // Budget path: same seam discipline; the operation rejects/throws and
+    // the lock is again released.
+    await expect(
+      broker.updateConversationWorkflowBudget({
+        conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+      }),
+    ).rejects.toThrow(/signal blew up/);
+    const probe2 = await acquireConversationMutationLock({ vaultRoot: root, conversationId, now: tick });
+    await probe2.release();
+
+    // A subsequent normal mutation succeeds (no residual contention).
+    const updated = await broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(updated).toMatchObject({ status: "updated" });
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+
+  it("a rejected hold barrier releases the lock: no leak, subsequent mutations succeed", async () => {
+    const rejectedBarrier = Promise.reject(new Error("barrier rejected (test seam)"));
+    // Avoid unhandled-rejection noise while preserving the rejection the seam awaits.
+    rejectedBarrier.catch(() => {});
+    const { broker } = makeBroker({
+      runnableAgents: ["zai", "dipu"],
+      behaviors: ["hang", "complete"],
+      mutationLockHoldBarrier: rejectedBarrier,
+    });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+
+    await expect(
+      broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" }),
+    ).rejects.toThrow(/barrier rejected/);
+    const probe = await acquireConversationMutationLock({ vaultRoot: root, conversationId, now: tick });
+    await probe.release();
+
+    await expect(
+      broker.updateConversationWorkflowBudget({
+        conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+      }),
+    ).rejects.toThrow(/barrier rejected/);
+    const probe2 = await acquireConversationMutationLock({ vaultRoot: root, conversationId, now: tick });
+    await probe2.release();
+
+    await broker.abort(conversationId, "zai");
+    await dispatch;
+    await broker.close();
+  });
+});

@@ -983,6 +983,31 @@ describe("conversation mutation lock (B3-A)", () => {
     expect(reread.audience).toEqual(["zai", "dipu"]);
   });
 
+  it("a FORGED plain object built from the visible lock token cannot mutate the audience (unforgeable capability)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Forged", audience: ["zai"], now: () => NOW });
+    const lockPath = join(root, "collaboration", "conversations", conversation.id, ".audience.lock");
+    const lock = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });
+    try {
+      // An attacker reads the visible lock file and forges the old public shape.
+      const visible = JSON.parse(await readFile(lockPath, "utf8")) as { token: string; conversationId: string };
+      const forged = {
+        conversationId: visible.conversationId,
+        token: visible.token,
+        release: async () => {},
+      };
+      await expect(
+        updateConversationAudienceUnderLock(
+          { vaultRoot: root, conversationId: conversation.id, additions: { __validatedRecipients: true, recipients: ["dipu"] }, kind: "handoff", now: () => NOW },
+          forged as never,
+        ),
+      ).rejects.toThrow(/capability/i);
+      const after = await readConversation({ vaultRoot: root, conversationId: conversation.id });
+      expect(after.audience).toEqual(["zai"]);
+    } finally {
+      await lock.release();
+    }
+  });
+
   it("a RELEASED capability cannot mutate the audience (fail closed, no write)", async () => {
     const conversation = await createConversation({ vaultRoot: root, text: "Released", audience: ["zai"], now: () => NOW });
     const lock = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });

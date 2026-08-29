@@ -1896,9 +1896,12 @@ export class ConversationBroker {
       }
       return { status: "busy", reason: "budget update could not acquire the conversation mutation lock" };
     }
-    if (this.mutationLockAcquiredSignal !== undefined) this.mutationLockAcquiredSignal();
-    if (this.mutationLockHoldBarrier !== undefined) await this.mutationLockHoldBarrier;
     try {
+      // B3 final correction: the test-only seam runs INSIDE the releasing
+      // try/finally — a throwing signal or rejected barrier can never leak
+      // the visible `.audience.lock`.
+      if (this.mutationLockAcquiredSignal !== undefined) this.mutationLockAcquiredSignal();
+      if (this.mutationLockHoldBarrier !== undefined) await this.mutationLockHoldBarrier;
       let conversation: ConversationManifest;
       try {
         conversation = await this.conversationReader({ vaultRoot: this.vaultRoot, conversationId });
@@ -2005,9 +2008,12 @@ export class ConversationBroker {
       }
       return { status: "rejected", reason: "conversation handoff could not acquire the conversation mutation lock" };
     }
-    if (this.mutationLockAcquiredSignal !== undefined) this.mutationLockAcquiredSignal();
-    if (this.mutationLockHoldBarrier !== undefined) await this.mutationLockHoldBarrier;
     try {
+      // B3 final correction: the test-only seam runs INSIDE the releasing
+      // try/finally — a throwing signal or rejected barrier can never leak
+      // the visible `.audience.lock`.
+      if (this.mutationLockAcquiredSignal !== undefined) this.mutationLockAcquiredSignal();
+      if (this.mutationLockHoldBarrier !== undefined) await this.mutationLockHoldBarrier;
       // Open check under the lock: an archived Conversation accepts no
       // handoffs (bounded rejection, no side effects).
       let conversation: ConversationManifest;

@@ -624,9 +624,20 @@ const AUDIENCE_LOCK_FILENAME = ".audience.lock";
  */
 export interface ConversationMutationLock {
   readonly conversationId: string;
-  readonly token: string;
   release(): Promise<void>;
 }
+
+/**
+ * B3 final correction: module-private ownership for issued capabilities.
+ * The token is NEVER exposed on the capability object, so a caller cannot
+ * forge `{ conversationId, token, release }` from the visible lock file —
+ * only an object returned by this module has private ownership here, and
+ * `updateConversationAudienceUnderLock` verifies it fail-closed.
+ */
+const CONVERSATION_MUTATION_LOCK_OWNERSHIP = new WeakMap<
+  ConversationMutationLock,
+  { conversationId: string; token: string }
+>();
 
 export async function acquireConversationMutationLock(options: {
   vaultRoot: string;
@@ -657,7 +668,6 @@ export async function acquireConversationMutationLock(options: {
   let released = false;
   const capability: ConversationMutationLock = {
     conversationId: options.conversationId,
-    token,
     release: async () => {
       if (released) return;
       released = true;
@@ -684,6 +694,7 @@ export async function acquireConversationMutationLock(options: {
       }
     },
   };
+  CONVERSATION_MUTATION_LOCK_OWNERSHIP.set(capability, { conversationId: options.conversationId, token });
   return capability;
 }
 
@@ -755,12 +766,18 @@ export async function updateConversationAudienceUnderLock(
   const absolutePath = join(conversationDir, "index.md");
   assertInside(root, conversationDir);
 
-  // B3 correction: under-lock OWNERSHIP enforcement. The helper mutates only
-  // for a caller holding the real capability for THIS conversation, verified
-  // token-for-token against the visible lock file right now (fail closed on
-  // a released capability, a replaced/manually-triaged lock, or a
+  // B3 final correction: under-lock OWNERSHIP enforcement. The helper
+  // mutates only for a capability THIS MODULE issued (module-private
+  // ownership lookup; a forged plain object built from the visible lock
+  // token has no ownership entry and fails closed) for THIS conversation,
+  // verified token-for-token against the visible lock file right now (fail
+  // closed on a released capability, a replaced/manually-triaged lock, or a
   // wrong-conversation capability). It still NEVER re-acquires.
-  if (lock.conversationId !== options.conversationId) {
+  const ownership = CONVERSATION_MUTATION_LOCK_OWNERSHIP.get(lock);
+  if (ownership === undefined) {
+    throw new Error("conversation mutation lock capability was not issued by this module; fail closed");
+  }
+  if (ownership.conversationId !== options.conversationId || lock.conversationId !== options.conversationId) {
     throw new Error("conversation mutation lock capability does not belong to this conversation");
   }
   const lockPath = join(conversationDir, AUDIENCE_LOCK_FILENAME);
@@ -780,7 +797,7 @@ export async function updateConversationAudienceUnderLock(
     throw new Error("conversation mutation lock ownership could not be verified; fail closed");
   }
   const lockRecord = parsedLock as Record<string, unknown>;
-  if (lockRecord.token !== lock.token || lockRecord.conversationId !== options.conversationId) {
+  if (lockRecord.token !== ownership.token || lockRecord.conversationId !== options.conversationId) {
     throw new Error("conversation mutation lock ownership could not be verified; fail closed");
   }
 
