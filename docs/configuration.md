@@ -288,8 +288,8 @@ scheduler:
     script_cron: true         # sole script-cron gate (default false)
   agent_scope:              # optional per-class agent narrowing (all eligible when omitted)
     inbox_tasks:
-      allow: [thor]         # optional; present empty list allows none
-      exclude: [sam]        # optional; exclusion wins over allow
+      allow: [agent-a]      # optional; present empty list allows none
+      exclude: [agent-b]    # optional; exclusion wins over allow
     agent_cron: {}
     script_cron: {}
   poll_interval_seconds: 30

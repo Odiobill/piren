@@ -38,8 +38,8 @@ scheduler:
     script_cron: false
   agent_scope:
     inbox_tasks:
-      allow: [thor]       # optional; a present empty list deliberately allows none
-      exclude: [sam]      # optional; exclusion wins over allow
+      allow: [agent-a]    # optional; a present empty list deliberately allows none
+      exclude: [agent-b]  # optional; exclusion wins over allow
     agent_cron: {}        # empty mapping = no narrowing
     script_cron: {}
 ```
@@ -54,7 +54,7 @@ Semantics:
 - An excluded agent's work is never proposed, claimed, spawned, retried, or completion-released through any scheduler path. In `--dry-run`, an enabled inbox class whose pending task belongs to an excluded agent is printed as `[BLOCK] inbox_task <path> - class agent excluded (no claim proposed)`, never as a `[CLAIM]`.
 - The dry-run, one-shot summary, and loop startup summary report the effective policy as a bounded count-only line (`agent scope: inbox_tasks=1 agent(s) agent_cron=all script_cron=all`) plus any non-secret config warnings.
 
-A typical use: keep `inbox_tasks` automation enabled while excluding agents reserved for interactive Workbench Conversations (for example `exclude: [sam, zai]`), so the scheduler never claims their inbox tasks while those agents remain fully available for explicit work.
+A typical use: keep `inbox_tasks` automation enabled while excluding agents reserved for interactive Workbench Conversations (for example `exclude: [agent-a, agent-b]`), so the scheduler never claims their inbox tasks while those agents remain fully available for explicit work.
 
 The dry-run loads vault state for every agent in local `allowed_agents`, plans proposed claim attempts for one tick, and prints them grouped by agent. It does not claim, does not spawn, and does not invoke any LLM.
 
@@ -229,8 +229,8 @@ scheduler:
     script_cron: true         # execute due script-mode cron jobs directly (default false)
   agent_scope:                # optional per-class agent narrowing (all eligible when omitted)
     inbox_tasks:
-      allow: [thor]           # optional; present empty list allows none
-      exclude: [sam]          # optional; exclusion wins over allow
+      allow: [agent-a]        # optional; present empty list allows none
+      exclude: [agent-b]      # optional; exclusion wins over allow
     agent_cron: {}
     script_cron: {}
   poll_interval_seconds: 30    # seconds between loop ticks (default 30)
