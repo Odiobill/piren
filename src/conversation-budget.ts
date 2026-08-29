@@ -187,7 +187,8 @@ interface DimensionUpdate {
 function parseDimensionUpdate(
   value: { from: unknown; to: unknown } | undefined,
   cap: number,
-): { ok: true; update: DimensionUpdate } | { ok: false; reason: string } {  if (value === undefined || typeof value !== "object") {
+): { ok: true; update: DimensionUpdate } | { ok: false; reason: string } {
+  if (value === undefined || typeof value !== "object") {
     return { ok: false, reason: "budget update dimension is malformed" };
   }
   const { from, to } = value as { from: unknown; to: unknown };
@@ -207,18 +208,32 @@ function parseDimensionUpdate(
  * Canonical, bounded record serialization used ONLY as the final
  * deterministic tie-break for the derivation ordering (e.g. two records
  * colliding on both sequence and eventId). Field order is fixed; absent
- * dimensions render as "-"; values render verbatim (this key is never
- * surfaced in warnings or ignored reasons).
+ * dimensions render as "-"; malformed values reduce to bounded safe type
+ * tags without coercion (this key is never surfaced in warnings or ignored
+ * reasons).
  */
 function canonicalEvidenceKey(update: HandoffBudgetUpdateEvidence): string {
-  const dimension = (d?: { from: number; to: number } | undefined): string =>
-    d === undefined ? "-" : `${d.from}:${d.to}`;
+  // Runtime evidence is deliberately tested with malformed values. Never
+  // stringify/coerce one before validation: user-defined `toString` must not
+  // turn fail-closed evidence rejection into a thrown derivation.
+  const scalar = (value: unknown): string => {
+    if (isFiniteInteger(value)) return `integer:${value}`;
+    if (value === undefined) return "undefined";
+    if (value === null) return "null";
+    return typeof value;
+  };
+  const dimension = (value: unknown): string => {
+    if (value === undefined) return "-";
+    if (value === null || typeof value !== "object") return `malformed:${scalar(value)}`;
+    const record = value as { from?: unknown; to?: unknown };
+    return `from:${scalar(record.from)};to:${scalar(record.to)}`;
+  };
   return [
-    update.kind,
-    update.author,
-    update.authorKind,
-    update.rootEventId,
-    update.correlationId,
+    scalar(update.kind),
+    scalar(update.author),
+    scalar(update.authorKind),
+    scalar(update.rootEventId),
+    scalar(update.correlationId),
     dimension(update.edges),
     dimension(update.reworkRounds),
   ].join("|");

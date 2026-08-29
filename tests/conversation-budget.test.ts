@@ -350,6 +350,24 @@ describe("conversation-budget: duplicate durable identity/order fail closed (B1 
     expect(backward).toEqual(forward);
   });
 
+  it("fail-closes hostile malformed dimension values without coercing them during ordering", () => {
+    const hostile = {
+      toString() {
+        throw new Error("must not coerce malformed evidence");
+      },
+    };
+    const derived = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [
+        evidence({ eventId: "same", sequence: 1, edges: { from: 8, to: 10 } }),
+        evidence({ eventId: "same", sequence: 1, edges: { from: hostile as unknown as number, to: 10 } }),
+      ],
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    expect(derived.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(derived.ignored).toHaveLength(2);
+  });
+
   it("reasons never echo the conflicting values", () => {
     const derived = deriveHandoffBudget({
       rootEventId: ROOT,
