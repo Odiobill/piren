@@ -537,7 +537,10 @@ export type AgentWorkflowBudgetFacts = {
   worstPairOccurrences: number;
   low: boolean;
   exhausted: boolean;
+  /** Bounded deterministic warnings for THIS root (capped at 20). */
   warnings: string[];
+  /** Count of same-root ignored facts beyond the warnings cap (never hidden). */
+  omittedWarnings: number;
 };
 
 /** B4 closed status shape (contract §4.1). */
@@ -546,11 +549,17 @@ export type AgentWorkflowStatus =
   | { run_active: boolean; workflow: AgentWorkflowBudgetFacts };
 
 /** B4: one durable workflow root's budget view (durable sequence order). */
-export type ConversationWorkflowBudgetRootView = Omit<AgentWorkflowBudgetFacts, "association">;
+export type ConversationWorkflowBudgetRootView = Omit<AgentWorkflowBudgetFacts, "association"> & {
+  sequence: number;
+};
 
 /** B4: conversation-wide budgets read with the server-resolved association map. */
 export type ConversationWorkflowBudgetsView = {
   roots: ConversationWorkflowBudgetRootView[];
+  /** Total durable workflow roots, including any beyond the response bound. */
+  total: number;
+  /** How many older roots fall outside the returned newest window. */
+  omitted: number;
   association: Record<string, { root_event_id: string; association: "active-run" | "latest-run" } | null>;
 };
 
@@ -2013,13 +2022,21 @@ export class ConversationBroker {
     for (const occurrences of workflow.pairOccurrences.values()) {
       if (occurrences > worstPairOccurrences) worstPairOccurrences = occurrences;
     }
+    // B4 correction: scope B2 evidence to the EXACT root correlation before
+    // B1 derivation — valid updates belonging to other roots never surface
+    // as this root's warnings, and malformed same-root evidence still
+    // fail-closes. Warnings are deterministically capped (same 20-item
+    // bound) with an omitted count so truncation is never hidden.
+    const rootBudgetEvents = events.filter(
+      (event) => event.kind === "handoff_budget_updated" && event.correlationId === rootEventId,
+    );
     const budget = deriveHandoffBudget({
       rootEventId,
-      updates: events
-        .filter((event) => event.kind === "handoff_budget_updated")
-        .map((event) => handoffBudgetEvidenceFromRecord(event, rootEventId)),
+      updates: rootBudgetEvents.map((event) => handoffBudgetEvidenceFromRecord(event, rootEventId)),
       usage: { consumedEdges: workflow.edges.length, worstPairOccurrences },
     });
+    const allWarnings = budget.ignored.map((entry) => entry.reason);
+    const warnings = allWarnings.slice(0, WORKFLOW_BUDGETS_MAX_ROOTS);
     return {
       root_event_id: rootEventId,
       association,
@@ -2029,7 +2046,8 @@ export class ConversationBroker {
       worstPairOccurrences,
       low: budget.low,
       exhausted: budget.exhausted,
-      warnings: budget.ignored.map((entry) => entry.reason),
+      warnings,
+      omittedWarnings: Math.max(0, allWarnings.length - warnings.length),
     };
   }
 
@@ -2080,8 +2098,12 @@ export class ConversationBroker {
     const roots = boundedRoots.map((rootEvent) => {
       const facts = this.deriveRootBudgetFacts(events, rootEvent.id, "latest-run");
       const { association: _association, ...rest } = facts;
-      return rest;
+      return { ...rest, sequence: rootEvent.sequence };
     });
+    // B4 correction: truncation is truthful and inspectable — the newest
+    // window is returned in durable sequence order with total/omitted counts.
+    const total = stewardRoots.length;
+    const omitted = Math.max(0, total - boundedRoots.length);
     const association: ConversationWorkflowBudgetsView["association"] = {};
     for (const agent of manifest.audience) {
       const activeRun = this.activeRuns.get(`${conversationId}:${agent}`);
@@ -2092,7 +2114,7 @@ export class ConversationBroker {
       const latest = resolveLatestRunWorkflowAssociation(events, agent);
       association[agent] = latest === null ? null : { root_event_id: latest.rootEventId, association: "latest-run" };
     }
-    return { roots, association };
+    return { roots, total, omitted, association };
   }
 
   /**

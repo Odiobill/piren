@@ -3597,6 +3597,144 @@ describe("ConversationBroker B4: agent workflow status + budgets reads", () => {
     await broker.close();
   });
 
+  it("budgets view is truthfully bounded: >20 roots keep total/omitted counts and deterministic newest-window order", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    for (let i = 0; i < 25; i += 1) {
+      await makeStewardEvent(conversationId, `Root ${i}`, () => `r${i}`);
+    }
+    const view = await broker.getConversationWorkflowBudgets(conversationId);
+    expect(view.total).toBe(25);
+    expect(view.omitted).toBe(5);
+    expect(view.roots).toHaveLength(20);
+    // Newest window, still in durable sequence order.
+    const allSequences = (await readConversationEvents({ vaultRoot: root, conversationId }))
+      .filter((e) => e.kind === "steward_message")
+      .map((e) => e.sequence);
+    const expectedWindow = allSequences.slice(-20);
+    expect(view.roots.map((r) => r.sequence)).toEqual(expectedWindow);
+    await broker.close();
+  });
+
+  it("warnings are root-scoped and bounded: a valid other-root update is not a warning, malformed same-root records cap deterministically", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const rootOne = await makeStewardEvent(conversationId, "First workflow");
+    const rootTwo = await makeStewardEvent(conversationId, "Second workflow");
+    // A VALID budget update on rootTwo (must NOT pollute rootOne's warnings).
+    await appendConversationEvent({
+      vaultRoot: root, conversationId, kind: "handoff_budget_updated",
+      authorKind: "steward", author: "steward", body: "raise root two",
+      correlationId: rootTwo, handoffBudget: { edges: { from: 8, to: 10 } }, now: tick, nonce: () => "ok1",
+    });
+    // 22 malformed same-root (rootOne) records (hand-written, value-level garbage).
+    const eventsDir = join(root, "collaboration", "conversations", conversationId, "events");
+    const existing = (await readdir(eventsDir)).length;
+    for (let i = 0; i < 22; i += 1) {
+      const seq = existing + i + 1;
+      await writeFile(
+        join(eventsDir, `${String(seq).padStart(8, "0")}.md`),
+        [
+          "---",
+          "type: Conversation Event",
+          `id: 20260805T140000001Z-bad${i}`,
+          `conversationId: ${conversationId}`,
+          "kind: handoff_budget_updated",
+          "authorKind: steward",
+          "author: steward",
+          "created: 2026-08-05T14:00:00.000Z",
+          `sequence: ${seq}`,
+          `correlationId: ${rootOne}`,
+          `handoffBudget: '${JSON.stringify({ edges: { from: "8", to: 12 } })}'`,
+          "---",
+          "",
+          "Hand-edited malformed values.",
+          "",
+        ].join("\n"),
+      );
+    }
+    const view = await broker.getConversationWorkflowBudgets(conversationId);
+    expect(view.roots).toHaveLength(2);
+    const rootOneView = view.roots.find((r) => r.root_event_id === rootOne);
+    const rootTwoView = view.roots.find((r) => r.root_event_id === rootTwo);
+    expect(rootOneView?.effective).toEqual({ edges: 8, reworkRounds: 2 });
+    expect(rootOneView?.warnings).toHaveLength(20);
+    expect(rootOneView?.omittedWarnings).toBe(2);
+    expect(rootOneView?.warnings.join("\n")).not.toContain("different workflow root");
+    expect(rootTwoView?.effective).toEqual({ edges: 10, reworkRounds: 2 });
+    expect(rootTwoView?.warnings).toEqual([]);
+    await broker.close();
+  });
+
+  it("association resolver is fail-closed: duplicate visible ids and wrong-addressee handoffs give no association", async () => {
+    const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai", "dipu"], "Hello @zai @dipu");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const eventsDir = join(root, "collaboration", "conversations", conversationId, "events");
+    // (a) A handoff agent_message whose id is DUPLICATED across two visible
+    // files: corrupt/unresolvable — no association through it.
+    const dupHandoff = [
+      "---",
+      "type: Conversation Event",
+      "id: 20260805T140000001Z-dup",
+      `conversationId: ${conversationId}`,
+      "kind: agent_message",
+      "authorKind: agent",
+      "author: zai",
+      "created: 2026-08-05T14:00:00.000Z",
+      "sequence: 2",
+      `correlationId: ${stewardEventId}`,
+      "addressedAgent: dipu",
+      "---",
+      "",
+      "Duplicated handoff record.",
+      "",
+    ].join("\n");
+    await writeFile(join(eventsDir, "00000002.md"), dupHandoff);
+    await writeFile(join(eventsDir, "00000003.md"), dupHandoff);
+    // An attributed run event for dipu correlating to the duplicated id.
+    await writeFile(
+      join(eventsDir, "00000004.md"),
+      [
+        "---",
+        "type: Conversation Event",
+        "id: 20260805T140000001Z-rundup",
+        `conversationId: ${conversationId}`,
+        "kind: run_finished",
+        "authorKind: system",
+        "author: system",
+        "created: 2026-08-05T14:00:00.000Z",
+        "sequence: 4",
+        "runStatus: completed",
+        `correlationId: 20260805T140000001Z-dup`,
+        "runAgent: dipu",
+        "---",
+        "",
+        "Attributed run through a duplicated id.",
+        "",
+      ].join("\n"),
+    );
+    const dupStatus = await broker.getAgentWorkflowStatus(conversationId, "dipu");
+    expect(dupStatus).toEqual({ run_active: false, workflow: null });
+
+    // (b) A handoff addressed to a DIFFERENT agent than the attributed run's
+    // agent: no association for dipu through kimi's handoff.
+    await appendConversationEvent({
+      vaultRoot: root, conversationId, kind: "agent_message", authorKind: "agent", author: "zai",
+      body: "handoff to kimi", addressedAgent: "kimi", correlationId: stewardEventId, now: tick, nonce: () => "h2",
+    });
+    await appendConversationEvent({
+      vaultRoot: root, conversationId, kind: "run_finished", authorKind: "system", author: "system",
+      body: "kimi stage completed.", runStatus: "completed",
+      correlationId: (await readConversationEvents({ vaultRoot: root, conversationId })).find((e) => e.addressedAgent === "kimi")?.id ?? "",
+      runAgent: "kimi", now: tick, nonce: () => "r9",
+    });
+    // dipu's own attributed chain is only the duplicated handoff: still none.
+    const dipuStatus = await broker.getAgentWorkflowStatus(conversationId, "dipu");
+    expect(dipuStatus).toEqual({ run_active: false, workflow: null });
+    await broker.close();
+  });
+
   it("invalid durable budget evidence surfaces as bounded warnings without widening the effective budget", async () => {
     const { broker } = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
     const conversationId = await makeConversation(["zai"], "Hello @zai");

@@ -264,8 +264,12 @@ export function resolveLatestRunWorkflowAssociation(
   events: readonly ConversationEventRecord[],
   agent: string,
 ): AgentLatestRunWorkflowAssociation | null {
+  // B4 correction: duplicate visible ids are malformed/unresolvable — no
+  // association may pass through them (fail closed, never last-writer-wins).
+  const idCounts = new Map<string, number>();
+  for (const event of events) idCounts.set(event.id, (idCounts.get(event.id) ?? 0) + 1);
   const byId = new Map<string, ConversationEventRecord>();
-  for (const event of events) byId.set(event.id, event);
+  for (const event of events) if ((idCounts.get(event.id) ?? 0) === 1) byId.set(event.id, event);
   const attributedRunEvents = events
     .filter(
       (event) =>
@@ -280,11 +284,15 @@ export function resolveLatestRunWorkflowAssociation(
       if (typeof currentId !== "string" || currentId === "" || visited.has(currentId)) break;
       visited.add(currentId);
       const current = byId.get(currentId);
-      if (current === undefined) break;
+      if (current === undefined) break; // missing or duplicate-visible id: unresolvable
       if (current.kind === "steward_message") {
         return { rootEventId: current.id, association: "latest-run" };
       }
+      // B4 correction: a stage handoff is traversable only when it addresses
+      // the attributed agent; a handoff addressed to anyone else belongs to a
+      // different chain and yields no association here.
       if (current.kind === "agent_message") {
+        if (current.addressedAgent !== agent) break;
         currentId = current.correlationId;
         continue;
       }

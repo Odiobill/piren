@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GatewayServer, type GatewayHandle } from "../src/gateway-http.js";
 import { initVault } from "../src/init.js";
-import { readConversationEvents } from "../src/conversations.js";
+import { readConversationEvents, acquireConversationMutationLock } from "../src/conversations.js";
+import { ConversationBroker } from "../src/conversation-broker.js";
 
 const fakePiScript = join(process.cwd(), "tests", "fixtures", "fake-pi-rpc.cjs");
 
@@ -209,5 +210,149 @@ describe("Gateway Conversation workflow-budget routes (B4)", () => {
     expect(malformed.status).toBe(400);
     const outside = await get(url(`/api/conversations/${conversationId}/agents/ghost/workflow-status`), token);
     expect(outside.status).toBe(404);
+  });
+});
+
+describe("Gateway Conversation workflow-budget routes (B4 correction: route error matrix)", () => {
+  let root: string;
+  let server: GatewayServer;
+  let handle: GatewayHandle;
+  const token = "test-budget-matrix-token";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-gateway-budget-matrix-"));
+    await initVault({ vaultRoot: root, agentName: "piren" });
+  });
+
+  afterEach(async () => {
+    await server.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function url(path: string): string {
+    return `http://${handle.hostname}:${handle.port}${path}`;
+  }
+
+  async function startServer(runnableAgents: string[] = ["zai"], targetBuilder?: () => Promise<{ command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }>): Promise<void> {
+    server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: token,
+      vaultRoot: root,
+      runnableAgents,
+      targetBuilder: targetBuilder ?? (async () => fakePiTarget()),
+    });
+    handle = await server.start();
+  }
+
+  async function waitForActiveRun(serverInstance: GatewayServer, conversationId: string, agent: string, timeoutMs = 5000): Promise<void> {
+    const broker = (serverInstance as unknown as { conversationBroker: ConversationBroker }).conversationBroker as ConversationBroker;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (broker.hasActiveRun(conversationId, agent)) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("run did not become active in time");
+  }
+
+  it("an active agent-first non-C5 run reports run_active true with workflow null over the status route", async () => {
+    // A minimal hanging fake Pi: acks every prompt, emits agent_start, never
+    // settles — so the agent-first greeting run stays active deterministically.
+    const hangingScript = join(root, "hanging-fake-pi.cjs");
+    await writeFile(
+      hangingScript,
+      [
+        '"use strict";',
+        "let buffer = '';",
+        "process.stdin.on('data', (chunk) => {",
+        "  buffer += chunk;",
+        "  let index;",
+        "  while ((index = buffer.indexOf('\\n')) >= 0) {",
+        "    const line = buffer.slice(0, index);",
+        "    buffer = buffer.slice(index + 1);",
+        "    if (!line.trim()) continue;",
+        "    try {",
+        "      const cmd = JSON.parse(line);",
+        "      if (cmd.type === 'prompt') {",
+        "        process.stdout.write(JSON.stringify({ type: 'response', command: 'prompt', success: true, id: cmd.id }) + '\\n');",
+        "        process.stdout.write(JSON.stringify({ type: 'agent_start' }) + '\\n');",
+        "      }",
+        "    } catch {}",
+        "  }",
+        "});",
+      ].join("\n"),
+    );
+    await startServer(["zai"], async () => ({
+      command: process.execPath,
+      args: [hangingScript],
+      cwd: process.cwd(),
+      env: process.env,
+    }));
+    // The start route AWAITS the run outcome, so with a hanging fake Pi the
+    // POST stays pending while the run is active. Fire it, then read the
+    // durable conversation id from the list route.
+    const startPromise = post(url("/api/conversations/start"), { agent: "zai" }, token);
+    startPromise.catch(() => {}); // the hanging run keeps this pending; afterEach closes the server
+    const deadline = Date.now() + 4000;
+    let conversationId = "";
+    while (Date.now() < deadline && conversationId === "") {
+      const list = (await (await get(url("/api/conversations"), token)).json()) as {
+        conversations: Array<{ id: string }>;
+      };
+      conversationId = list.conversations[0]?.id ?? "";
+      if (conversationId === "") await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(conversationId).not.toBe("");
+
+    await waitForActiveRun(server, conversationId, "zai");
+    const response = await get(url(`/api/conversations/${conversationId}/agents/zai/workflow-status`), token);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { run_active: boolean; workflow: null };
+    expect(body.run_active).toBe(true);
+    expect(body.workflow).toBeNull();
+  });
+
+  it("an archived conversation rejects the CAS update with a bounded 409 and no event", async () => {
+    await startServer();
+    const createResponse = await post(url("/api/conversations"), { text: "Hello @zai" }, token);
+    const conversationId = ((await createResponse.json()) as { conversation: { id: string } }).conversation.id;
+    const archive = await post(url(`/api/conversations/${conversationId}/archive`), {}, token);
+    expect(archive.status).toBe(200);
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const rootEventId = events.find((e) => e.kind === "steward_message")?.id ?? "";
+
+    const response = await post(url(`/api/conversations/${conversationId}/workflow-budget`), {
+      root_event_id: rootEventId,
+      edges: 10,
+      expected_effective: { edges: 8, reworkRounds: 2 },
+    }, token);
+    expect(response.status).toBe(409);
+    const after = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(after.some((e) => e.kind === "handoff_budget_updated")).toBe(false);
+  });
+
+  it("mutation-lock contention rejects the CAS update with a bounded 409 and no side effects", async () => {
+    await startServer();
+    const createResponse = await post(url("/api/conversations"), { text: "Hello @zai" }, token);
+    const conversationId = ((await createResponse.json()) as { conversation: { id: string } }).conversation.id;
+    const events = await readConversationEvents({ vaultRoot: root, conversationId });
+    const rootEventId = events.find((e) => e.kind === "steward_message")?.id ?? "";
+
+    // An independent holder (simulated second process) owns the lock.
+    const external = await acquireConversationMutationLock({ vaultRoot: root, conversationId, now: () => new Date() });
+    const response = await post(url(`/api/conversations/${conversationId}/workflow-budget`), {
+      root_event_id: rootEventId,
+      edges: 10,
+      expected_effective: { edges: 8, reworkRounds: 2 },
+    }, token);
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/busy|lock/i);
+    await external.release();
+
+    // Zero side effects: no event, manifest untouched, no dispatch.
+    const after = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(after.some((e) => e.kind === "handoff_budget_updated")).toBe(false);
+    const manifest = await readFile(join(root, "collaboration", "conversations", conversationId, "index.md"), "utf8");
+    expect(manifest).not.toContain("- dipu");
   });
 });
