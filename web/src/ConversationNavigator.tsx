@@ -8,6 +8,7 @@ import {
   fetchConversation,
   fetchConversationAgents,
   fetchConversationTelemetry,
+  fetchConversationWorkflowStatus,
   LifecycleHttpError,
   RenameHttpError,
   renameConversation,
@@ -69,6 +70,12 @@ import {
   type ConversationTelemetryState,
 } from "./conversation-telemetry";
 import { contextCardsForSelection, telemetryPopupViewModel } from "./conversation-context-cards";
+import {
+  applyWorkflowStatusActivity,
+  workflowStatusAccessibleName,
+  workflowStatusIndicator,
+  type WorkflowStatusIndicator,
+} from "./conversation-budget-status";
 import { contextContinuityStore, type ContextContinuityEntry } from "./context-continuity-store";
 import { ConversationTelemetryPopup } from "./ConversationTelemetryPopup";
 
@@ -131,6 +138,14 @@ type LifecycleControlState =
   | { phase: "idle" }
   | { phase: "busy"; action: ConversationLifecycleAction }
   | { phase: "error"; action: ConversationLifecycleAction; error: LifecycleActionError };
+
+
+/** B6 — the exact active `conversation × audience` pair a status read belongs to (or null). */
+function workflowStatusTargetFor(selection: SelectionState): { conversationId: string; audience: readonly string[] } | null {
+  return selection.phase === "active"
+    ? { conversationId: selection.conversation.id, audience: selection.conversation.audience }
+    : null;
+}
 
 export function ConversationNavigator({
   token,
@@ -240,6 +255,9 @@ export function ConversationNavigator({
     previousDockRunsRef.current = runs;
     if (announcement !== null) setActivityAnnouncement(announcement);
     setDockRuns(runs);
+    // B6: the validated scoped activity runs may ONLY transition busy between
+    // explicit reads — they never make or change association/budget states.
+    setWorkflowStatusByAgent((previous) => applyWorkflowStatusActivity(previous, runs));
   }, []);
   useEffect(() => {
     bumpContentVersion();
@@ -252,6 +270,17 @@ export function ConversationNavigator({
    * history/reload never reconstructs it; never a Conversation-wide total.
    */
   const [telemetryByAgent, setTelemetryByAgent] = useState<ConversationTelemetryState>(emptyConversationTelemetryState());
+  /**
+   * B6 — per-agent context-card workflow status (contract §6). Session-only,
+   * in-memory indicators derived ONLY from the exact-pair workflow-status
+   * snapshot read at the contract's explicit moments plus the existing
+   * validated scoped live activity runs (which may only transition busy
+   * between reads). No polling, no SSE-triggered fetch, no storage, no
+   * automatic retry; a non-401 failed read yields no fabricated indicator.
+   */
+  const [workflowStatusByAgent, setWorkflowStatusByAgent] = useState<ReadonlyMap<string, WorkflowStatusIndicator>>(new Map());
+  const workflowStatusReadSeqRef = useRef(0);
+  const activeWorkflowStatusTargetRef = useRef<{ conversationId: string; audience: readonly string[] } | null>(null);
   const handleTelemetry = useCallback((frame: ConversationTelemetryFrame) => {
     setTelemetryByAgent((previous) => applyConversationTelemetryFrame(previous, frame));
     // VR-4: a fresh accepted live frame supersedes any restored entry for the
@@ -295,6 +324,52 @@ export function ConversationNavigator({
     setTelemetryRefresh(null);
     onUnauthorized();
   }, [onUnauthorized]);
+
+  /**
+   * B6 — one explicit workflow-status read for EVERY current audience exact
+   * pair. Called ONLY at the contract's explicit moments: the fresh
+   * attach/reread/reconnect history load and the details-modal close (the
+   * B5 budget update's successful re-gate performs a fresh selection read,
+   * which covers its moment). No timer, no SSE-triggered fetch, no card
+   * activation fetch, no hidden retry or queue. A typed 401 uses the
+   * existing onUnauthorized recovery path and clears the transient status;
+   * any other failure leaves that agent without an indicator (never a
+   * fabricated one) and never retries automatically.
+   */
+  const refreshWorkflowStatuses = useCallback(
+    async (conversationId: string, audience: readonly string[]) => {
+      const seq = ++workflowStatusReadSeqRef.current;
+      const results = await Promise.all(
+        audience.map(async (agent) => {
+          try {
+            return { agent, snapshot: await fetchConversationWorkflowStatus(conversationId, agent, token) };
+          } catch (error) {
+            return { agent, error };
+          }
+        }),
+      );
+      // Stale-completion guards: a newer explicit read supersedes this one,
+      // and a selection that is no longer exactly this active conversation
+      // (id AND audience) makes this completion fully inert.
+      if (seq !== workflowStatusReadSeqRef.current) return;
+      const target = activeWorkflowStatusTargetRef.current;
+      if (target === null || target.conversationId !== conversationId || target.audience.join("\u0000") !== audience.join("\u0000")) return;
+      if (results.some((result) => "error" in result && result.error instanceof UnauthorizedError)) {
+        setWorkflowStatusByAgent(new Map());
+        handleUnauthorized();
+        return;
+      }
+      const activityActiveAgents = new Set(previousDockRunsRef.current.map((run) => run.agent));
+      const next = new Map<string, WorkflowStatusIndicator>();
+      for (const result of results) {
+        if ("snapshot" in result) {
+          next.set(result.agent, workflowStatusIndicator(result.agent, result.snapshot, activityActiveAgents.has(result.agent)));
+        }
+      }
+      setWorkflowStatusByAgent(next);
+    },
+    [token, handleUnauthorized],
+  );
   const telemetryCardRefs = useRef(new Map<string, HTMLButtonElement>());
   /**
    * T6 correction: selection generation guard. Incremented on EVERY
@@ -397,6 +472,17 @@ export function ConversationNavigator({
     // Context cards: the popup is bound to the exact selected pair, so every
     // selection change closes it together with the session-only reset.
     setTelemetryPopupAgent(null);
+  }, [surfaceKey]);
+
+  // B6 — workflow-status session-only reset at the SAME synchronous
+  // layout-effect boundary: bumping the read sequence makes any in-flight
+  // stale completion inert, and the target pair is recomputed synchronously
+  // at selection commit so a stale read can never touch the new selection.
+  useLayoutEffect(() => {
+    workflowStatusReadSeqRef.current += 1;
+    setWorkflowStatusByAgent(new Map());
+    activeWorkflowStatusTargetRef.current = workflowStatusTargetFor(selection);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surfaceKey]);
 
   // VR-4: rehydrate ONLY the new selection's stored observations from browser
@@ -935,6 +1021,11 @@ export function ConversationNavigator({
   function closeDetails() {
     setDetailsOpen(false);
     detailsButtonRef.current?.focus();
+    // B6 explicit moment: the details modal closed (it may have changed
+    // audience or budgets) — one fresh exact-pair status read per agent.
+    if (selection.phase === "active") {
+      void refreshWorkflowStatuses(selection.conversation.id, selection.conversation.audience);
+    }
   }
 
   if (load.phase === "loading") {
@@ -1011,6 +1102,10 @@ export function ConversationNavigator({
                   onHistoryLoaded={() => {
                     scrollWiringRef.current = { ...scrollWiringRef.current, initialAnchor: true };
                     bumpContentVersion();
+                    // B6 explicit moment: fresh attach, durable reread, and
+                    // reconnect history loads each re-read every audience
+                    // exact pair once. Never a timer or SSE-triggered fetch.
+                    void refreshWorkflowStatuses(selection.conversation.id, selection.conversation.audience);
                   }}
                 />
                 {/* U1 — status-only live activity cards: the final transient
@@ -1108,7 +1203,7 @@ export function ConversationNavigator({
                         key={card.agent}
                         type="button"
                         className="context-card"
-                        aria-label={card.accessibleName}
+                        aria-label={workflowStatusAccessibleName(card.accessibleName, workflowStatusByAgent.get(card.agent))}
                         ref={(element) => {
                           if (element === null) telemetryCardRefs.current.delete(card.agent);
                           else telemetryCardRefs.current.set(card.agent, element);
@@ -1139,6 +1234,22 @@ export function ConversationNavigator({
                           </span>
                           <span className="context-card-name">{card.agent}</span>
                         </span>
+                        {/* B6: the compact labelled workflow-status indicator.
+                            It lives INSIDE the existing card button semantics
+                            (no additional tab stop, no focusable control),
+                            carries a static text label (color/motion never
+                            the sole carrier), and is derived only from
+                            gateway facts — the busy spin has a CSS
+                            reduced-motion static equivalent. */}
+                        {(() => {
+                          const status = workflowStatusByAgent.get(card.agent);
+                          if (status === undefined || status.state === "none") return null;
+                          return (
+                            <span className={`context-card-workflow-status context-card-workflow-status-${status.state}`}>
+                              <span className="context-card-workflow-status-label">{status.shortText}</span>
+                            </span>
+                          );
+                        })()}
                       </button>
                     ))}
                   </div>

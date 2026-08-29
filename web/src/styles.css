@@ -2073,6 +2073,64 @@ code {
   min-width: 0;
 }
 
+/* B6 — compact labelled per-agent workflow-status indicator (contract §6).
+   It lives inside the existing card button semantics: no focusable control,
+   no new tab stop, no scroll owner. Color/motion never carry meaning alone —
+   every state renders its static text label; red means action required only
+   (exhausted associated workflow), never generic activity. */
+.context-card-workflow-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.context-card-workflow-status-red {
+  background: var(--danger, #b3261e);
+  color: var(--on-accent, #ffffff);
+}
+
+.context-card-workflow-status-yellow {
+  background: var(--warning, #b08300);
+  color: var(--on-accent, #ffffff);
+}
+
+.context-card-workflow-status-busy {
+  background: var(--muted-surface, rgba(127, 127, 127, 0.18));
+  color: inherit;
+}
+
+.context-card-workflow-status-busy::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: context-card-workflow-status-spin 0.9s linear infinite;
+}
+
+@keyframes context-card-workflow-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-card-workflow-status-busy::before {
+    animation: none;
+    border-top-color: currentColor;
+    opacity: 0.55;
+  }
+}
+
 /* Telemetry details popup: same dialog family as the details modal. No
    entry/exit animation; reduced-motion safe. Its content is strictly bounded
    (state line, one bar, <=6 permitted fields, one action row, one bounded
