@@ -33,6 +33,141 @@ export const SCHEDULER_AUTOMATION_CLASSES = [
     "agent_cron",
     "script_cron",
 ];
+const AGENT_SCOPE_CLASS_FIELDS = {
+    inbox_tasks: "inboxTasks",
+    agent_cron: "agentCron",
+    script_cron: "scriptCron",
+};
+const AGENT_SCOPE_CLASS_LABELS = {
+    inbox_tasks: "inbox task",
+    agent_cron: "agent cron",
+    script_cron: "script cron",
+};
+/** Fail-closed scope for one class: no agent is eligible. */
+function failClosedClassScope() {
+    return [];
+}
+/** Fail-closed scope for every class. */
+function failClosedAllClassScopes() {
+    return { inboxTasks: [], agentCron: [], scriptCron: [] };
+}
+/**
+ * Parse one optional allow/exclude name list. Returns undefined when absent
+ * (null is absent-like). A present-but-malformed list (non-array, or any
+ * non-string/blank entry) records a deterministic warning, flags failure via
+ * the returned `malformed` marker, and never yields widened candidates.
+ */
+function parseAgentScopeList(container, key, classKey, warnings) {
+    const raw = container[key];
+    if (isAbsentLike(raw))
+        return { names: undefined, malformed: false };
+    if (!Array.isArray(raw) ||
+        raw.some((entry) => typeof entry !== "string" || entry.trim() === "")) {
+        warnings.push(`scheduler.agent_scope.${classKey}.${key} has invalid ${configValueKind(raw)} content; ` +
+            `excluding all agents for ${AGENT_SCOPE_CLASS_LABELS[classKey]} automation (fail closed).`);
+        return { names: undefined, malformed: true };
+    }
+    // Deterministic de-duplication, order-preserving.
+    return { names: [...new Set(raw)], malformed: false };
+}
+/**
+ * Pure fail-closed resolver for the closed `scheduler.agent_scope` block
+ * (S1a). Takes the raw value (anything the YAML loader produced) and the
+ * locally enabled agent set (allowed minus excluded) and returns the resolved
+ * per-class scope plus deterministic warnings. No I/O.
+ *
+ * - Absent/null container -> no narrowing for any class, no warning.
+ * - Non-mapping container -> every class fails closed (no candidates) + one warning.
+ * - Absent/null class scope or an empty class mapping -> no narrowing for that class.
+ * - Non-mapping class scope or a malformed allow/exclude list -> that class
+ *   fails closed (no candidates) with a warning.
+ * - `allow` narrows only that class; `exclude` wins over `allow`; both are
+ *   intersected with the runnable set so unknown/non-runnable names never
+ *   widen eligibility (each is reported with a bounded count-only warning).
+ * - Unknown keys under the container or a class scope are warned-and-ignored.
+ * - Warnings never echo configured values (count-only, non-secret).
+ */
+export function resolveSchedulerAgentScope(raw, runnableAgents) {
+    const warnings = [];
+    if (isAbsentLike(raw))
+        return { scope: {}, warnings };
+    if (!isPlainRecord(raw)) {
+        warnings.push(`scheduler.agent_scope has invalid ${configValueKind(raw)} content; ` +
+            "excluding all agents for every automation class (fail closed).");
+        return { scope: failClosedAllClassScopes(), warnings };
+    }
+    const runnable = new Set(runnableAgents);
+    const scope = {};
+    for (const classKey of SCHEDULER_AUTOMATION_CLASSES) {
+        const field = AGENT_SCOPE_CLASS_FIELDS[classKey];
+        const rawClass = raw[classKey];
+        if (isAbsentLike(rawClass))
+            continue;
+        if (!isPlainRecord(rawClass)) {
+            warnings.push(`scheduler.agent_scope.${classKey} has invalid ${configValueKind(rawClass)} content; ` +
+                `excluding all agents for ${AGENT_SCOPE_CLASS_LABELS[classKey]} automation (fail closed).`);
+            scope[field] = failClosedClassScope();
+            continue;
+        }
+        const knownScopeKeys = ["allow", "exclude"];
+        const unknownScopeKeys = Object.keys(rawClass)
+            .filter((key) => !knownScopeKeys.includes(key))
+            .sort();
+        if (unknownScopeKeys.length > 0) {
+            warnings.push(`scheduler.agent_scope.${classKey} contains ${unknownScopeKeys.length} unrecognized key(s); ignoring them.`);
+        }
+        const allow = parseAgentScopeList(rawClass, "allow", classKey, warnings);
+        if (allow.malformed) {
+            scope[field] = failClosedClassScope();
+            continue;
+        }
+        const exclude = parseAgentScopeList(rawClass, "exclude", classKey, warnings);
+        if (exclude.malformed) {
+            scope[field] = failClosedClassScope();
+            continue;
+        }
+        if (allow.names === undefined && exclude.names === undefined)
+            continue;
+        // Bounded count-only warnings for configured names outside the locally
+        // enabled set: they are ignored and never widen the candidate set.
+        for (const [key, names] of [
+            ["allow", allow.names],
+            ["exclude", exclude.names],
+        ]) {
+            if (names === undefined)
+                continue;
+            const unknownCount = names.filter((name) => !runnable.has(name)).length;
+            if (unknownCount > 0) {
+                warnings.push(`scheduler.agent_scope.${classKey}.${key} contains ${unknownCount} name(s) that are not locally enabled agents; ` +
+                    "they are ignored and never widen eligibility.");
+            }
+        }
+        const allowNames = allow.names;
+        const excludeNames = exclude.names;
+        let agents;
+        if (allowNames !== undefined) {
+            agents = allowNames.filter((name) => runnable.has(name));
+            if (excludeNames !== undefined)
+                agents = agents.filter((name) => !excludeNames.includes(name));
+        }
+        else if (excludeNames !== undefined) {
+            agents = runnableAgents.filter((name) => !excludeNames.includes(name));
+        }
+        else {
+            // Both lists absent: no narrowing for this class.
+            continue;
+        }
+        scope[field] = agents;
+    }
+    const knownClasses = SCHEDULER_AUTOMATION_CLASSES;
+    const unknownClassKeys = Object.keys(raw)
+        .filter((key) => !knownClasses.includes(key))
+        .sort();
+    if (unknownClassKeys.length > 0) {
+        warnings.push(`scheduler.agent_scope contains ${unknownClassKeys.length} unrecognized class key(s); ignoring them.`);
+    }
+    return { scope, warnings };
+}
 function isPlainRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -198,6 +333,15 @@ export function resolveSchedulerConfig(config) {
     const automationResult = resolveAutomationClasses(sched.automation);
     for (const warning of automationResult.warnings)
         warnings.push(warning);
+    // S1a: resolve the per-class agent scope against the locally enabled agent
+    // set (allowed minus excluded). The scope applies after that global policy
+    // and never makes a globally non-runnable agent runnable.
+    const allowedAgents = config.allowed_agents ?? [];
+    const excludedAgents = new Set(config.excluded_agents ?? []);
+    const runnableAgents = allowedAgents.filter((agent) => !excludedAgents.has(agent));
+    const agentScopeResult = resolveSchedulerAgentScope(sched.agent_scope, runnableAgents);
+    for (const warning of agentScopeResult.warnings)
+        warnings.push(warning);
     // Fail-closed legacy gating: a "gated" retired master key disables EVERY
     // automation class regardless of the declared `automation` block, so no
     // old `enabled:false` installation can silently begin executing.
@@ -211,6 +355,7 @@ export function resolveSchedulerConfig(config) {
         effectiveConcurrency: SCHEDULER_EFFECTIVE_CONCURRENCY,
         enabled,
         automation,
+        agentScope: agentScopeResult.scope,
         legacyMasterGate,
         warnings,
     };
@@ -318,6 +463,12 @@ function formatStartupSummary(schedulerConfig, enabledAgents, startedAt) {
     lines.push(`automation: inbox_tasks=${onOff(schedulerConfig.automation.inboxTasks)} ` +
         `agent_cron=${onOff(schedulerConfig.automation.agentCron)} ` +
         `script_cron=${onOff(schedulerConfig.automation.scriptCron)}`);
+    // S1a: bounded effective agent-scope policy line (counts only, never
+    // configured values).
+    const scopePart = (label, agents) => agents === undefined ? `${label}=all` : `${label}=${agents.length} agent(s)`;
+    lines.push(`agent scope: ${scopePart("inbox_tasks", schedulerConfig.agentScope.inboxTasks)} ` +
+        `${scopePart("agent_cron", schedulerConfig.agentScope.agentCron)} ` +
+        `${scopePart("script_cron", schedulerConfig.agentScope.scriptCron)}`);
     if (!schedulerConfig.automation.inboxTasks && !schedulerConfig.automation.agentCron && !schedulerConfig.automation.scriptCron) {
         lines.push("no enabled automation classes; the loop runs as supervision only and will not heartbeat, plan, claim, or spawn until a class is enabled.");
     }

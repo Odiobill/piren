@@ -61,6 +61,12 @@ export interface SchedulerLocalConfig {
    * disabled; exactly inbox_tasks / agent_cron / script_cron.
    */
   automation?: SchedulerAutomationLocalConfig;
+  /**
+   * Closed per-class agent scope narrowing (S1a). Applies AFTER the global
+   * runnable policy (allowed minus excluded) and never makes a globally
+   * non-runnable agent runnable. Malformed present values fail closed.
+   */
+  agent_scope?: SchedulerAgentScopeLocalConfig;
 }
 
 /**
@@ -75,6 +81,25 @@ export interface SchedulerAutomationLocalConfig {
   agent_cron?: boolean;
   /** Execute due script-mode cron jobs directly. Default false (fail closed). */
   script_cron?: boolean;
+}
+
+/**
+ * Closed per-class agent scope shape under `scheduler.agent_scope` (S1a).
+ * Lives in ~/.config/piren/config.yml only: never in the vault, agent
+ * config, task frontmatter, browser storage, or an environment override.
+ */
+export interface SchedulerClassAgentScopeLocalConfig {
+  /** Optional allowlist narrowing only this class. Present empty list allows none. */
+  allow?: string[];
+  /** Optional exclusion list; exclusion wins over allow. */
+  exclude?: string[];
+}
+
+/** Closed `scheduler.agent_scope` container (S1a): exactly the three classes. */
+export interface SchedulerAgentScopeLocalConfig {
+  inbox_tasks?: SchedulerClassAgentScopeLocalConfig;
+  agent_cron?: SchedulerClassAgentScopeLocalConfig;
+  script_cron?: SchedulerClassAgentScopeLocalConfig;
 }
 
 /**

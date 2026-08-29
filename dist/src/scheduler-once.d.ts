@@ -1,6 +1,6 @@
 import { type ClaimInboxTaskOptions, type ClaimInboxTaskResult } from "./inbox.js";
 import { type ClaimCronJobOptions, type ClaimCronJobResult, type ExecuteScriptCronJobResult } from "./cron.js";
-import { type PlannerAutomation } from "./scheduler.js";
+import { type PlannerAutomation, type PlannerAgentScope } from "./scheduler.js";
 import { type SchedulerLegacyMasterGateState } from "./scheduler-loop.js";
 import type { ExecuteClaimedInboxTaskResult, ClaimedInboxTaskRunner } from "./scheduler-executor.js";
 import { type ExecuteClaimedAgentCronJobResult } from "./scheduler-cron-executor.js";
@@ -158,6 +158,17 @@ export interface SchedulerOnceResult {
      * (ordinary disabled inbox class only; never legacy gating).
      */
     forced?: boolean;
+    /**
+     * Resolved per-class agent scope applied to this tick (S1a). Present when
+     * at least one class is narrowed by `scheduler.agent_scope`.
+     */
+    agentScope?: PlannerAgentScope;
+    /**
+     * Bounded non-secret local-config warnings for this tick (S1a reporting):
+     * includes agent-scope fail-closed/narrowing warnings. Never echoes
+     * configured values.
+     */
+    configWarnings?: string[];
     /**
      * Present when the resolved config carried a retired `scheduler.enabled`
      * key that is not "absent" ("ignored" = enabled:true, inert-to-ignore;

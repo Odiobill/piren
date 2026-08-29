@@ -116,21 +116,26 @@ export async function schedulerDryRun(options) {
         dependencyNodes: inboxState.dependencyNodes,
         duplicateIds: inboxState.duplicateIds,
         automation,
+        // S1a: the resolved class agent scope narrows planner candidates after
+        // the enabled-agents gate; it never widens the runnable set.
+        agentScope: schedulerConfig.agentScope,
     });
     // Separately classify pending candidates for the human-readable report so
     // the dry-run can distinguish runnable from dependency-blocked work without
     // mutating anything. This reuses the same pure evaluator the planner uses.
     // Skipped when the inbox class is disabled: those tasks are class-gated,
-    // not dependency/retry-blocked.
+    // not dependency/retry-blocked. The class agent scope is checked first
+    // (S1a): an excluded agent's pending task is reported with the exact
+    // bounded exclusion reason and never proposed as a claim.
     const blocked = automation.inboxTasks
-        ? classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds, now)
+        ? classifyBlockedTasks(inboxState.pendingTasks, inboxState.dependencyNodes, inboxState.duplicateIds, now, schedulerConfig.agentScope.inboxTasks)
         : [];
     // Discovery-complete: when inbox automation is disabled (ordinary disabled
     // or legacy-gated), every unclaimed pending inbox task is still listed
     // with a bounded [DISABLED] status; no claim is proposed.
     const disabledInboxTasks = automation.inboxTasks ? [] : inboxState.pendingTasks;
     // Format output
-    const gates = { automation, legacyMasterGate };
+    const gates = { automation, legacyMasterGate, agentScope: schedulerConfig.agentScope, warnings: schedulerConfig.warnings };
     return formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, disabledInboxTasks, gates);
 }
 /** Map a loaded inbox task to the planner's task shape, carrying dependency fields. */
@@ -149,9 +154,20 @@ function toPlannerTask(task) {
     return plannerTask;
 }
 /** Evaluate every pending candidate and return the blocked ones with reasons. */
-function classifyBlockedTasks(pendingTasks, dependencyNodes, duplicateIds, now) {
+function classifyBlockedTasks(pendingTasks, dependencyNodes, duplicateIds, now, inboxScopeAgents) {
     const blocked = [];
+    const inboxScopeSet = inboxScopeAgents !== undefined ? new Set(inboxScopeAgents) : undefined;
     for (const task of pendingTasks) {
+        // Class agent scope (S1a): an excluded agent's pending task is reported
+        // with the exact bounded reason and never proposed as a claim.
+        if (inboxScopeSet !== undefined && !inboxScopeSet.has(task.agentName)) {
+            blocked.push({
+                agentName: task.agentName,
+                path: task.path,
+                reason: "class agent excluded (no claim proposed)",
+            });
+            continue;
+        }
         const candidate = {
             id: task.id,
             status: task.status,
@@ -212,6 +228,17 @@ function formatSchedulerDryRun(deviceId, enabledAgents, claims, blocked, disable
     }
     else if (gates.legacyMasterGate === "ignored") {
         lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
+    }
+    // S1a: bounded effective agent-scope policy line (counts only, never
+    // configured values) and deterministic non-secret config warnings.
+    const scopePart = (label, agents) => agents === undefined ? `${label}=all` : `${label}=${agents.length} agent(s)`;
+    lines.push(`agent scope: ${scopePart("inbox_tasks", gates.agentScope.inboxTasks)} ` +
+        `${scopePart("agent_cron", gates.agentScope.agentCron)} ` +
+        `${scopePart("script_cron", gates.agentScope.scriptCron)}`);
+    if (gates.warnings.length > 0) {
+        lines.push("config warnings:");
+        for (const warning of gates.warnings)
+            lines.push(`  - ${warning}`);
     }
     // Group claims by agent
     const agentClaims = new Map();

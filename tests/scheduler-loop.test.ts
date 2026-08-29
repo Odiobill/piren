@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LocalPirenConfig } from "../src/bootstrap.js";
+import type { LocalPirenConfig, SchedulerAgentScopeLocalConfig, SchedulerClassAgentScopeLocalConfig } from "../src/bootstrap.js";
 import type {
   SchedulerOnceOptions,
   SchedulerOnceResult,
@@ -346,6 +346,145 @@ describe("resolveAutomationClasses: closed class resolution (0.2.0 S1)", () => {
     expect(result.classes).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
     expect(result.warnings).toHaveLength(2);
     expect(result.warnings.join("\n")).not.toContain(secret);
+  });
+});
+
+describe("resolveSchedulerConfig: agent_scope class agent policy (S1a)", () => {
+  it("absent agent_scope leaves every class un-narrowed with no warnings", () => {
+    const resolved = resolveSchedulerConfig({ scheduler: { automation: { inbox_tasks: true } } });
+    expect(resolved.agentScope).toEqual({});
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("allow-only narrows that class to runnable agents and never widens the runnable set", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor", "sam"],
+      scheduler: {
+        automation: { inbox_tasks: true },
+        agent_scope: { inbox_tasks: { allow: ["thor", "ghost"] } },
+      },
+    });
+    expect(resolved.agentScope?.inboxTasks).toEqual(["thor"]);
+    expect(resolved.agentScope?.agentCron).toBeUndefined();
+    expect(resolved.agentScope?.scriptCron).toBeUndefined();
+  });
+
+  it("exclude-only narrows that class to runnable agents minus the excluded names", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor", "sam", "zai"],
+      scheduler: { agent_scope: { inbox_tasks: { exclude: ["sam"] } } },
+    });
+    expect(resolved.agentScope?.inboxTasks).toEqual(["thor", "zai"]);
+  });
+
+  it("overlap resolves with exclusion winning over allow", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor", "sam"],
+      scheduler: { agent_scope: { inbox_tasks: { allow: ["thor", "sam"], exclude: ["sam"] } } },
+    });
+    expect(resolved.agentScope?.inboxTasks).toEqual(["thor"]);
+  });
+
+  it("a present empty allow list deliberately allows none for that class", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor"],
+      scheduler: { agent_scope: { inbox_tasks: { allow: [] } } },
+    });
+    expect(resolved.agentScope?.inboxTasks).toEqual([]);
+  });
+
+  it("a malformed top-level agent_scope fails closed for every class with a bounded warning", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor"],
+      scheduler: {
+        agent_scope: "everything" as unknown as SchedulerAgentScopeLocalConfig,
+      },
+    });
+    expect(resolved.agentScope).toEqual({ inboxTasks: [], agentCron: [], scriptCron: [] });
+    expect(resolved.warnings.some((w) => w.includes("scheduler.agent_scope") && w.includes("fail closed"))).toBe(true);
+    expect(resolved.warnings.join("\n")).not.toContain("everything");
+  });
+
+  it("a malformed class scope fails closed only for the affected class", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor"],
+      scheduler: {
+        agent_scope: {
+          inbox_tasks: ["thor"] as unknown as SchedulerClassAgentScopeLocalConfig,
+          script_cron: { exclude: ["thor"] },
+        },
+      },
+    });
+    expect(resolved.agentScope?.inboxTasks).toEqual([]);
+    expect(resolved.agentScope?.agentCron).toBeUndefined();
+    expect(resolved.agentScope?.scriptCron).toEqual([]);
+    expect(resolved.warnings.some((w) => w.includes("scheduler.agent_scope.inbox_tasks"))).toBe(true);
+  });
+
+  it("a malformed allow/exclude list fails closed for the affected class", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor", "sam"],
+      scheduler: {
+        agent_scope: {
+          inbox_tasks: { allow: "thor" as unknown as string[] },
+          script_cron: { exclude: [42 as unknown as string] },
+        },
+      },
+    });
+    expect(resolved.agentScope?.inboxTasks).toEqual([]);
+    expect(resolved.agentScope?.scriptCron).toEqual([]);
+    expect(resolved.agentScope?.agentCron).toBeUndefined();
+    expect(resolved.warnings.some((w) => w.includes("scheduler.agent_scope.inbox_tasks.allow"))).toBe(true);
+    expect(resolved.warnings.some((w) => w.includes("scheduler.agent_scope.script_cron.exclude"))).toBe(true);
+  });
+
+  it("unknown class keys are warned-and-ignored", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor"],
+      scheduler: {
+        agent_scope: {
+          inbox_tasks: { exclude: ["thor"] },
+          everything_else: {},
+        } as unknown as SchedulerAgentScopeLocalConfig,
+      },
+    });
+    expect(resolved.agentScope?.inboxTasks).toEqual([]);
+    expect(resolved.warnings.some((w) => w.includes("scheduler.agent_scope contains 1 unrecognized class key"))).toBe(true);
+  });
+
+  it("unknown/non-runnable configured names warn deterministically and never widen the candidate set", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor"],
+      scheduler: { agent_scope: { inbox_tasks: { allow: ["thor", "ghost"], exclude: ["phantom"] } } },
+    });
+    expect(resolved.agentScope?.inboxTasks).toEqual(["thor"]);
+    expect(resolved.warnings.some((w) => w.includes("scheduler.agent_scope.inbox_tasks.allow") && w.includes("not locally enabled"))).toBe(true);
+    expect(resolved.warnings.some((w) => w.includes("scheduler.agent_scope.inbox_tasks.exclude") && w.includes("not locally enabled"))).toBe(true);
+    expect(resolved.warnings.join("\n")).not.toContain("ghost");
+    expect(resolved.warnings.join("\n")).not.toContain("phantom");
+  });
+
+  it("an empty class scope record is absent-like: no narrowing for that class", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor"],
+      scheduler: { agent_scope: { agent_cron: {} } },
+    });
+    expect(resolved.agentScope).toEqual({});
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("a class excluded by scope plus a legacy gated master key stays fail closed on both layers", () => {
+    const resolved = resolveSchedulerConfig({
+      allowed_agents: ["thor", "sam"],
+      scheduler: {
+        enabled: false,
+        automation: { inbox_tasks: true },
+        agent_scope: { inbox_tasks: { exclude: ["sam"] } },
+      },
+    });
+    expect(resolved.legacyMasterGate).toBe("gated");
+    expect(resolved.automation).toEqual({ inboxTasks: false, agentCron: false, scriptCron: false });
+    expect(resolved.agentScope?.inboxTasks).toEqual(["thor"]);
   });
 });
 
@@ -874,6 +1013,30 @@ describe("runSchedulerLoop: automation gates and startup summary (SGC-1/2)", () 
 
     const startup = logs[0] ?? "";
     expect(startup).toContain("automation: inbox_tasks=on agent_cron=off script_cron=on");
+  });
+
+  it("startup summary surfaces the bounded agent-scope policy line (S1a)", async () => {
+    const controller = createSchedulerLoopController();
+    const logs: string[] = [];
+    const schedulerConfig = resolveSchedulerConfig({
+      allowed_agents: ["thor", "sam"],
+      scheduler: {
+        automation: { inbox_tasks: true },
+        agent_scope: { inbox_tasks: { allow: ["thor"] } },
+      },
+    });
+
+    await runSchedulerLoop(
+      baseLoopOptions({
+        controller,
+        schedulerConfig,
+        schedulerOnce: fakeTick({ controller, shutdownAfter: 1 }).fn,
+        log: (m) => logs.push(m),
+      }),
+    );
+
+    const startup = logs[0] ?? "";
+    expect(startup).toContain("agent scope: inbox_tasks=1 agent(s) agent_cron=all script_cron=all");
   });
 
   it("startup summary surfaces the legacy-gate notice for a gated config (read-only, never persisted)", async () => {

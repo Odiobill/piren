@@ -21,7 +21,7 @@ import {
   type ExecuteScriptCronJobResult,
   type IsScheduleDueOptions,
 } from "./cron.js";
-import { planSchedulerTick, type PlannerAutomation, type PlannerCronJob, type PlannerTask } from "./scheduler.js";
+import { planSchedulerTick, type PlannerAutomation, type PlannerAgentScope, type PlannerCronJob, type PlannerTask } from "./scheduler.js";
 import { resolveSchedulerConfig, type SchedulerLegacyMasterGateState } from "./scheduler-loop.js";
 import { registerDevice } from "./devices.js";
 import type { ExecuteClaimedInboxTaskResult, ClaimedInboxTaskRunner } from "./scheduler-executor.js";
@@ -241,6 +241,17 @@ export interface SchedulerOnceResult {
    */
   forced?: boolean;
   /**
+   * Resolved per-class agent scope applied to this tick (S1a). Present when
+   * at least one class is narrowed by `scheduler.agent_scope`.
+   */
+  agentScope?: PlannerAgentScope;
+  /**
+   * Bounded non-secret local-config warnings for this tick (S1a reporting):
+   * includes agent-scope fail-closed/narrowing warnings. Never echoes
+   * configured values.
+   */
+  configWarnings?: string[];
+  /**
    * Present when the resolved config carried a retired `scheduler.enabled`
    * key that is not "absent" ("ignored" = enabled:true, inert-to-ignore;
    * "gated" = enabled:false/malformed, all classes fail closed). Read-only
@@ -302,7 +313,12 @@ function formatSummary(result: SchedulerOnceResult): string {
   const lines: string[] = [`SCHEDULER ONCE (device: ${result.deviceId})`];
   lines.push(`enabled agents: ${result.enabledAgents.join(", ") || "(none)"}`);
   if (result.automation !== undefined) lines.push(formatGateState(result.automation));
+  if (result.agentScope !== undefined) lines.push(formatAgentScopeLine(result.agentScope));
   if (result.forced === true) lines.push("force: inbox automation override (this tick only; not persisted)");
+  if (result.configWarnings !== undefined && result.configWarnings.length > 0) {
+    lines.push("config warnings:");
+    for (const warning of result.configWarnings) lines.push(`  - ${warning}`);
+  }
   if (result.legacyMasterGate === "ignored") {
     lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
   }
@@ -343,6 +359,17 @@ function formatGateState(automation: PlannerAutomation): string {
     `automation: inbox_tasks=${onOff(automation.inboxTasks)} ` +
     `agent_cron=${onOff(automation.agentCron)} ` +
     `script_cron=${onOff(automation.scriptCron)}`
+  );
+}
+
+/** Bounded agent-scope policy line (S1a): counts only, never config values. */
+function formatAgentScopeLine(agentScope: PlannerAgentScope): string {
+  const part = (label: string, agents: string[] | undefined): string =>
+    agents === undefined ? `${label}=all` : `${label}=${agents.length} agent(s)`;
+  return (
+    `agent scope: ${part("inbox_tasks", agentScope.inboxTasks)} ` +
+    `${part("agent_cron", agentScope.agentCron)} ` +
+    `${part("script_cron", agentScope.scriptCron)}`
   );
 }
 
@@ -499,6 +526,9 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
     dependencyNodes: inboxState.dependencyNodes,
     duplicateIds: inboxState.duplicateIds,
     automation,
+    // S1a: the per-class agent scope applies after --force class overrides:
+    // force never bypasses a class's agent scope.
+    agentScope: schedulerConfig.agentScope,
   });
 
   // 4. Walk planned claims in priority order; claim first, execute only on
@@ -733,6 +763,14 @@ export async function schedulerOnce(options: SchedulerOnceOptions): Promise<Sche
   };
   if (forceApplied) result.forced = true;
   if (legacyMasterGate !== "absent") result.legacyMasterGate = legacyMasterGate;
+  const narrowedScope: PlannerAgentScope = {};
+  if (schedulerConfig.agentScope.inboxTasks !== undefined) narrowedScope.inboxTasks = schedulerConfig.agentScope.inboxTasks;
+  if (schedulerConfig.agentScope.agentCron !== undefined) narrowedScope.agentCron = schedulerConfig.agentScope.agentCron;
+  if (schedulerConfig.agentScope.scriptCron !== undefined) narrowedScope.scriptCron = schedulerConfig.agentScope.scriptCron;
+  if (narrowedScope.inboxTasks !== undefined || narrowedScope.agentCron !== undefined || narrowedScope.scriptCron !== undefined) {
+    result.agentScope = narrowedScope;
+  }
+  if (schedulerConfig.warnings.length > 0) result.configWarnings = schedulerConfig.warnings;
   if (executedItemType !== undefined) result.executedItemType = executedItemType;
   if (executedItemPath !== undefined) result.executedItemPath = executedItemPath;
   if (executedAgentName !== undefined) result.executedAgentName = executedAgentName;

@@ -282,6 +282,132 @@ describe("scheduler planner", () => {
   });
 });
 
+describe("scheduler planner agent scope (S1a)", () => {
+  const owningDevices = new Map<string, PlannerActiveDevice[]>([
+    ["codex", [{ deviceId: "heimdall", priority: 1 }]],
+    ["thor", [{ deviceId: "heimdall", priority: 1 }]],
+  ]);
+  const pendingInbox: PlannerTask[] = [
+    { path: "team/codex/inbox/task-1.md", agentName: "codex", status: "pending" },
+    { path: "team/thor/inbox/task-2.md", agentName: "thor", status: "pending" },
+  ];
+  const agentCron: PlannerCronJob[] = [
+    {
+      path: "cron/jobs/agent-brief.md",
+      agentName: "codex",
+      devicePolicy: { mode: "highest_priority" as const, allowedDevices: [] },
+      mode: "agent",
+    },
+  ];
+  const scriptCron: PlannerCronJob[] = [
+    {
+      path: "cron/jobs/script-cleanup.md",
+      agentName: "thor",
+      devicePolicy: { mode: "highest_priority" as const, allowedDevices: [] },
+      mode: "script",
+    },
+  ];
+
+  function planWithScope(agentScope: {
+    inboxTasks?: string[];
+    agentCron?: string[];
+    scriptCron?: string[];
+  }) {
+    return planSchedulerTick({
+      enabledAgents: ["codex", "thor"],
+      pendingTasks: pendingInbox,
+      dueCronJobs: [...agentCron, ...scriptCron],
+      activeDevices: owningDevices,
+      deviceId,
+      staleAfterMs,
+      now,
+      automation: { inboxTasks: true, agentCron: true, scriptCron: true },
+      agentScope,
+    });
+  }
+
+  it("absent agentScope retains legacy behavior: every eligible class is proposed", () => {
+    const result = planSchedulerTick({
+      enabledAgents: ["codex", "thor"],
+      pendingTasks: pendingInbox,
+      dueCronJobs: [...agentCron, ...scriptCron],
+      activeDevices: owningDevices,
+      deviceId,
+      staleAfterMs,
+      now,
+      automation: { inboxTasks: true, agentCron: true, scriptCron: true },
+    });
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/agent-brief.md",
+      "cron/jobs/script-cleanup.md",
+      "team/codex/inbox/task-1.md",
+      "team/thor/inbox/task-2.md",
+    ]);
+  });
+
+  it("narrows inbox-task candidates to the scoped agents only", () => {
+    const result = planWithScope({ inboxTasks: ["thor"] });
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/agent-brief.md",
+      "cron/jobs/script-cleanup.md",
+      "team/thor/inbox/task-2.md",
+    ]);
+  });
+
+  it("an empty scoped list proposes no inbox candidates for any agent (fail closed)", () => {
+    const result = planWithScope({ inboxTasks: [] });
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/agent-brief.md",
+      "cron/jobs/script-cleanup.md",
+    ]);
+  });
+
+  it("narrows agent-mode cron independently of script cron and inbox classes", () => {
+    const result = planWithScope({ agentCron: ["thor"] });
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/script-cleanup.md",
+      "team/codex/inbox/task-1.md",
+      "team/thor/inbox/task-2.md",
+    ]);
+  });
+
+  it("narrows script-mode cron independently of agent cron", () => {
+    const result = planWithScope({ scriptCron: ["codex"] });
+    expect(result.map((c) => c.itemPath).sort()).toEqual([
+      "cron/jobs/agent-brief.md",
+      "team/codex/inbox/task-1.md",
+      "team/thor/inbox/task-2.md",
+    ]);
+  });
+
+  it("never proposes a stale-claim reclaim for an excluded agent's claimed inbox task", () => {
+    const claimed: PlannerTask[] = [
+      {
+        path: "team/codex/inbox/task-1.claimed.ironman.md",
+        agentName: "codex",
+        status: "claimed",
+        claimedBy: "ironman",
+      },
+    ];
+    const result = planSchedulerTick({
+      enabledAgents: ["codex"],
+      pendingTasks: claimed,
+      dueCronJobs: [],
+      activeDevices: new Map(),
+      deviceId,
+      staleAfterMs,
+      now,
+      agentScope: { inboxTasks: ["thor"] },
+    });
+    expect(result).toEqual([]);
+  });
+
+  it("agent scope applies even when the inbox class gate was force-overridden on", () => {
+    const result = planWithScope({ inboxTasks: [] });
+    expect(result.every((c) => c.itemType === "cron_job")).toBe(true);
+  });
+});
+
 describe("scheduler planner dependency eligibility (ADR-0038 R1)", () => {
   it("proposes no claim for a task whose prerequisite is unsatisfied", () => {
     const dependencyNodes = new Map<string, DependencyTaskNode>([

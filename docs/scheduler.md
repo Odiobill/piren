@@ -24,7 +24,37 @@ A retired `scheduler.enabled` key is never a gate:
 - `enabled: true` is **inert-to-ignore**: it never adds execution. Surfaces that show scheduler state print `legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)`.
 - `enabled: false` or a malformed value is the ambiguous legacy shape: such installations were previously fully inert, so they must never silently begin executing. Every class resolves **disabled** (fail closed) until an operator-confirmed `piren scheduler configure` migration removes the stale key. The affected surfaces show `legacy gate: retired scheduler.enabled key present with a disabled/malformed value; all automation classes resolve disabled (fail closed); operator-confirmed migration required`. Settings and doctor never migrate this state; they surface it read-only, and configure is the only migration writer.
 
-`piren scheduler --once --force` is the only override: it turns on **only a disabled inbox automation class** for that one tick, non-persistently (`force: inbox automation override (this tick only; not persisted)`). It never enables either cron class, never bypasses the legacy gate, never writes config, and never starts a service.
+`piren scheduler --once --force` is the only override: it turns on **only a disabled inbox automation class** for that one tick, non-persistently (`force: inbox automation override (this tick only; not persisted)`). It never enables either cron class, never bypasses the legacy gate, never bypasses a class's agent scope (below), never writes config, and never starts a service.
+
+## Class agent scope (`agent_scope`)
+
+Each automation class can independently narrow **which locally enabled agents** its items may be claimed for. This is installation-local policy in `~/.config/piren/config.yml` under `scheduler.agent_scope`; it never belongs in the vault, agent config, task frontmatter, browser storage, or an environment override.
+
+```yaml
+scheduler:
+  automation:
+    inbox_tasks: true
+    agent_cron: false
+    script_cron: false
+  agent_scope:
+    inbox_tasks:
+      allow: [thor]       # optional; a present empty list deliberately allows none
+      exclude: [sam]      # optional; exclusion wins over allow
+    agent_cron: {}        # empty mapping = no narrowing
+    script_cron: {}
+```
+
+Semantics:
+
+- A scope omitted for a class (absent key, `null`, or an empty `{}` mapping) leaves **all** locally enabled agents eligible for that class.
+- `allow` narrows only that class to the intersection with locally enabled agents; `exclude` removes names from that class's candidates; when both are set, **exclusion wins**.
+- The scope applies **after** the global runnable policy (`allowed_agents` minus `excluded_agents`). It never makes a globally non-runnable agent runnable.
+- Configured names that are not locally enabled agents produce a bounded count-only warning and are ignored: they never widen eligibility.
+- A malformed present `agent_scope`, class scope, or allow/exclude list fails **closed** for the affected class (no candidates for that class) with a deterministic non-secret warning. Unknown class keys and unknown keys inside a class scope are warned-and-ignored.
+- An excluded agent's work is never proposed, claimed, spawned, retried, or completion-released through any scheduler path. In `--dry-run`, an enabled inbox class whose pending task belongs to an excluded agent is printed as `[BLOCK] inbox_task <path> - class agent excluded (no claim proposed)`, never as a `[CLAIM]`.
+- The dry-run, one-shot summary, and loop startup summary report the effective policy as a bounded count-only line (`agent scope: inbox_tasks=1 agent(s) agent_cron=all script_cron=all`) plus any non-secret config warnings.
+
+A typical use: keep `inbox_tasks` automation enabled while excluding agents reserved for interactive Workbench Conversations (for example `exclude: [sam, zai]`), so the scheduler never claims their inbox tasks while those agents remain fully available for explicit work.
 
 The dry-run loads vault state for every agent in local `allowed_agents`, plans proposed claim attempts for one tick, and prints them grouped by agent. It does not claim, does not spawn, and does not invoke any LLM.
 
@@ -67,9 +97,9 @@ A scheduler tick is LLM-free. For each locally enabled agent, the planner:
 6. Proposes a claim attempt.
 
 For inbox tasks:
-- An unclaimed `pending` task gets a proposed claim.
+- An unclaimed `pending` task gets a proposed claim, unless the class agent scope excludes its agent (`agent_scope`, above).
 - A claimed task is never a claim candidate: the scheduler loads only unclaimed `pending` tasks, so a task claimed by any device — stale or not — stays claimed for manual triage (see [Recovery](recovery.md)).
-- A pending task blocked by `depends_on` or by retry eligibility (below) never gets a claim proposal. `--dry-run` reports it as a `[BLOCK]` line with the exact reason.
+- A pending task blocked by `depends_on`, retry eligibility, or the class agent scope (below) never gets a claim proposal. `--dry-run` reports it as a `[BLOCK]` line with the exact reason.
 
 For cron jobs:
 - The planner uses active-device-priority ownership to pick the owning device.
@@ -197,6 +227,12 @@ scheduler:
     inbox_tasks: true         # sole inbox gate (default false)
     agent_cron: true          # sole agent-cron gate (default false)
     script_cron: true         # execute due script-mode cron jobs directly (default false)
+  agent_scope:                # optional per-class agent narrowing (all eligible when omitted)
+    inbox_tasks:
+      allow: [thor]           # optional; present empty list allows none
+      exclude: [sam]          # optional; exclusion wins over allow
+    agent_cron: {}
+    script_cron: {}
   poll_interval_seconds: 30    # seconds between loop ticks (default 30)
   stale_after_seconds: 300      # device heartbeat staleness threshold (default 300)
   max_concurrent_agents: 1      # parsed and reported; effective concurrency is 1 (one-at-a-time)

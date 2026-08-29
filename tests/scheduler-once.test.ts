@@ -1613,3 +1613,119 @@ describe("schedulerOnce automation gates (0.2.0 S2)", () => {
     expect(result.summary).not.toMatch(/force/i);
   });
 });
+
+describe("schedulerOnce class agent scope (S1a)", () => {
+  it("never claims an excluded agent's pending inbox task", async () => {
+    await writeConfig({
+      allowed: ["codex", "thor"],
+      scheduler:
+        "scheduler:\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n  agent_scope:\n    inbox_tasks:\n      exclude: [thor]\n",
+    });
+    const thorPath = await writeInboxTask("thor", "thor-task");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(inboxCalls).toEqual([]);
+    expect(result.executed).toBe(false);
+    expect(result.noWork).toBe(true);
+    // The excluded task is never claimed: still pending under its ordinary name.
+    const after = await readFile(join(vault, thorPath), "utf8");
+    expect(after).toContain("status: pending");
+  });
+
+  it("still executes an allowed agent's inbox task while excluding another agent", async () => {
+    await writeConfig({
+      allowed: ["codex", "thor"],
+      scheduler:
+        "scheduler:\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n  agent_scope:\n    inbox_tasks:\n      allow: [codex]\n",
+    });
+    await writeInboxTask("codex", "codex-task");
+    await writeInboxTask("thor", "thor-task");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(inboxCalls).toHaveLength(1);
+    expect(result.executedAgentName).toBe("codex");
+    expect(result.summary).toMatch(/agent scope:/);
+  });
+
+  it("--force overrides a disabled inbox class but NEVER bypasses its class agent scope", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler:
+        "scheduler:\n  automation:\n    inbox_tasks: false\n    agent_cron: false\n    script_cron: false\n  agent_scope:\n    inbox_tasks:\n      exclude: [codex]\n",
+    });
+    await writeInboxTask("codex", "forced-excluded-task");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+      force: true,
+    });
+
+    expect(inboxCalls).toEqual([]);
+    expect(result.executed).toBe(false);
+    expect(result.noWork).toBe(true);
+    expect(result.summary).toMatch(/force: inbox automation override/);
+    expect(result.summary).toMatch(/agent scope:/);
+  });
+
+  it("never claims an excluded agent's due agent-mode cron job (agent_cron scope)", async () => {
+    await writeConfig({
+      allowed: ["codex", "thor"],
+      scheduler:
+        "scheduler:\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n  agent_scope:\n    agent_cron:\n      exclude: [thor]\n",
+    });
+    await writeCronJob({ id: "thor-agent-job", agent: "thor", mode: "agent", prompt: "Brief me." });
+    const { executors, cronAgentCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(cronAgentCalls).toEqual([]);
+    expect(result.executed).toBe(false);
+    expect(result.noWork).toBe(true);
+  });
+
+  it("reports bounded agent-scope policy and malformed-scope warnings in the summary", async () => {
+    await writeConfig({
+      allowed: ["codex"],
+      scheduler:
+        "scheduler:\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n  agent_scope:\n    inbox_tasks:\n      allow: [codex, ghost]\n",
+    });
+    await writeInboxTask("codex", "scoped-task");
+    const { executors, inboxCalls } = recordingExecutors();
+
+    const result = await schedulerOnce({
+      configPath,
+      deviceId: "heimdall",
+      now: tick,
+      executors,
+    });
+
+    expect(inboxCalls).toHaveLength(1);
+    expect(result.summary).toMatch(/agent scope: inbox_tasks=1 agent\(s\) agent_cron=all script_cron=all/);
+    expect(result.summary).toContain("config warnings:");
+    expect(result.summary).toMatch(/scheduler\.agent_scope\.inbox_tasks\.allow contains 1 name\(s\) that are not locally enabled agents/);
+    expect(result.summary).not.toContain("ghost");
+  });
+});

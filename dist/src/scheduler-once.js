@@ -86,8 +86,15 @@ function formatSummary(result) {
     lines.push(`enabled agents: ${result.enabledAgents.join(", ") || "(none)"}`);
     if (result.automation !== undefined)
         lines.push(formatGateState(result.automation));
+    if (result.agentScope !== undefined)
+        lines.push(formatAgentScopeLine(result.agentScope));
     if (result.forced === true)
         lines.push("force: inbox automation override (this tick only; not persisted)");
+    if (result.configWarnings !== undefined && result.configWarnings.length > 0) {
+        lines.push("config warnings:");
+        for (const warning of result.configWarnings)
+            lines.push(`  - ${warning}`);
+    }
     if (result.legacyMasterGate === "ignored") {
         lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
     }
@@ -132,6 +139,13 @@ function formatGateState(automation) {
     return (`automation: inbox_tasks=${onOff(automation.inboxTasks)} ` +
         `agent_cron=${onOff(automation.agentCron)} ` +
         `script_cron=${onOff(automation.scriptCron)}`);
+}
+/** Bounded agent-scope policy line (S1a): counts only, never config values. */
+function formatAgentScopeLine(agentScope) {
+    const part = (label, agents) => agents === undefined ? `${label}=all` : `${label}=${agents.length} agent(s)`;
+    return (`agent scope: ${part("inbox_tasks", agentScope.inboxTasks)} ` +
+        `${part("agent_cron", agentScope.agentCron)} ` +
+        `${part("script_cron", agentScope.scriptCron)}`);
 }
 function inertSummary(deviceId, enabledAgents, state) {
     const lines = [`SCHEDULER ONCE (device: ${deviceId})`];
@@ -262,6 +276,9 @@ export async function schedulerOnce(options) {
         dependencyNodes: inboxState.dependencyNodes,
         duplicateIds: inboxState.duplicateIds,
         automation,
+        // S1a: the per-class agent scope applies after --force class overrides:
+        // force never bypasses a class's agent scope.
+        agentScope: schedulerConfig.agentScope,
     });
     // 4. Walk planned claims in priority order; claim first, execute only on
     //    success, skip failures, stop after the first execution attempt.
@@ -506,6 +523,18 @@ export async function schedulerOnce(options) {
         result.forced = true;
     if (legacyMasterGate !== "absent")
         result.legacyMasterGate = legacyMasterGate;
+    const narrowedScope = {};
+    if (schedulerConfig.agentScope.inboxTasks !== undefined)
+        narrowedScope.inboxTasks = schedulerConfig.agentScope.inboxTasks;
+    if (schedulerConfig.agentScope.agentCron !== undefined)
+        narrowedScope.agentCron = schedulerConfig.agentScope.agentCron;
+    if (schedulerConfig.agentScope.scriptCron !== undefined)
+        narrowedScope.scriptCron = schedulerConfig.agentScope.scriptCron;
+    if (narrowedScope.inboxTasks !== undefined || narrowedScope.agentCron !== undefined || narrowedScope.scriptCron !== undefined) {
+        result.agentScope = narrowedScope;
+    }
+    if (schedulerConfig.warnings.length > 0)
+        result.configWarnings = schedulerConfig.warnings;
     if (executedItemType !== undefined)
         result.executedItemType = executedItemType;
     if (executedItemPath !== undefined)

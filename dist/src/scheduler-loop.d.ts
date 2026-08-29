@@ -51,6 +51,42 @@ export interface SchedulerMigrationSignal {
     readonly note: string;
 }
 /**
+ * Resolved per-class agent scope (S1a). A class maps to a present array of
+ * eligible agent names when the configured scope narrows that class (an
+ * empty array deliberately allows none: fail closed), and is absent when the
+ * class scope is omitted/empty (all locally enabled agents remain eligible).
+ * Values already exclude non-runnable names: the scope applies AFTER the
+ * global runnable policy and never widens it.
+ */
+export interface ResolvedSchedulerAgentScope {
+    inboxTasks?: string[];
+    agentCron?: string[];
+    scriptCron?: string[];
+}
+/** Result of `resolveSchedulerAgentScope`: resolved scope plus warnings. */
+export interface ResolveSchedulerAgentScopeResult {
+    scope: ResolvedSchedulerAgentScope;
+    warnings: string[];
+}
+/**
+ * Pure fail-closed resolver for the closed `scheduler.agent_scope` block
+ * (S1a). Takes the raw value (anything the YAML loader produced) and the
+ * locally enabled agent set (allowed minus excluded) and returns the resolved
+ * per-class scope plus deterministic warnings. No I/O.
+ *
+ * - Absent/null container -> no narrowing for any class, no warning.
+ * - Non-mapping container -> every class fails closed (no candidates) + one warning.
+ * - Absent/null class scope or an empty class mapping -> no narrowing for that class.
+ * - Non-mapping class scope or a malformed allow/exclude list -> that class
+ *   fails closed (no candidates) with a warning.
+ * - `allow` narrows only that class; `exclude` wins over `allow`; both are
+ *   intersected with the runnable set so unknown/non-runnable names never
+ *   widen eligibility (each is reported with a bounded count-only warning).
+ * - Unknown keys under the container or a class scope are warned-and-ignored.
+ * - Warnings never echo configured values (count-only, non-secret).
+ */
+export declare function resolveSchedulerAgentScope(raw: unknown, runnableAgents: string[]): ResolveSchedulerAgentScopeResult;
+/**
  * Pure fail-closed resolver for the closed `scheduler.automation` block
  * (0.2.0 scope amendment §2). Takes the raw `automation` value (which may be
  * anything the YAML loader produced) and returns the three resolved classes
@@ -86,6 +122,13 @@ export interface ResolvedSchedulerConfig {
     enabled: boolean;
     /** Closed automation classes (inbox_tasks / agent_cron / script_cron). */
     automation: ResolvedSchedulerAutomation;
+    /**
+     * Resolved per-class agent scope (S1a). A class maps to a present array of
+     * eligible agents when its configured scope narrows that class (possibly
+     * empty: fail closed), and is absent when no narrowing applies. Applies
+     * after the global runnable policy; never widens it.
+     */
+    agentScope: ResolvedSchedulerAgentScope;
     /**
      * Present exactly for a legacy established scheduler block lacking
      * `enabled`: inspectable pure signal for a later writer/wizard tracer.

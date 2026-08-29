@@ -45,6 +45,19 @@ export interface PlannerAutomation {
     agentCron: boolean;
     scriptCron: boolean;
 }
+/**
+ * Resolved per-class agent scope for planner gating (S1a). Mirrors
+ * `ResolvedSchedulerAgentScope` in scheduler-loop.ts without a module
+ * dependency: a present class array narrows that class's candidates to those
+ * agent names (an empty array allows none); an absent class key leaves every
+ * enabled agent eligible. The scope applies after the enabled-agents gate and
+ * never widens it.
+ */
+export interface PlannerAgentScope {
+    inboxTasks?: string[];
+    agentCron?: string[];
+    scriptCron?: string[];
+}
 export interface PlannerActiveDevice {
     deviceId: string;
     priority: number;
@@ -87,6 +100,13 @@ export interface PlanSchedulerTickOptions {
      * classes are permitted (legacy behavior).
      */
     automation?: PlannerAutomation;
+    /**
+     * Resolved per-class agent scope (S1a). When present for a class, only the
+     * listed agents' items of that class are proposed; an empty array excludes
+     * every agent for that class. Applies to inbox tasks (including stale-claim
+     * reclaims) and to agent-/script-mode cron independently.
+     */
+    agentScope?: PlannerAgentScope;
 }
 /**
  * Plan proposed claims for one scheduler tick. Pure function: takes

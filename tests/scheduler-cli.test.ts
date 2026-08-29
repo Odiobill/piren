@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -591,5 +591,78 @@ describe("scheduler dry-run automation gates (0.2.0 S2)", () => {
     // Read-only: no config write ever happens.
     const after = await readFile(configPath, "utf8");
     expect(after).not.toContain("enabled: true");
+  });
+});
+
+const AUTOMATION_ON = "scheduler:\n  automation:\n    inbox_tasks: true\n    agent_cron: true\n    script_cron: true\n";
+
+describe("scheduler dry-run class agent scope (S1a)", () => {
+  it("prints an excluded agent's pending inbox task as blocked, never as a claim, and mutates nothing", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\n${AUTOMATION_ON}  agent_scope:\n    inbox_tasks:\n      exclude: [thor]\n`,
+    );
+
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+    const taskPath = join(vault, "team", "thor", "inbox", "task-1.md");
+    await writeFile(
+      taskPath,
+      "---\nid: task-1\nstatus: pending\nfrom: nora\nto: thor\ncreated: 2026-07-05T09:00:00Z\nupdated: 2026-07-05T09:00:00Z\n---\n\n# Test task\n\nDo something.",
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toMatch(/\[BLOCK\] inbox_task\s+team\/thor\/inbox\/task-1\.md - class agent excluded \(no claim proposed\)/);
+    expect(output).not.toContain("[CLAIM]");
+    // Dry-run stays read-only: the task file is untouched and unclaimed.
+    const stillUnclaimed = await readFile(taskPath, "utf8");
+    expect(stillUnclaimed).toContain("status: pending");
+    expect(await readdir(join(vault, "team", "thor", "inbox"))).toEqual(["task-1.md"]);
+  });
+
+  it("still proposes claims for agents the class scope allows", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\n  - sam\n${AUTOMATION_ON}  agent_scope:\n    inbox_tasks:\n      allow: [thor]\n`,
+    );
+
+    await mkdir(join(vault, "team", "thor", "inbox"), { recursive: true });
+    await mkdir(join(vault, "team", "sam", "inbox"), { recursive: true });
+    await writeFile(
+      join(vault, "team", "thor", "inbox", "task-1.md"),
+      "---\nid: task-1\nstatus: pending\nfrom: nora\nto: thor\ncreated: 2026-07-05T09:00:00Z\nupdated: 2026-07-05T09:00:00Z\n---\n\n# Thor task\n",
+    );
+    await writeFile(
+      join(vault, "team", "sam", "inbox", "task-2.md"),
+      "---\nid: task-2\nstatus: pending\nfrom: nora\nto: sam\ncreated: 2026-07-05T09:00:00Z\nupdated: 2026-07-05T09:00:00Z\n---\n\n# Sam task\n",
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toMatch(/\[CLAIM\] inbox_task\s+team\/thor\/inbox\/task-1\.md/);
+    expect(output).toContain("team/sam/inbox/task-2.md - class agent excluded (no claim proposed)");
+  });
+
+  it("reports the bounded agent-scope policy line and non-secret warnings", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\n${AUTOMATION_ON}  agent_scope:\n    inbox_tasks:\n      allow: [thor, ghost]\n`,
+    );
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toMatch(/agent scope: inbox_tasks=1 agent\(s\) agent_cron=all script_cron=all/);
+    expect(output).toContain("config warnings:");
+    expect(output).toMatch(/scheduler\.agent_scope\.inbox_tasks\.allow contains 1 name\(s\) that are not locally enabled agents/);
+    expect(output).not.toContain("ghost");
+  });
+
+  it("prints an all-agents scope line when no narrowing is configured", async () => {
+    await writeFile(configPath, `vault_root: ${vault}\nallowed_agents:\n  - thor\n${AUTOMATION_ON}`);
+
+    const output = await schedulerDryRun({ configPath });
+
+    expect(output).toContain("agent scope: inbox_tasks=all agent_cron=all script_cron=all");
+    expect(output).not.toContain("config warnings:");
   });
 });

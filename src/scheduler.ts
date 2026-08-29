@@ -54,6 +54,20 @@ export interface PlannerAutomation {
   scriptCron: boolean;
 }
 
+/**
+ * Resolved per-class agent scope for planner gating (S1a). Mirrors
+ * `ResolvedSchedulerAgentScope` in scheduler-loop.ts without a module
+ * dependency: a present class array narrows that class's candidates to those
+ * agent names (an empty array allows none); an absent class key leaves every
+ * enabled agent eligible. The scope applies after the enabled-agents gate and
+ * never widens it.
+ */
+export interface PlannerAgentScope {
+  inboxTasks?: string[];
+  agentCron?: string[];
+  scriptCron?: string[];
+}
+
 export interface PlannerActiveDevice {
   deviceId: string;
   priority: number;
@@ -98,6 +112,13 @@ export interface PlanSchedulerTickOptions {
    * classes are permitted (legacy behavior).
    */
   automation?: PlannerAutomation;
+  /**
+   * Resolved per-class agent scope (S1a). When present for a class, only the
+   * listed agents' items of that class are proposed; an empty array excludes
+   * every agent for that class. Applies to inbox tasks (including stale-claim
+   * reclaims) and to agent-/script-mode cron independently.
+   */
+  agentScope?: PlannerAgentScope;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,13 +134,19 @@ export interface PlanSchedulerTickOptions {
  * jobs, active devices) and executing or displaying the proposed claims.
  */
 export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedClaim[] {
-  const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes, duplicateIds, automation } = options;
+  const { enabledAgents, pendingTasks, dueCronJobs, activeDevices, deviceId, staleAfterMs, now, dependencyNodes, duplicateIds, automation, agentScope } = options;
   const claims: PlannedClaim[] = [];
   const enabledSet = new Set(enabledAgents);
+  const inboxScopeSet = agentScope?.inboxTasks !== undefined ? new Set(agentScope.inboxTasks) : undefined;
+  const agentCronScopeSet = agentScope?.agentCron !== undefined ? new Set(agentScope.agentCron) : undefined;
+  const scriptCronScopeSet = agentScope?.scriptCron !== undefined ? new Set(agentScope.scriptCron) : undefined;
 
   // Process inbox tasks (skipped entirely when the inbox class is disabled)
   for (const task of automation !== undefined && !automation.inboxTasks ? [] : pendingTasks) {
     if (!enabledSet.has(task.agentName)) continue;
+    // Class agent scope (S1a): an excluded agent's inbox task is never
+    // proposed, including a stale-claim reclaim proposal below.
+    if (inboxScopeSet !== undefined && !inboxScopeSet.has(task.agentName)) continue;
 
     if (task.status === "pending") {
       // Dependency eligibility (ADR-0038 R1): a task with unsatisfied or
@@ -166,6 +193,10 @@ export function planSchedulerTick(options: PlanSchedulerTickOptions): PlannedCla
       if (isScript && !automation.scriptCron) continue;
       if (!isScript && !automation.agentCron) continue;
     }
+    // Class agent scope (S1a): an excluded agent's cron job is never
+    // proposed, per class independently.
+    const scopeSet = job.mode === "script" ? scriptCronScopeSet : agentCronScopeSet;
+    if (scopeSet !== undefined && !scopeSet.has(job.agentName)) continue;
 
     const agentDevices = activeDevices.get(job.agentName) ?? [];
     const activeList: ActiveDevice[] = agentDevices.map((d) => ({
