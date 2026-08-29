@@ -187,8 +187,7 @@ interface DimensionUpdate {
 function parseDimensionUpdate(
   value: { from: unknown; to: unknown } | undefined,
   cap: number,
-): { ok: true; update: DimensionUpdate } | { ok: false; reason: string } {
-  if (value === undefined || typeof value !== "object") {
+): { ok: true; update: DimensionUpdate } | { ok: false; reason: string } {  if (value === undefined || typeof value !== "object") {
     return { ok: false, reason: "budget update dimension is malformed" };
   }
   const { from, to } = value as { from: unknown; to: unknown };
@@ -205,15 +204,69 @@ function parseDimensionUpdate(
 }
 
 /**
+ * Canonical, bounded record serialization used ONLY as the final
+ * deterministic tie-break for the derivation ordering (e.g. two records
+ * colliding on both sequence and eventId). Field order is fixed; absent
+ * dimensions render as "-"; values render verbatim (this key is never
+ * surfaced in warnings or ignored reasons).
+ */
+function canonicalEvidenceKey(update: HandoffBudgetUpdateEvidence): string {
+  const dimension = (d?: { from: number; to: number } | undefined): string =>
+    d === undefined ? "-" : `${d.from}:${d.to}`;
+  return [
+    update.kind,
+    update.author,
+    update.authorKind,
+    update.rootEventId,
+    update.correlationId,
+    dimension(update.edges),
+    dimension(update.reworkRounds),
+  ].join("|");
+}
+
+/** Compare two strings deterministically (lexicographic by code unit). */
+function compareStrings(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/**
+ * Total deterministic evidence ordering: ascending valid durable sequence
+ * first (malformed/non-positive sequences sort last, deterministically);
+ * then eventId; then the canonical record serialization. Never mutates the
+ * inputs and never lets malformed/duplicate evidence alter effective values
+ * — it only fixes the application/inspection order.
+ */
+function orderEvidenceForDerivation(
+  updates: readonly HandoffBudgetUpdateEvidence[],
+): HandoffBudgetUpdateEvidence[] {
+  return [...updates].sort((a, b) => {
+    const seqA = isFiniteInteger(a.sequence) && a.sequence >= 1 ? a.sequence : Number.POSITIVE_INFINITY;
+    const seqB = isFiniteInteger(b.sequence) && b.sequence >= 1 ? b.sequence : Number.POSITIVE_INFINITY;
+    if (seqA !== seqB) return seqA - seqB;
+    const idCompare = compareStrings(a.eventId, b.eventId);
+    if (idCompare !== 0) return idCompare;
+    return compareStrings(canonicalEvidenceKey(a), canonicalEvidenceKey(b));
+  });
+}
+
+/**
  * Derive the per-root effective budget from injected update evidence and
- * injected usage facts (contract §3.2). Updates apply in ascending durable
- * sequence order (stable sort). A whole update is ignored — never applied
- * partially — when its shape is invalid, any mentioned dimension fails its
- * chain validation, or it mentions no dimension. Ignored updates are
- * recorded with bounded non-secret reasons; the effective budget is never
- * widened or lowered by them. A duplicate/replay is idempotent: its `from`
- * no longer matches the advanced effective value, so it is ignored and the
- * budget applies exactly once.
+ * injected usage facts (contract §3.2). Updates apply in a TOTAL
+ * deterministic order: ascending valid durable sequence as the primary key,
+ * then a bounded identity-based tie-break (eventId), then a canonical
+ * record-serialization comparison as the final tie policy — so the entire
+ * derived result, including the ordered `ignored` metadata, is identical
+ * regardless of caller array order, even for equal/malformed/duplicate
+ * sequence evidence. A whole update is ignored — never applied partially —
+ * when its shape is invalid, any mentioned dimension fails its chain
+ * validation, or it mentions no dimension. Ignored updates are recorded
+ * with bounded non-secret reasons; the effective budget is never widened or
+ * lowered by them. Duplicate durable identity/order is whole-GROUP rejected
+ * BEFORE any chain application (a durable event id or sequence position
+ * identifies exactly one record); separately, a replay under a distinct id
+ * whose `from` no longer matches the advanced effective value fails the
+ * chain rule and is ignored — the budget applies exactly once.
  */
 export function deriveHandoffBudget(input: {
   rootEventId: string;
@@ -225,13 +278,15 @@ export function deriveHandoffBudget(input: {
   const validUpdateEventIds: string[] = [];
   const ignored: IgnoredHandoffBudgetUpdate[] = [];
 
-  const ordered = [...input.updates].sort((a, b) => a.sequence - b.sequence);
+  const ordered = orderEvidenceForDerivation(input.updates);
 
   // Duplicate durable identity/order is corrupt/replay evidence and fails
   // closed as a whole group (contract §3.2; B1 correction): a durable event
   // id or a durable sequence position identifies exactly one record. Counts
   // are computed over usable identities/sequences only, so the rejection is
-  // deterministic and caller-order-independent.
+  // deterministic and caller-order-independent. The total evidence ordering
+  // above additionally makes the ordered `ignored` metadata itself
+  // caller-order-independent.
   const identityCounts = new Map<string, number>();
   const sequenceCounts = new Map<number, number>();
   for (const update of ordered) {

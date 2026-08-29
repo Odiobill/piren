@@ -331,6 +331,25 @@ describe("conversation-budget: duplicate durable identity/order fail closed (B1 
     expect(derived.ignored.map((i) => i.eventId)).toEqual(["u1", "u1"]);
   });
 
+  it("the full derived result including ignored metadata is deep-equal under reversed caller order (deterministic total ordering)", () => {
+    const updates = [
+      evidence({ eventId: "u1", sequence: 1, edges: { from: 8, to: 10 } }),
+      evidence({ eventId: "u2", sequence: 1, edges: { from: 8, to: 12 } }),
+      evidence({ eventId: "u3", sequence: -1, edges: { from: 8, to: 11 } }),
+      evidence({ eventId: "u4", sequence: 2, edges: undefined, reworkRounds: { from: 2, to: 9 } }),
+    ];
+    const forward = deriveHandoffBudget({ rootEventId: ROOT, updates, usage: { consumedEdges: 0, worstPairOccurrences: 0 } });
+    const backward = deriveHandoffBudget({
+      rootEventId: ROOT,
+      updates: [...updates].reverse(),
+      usage: { consumedEdges: 0, worstPairOccurrences: 0 },
+    });
+    // The ENTIRE derived result — effective values, valid ids, and the full
+    // ignored metadata in order — must be deterministic, not merely the
+    // effective limits or the ignored ids after sorting.
+    expect(backward).toEqual(forward);
+  });
+
   it("reasons never echo the conflicting values", () => {
     const derived = deriveHandoffBudget({
       rootEventId: ROOT,
