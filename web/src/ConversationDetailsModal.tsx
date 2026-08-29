@@ -101,11 +101,14 @@ export function ConversationDetailsModal({
   const [budgetView, setBudgetView] = useState<ConversationWorkflowBudgetsView | null>(null);
   const [budgetLoadError, setBudgetLoadError] = useState<string | null>(null);
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, WorkflowBudgetDraft>>({});
-  const [savingRoot, setSavingRoot] = useState<string | null>(null);
+  // B5 correction: the save interlock is MODAL-WIDE — any workflow-budget
+  // POST disables every root's controls and the modal Close/Cancel.
+  const [savingBudget, setSavingBudget] = useState(false);
   const [budgetRequestError, setBudgetRequestError] = useState<{ rootEventId: string; message: string } | null>(null);
+  const [budgetReloadError, setBudgetReloadError] = useState<{ rootEventId: string; message: string } | null>(null);
   // Ref mirror for the keydown listener: a budget save is in flight.
   const budgetBusyRef = useRef(false);
-  budgetBusyRef.current = savingRoot !== null;
+  budgetBusyRef.current = savingBudget;
 
   useEffect(() => {
     let cancelled = false;
@@ -292,28 +295,30 @@ export function ConversationDetailsModal({
           view={budgetView}
           loadError={budgetLoadError}
           drafts={budgetDrafts}
-          savingRoot={savingRoot}
           requestError={budgetRequestError}
+          savingBudget={savingBudget}
+          reloadError={budgetReloadError}
           onDraftChange={(rootEventId, patch) =>
             setBudgetDrafts((previous) => ({
               ...previous,
               [rootEventId]: { edges: "", reworkRounds: "", ...previous[rootEventId], ...patch },
             }))
           }
+          // B5 correction: a post-success RE-READ failure throws to the root's
+          // own reload-error state (the section-level loadError is reserved
+          // for the OPEN fetch) so the mounted modal keeps its bounded Retry
+          // that never replays the accepted POST.
           onReload={async () => {
-            setBudgetLoadError(null);
-            try {
-              setBudgetView(await fetchConversationWorkflowBudgets(conversation.id, token));
-              return true;
-            } catch {
-              setBudgetLoadError("Workflow budgets unavailable. Check the gateway and retry.");
-              return false;
-            }
+            setBudgetView(await fetchConversationWorkflowBudgets(conversation.id, token));
+            return true;
           }}
           onWorkflowBudgetsChanged={onWorkflowBudgetsChanged}
-          onSavingChange={(rootEventId, busy) => setSavingRoot(busy ? rootEventId : null)}
+          onSavingChange={(_, busy) => setSavingBudget(busy)}
           onRequestError={(rootEventId, message) =>
             setBudgetRequestError(message === null ? null : { rootEventId, message })
+          }
+          onReloadError={(rootEventId, message) =>
+            setBudgetReloadError(message === null ? null : { rootEventId, message })
           }
         />
 
@@ -479,26 +484,30 @@ function WorkflowBudgetSection({
   view,
   loadError,
   drafts,
-  savingRoot,
+  savingBudget,
   requestError,
+  reloadError,
   onDraftChange,
   onReload,
   onWorkflowBudgetsChanged,
   onSavingChange,
   onRequestError,
+  onReloadError,
 }: {
   conversationId: string;
   token: string;
   view: ConversationWorkflowBudgetsView | null;
   loadError: string | null;
   drafts: Record<string, WorkflowBudgetDraft>;
-  savingRoot: string | null;
+  savingBudget: boolean;
   requestError: { rootEventId: string; message: string } | null;
+  reloadError: { rootEventId: string; message: string } | null;
   onDraftChange: (rootEventId: string, patch: Partial<WorkflowBudgetDraft>) => void;
   onReload: () => Promise<boolean>;
   onWorkflowBudgetsChanged: (conversationId: string) => void;
   onSavingChange: (rootEventId: string, busy: boolean) => void;
   onRequestError: (rootEventId: string, message: string | null) => void;
+  onReloadError: (rootEventId: string, message: string | null) => void;
 }): ReactElement | null {
   if (loadError !== null) {
     return (
@@ -530,13 +539,15 @@ function WorkflowBudgetSection({
           token={token}
           root={rootView}
           draft={drafts[rootView.root_event_id] ?? { edges: "", reworkRounds: "" }}
-          saving={savingRoot === rootView.root_event_id}
+          saving={savingBudget}
           requestError={requestError?.rootEventId === rootView.root_event_id ? requestError.message : null}
+          reloadError={reloadError?.rootEventId === rootView.root_event_id ? reloadError.message : null}
           onDraftChange={onDraftChange}
           onReload={onReload}
           onWorkflowBudgetsChanged={onWorkflowBudgetsChanged}
           onSavingChange={onSavingChange}
           onRequestError={onRequestError}
+          onReloadError={onReloadError}
         />
       ))}
       {view.omitted > 0 && (
@@ -555,11 +566,13 @@ function WorkflowBudgetRoot({
   draft,
   saving,
   requestError,
+  reloadError,
   onDraftChange,
   onReload,
   onWorkflowBudgetsChanged,
   onSavingChange,
   onRequestError,
+  onReloadError,
 }: {
   conversationId: string;
   token: string;
@@ -567,11 +580,13 @@ function WorkflowBudgetRoot({
   draft: WorkflowBudgetDraft;
   saving: boolean;
   requestError: string | null;
+  reloadError: string | null;
   onDraftChange: (rootEventId: string, patch: Partial<WorkflowBudgetDraft>) => void;
   onReload: () => Promise<boolean>;
   onWorkflowBudgetsChanged: (conversationId: string) => void;
   onSavingChange: (rootEventId: string, busy: boolean) => void;
   onRequestError: (rootEventId: string, message: string | null) => void;
+  onReloadError: (rootEventId: string, message: string | null) => void;
 }): ReactElement | null {
   const busy = saving;
   const saveEnabled = isWorkflowBudgetSaveEnabled({ draft, effective: root.effective, busy });
@@ -586,25 +601,50 @@ function WorkflowBudgetRoot({
     if (request === null) return;
     onSavingChange(root.root_event_id, true);
     onRequestError(root.root_event_id, null);
+    onReloadError(root.root_event_id, null);
     try {
       await updateConversationWorkflowBudget(conversationId, request, token);
-      // Success: re-read the workflow view and re-gate through the narrow
-      // navigator callback. Local durable state is never mutated.
-      const reloaded = await onReload();
-      onWorkflowBudgetsChanged(conversationId);
-      if (!reloaded) {
-        onRequestError(root.root_event_id, "Workflow budgets could not be re-read. Check the gateway and retry.");
-      }
     } catch (cause) {
+      // The POST failed: bounded failure with explicit Retry (resends the
+      // POST). The accepted mutation was never stored.
       onRequestError(
         root.root_event_id,
         cause instanceof WorkflowBudgetHttpError
           ? cause.message
           : "The workflow budget update failed. Check the gateway and retry.",
       );
-    } finally {
       onSavingChange(root.root_event_id, false);
+      return;
     }
+    // B5 correction: the POST is ACCEPTED. Re-read the bounded view FIRST;
+    // only a successful re-read may invoke the navigator re-gate. A failed
+    // re-read keeps the modal mounted with its own bounded Retry that NEVER
+    // replays the accepted POST.
+    let reloaded: boolean;
+    try {
+      reloaded = await onReload();
+    } catch {
+      reloaded = false;
+    }
+    if (reloaded) {
+      onWorkflowBudgetsChanged(conversationId);
+    } else {
+      onReloadError(root.root_event_id, "Workflow budgets could not be re-read. Check the gateway and retry.");
+    }
+    onSavingChange(root.root_event_id, false);
+  }
+
+  /** Retry for a failed RE-READ only: never replays the accepted POST. */
+  async function handleRetryReload(): Promise<void> {
+    onReloadError(root.root_event_id, null);
+    let reloaded: boolean;
+    try {
+      reloaded = await onReload();
+    } catch {
+      reloaded = false;
+    }
+    if (reloaded) onWorkflowBudgetsChanged(conversationId);
+    else onReloadError(root.root_event_id, "Workflow budgets could not be re-read. Check the gateway and retry.");
   }
 
   return (
@@ -679,6 +719,15 @@ function WorkflowBudgetRoot({
         <div className="workflow-budget-error" role="alert">
           <p className="error-message">{requestError}</p>
           <button type="button" className="button button-small" onClick={() => void handleSave()}>
+            <RetryIcon size={14} />
+            Retry
+          </button>
+        </div>
+      )}
+      {reloadError !== null && (
+        <div className="workflow-budget-reload-error" role="alert">
+          <p className="error-message">{reloadError}</p>
+          <button type="button" className="button button-small" onClick={() => void handleRetryReload()}>
             <RetryIcon size={14} />
             Retry
           </button>

@@ -35,9 +35,11 @@ export interface ConversationWorkflowBudgetsView {
 }
 
 /**
- * Display/input bounds mirroring the B1 fixed caps. These are PRESENTATION
- * bounds only — the gateway decides validity and never receives a clamped
- * value from the browser.
+ * Display GUIDANCE mirroring the B1 fixed caps (rendered as field help).
+ * They are NOT submission bounds: a changed positive integer target —
+ * including out-of-cap — is submitted UNCHANGED so the B4 gateway remains
+ * the sole validation authority and its bounded 400 is the truthful
+ * outcome (never a local clamp, never a disabled out-of-cap save).
  */
 export const WORKFLOW_BUDGET_MAX_EDGES_INPUT = 24;
 export const WORKFLOW_BUDGET_MAX_REWORK_ROUNDS_INPUT = 6;
@@ -166,11 +168,16 @@ export interface WorkflowBudgetDraft {
   reworkRounds: string;
 }
 
-/** A usable numeric target: a positive integer within the display cap. */
-function parseDraftTarget(raw: string, max: number): number | null {
+/**
+ * B5 correction: a usable numeric target is ANY positive integer — including
+ * out-of-cap — so the gateway's bounded 400 stays reachable and the value is
+ * never locally clamped or disabled into a fake success. Non-numeric/empty
+ * remains unusable (Save disabled).
+ */
+function parseDraftTarget(raw: string): number | null {
   if (raw.trim() === "") return null;
   const value = Number(raw);
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0 || value > max) return null;
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return null;
   return value;
 }
 
@@ -187,8 +194,8 @@ export function isWorkflowBudgetSaveEnabled(input: {
   busy: boolean;
 }): boolean {
   if (input.busy) return false;
-  const edges = parseDraftTarget(input.draft.edges, WORKFLOW_BUDGET_MAX_EDGES_INPUT);
-  const reworkRounds = parseDraftTarget(input.draft.reworkRounds, WORKFLOW_BUDGET_MAX_REWORK_ROUNDS_INPUT);
+  const edges = parseDraftTarget(input.draft.edges);
+  const reworkRounds = parseDraftTarget(input.draft.reworkRounds);
   // A provided value that fails to parse makes the whole draft unusable.
   if (input.draft.edges.trim() !== "" && edges === null) return false;
   if (input.draft.reworkRounds.trim() !== "" && reworkRounds === null) return false;
@@ -218,8 +225,8 @@ export function buildWorkflowBudgetUpdateRequest(input: {
   busy: boolean;
 }): WorkflowBudgetUpdateRequest | null {
   if (!isWorkflowBudgetSaveEnabled(input)) return null;
-  const edges = parseDraftTarget(input.draft.edges, WORKFLOW_BUDGET_MAX_EDGES_INPUT);
-  const reworkRounds = parseDraftTarget(input.draft.reworkRounds, WORKFLOW_BUDGET_MAX_REWORK_ROUNDS_INPUT);
+  const edges = parseDraftTarget(input.draft.edges);
+  const reworkRounds = parseDraftTarget(input.draft.reworkRounds);
   const request: WorkflowBudgetUpdateRequest = {
     root_event_id: input.rootEventId,
     expected_effective: { ...input.effective },

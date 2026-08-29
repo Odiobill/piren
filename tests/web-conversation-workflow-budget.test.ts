@@ -98,8 +98,8 @@ afterEach(() => {
 });
 
 function Harness(props: {
-  budgets: ConversationWorkflowBudgetsView | Error;
-  onUpdate?: typeof updateConversationWorkflowBudget;
+  budgets?: ConversationWorkflowBudgetsView | Error;
+  onWorkflowBudgetsChanged?: (conversationId: string) => void;
 }): ReactElement {
   const [open, setOpen] = useState(true);
   const archiveButtonRef = useRef<HTMLButtonElement>(null);
@@ -122,8 +122,7 @@ function Harness(props: {
     onRename: async () => null,
     onClose,
     token: "t",
-    onWorkflowBudgetsChanged: () => {},
-    ...(props.budgets instanceof Error ? {} : {}),
+    onWorkflowBudgetsChanged: props.onWorkflowBudgetsChanged ?? (() => {}),
   });
 }
 
@@ -275,10 +274,11 @@ describe("ConversationDetailsModal Workflow budget section (B5)", () => {
     });
     await flush();
 
-    // An out-of-cap input stays DISABLED (B1 caps as display/input bounds;
-    // the browser never submits 99 for the gateway to clamp).
+    // B5 correction: an out-of-cap CHANGED target is submitted UNCHANGED —
+    // the B4 gateway is the validation authority and its bounded 400 is the
+    // truthful outcome (never locally clamped, never disabled).
     setDraft(ROOT_ID, "edges", "99");
-    expect(saveButton(ROOT_ID)?.disabled).toBe(true);
+    expect(saveButton(ROOT_ID)?.disabled).toBe(false);
 
     // A non-raising target is submittable: the gateway's bounded 400 is the
     // truthful outcome, submitted as-is (never clamped).
@@ -328,5 +328,123 @@ describe("ConversationDetailsModal Workflow budget section (B5)", () => {
     // The section never implies a per-agent budget: no agent names in it.
     const section = budgetSection();
     expect(section?.textContent).not.toContain("zai");
+  });
+});
+
+describe("ConversationDetailsModal Workflow budget section (B5 correction)", () => {
+  it("an out-of-cap changed target submits exactly as typed, surfaces the gateway bounded 400, and is never locally clamped", async () => {
+    mockedUpdateBudget.mockRejectedValueOnce(
+      new WorkflowBudgetHttpError(400, "budget edges exceed the fixed cap"),
+    );
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(Harness, { budgets: budgetsView() }));
+    });
+    await flush();
+
+    setDraft(ROOT_ID, "edges", "99");
+    expect(saveButton(ROOT_ID)?.disabled).toBe(false);
+    await act(async () => {
+      saveButton(ROOT_ID)?.click();
+    });
+    await flush();
+
+    // Submitted exactly 99: the gateway is the validation authority.
+    expect(mockedUpdateBudget).toHaveBeenCalledWith(
+      CONVERSATION.id,
+      expect.objectContaining({ edges: 99, expected_effective: { edges: 8, reworkRounds: 2 } }),
+      "t",
+    );
+    // Bounded 400 stays visible in role=alert; never clamped into success.
+    const alert = container.querySelector<HTMLElement>(".workflow-budget .workflow-budget-error[role='alert']");
+    expect(alert).not.toBeNull();
+    expect(alert?.textContent).toContain("budget edges exceed the fixed cap");
+    expect(mockedFetchBudgets).toHaveBeenCalledTimes(1);
+  });
+
+  it("any in-flight budget save interlocks the whole modal: another root cannot POST, and normal operation resumes after settle", async () => {
+    let releaseA!: (value: { status: "updated"; effective: { edges: number; reworkRounds: number } }) => void;
+    mockedUpdateBudget.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        releaseA = resolve;
+      }),
+    );
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(Harness, { budgets: budgetsView() }));
+    });
+    await flush();
+
+    // Root A in flight.
+    setDraft(ROOT_ID, "edges", "10");
+    await act(async () => {
+      saveButton(ROOT_ID)?.click();
+    });
+    expect(mockedUpdateBudget).toHaveBeenCalledTimes(1);
+
+    // Root B: inputs/Save disabled by the MODAL-WIDE interlock; clicking it
+    // must NOT send a second POST.
+    expect(saveButton(ROOT_TWO_ID)?.disabled).toBe(true);
+    expect(dimensionInput(ROOT_TWO_ID, "edges")?.disabled).toBe(true);
+    await act(async () => {
+      saveButton(ROOT_TWO_ID)?.click();
+    });
+    await flush();
+    expect(mockedUpdateBudget).toHaveBeenCalledTimes(1);
+    // Escape also stays suppressed while any root is in flight.
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(budgetSection()).not.toBeNull();
+
+    // Settle A: normal operation resumes (B editable/enabled again).
+    await act(async () => {
+      releaseA({ status: "updated", effective: { edges: 10, reworkRounds: 2 } });
+    });
+    await flush();
+    expect(saveButton(ROOT_TWO_ID)?.disabled).toBe(true); // still gated: B unchanged
+    setDraft(ROOT_TWO_ID, "edges", "12");
+    expect(saveButton(ROOT_TWO_ID)?.disabled).toBe(false);
+  });
+
+  it("a successful POST whose follow-up GET fails keeps the modal mounted, never re-gates, and Retry only re-reads (no second POST)", async () => {
+    // POST succeeds; the FIRST re-read fails.
+    mockedUpdateBudget.mockResolvedValueOnce({ status: "updated", effective: { edges: 10, reworkRounds: 2 } });
+    mockedFetchBudgets.mockResolvedValueOnce(budgetsView()); // open fetch
+    mockedFetchBudgets.mockRejectedValueOnce(new WorkflowBudgetHttpError(500, "internal error")); // failed re-read
+    const onWorkflowBudgetsChanged = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(Harness, { budgets: budgetsView(), onWorkflowBudgetsChanged }));
+    });
+    await flush();
+
+    setDraft(ROOT_ID, "edges", "10");
+    await act(async () => {
+      saveButton(ROOT_ID)?.click();
+    });
+    await flush();
+
+    // POST exactly once; the accepted mutation is never replayed.
+    expect(mockedUpdateBudget).toHaveBeenCalledTimes(1);
+    // The re-gate has NOT run (only a successful re-read may invoke it).
+    expect(onWorkflowBudgetsChanged).not.toHaveBeenCalled();
+    // Modal remains mounted with the bounded reload-failure alert.
+    expect(budgetSection()).not.toBeNull();
+    const reloadAlert = container.querySelector<HTMLElement>(
+      ".workflow-budget .workflow-budget-reload-error[role='alert']",
+    );
+    expect(reloadAlert).not.toBeNull();
+    expect(reloadAlert?.textContent).toContain("could not be re-read");
+
+    // Retry retries ONLY the re-read/re-gate: no second POST.
+    await act(async () => {
+      reloadAlert?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+    await flush();
+    expect(mockedUpdateBudget).toHaveBeenCalledTimes(1);
+    expect(mockedFetchBudgets).toHaveBeenCalledTimes(3); // open + failed + retried
+    expect(onWorkflowBudgetsChanged).toHaveBeenCalledTimes(1);
+    expect(onWorkflowBudgetsChanged).toHaveBeenCalledWith(CONVERSATION.id);
+    // Reload alert cleared after the successful re-read.
+    expect(container.querySelector(".workflow-budget-reload-error")).toBeNull();
   });
 });
