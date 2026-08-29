@@ -2969,8 +2969,15 @@ export class GatewayServer {
       this.writeJson(res, 404, { error: "agent is not in the conversation audience" });
       return;
     }
-    const result = await (this.conversationBroker as ConversationBroker).getAgentWorkflowStatus(conversationId, agent);
-    this.writeJson(res, 200, result);
+    try {
+      const result = await (this.conversationBroker as ConversationBroker).getAgentWorkflowStatus(conversationId, agent);
+      this.writeJson(res, 200, result);
+    } catch (error) {
+      // B4 final correction: a strict-invalid durable event rejects inside
+      // the broker read; the route guarantees a bounded response (never an
+      // unhandled rejection, never a raw error or vault path).
+      this.conversationError(res, error);
+    }
   }
 
   /**
@@ -2985,8 +2992,13 @@ export class GatewayServer {
       this.conversationError(res, error);
       return;
     }
-    const result = await (this.conversationBroker as ConversationBroker).getConversationWorkflowBudgets(conversationId);
-    this.writeJson(res, 200, result);
+    try {
+      const result = await (this.conversationBroker as ConversationBroker).getConversationWorkflowBudgets(conversationId);
+      this.writeJson(res, 200, result);
+    } catch (error) {
+      // B4 final correction: bounded 500 boundary — see the status handler.
+      this.conversationError(res, error);
+    }
   }
 
   /**

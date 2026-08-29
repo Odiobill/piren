@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -210,6 +210,83 @@ describe("Gateway Conversation workflow-budget routes (B4)", () => {
     expect(malformed.status).toBe(400);
     const outside = await get(url(`/api/conversations/${conversationId}/agents/ghost/workflow-status`), token);
     expect(outside.status).toBe(404);
+  });
+});
+
+describe("Gateway Conversation workflow-budget routes (B4 final correction: bounded 500 on durable-read failures)", () => {
+  let root: string;
+  let server: GatewayServer;
+  let handle: GatewayHandle;
+  const token = "test-budget-500-token";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "piren-gateway-budget-500-"));
+    await initVault({ vaultRoot: root, agentName: "piren" });
+  });
+
+  afterEach(async () => {
+    await server.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function url(path: string): string {
+    return `http://${handle.hostname}:${handle.port}${path}`;
+  }
+
+  async function startServer(runnableAgents: string[] = ["zai"]): Promise<void> {
+    server = new GatewayServer({
+      target: fakePiTarget(),
+      authToken: token,
+      vaultRoot: root,
+      runnableAgents,
+      targetBuilder: async () => fakePiTarget(),
+    });
+    handle = await server.start();
+  }
+
+  /** Hand-write a strict-invalid event (unknown kind) into an existing conversation. */
+  async function corruptEvents(conversationId: string): Promise<void> {
+    const eventsDir = join(root, "collaboration", "conversations", conversationId, "events");
+    await mkdir(eventsDir, { recursive: true });
+    const seq = (await readdir(eventsDir)).length + 1;
+    await writeFile(
+      join(eventsDir, `${String(seq).padStart(8, "0")}.md`),
+      [
+        "---",
+        "type: Conversation Event",
+        `id: 20260805T140000001Z-corrupt`,
+        `conversationId: ${conversationId}`,
+        "kind: not_a_real_kind",
+        "authorKind: steward",
+        "author: steward",
+        "created: 2026-08-05T14:00:00.000Z",
+        `sequence: ${seq}`,
+        "---",
+        "",
+        "Strict-invalid event.",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  it("status route returns a bounded 500 internal error for a strict-invalid durable event", async () => {
+    await startServer();
+    const createResponse = await post(url("/api/conversations"), { text: "Hello @zai" }, token);
+    const conversationId = ((await createResponse.json()) as { conversation: { id: string } }).conversation.id;
+    await corruptEvents(conversationId);
+    const response = await get(url(`/api/conversations/${conversationId}/agents/zai/workflow-status`), token);
+    expect(response.status).toBe(500);
+    expect((await response.json()) as { error: string }).toEqual({ error: "internal error" });
+  });
+
+  it("budgets route returns a bounded 500 internal error for a strict-invalid durable event", async () => {
+    await startServer();
+    const createResponse = await post(url("/api/conversations"), { text: "Hello @zai" }, token);
+    const conversationId = ((await createResponse.json()) as { conversation: { id: string } }).conversation.id;
+    await corruptEvents(conversationId);
+    const response = await get(url(`/api/conversations/${conversationId}/workflow-budgets`), token);
+    expect(response.status).toBe(500);
+    expect((await response.json()) as { error: string }).toEqual({ error: "internal error" });
   });
 });
 
