@@ -342,6 +342,9 @@ function makeBroker(options?: {
   clientSetup?: (client: FakeConversationClient) => void;
   /** VR-2: omit runTimeoutMs entirely to exercise the broker's own default. */
   useDefaultTimeout?: boolean;
+  /** B3 correction: test-only lock interleaving seams (see broker docs). */
+  mutationLockAcquiredSignal?: () => void;
+  mutationLockHoldBarrier?: Promise<void>;
 }): { broker: ConversationBroker; clients: FakeConversationClient[]; timers: ReturnType<typeof makeTimers>; targets: RpcSpawnTarget[] } {
   const behaviors = options?.behaviors ?? [];
   const approvalMethods = options?.approvalMethods ?? [];
@@ -364,6 +367,8 @@ function makeBroker(options?: {
     nonce: () => `n${++nonceSeq}`,
     timers,
     ...(options?.useDefaultTimeout === true ? {} : { runTimeoutMs: 60_000 }),
+    ...(options?.mutationLockAcquiredSignal !== undefined ? { mutationLockAcquiredSignal: options.mutationLockAcquiredSignal } : {}),
+    ...(options?.mutationLockHoldBarrier !== undefined ? { mutationLockHoldBarrier: options.mutationLockHoldBarrier } : {}),
   });
   return { broker, clients, timers, targets };
 }
@@ -3080,5 +3085,230 @@ describe("ConversationBroker B3: budget-update mutation seam", () => {
     await broker.abort(conversationId, "zai");
     await dispatch;
     await broker.close();
+  });
+});
+
+describe("ConversationBroker B3 correction: real two-broker interleavings over one vault", () => {
+  function deferred(): { promise: Promise<void>; resolve: () => void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  async function seedEdges(conversationId: string, stewardEventId: string, count = 8): Promise<void> {
+    const targets = ["dipu", "kimi", "sam", "nora"];
+    for (let i = 0; i < count; i += 1) {
+      await appendConversationEvent({
+        vaultRoot: root, conversationId, kind: "agent_message", authorKind: "agent", author: "zai",
+        body: `edge ${i}`, addressedAgent: targets[i % targets.length] as string,
+        correlationId: stewardEventId, now: tick, nonce: () => `e${i}`,
+      });
+    }
+  }
+
+  it("budget update (winner) vs stage handoff acceptance (loser) — bounded rejection, zero loser side effects, one durable ordering", async () => {
+    const signal = deferred();
+    const hold = deferred();
+    // Winner broker pauses mid-critical-section while HOLDING the lock.
+    const winner = makeBroker({
+      runnableAgents: ["zai", "dipu", "kimi", "sam", "nora"],
+      behaviors: [],
+      mutationLockAcquiredSignal: () => signal.resolve(),
+      mutationLockHoldBarrier: hold.promise,
+    });
+    // Independent loser broker sharing the same vault.
+    const loser = makeBroker({
+      runnableAgents: ["zai", "dipu", "kimi", "sam", "nora"],
+      behaviors: ["hang", "complete"],
+    });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    await seedEdges(conversationId, stewardEventId);
+
+    // Loser: root run active for stage acceptance attempts.
+    const loserDispatch = loser.broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => loser.broker.hasActiveRun(conversationId, "zai"));
+    await waitFor(() => (loser.clients[0]?.prompts.length ?? 0) > 0);
+
+    // Winner acquires the lock and PAUSES inside the critical section.
+    const updatePromise = winner.broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    await signal.promise;
+
+    // Loser's stage acceptance attempts the SAME lock: bounded rejection.
+    const rejected = await loser.broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(rejected).toMatchObject({ status: "rejected" });
+    if (rejected.status === "rejected") expect(rejected.reason).toMatch(/busy|lock/i);
+    // Zero loser side effects: no handoff event, no audience mutation, no budget event, no child dispatch.
+    let events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "agent_message" && e.addressedAgent === "dipu" && e.author === "zai" && e.body === "help")).toBe(false);
+    expect(events.some((e) => e.kind === "handoff_budget_updated")).toBe(false);
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["zai"]);
+    expect(loser.clients).toHaveLength(1);
+
+    // Release the winner: exactly one durable ordering — the budget event.
+    hold.resolve();
+    const outcome = await updatePromise;
+    expect(outcome).toMatchObject({ status: "updated", effective: { edges: 10, reworkRounds: 2 } });
+    events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "handoff_budget_updated")).toHaveLength(1);
+
+    // With the raised budget now durable, the loser's acceptance succeeds.
+    const accepted = await loser.broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    expect(accepted).toMatchObject({ status: "accepted" });
+
+    await loser.broker.abort(conversationId, "zai");
+    await loserDispatch;
+    await winner.broker.close();
+    await loser.broker.close();
+  });
+
+  it("stage handoff acceptance (winner) vs budget update (loser) — bounded busy, zero loser side effects, one durable ordering", async () => {
+    const signal = deferred();
+    const hold = deferred();
+    // Winner broker: stage acceptance pauses mid-critical-section.
+    const winner = makeBroker({
+      runnableAgents: ["zai", "dipu"],
+      behaviors: ["hang", "complete"],
+      mutationLockAcquiredSignal: () => signal.resolve(),
+      mutationLockHoldBarrier: hold.promise,
+    });
+    const loser = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = winner.broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => winner.broker.hasActiveRun(conversationId, "zai"));
+    await waitFor(() => (winner.clients[0]?.prompts.length ?? 0) > 0);
+
+    // Winner: acceptance acquires the lock and PAUSES.
+    const acceptPromise = winner.broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
+    await signal.promise;
+
+    // Loser: budget update attempts the SAME lock: bounded busy, no write.
+    const busy = await loser.broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 12, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(busy).toMatchObject({ status: "busy" });
+    let events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "handoff_budget_updated")).toBe(false);
+
+    // Release the winner: exactly one durable ordering — the handoff edge.
+    hold.resolve();
+    const accepted = await acceptPromise;
+    expect(accepted).toMatchObject({ status: "accepted" });
+    events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message" && e.addressedAgent === "dipu")).toHaveLength(1);
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["zai", "dipu"]);
+
+    await winner.broker.abort(conversationId, "zai");
+    await dispatch;
+    await winner.broker.close();
+    await loser.broker.close();
+  });
+
+  it("budget update (winner) vs initial-gate confirmation (loser) — confirmation fails bounded, zero side effects", async () => {
+    const signal = deferred();
+    const hold = deferred();
+    const winner = makeBroker({
+      runnableAgents: ["zai", "dipu", "kimi", "sam", "nora"],
+      behaviors: [],
+      mutationLockAcquiredSignal: () => signal.resolve(),
+      mutationLockHoldBarrier: hold.promise,
+    });
+    const loser = makeBroker({
+      runnableAgents: ["zai", "dipu", "kimi", "sam", "nora"],
+      behaviors: ["hang", "complete"],
+    });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    await seedEdges(conversationId, stewardEventId);
+    const loserDispatch = loser.broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => loser.broker.hasActiveRun(conversationId, "zai"));
+    const gate = await loser.broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    // Winner: budget update acquires the lock and PAUSES.
+    const updatePromise = winner.broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 10, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    await signal.promise;
+
+    // Loser: gate confirmation attempts the SAME lock: bounded failure.
+    await expect(
+      loser.broker.respondToConversationApproval({
+        conversationId, agent: "zai", requestId: gate.requestId, response: { confirmed: true },
+      }),
+    ).rejects.toThrow(/could not be accepted/);
+    // Zero loser side effects: no handoff event, no audience mutation.
+    let events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message")).toHaveLength(8);
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["zai"]);
+
+    // Release the winner: exactly one durable ordering — the budget event.
+    hold.resolve();
+    const outcome = await updatePromise;
+    expect(outcome).toMatchObject({ status: "updated", effective: { edges: 10, reworkRounds: 2 } });
+    events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "handoff_budget_updated")).toHaveLength(1);
+
+    await loser.broker.abort(conversationId, "zai");
+    await loserDispatch;
+    await winner.broker.close();
+    await loser.broker.close();
+  });
+
+  it("initial-gate confirmation (winner) vs budget update (loser) — bounded busy, zero loser side effects", async () => {
+    const signal = deferred();
+    const hold = deferred();
+    const winner = makeBroker({
+      runnableAgents: ["zai", "dipu"],
+      behaviors: ["hang", "complete"],
+      mutationLockAcquiredSignal: () => signal.resolve(),
+      mutationLockHoldBarrier: hold.promise,
+    });
+    const loser = makeBroker({ runnableAgents: ["zai", "dipu"], behaviors: [] });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Lead this workflow");
+    const dispatch = winner.broker.dispatchConversationMention({
+      conversationId, agent: "zai", text: "Lead this workflow", stewardEventId, priorEvents: [],
+    });
+    await waitFor(() => winner.broker.hasActiveRun(conversationId, "zai"));
+    const gate = await winner.broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
+    if (gate.status !== "pending") throw new Error("expected pending");
+
+    // Winner: confirmation acquires the lock (via the shared accept path) and PAUSES.
+    const confirmPromise = winner.broker.respondToConversationApproval({
+      conversationId, agent: "zai", requestId: gate.requestId, response: { confirmed: true },
+    });
+    await signal.promise;
+
+    // Loser: budget update attempts the SAME lock: bounded busy, no write.
+    const busy = await loser.broker.updateConversationWorkflowBudget({
+      conversationId, rootEventId: stewardEventId, edges: 12, expectedEffective: { edges: 8, reworkRounds: 2 },
+    });
+    expect(busy).toMatchObject({ status: "busy" });
+    let events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.some((e) => e.kind === "handoff_budget_updated")).toBe(false);
+
+    // Release the winner: exactly one durable ordering — the handoff edge.
+    hold.resolve();
+    await confirmPromise;
+    events = await readConversationEvents({ vaultRoot: root, conversationId });
+    expect(events.filter((e) => e.kind === "agent_message" && e.addressedAgent === "dipu")).toHaveLength(1);
+    expect((await readConversation({ vaultRoot: root, conversationId })).audience).toEqual(["zai", "dipu"]);
+
+    await winner.broker.abort(conversationId, "zai");
+    await dispatch;
+    await winner.broker.close();
+    await loser.broker.close();
   });
 });

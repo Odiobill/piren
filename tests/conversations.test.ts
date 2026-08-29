@@ -351,7 +351,10 @@ describe("updateConversationAudience (additive later-mention membership, C2 rewo
     });
     await writeFile(lockPath, replacement, { encoding: "utf8" });
     release();
-    await first;
+    // B3 correction: the under-lock ownership verification fails the paused
+    // mutation CLOSED — a mid-hold lock replacement invalidates the held
+    // capability, so the audience mutation never completes.
+    await expect(first).rejects.toThrow(/ownership/i);
 
     // The replaced lock remains byte-for-byte for manual triage.
     await expect(readFile(lockPath, "utf8")).resolves.toBe(replacement);
@@ -391,7 +394,9 @@ describe("updateConversationAudience (additive later-mention membership, C2 rewo
       }
       await writeFile(lockPath, content, { encoding: "utf8" });
       release();
-      await first;
+      // B3 correction: the paused mutation fails closed on the invalidated
+      // capability (malformed lock / wrong conversationId cannot be owned).
+      await expect(first).rejects.toThrow(/ownership|not held/i);
       await expect(readFile(lockPath, "utf8")).resolves.toBe(content);
     }
   });
@@ -954,25 +959,83 @@ describe("handoff_budget_updated durable evidence (B2)", () => {
 });
 
 describe("conversation mutation lock (B3-A)", () => {
-  it("the under-lock audience helper reuses an already-held lock (no re-acquisition) and performs the C1 union", async () => {
+  it("the under-lock audience helper requires the held lock capability (no re-acquisition) and performs the C1 union", async () => {
     const conversation = await createConversation({ vaultRoot: root, text: "UnderLock", audience: ["zai"], now: () => NOW });
     // Hold the mutation lock ourselves: if the under-lock helper tried to
     // re-acquire, it would throw busy (EEXIST) instead of succeeding.
     const lock = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });
     try {
-      const manifest = await updateConversationAudienceUnderLock({
-        vaultRoot: root,
-        conversationId: conversation.id,
-        additions: { __validatedRecipients: true, recipients: ["dipu"] },
-        kind: "handoff",
-        now: () => NOW,
-      });
+      const manifest = await updateConversationAudienceUnderLock(
+        {
+          vaultRoot: root,
+          conversationId: conversation.id,
+          additions: { __validatedRecipients: true, recipients: ["dipu"] },
+          kind: "handoff",
+          now: () => NOW,
+        },
+        lock,
+      );
       expect(manifest.audience).toEqual(["zai", "dipu"]);
     } finally {
       await lock.release();
     }
     const reread = await readConversation({ vaultRoot: root, conversationId: conversation.id });
     expect(reread.audience).toEqual(["zai", "dipu"]);
+  });
+
+  it("a RELEASED capability cannot mutate the audience (fail closed, no write)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Released", audience: ["zai"], now: () => NOW });
+    const lock = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });
+    await lock.release();
+    await expect(
+      updateConversationAudienceUnderLock(
+        { vaultRoot: root, conversationId: conversation.id, additions: { __validatedRecipients: true, recipients: ["dipu"] }, kind: "handoff", now: () => NOW },
+        lock,
+      ),
+    ).rejects.toThrow(/not held|ownership/i);
+    const after = await readConversation({ vaultRoot: root, conversationId: conversation.id });
+    expect(after.audience).toEqual(["zai"]);
+  });
+
+  it("a WRONG-CONVERSATION capability cannot mutate the audience (fail closed, no write)", async () => {
+    const conversationA = await createConversation({ vaultRoot: root, text: "Wrong A", audience: ["zai"], now: () => NOW });
+    const conversationB = await createConversation({ vaultRoot: root, text: "Wrong B", audience: ["zai"], now: () => NOW });
+    const lockA = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversationA.id, now: () => NOW });
+    try {
+      await expect(
+        updateConversationAudienceUnderLock(
+          { vaultRoot: root, conversationId: conversationB.id, additions: { __validatedRecipients: true, recipients: ["dipu"] }, kind: "handoff", now: () => NOW },
+          lockA,
+        ),
+      ).rejects.toThrow(/does not belong/i);
+      const after = await readConversation({ vaultRoot: root, conversationId: conversationB.id });
+      expect(after.audience).toEqual(["zai"]);
+    } finally {
+      await lockA.release();
+    }
+  });
+
+  it("a REPLACED lock file invalidates the capability (token-verified, fail closed, no write)", async () => {
+    const conversation = await createConversation({ vaultRoot: root, text: "Replaced", audience: ["zai"], now: () => NOW });
+    const lock = await acquireConversationMutationLock({ vaultRoot: root, conversationId: conversation.id, now: () => NOW });
+    try {
+      // Simulate a manually replaced lock (different token) as the manual
+      // triage path would produce.
+      await writeFile(
+        join(root, "collaboration", "conversations", conversation.id, ".audience.lock"),
+        JSON.stringify({ token: "foreign-token", pid: 1, conversationId: conversation.id, acquiredAt: NOW.toISOString() }),
+      );
+      await expect(
+        updateConversationAudienceUnderLock(
+          { vaultRoot: root, conversationId: conversation.id, additions: { __validatedRecipients: true, recipients: ["dipu"] }, kind: "handoff", now: () => NOW },
+          lock,
+        ),
+      ).rejects.toThrow(/ownership/i);
+      const after = await readConversation({ vaultRoot: root, conversationId: conversation.id });
+      expect(after.audience).toEqual(["zai"]);
+    } finally {
+      await lock.release();
+    }
   });
 
   it("acquireConversationMutationLock is the same vault-visible authority: contention is bounded and token release is ownership-verified", async () => {

@@ -615,12 +615,25 @@ const AUDIENCE_LOCK_FILENAME = ".audience.lock";
  * Exported as a test seam (C5-1 lock-failure containment): tests hold the
  * lock to prove a busy mutation is contained.
  */
+/**
+ * B3 correction: the opaque-ish mutation-lock capability returned by
+ * `acquireConversationMutationLock`. Under-lock helpers REQUIRE this
+ * capability and verify it (exact conversation + token-verified against the
+ * visible lock file, fail closed) before mutating — an unowned call can
+ * never bypass the serialization boundary.
+ */
+export interface ConversationMutationLock {
+  readonly conversationId: string;
+  readonly token: string;
+  release(): Promise<void>;
+}
+
 export async function acquireConversationMutationLock(options: {
   vaultRoot: string;
   conversationId: string;
   now?: () => Date;
   token?: () => string;
-}): Promise<{ release: () => Promise<void> }> {
+}): Promise<ConversationMutationLock> {
   const root = resolve(options.vaultRoot);
   const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
   const lockPath = join(conversationDir, AUDIENCE_LOCK_FILENAME);
@@ -642,7 +655,9 @@ export async function acquireConversationMutationLock(options: {
     throw error;
   }
   let released = false;
-  return {
+  const capability: ConversationMutationLock = {
+    conversationId: options.conversationId,
+    token,
     release: async () => {
       if (released) return;
       released = true;
@@ -669,6 +684,7 @@ export async function acquireConversationMutationLock(options: {
       }
     },
   };
+  return capability;
 }
 
 /**
@@ -712,7 +728,7 @@ export async function updateConversationAudience(
     if (options.holdBarrier !== undefined) {
       await options.holdBarrier;
     }
-    return await updateConversationAudienceUnderLock(options);
+    return await updateConversationAudienceUnderLock(options, lock);
   } finally {
     await lock.release();
   }
@@ -721,19 +737,52 @@ export async function updateConversationAudience(
 /**
  * B3-A: the under-lock audience mutation — read -> C1 additive union ->
  * atomic manifest replace -> re-read — for callers that ALREADY hold the
- * conversation mutation lock (the broker's handoff-acceptance and
- * budget-update critical sections). It NEVER re-acquires the lock: calling
- * it inside an already-held section is the whole point, and re-acquiring
- * the same `.audience.lock` would self-deadlock by construction.
+ * conversation mutation lock (the broker's handoff-acceptance critical
+ * section). REQUIRES the held {@link ConversationMutationLock} capability
+ * for the exact conversation and verifies it token-for-token against the
+ * visible lock file (fail closed) before mutating. It NEVER re-acquires
+ * the lock: calling it inside an already-held section is the whole point,
+ * and re-acquiring the same `.audience.lock` would self-deadlock by
+ * construction.
  */
 export async function updateConversationAudienceUnderLock(
   options: UpdateConversationAudienceOptions,
+  lock: ConversationMutationLock,
 ): Promise<ConversationManifest> {
   assertValidConversationId(options.conversationId);
   const root = resolve(options.vaultRoot);
   const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
   const absolutePath = join(conversationDir, "index.md");
   assertInside(root, conversationDir);
+
+  // B3 correction: under-lock OWNERSHIP enforcement. The helper mutates only
+  // for a caller holding the real capability for THIS conversation, verified
+  // token-for-token against the visible lock file right now (fail closed on
+  // a released capability, a replaced/manually-triaged lock, or a
+  // wrong-conversation capability). It still NEVER re-acquires.
+  if (lock.conversationId !== options.conversationId) {
+    throw new Error("conversation mutation lock capability does not belong to this conversation");
+  }
+  const lockPath = join(conversationDir, AUDIENCE_LOCK_FILENAME);
+  let lockContent: string;
+  try {
+    lockContent = await readFile(lockPath, "utf8");
+  } catch {
+    throw new Error("conversation mutation lock is not held (the lock file is missing); fail closed");
+  }
+  let parsedLock: unknown;
+  try {
+    parsedLock = JSON.parse(lockContent) as unknown;
+  } catch {
+    throw new Error("conversation mutation lock ownership could not be verified; fail closed");
+  }
+  if (typeof parsedLock !== "object" || parsedLock === null) {
+    throw new Error("conversation mutation lock ownership could not be verified; fail closed");
+  }
+  const lockRecord = parsedLock as Record<string, unknown>;
+  if (lockRecord.token !== lock.token || lockRecord.conversationId !== options.conversationId) {
+    throw new Error("conversation mutation lock ownership could not be verified; fail closed");
+  }
 
   const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
   const kind = options.kind ?? "steward";

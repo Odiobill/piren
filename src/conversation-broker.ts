@@ -26,6 +26,7 @@ import {
   acquireConversationMutationLock,
   isConversationMutationBusyError,
   updateConversationAudienceUnderLock,
+  type ConversationMutationLock,
   type AppendConversationEventResult,
   type ConversationContextMetadata,
   type ConversationEventRecord,
@@ -151,6 +152,17 @@ export interface ConversationBrokerOptions {
   timers?: ConversationBrokerTimers;
   runTimeoutMs?: number;
   io?: ConversationWriteIo | undefined;
+  /**
+   * B3 correction: TEST-ONLY lock interleaving seam. When set, each broker
+   * mutation that acquires the conversation mutation lock signals
+   * `mutationLockAcquiredSignal` and then awaits `mutationLockHoldBarrier`
+   * while HOLDING the lock — letting a test pause one broker's winner mid-
+   * critical-section while an independent second broker attempts its own
+   * mutation against the same vault. No hidden production state: both fields
+   * are absent in production and never used by non-test callers.
+   */
+  mutationLockAcquiredSignal?: () => void;
+  mutationLockHoldBarrier?: Promise<void>;
   conversationReader?: (options: { vaultRoot: string; conversationId: string }) => Promise<ConversationManifest>;
   /**
    * TB6: per-agent fallback policy loader (defaults to a best-effort
@@ -545,6 +557,8 @@ export class ConversationBroker {
   private readonly nonce: (() => string) | undefined;
   private readonly timers: ConversationBrokerTimers;
   private readonly runTimeoutMs: number;
+  private readonly mutationLockAcquiredSignal: (() => void) | undefined;
+  private readonly mutationLockHoldBarrier: Promise<void> | undefined;
   private readonly io: ConversationWriteIo | undefined;
   private readonly conversationReader: (options: { vaultRoot: string; conversationId: string }) => Promise<ConversationManifest>;
   private readonly fallbackPolicyLoader: ConversationBrokerFallbackPolicyLoader;
@@ -573,6 +587,8 @@ export class ConversationBroker {
     // deadline (workbench video-capture readiness contract §6); production
     // wiring passes the vault-root workbench.yml-resolved value instead.
     this.runTimeoutMs = options.runTimeoutMs ?? DEFAULT_WORKBENCH_RUN_TIMEOUT_MS;
+    this.mutationLockAcquiredSignal = options.mutationLockAcquiredSignal;
+    this.mutationLockHoldBarrier = options.mutationLockHoldBarrier;
     this.io = options.io;
     this.conversationReader = options.conversationReader ?? readConversation;
     // TB6: production default reads the agent-local config best-effort; an
@@ -1880,6 +1896,8 @@ export class ConversationBroker {
       }
       return { status: "busy", reason: "budget update could not acquire the conversation mutation lock" };
     }
+    if (this.mutationLockAcquiredSignal !== undefined) this.mutationLockAcquiredSignal();
+    if (this.mutationLockHoldBarrier !== undefined) await this.mutationLockHoldBarrier;
     try {
       let conversation: ConversationManifest;
       try {
@@ -1972,7 +1990,7 @@ export class ConversationBroker {
     // handoff with no event, no audience mutation, no budget consumption, and
     // no dispatch; raw filesystem failures are mapped to the same bounded
     // rejection shape (never leaked, never browser-derived).
-    let lock;
+    let lock: ConversationMutationLock;
     try {
       const lockOptions: { vaultRoot: string; conversationId: string; now?: () => Date; token?: () => string } = {
         vaultRoot: this.vaultRoot,
@@ -1987,6 +2005,8 @@ export class ConversationBroker {
       }
       return { status: "rejected", reason: "conversation handoff could not acquire the conversation mutation lock" };
     }
+    if (this.mutationLockAcquiredSignal !== undefined) this.mutationLockAcquiredSignal();
+    if (this.mutationLockHoldBarrier !== undefined) await this.mutationLockHoldBarrier;
     try {
       // Open check under the lock: an archived Conversation accepts no
       // handoffs (bounded rejection, no side effects).
@@ -2041,13 +2061,16 @@ export class ConversationBroker {
       // mutation lock (under-lock helper; never re-acquires) BEFORE the
       // handoff event, so a busy lock can never leave an orphan handoff edge.
       try {
-        await updateConversationAudienceUnderLock({
-          vaultRoot: this.vaultRoot,
-          conversationId,
-          additions: { __validatedRecipients: true, recipients: [request.to] },
-          kind: "handoff",
-          ...(this.now !== undefined ? { now: this.now } : {}),
-        });
+        await updateConversationAudienceUnderLock(
+          {
+            vaultRoot: this.vaultRoot,
+            conversationId,
+            additions: { __validatedRecipients: true, recipients: [request.to] },
+            kind: "handoff",
+            ...(this.now !== undefined ? { now: this.now } : {}),
+          },
+          lock,
+        );
       } catch {
         return {
           status: "rejected",
