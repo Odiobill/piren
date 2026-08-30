@@ -106,3 +106,26 @@ describe("docs/gateway.md — Workbench budget control and card status boundarie
     expect(gateway).toMatch(/Pi context|context telemetry/i);
   });
 });
+
+describe("README.md — live activity vs workflow-status sourcing (B7 correction)", () => {
+  it("no longer claims status cards come only from the live stream", async () => {
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const readme = await readFile(join(repoRoot, "README.md"), "utf8");
+    // The stale B7-review claim: workflow status is NOT stream-only after B6.
+    expect(readme).not.toMatch(/status cards are transient, come only from the live stream/);
+  });
+
+  it("pins the truthful separation: live activity from the stream; workflow status from explicit gateway snapshots with interim activity, no persistence", async () => {
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const readme = await readFile(join(repoRoot, "README.md"), "utf8");
+    // Live activity cards: live-stream transient state, never reconstructed.
+    expect(readme).toMatch(/[Ll]ive activity cards are transient/);
+    expect(readme).toContain("never reconstructed from history");
+    // Workflow-status indicators: session-only gateway snapshots + interim activity.
+    expect(readme).toMatch(/workflow-status/);
+    expect(readme).toMatch(/[Ss]napshot/);
+    expect(readme).toMatch(/[Ll]ive activity/);
+    expect(readme).toMatch(/[Nn]o (?:browser )?polling/);
+    expect(readme).toMatch(/[Nn]o browser persistence|never (?:written|persisted) (?:to|in) the browser|in browser memory only/);
+  });
+});
