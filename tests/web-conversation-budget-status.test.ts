@@ -209,4 +209,86 @@ describe("fetchConversationWorkflowStatus transport (B4 exact-pair route)", () =
     stubFetch(200, { run_active: true, workflow: { exhausted: "no" } });
     await expect(fetchConversationWorkflowStatus("c1", "dipu", "t")).rejects.toThrow();
   });
+
+  it("rejects an incomplete workflow record missing any B4-required field", async () => {
+    const FULL = {
+      root_event_id: "root-1",
+      association: "active-run",
+      base: { edges: 8, reworkRounds: 2 },
+      effective: { edges: 10, reworkRounds: 3 },
+      consumed: { edges: 4 },
+      worstPairOccurrences: 1,
+      low: false,
+      exhausted: false,
+      warnings: [],
+      omittedWarnings: 0,
+    };
+    for (const missing of [
+      "root_event_id",
+      "association",
+      "base",
+      "effective",
+      "consumed",
+      "worstPairOccurrences",
+      "low",
+      "exhausted",
+      "warnings",
+      "omittedWarnings",
+    ]) {
+      const partial = { ...FULL } as Record<string, unknown>;
+      delete partial[missing];
+      stubFetch(200, { run_active: false, workflow: partial });
+      await expect(fetchConversationWorkflowStatus("c1", "dipu", "t"), `missing ${missing}`).rejects.toThrow();
+    }
+  });
+
+  it("rejects unknown own fields at the top level and inside the workflow record", async () => {
+    stubFetch(200, { run_active: false, workflow: null, extra: 1 });
+    await expect(fetchConversationWorkflowStatus("c1", "dipu", "t")).rejects.toThrow();
+    stubFetch(200, {
+      run_active: false,
+      workflow: {
+        root_event_id: "root-1",
+        association: "latest-run",
+        base: { edges: 8, reworkRounds: 2 },
+        effective: { edges: 10, reworkRounds: 3 },
+        consumed: { edges: 4 },
+        worstPairOccurrences: 1,
+        low: false,
+        exhausted: false,
+        warnings: [],
+        omittedWarnings: 0,
+        unknown: "x",
+      },
+    });
+    await expect(fetchConversationWorkflowStatus("c1", "dipu", "t")).rejects.toThrow();
+  });
+
+  it("rejects malformed dimension/consumed/warnings shapes inside the workflow record", async () => {
+    const FULL = {
+      root_event_id: "root-1",
+      association: "latest-run",
+      base: { edges: 8, reworkRounds: 2 },
+      effective: { edges: 10, reworkRounds: 3 },
+      consumed: { edges: 4 },
+      worstPairOccurrences: 1,
+      low: false,
+      exhausted: false,
+      warnings: [],
+      omittedWarnings: 0,
+    };
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["negative effective edges", { ...FULL, effective: { edges: -1, reworkRounds: 3 } }],
+      ["non-integer consumed edges", { ...FULL, consumed: { edges: 1.5 } }],
+      ["non-string warning", { ...FULL, warnings: [7] }],
+      ["negative omittedWarnings", { ...FULL, omittedWarnings: -1 }],
+      ["bad association", { ...FULL, association: "unknown" }],
+      ["extra dimension field", { ...FULL, base: { edges: 8, reworkRounds: 2, extra: 1 } }],
+      ["consumed with extra field", { ...FULL, consumed: { edges: 4, reworkRounds: 9 } }],
+    ];
+    for (const [label, workflow] of cases) {
+      stubFetch(200, { run_active: false, workflow });
+      await expect(fetchConversationWorkflowStatus("c1", "dipu", "t"), label).rejects.toThrow();
+    }
+  });
 });

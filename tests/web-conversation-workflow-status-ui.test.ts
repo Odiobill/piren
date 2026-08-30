@@ -301,21 +301,45 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
         releaseA = resolve;
       }),
     );
+    // Every LATER explicit read (the new selection's own history-load moment)
+    // returns a valid exact snapshot: the ONLY stale result in this test is
+    // the released first completion.
+    vi.mocked(fetchConversationWorkflowStatus).mockResolvedValue(snapshot());
     await mountNavigator();
     expect(workflowIndicator("dipu")).toBeNull();
-    // Selection changed: navigate away to another conversation.
+    // Selection changed: navigate to another conversation.
     window.location.hash = "#conversation/c2";
     await flush();
-    // The stale completion arrives AFTER the selection change: fully inert.
+    // The new selection's own reads completed with valid snapshots: busy is
+    // already truthfully absent for the fresh selection.
+    expect(workflowIndicator("dipu")).toBeNull();
+    // The stale completion arrives AFTER the new selection's reads: fully
+    // inert — it must not touch the new selection's state.
     await act(async () => {
       releaseA?.(snapshot({ runActive: true }));
     });
     await flush();
-    // c2's own reads may exist; the stale c1 busy indicator must not appear.
+    // No stale busy indicator may appear on any rendered card.
     const staleButton = cardButton("dipu");
     if (staleButton !== null) {
       expect(staleButton.querySelector(".context-card-workflow-status-busy")).toBeNull();
     }
+    // The stale result must not have produced an unhandled rejection or a
+    // duplicated read: the read count is exactly (selections × audience).
+    expect(vi.mocked(fetchConversationWorkflowStatus).mock.calls.length).toBe(4);
+  });
+
+  it("an unexpected non-snapshot runtime value is treated as a non-401 failed read: no indicator, no crash, no unhandled rejection", async () => {
+    // Trusted-adapter boundary defense: even if a runtime value that is not a
+    // parsed snapshot reaches the consumer (never from the strict transport),
+    // it must be inert — no indicator, no thrown/unhandled path, no retry.
+    vi.mocked(fetchConversationWorkflowStatus).mockResolvedValue(undefined as unknown as ConversationWorkflowStatusSnapshot);
+    await mountNavigator();
+    expect(workflowIndicator("dipu")).toBeNull();
+    expect(workflowIndicator("zai")).toBeNull();
+    expect(unauthorizedCount).toBe(0);
+    // No automatic retry.
+    expect(vi.mocked(fetchConversationWorkflowStatus).mock.calls.length).toBe(2);
   });
 
   it("the indicator is labelled, adds no focusable control, and preserves popup behavior", async () => {

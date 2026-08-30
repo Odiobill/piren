@@ -49,6 +49,27 @@ function busyIndicator(agent: string): WorkflowStatusIndicator {
 const NONE_INDICATOR: WorkflowStatusIndicator = { state: "none", shortText: "", accessibleText: "" };
 
 /**
+ * Trusted-adapter boundary guard (B6 correction): validates that a runtime
+ * value really is a parsed snapshot view before the view model reads it.
+ * Unexpected values are treated as a non-401 failed read by the consumer —
+ * no indicator, no crash, no fabricated fact, no retry.
+ */
+export function isWorkflowStatusSnapshotView(value: unknown): value is WorkflowStatusSnapshotView {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.runActive !== "boolean") return false;
+  if (record.workflow === null) return true;
+  if (typeof record.workflow !== "object") return false;
+  const workflow = record.workflow as Record<string, unknown>;
+  return (
+    typeof workflow.effectiveEdges === "number" &&
+    typeof workflow.consumedEdges === "number" &&
+    typeof workflow.low === "boolean" &&
+    typeof workflow.exhausted === "boolean"
+  );
+}
+
+/**
  * Map one exact `conversation × agent` snapshot (plus the agent's validated
  * scoped live activity fact) into the truthful indicator. Never infers from
  * typing indicators, presence, unread, transcript, telemetry, or an agent

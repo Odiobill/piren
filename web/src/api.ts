@@ -496,31 +496,75 @@ export interface ConversationWorkflowStatusSnapshot {
 }
 
 const WORKFLOW_STATUS_ASSOCIATIONS: readonly string[] = ["active-run", "latest-run"];
+/** The exact accepted B4 status wire shape: no missing and no extra own keys. */
+const WORKFLOW_STATUS_TOP_KEYS = ["run_active", "workflow"];
+const WORKFLOW_STATUS_WORKFLOW_KEYS = [
+  "root_event_id",
+  "association",
+  "base",
+  "effective",
+  "consumed",
+  "worstPairOccurrences",
+  "low",
+  "exhausted",
+  "warnings",
+  "omittedWarnings",
+];
 
+function hasExactlyOwnKeys(value: object, keys: readonly string[]): boolean {
+  const own = Object.keys(value);
+  return own.length === keys.length && keys.every((key) => own.includes(key));
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && (value as number) >= 0;
+}
+
+/** B4 budget dimension on the wire: exactly {edges, reworkRounds}, both non-negative integers. */
+function parseWorkflowStatusDimension(value: unknown): void {
+  if (typeof value !== "object" || value === null || !hasExactlyOwnKeys(value, ["edges", "reworkRounds"])) {
+    throw new Error("unexpected workflow status payload");
+  }
+  const record = value as Record<string, unknown>;
+  if (!isNonNegativeInteger(record.edges) || !isNonNegativeInteger(record.reworkRounds)) {
+    throw new Error("unexpected workflow status payload");
+  }
+}
+
+/**
+ * Full strict validation of the complete accepted B4 workflow record
+ * (contract §4.1): exactly the ten B4 fields with their bounded shapes —
+ * any missing, malformed, or extra own field is rejected.
+ */
 function parseWorkflowStatusFacts(value: unknown): NonNullable<ConversationWorkflowStatusSnapshot["workflow"]> {
-  if (typeof value !== "object" || value === null) throw new Error("unexpected workflow status payload");
+  if (typeof value !== "object" || value === null || !hasExactlyOwnKeys(value, WORKFLOW_STATUS_WORKFLOW_KEYS)) {
+    throw new Error("unexpected workflow status payload");
+  }
   const record = value as Record<string, unknown>;
   if (
     typeof record.root_event_id !== "string" ||
     record.root_event_id === "" ||
     !WORKFLOW_STATUS_ASSOCIATIONS.includes(record.association as string) ||
     typeof record.low !== "boolean" ||
-    typeof record.exhausted !== "boolean"
+    typeof record.exhausted !== "boolean" ||
+    !isNonNegativeInteger(record.worstPairOccurrences) ||
+    !isNonNegativeInteger(record.omittedWarnings) ||
+    !Array.isArray(record.warnings) ||
+    record.warnings.some((warning) => typeof warning !== "string")
   ) {
     throw new Error("unexpected workflow status payload");
   }
-  const effective = parseWorkflowBudgetEffective(record.effective);
-  if (typeof record.consumed !== "object" || record.consumed === null) {
+  parseWorkflowStatusDimension(record.base);
+  parseWorkflowStatusDimension(record.effective);
+  if (typeof record.consumed !== "object" || record.consumed === null || !hasExactlyOwnKeys(record.consumed, ["edges"])) {
     throw new Error("unexpected workflow status payload");
   }
   const consumedEdges = (record.consumed as Record<string, unknown>).edges;
-  if (typeof consumedEdges !== "number" || !Number.isFinite(consumedEdges) || !Number.isInteger(consumedEdges) || consumedEdges < 0) {
-    throw new Error("unexpected workflow status payload");
-  }
+  if (!isNonNegativeInteger(consumedEdges)) throw new Error("unexpected workflow status payload");
   return {
     rootEventId: record.root_event_id,
     association: record.association as "active-run" | "latest-run",
-    effectiveEdges: effective.edges,
+    effectiveEdges: (record.effective as { edges: number }).edges,
     consumedEdges: consumedEdges as number,
     low: record.low as boolean,
     exhausted: record.exhausted as boolean,
@@ -529,11 +573,17 @@ function parseWorkflowStatusFacts(value: unknown): NonNullable<ConversationWorkf
 
 /**
  * Strict allowlist parser for the bounded B4 exact-pair status response
- * (contract §4.1). Any malformed payload throws — the browser never renders
- * or sends a fabricated run/workflow fact.
+ * (contract §4.1): the top level is exactly {run_active, workflow};
+ * `workflow: null` is valid only with that closed top-level shape; a
+ * non-null workflow is the COMPLETE B4 record (exactly its ten fields,
+ * fully validated) before projection. Any missing, malformed, or extra own
+ * field throws — the browser never renders or sends a fabricated
+ * run/workflow fact.
  */
 export function parseConversationWorkflowStatus(payload: unknown): ConversationWorkflowStatusSnapshot {
-  if (typeof payload !== "object" || payload === null) throw new Error("unexpected workflow status payload");
+  if (typeof payload !== "object" || payload === null || !hasExactlyOwnKeys(payload, WORKFLOW_STATUS_TOP_KEYS)) {
+    throw new Error("unexpected workflow status payload");
+  }
   const record = payload as Record<string, unknown>;
   if (typeof record.run_active !== "boolean") throw new Error("unexpected workflow status payload");
   return {

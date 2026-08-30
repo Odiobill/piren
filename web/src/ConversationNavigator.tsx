@@ -72,6 +72,7 @@ import {
 import { contextCardsForSelection, telemetryPopupViewModel } from "./conversation-context-cards";
 import {
   applyWorkflowStatusActivity,
+  isWorkflowStatusSnapshotView,
   workflowStatusAccessibleName,
   workflowStatusIndicator,
   type WorkflowStatusIndicator,
@@ -362,7 +363,11 @@ export function ConversationNavigator({
       const activityActiveAgents = new Set(previousDockRunsRef.current.map((run) => run.agent));
       const next = new Map<string, WorkflowStatusIndicator>();
       for (const result of results) {
-        if ("snapshot" in result) {
+        // B6 correction: the trusted-adapter boundary. Any unexpected
+        // runtime non-snapshot value is treated exactly like a non-401
+        // failed read — no indicator, no crash, no unhandled rejection,
+        // no fabricated fact, no retry.
+        if ("snapshot" in result && isWorkflowStatusSnapshotView(result.snapshot)) {
           next.set(result.agent, workflowStatusIndicator(result.agent, result.snapshot, activityActiveAgents.has(result.agent)));
         }
       }
