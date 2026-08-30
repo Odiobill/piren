@@ -293,40 +293,61 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
     expect(workflowIndicator("zai")).toBeNull();
   });
 
-  it("a stale selection completion is inert: statuses never touch the new selection", async () => {
-    // First read hangs; then we re-open the conversation (new selection).
-    let releaseA: ((value: ConversationWorkflowStatusSnapshot) => void) | undefined;
-    vi.mocked(fetchConversationWorkflowStatus).mockImplementationOnce(
-      () => new Promise<ConversationWorkflowStatusSnapshot>((resolve) => {
-        releaseA = resolve;
-      }),
-    );
-    // Every LATER explicit read (the new selection's own history-load moment)
-    // returns a valid exact snapshot: the ONLY stale result in this test is
-    // the released first completion.
-    vi.mocked(fetchConversationWorkflowStatus).mockResolvedValue(snapshot());
-    await mountNavigator();
-    expect(workflowIndicator("dipu")).toBeNull();
-    // Selection changed: navigate to another conversation.
+  it("a stale C1 completion is inert across a GENUINE distinct C2 selection: C2 renders only its own facts", async () => {
+    // B6 final correction — the PREVIOUS version of this test had a FALSE
+    // premise: it navigated to "#conversation/c2" but the fetchConversation/
+    // attachConversation mocks still returned the original record whose id is
+    // "c1", so it exercised only a fresh same-conversation re-open/sequence
+    // path and could never have detected a broken exact
+    // conversationId × audience target guard. THIS test uses a genuinely
+    // distinct C2 record (different id AND disjoint audience) and leaves C1's
+    // first status completion pending across the selection change.
+    const C2 = { ...CONVERSATION, id: "c2", title: "Second conversation", audience: ["zai"], path: "collaboration/conversations/c2/index.md" };
+    let releaseC1Dipu: ((value: ConversationWorkflowStatusSnapshot) => void) | undefined;
+    vi.mocked(fetchConversation).mockImplementation(async (id: string) => (id === "c2" ? C2 : CONVERSATION));
+    vi.mocked(attachConversation).mockImplementation(async (id: string) => ({
+      conversation: id === "c2" ? C2 : CONVERSATION,
+      attached: true,
+      gate: { ok: true, missing: [], malformed: [] },
+    }));
+    vi.mocked(fetchConversationWorkflowStatus).mockImplementation(async (conversationId: string, agent: string) => {
+      // C1's first read hangs: it is the ONLY stale result in this test.
+      if (conversationId === "c1" && agent === "dipu") {
+        return new Promise<ConversationWorkflowStatusSnapshot>((resolve) => {
+          releaseC1Dipu = resolve;
+        });
+      }
+      // C2's own read carries a RED budget fact (exhausted workflow) so the
+      // test can observe whether the stale completion REPLACED C2's map.
+      if (conversationId === "c2" && agent === "zai") {
+        return snapshot({ runActive: false, workflow: facts({ rootEventId: "root-c2", exhausted: true, low: true, effectiveEdges: 10, consumedEdges: 10 }) });
+      }
+      return snapshot();
+    });
+    await mountNavigator(); // C1 attached; c1×dipu pending, c1×zai resolved.
+    // Selection changed: navigate to the GENUINE distinct conversation.
     window.location.hash = "#conversation/c2";
     await flush();
-    // The new selection's own reads completed with valid snapshots: busy is
-    // already truthfully absent for the fresh selection.
-    expect(workflowIndicator("dipu")).toBeNull();
-    // The stale completion arrives AFTER the new selection's reads: fully
-    // inert — it must not touch the new selection's state.
+    // C2's own read completed: C2's audience is exactly ["zai"] — no dipu
+    // card exists, and zai carries ONLY C2's red fact.
+    expect(cardButton("dipu")).toBeNull();
+    const zaiCard = cardButton("zai");
+    expect(zaiCard).not.toBeNull();
+    expect(zaiCard?.querySelector(".context-card-workflow-status-red")).not.toBeNull();
+    // The stale C1 completion (busy data for dipu) arrives AFTER C2's reads.
     await act(async () => {
-      releaseA?.(snapshot({ runActive: true }));
+      releaseC1Dipu?.(snapshot({ runActive: true }));
     });
     await flush();
-    // No stale busy indicator may appear on any rendered card.
-    const staleButton = cardButton("dipu");
-    if (staleButton !== null) {
-      expect(staleButton.querySelector(".context-card-workflow-status-busy")).toBeNull();
-    }
-    // The stale result must not have produced an unhandled rejection or a
-    // duplicated read: the read count is exactly (selections × audience).
-    expect(vi.mocked(fetchConversationWorkflowStatus).mock.calls.length).toBe(4);
+    // Fully inert: C2 still renders exactly its own audience and C2's red
+    // fact — no dipu card, no stale busy, and C2's red was NOT replaced.
+    expect(cardButton("dipu")).toBeNull();
+    expect(zaiCard?.querySelector(".context-card-workflow-status-busy")).toBeNull();
+    expect(zaiCard?.querySelector(".context-card-workflow-status-red")).not.toBeNull();
+    // Exact read arguments distinguish C1 and C2.
+    const calls = vi.mocked(fetchConversationWorkflowStatus).mock.calls;
+    expect(calls.filter((call) => call[0] === "c1").map((call) => call[1]).sort()).toEqual(["dipu", "zai"]);
+    expect(calls.filter((call) => call[0] === "c2").map((call) => call[1])).toEqual(["zai"]);
   });
 
   it("an unexpected non-snapshot runtime value is treated as a non-401 failed read: no indicator, no crash, no unhandled rejection", async () => {
