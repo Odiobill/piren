@@ -493,6 +493,11 @@ function CopyMessageControl({ event }: { event: ConversationEventRecord }) {
   const [feedback, setFeedback] = useState<CopyFeedbackState>({ kind: "idle" });
   const mountedRef = useRef(true);
   const expiryRef = useRef<ScheduledExpiry | null>(null);
+  // W4 correction: monotonically increasing gesture generation. Clipboard
+  // promises may settle out of order; only the LATEST gesture may apply any
+  // success/failure/expiry. The generation is captured synchronously at the
+  // start of every deliberate click (including the unavailable-API path).
+  const gestureGenerationRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -505,6 +510,7 @@ function CopyMessageControl({ event }: { event: ConversationEventRecord }) {
   if (!isCopyableMessageRow({ type: "message", event, statuses: [] })) return null;
 
   async function handleCopy(): Promise<void> {
+    const generation = ++gestureGenerationRef.current;
     expiryRef.current?.cancel();
     expiryRef.current = null;
     const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
@@ -514,13 +520,13 @@ function CopyMessageControl({ event }: { event: ConversationEventRecord }) {
     }
     try {
       await clipboard.writeText(copyMessagePayload(event));
-      if (!mountedRef.current) return; // stale completion: fully inert
+      if (!mountedRef.current || gestureGenerationRef.current !== generation) return; // stale: fully inert
       setFeedback((previous) => copyStateAfterSuccess(previous));
       expiryRef.current = scheduleFeedbackExpiry(() => {
-        if (mountedRef.current) setFeedback({ kind: "idle" });
+        if (mountedRef.current && gestureGenerationRef.current === generation) setFeedback({ kind: "idle" });
       });
     } catch {
-      if (!mountedRef.current) return; // stale failure: fully inert
+      if (!mountedRef.current || gestureGenerationRef.current !== generation) return; // stale: fully inert
       setFeedback((previous) => copyStateAfterFailure(previous, { available: true, rejected: true }));
     }
   }

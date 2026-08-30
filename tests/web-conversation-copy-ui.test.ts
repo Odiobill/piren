@@ -349,3 +349,137 @@ describe("W4 source boundary pins — no fallback, storage, fetch, polling, rout
     }
   });
 });
+
+describe("W4 correction — latest gesture wins across out-of-order Clipboard promises", () => {
+  function deferredWrite(): { writeText: ReturnType<typeof vi.fn>; settleA: (v: "resolve" | "reject") => void; settleB: (v: "resolve" | "reject") => void } {
+    let resolveA!: () => void;
+    let rejectA!: () => void;
+    let resolveB!: () => void;
+    let rejectB!: () => void;
+    const promiseA = new Promise<void>((res, rej) => {
+      resolveA = res;
+      rejectA = rej;
+    });
+    const promiseB = new Promise<void>((res, rej) => {
+      resolveB = res;
+      rejectB = rej;
+    });
+    const writeText = vi
+      .fn()
+      .mockReturnValueOnce(promiseA)
+      .mockReturnValueOnce(promiseB);
+    const settle = (res: () => void, rej: (reason: unknown) => void) => (v: "resolve" | "reject"): void => {
+      if (v === "resolve") res();
+      else rej(new DOMException("late", "NotAllowedError"));
+    };
+    return { writeText, settleA: settle(resolveA, rejectA), settleB: settle(resolveB, rejectB) };
+  }
+
+  it("click A pending, click B rejects, then A resolves: the rejection stays (latest gesture wins)", async () => {
+    const deferred = deferredWrite();
+    stubClipboard({ writeText: deferred.writeText });
+    renderTimeline();
+    await settleHistory();
+    await act(async () => {
+      copyButton("dipu")?.click(); // gesture A: pending
+    });
+    await act(async () => {
+      copyButton("dipu")?.click(); // gesture B: rejects
+    });
+    await act(async () => {
+      deferred.settleB("reject");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(feedback()).toHaveLength(1);
+    expect(feedback()[0]?.textContent).toContain("clipboard rejected");
+    // The stale gesture A now resolves — it must NOT replace gesture B's feedback.
+    await act(async () => {
+      deferred.settleA("resolve");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const feedbackEls = feedback();
+    expect(feedbackEls).toHaveLength(1);
+    expect(feedbackEls[0]?.textContent).toContain("clipboard rejected");
+    // Both deliberate gestures wrote exactly once.
+    expect(deferred.writeText).toHaveBeenCalledTimes(2);
+  });
+
+  it("click A pending, click B resolves, then A rejects: Copied stays and its expiry belongs to the latest success", async () => {
+    vi.useFakeTimers();
+    const deferred = deferredWrite();
+    stubClipboard({ writeText: deferred.writeText });
+    renderTimeline();
+    await settleHistory();
+    await act(async () => {
+      copyButton("dipu")?.click(); // gesture A: pending
+    });
+    await act(async () => {
+      copyButton("dipu")?.click(); // gesture B: resolves
+    });
+    await act(async () => {
+      deferred.settleB("resolve");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(feedback()).toHaveLength(1);
+    expect(feedback()[0]?.textContent).toContain("Copied");
+    // The stale gesture A now rejects — it must NOT replace gesture B's success.
+    await act(async () => {
+      deferred.settleA("reject");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(feedback()).toHaveLength(1);
+    expect(feedback()[0]?.textContent).toContain("Copied");
+    // The 2-second expiry belongs to the LATEST successful gesture (B):
+    // it expires on B's schedule, and A's rejection never resurrects feedback.
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(feedback()).toHaveLength(0);
+    act(() => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(feedback()).toHaveLength(0);
+    expect(deferred.writeText).toHaveBeenCalledTimes(2);
+  });
+
+  it("a stale gesture expiry cannot fire after a later gesture replaced it", async () => {
+    vi.useFakeTimers();
+    const deferred = deferredWrite();
+    stubClipboard({ writeText: deferred.writeText });
+    renderTimeline();
+    await settleHistory();
+    await act(async () => {
+      copyButton("dipu")?.click(); // gesture A: pending
+    });
+    await act(async () => {
+      copyButton("dipu")?.click(); // gesture B: resolves -> Copied, schedules expiry B
+    });
+    await act(async () => {
+      deferred.settleB("resolve");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(feedback()[0]?.textContent).toContain("Copied");
+    // A resolves late: inert — must not schedule a second expiry or touch feedback.
+    await act(async () => {
+      deferred.settleA("resolve");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(feedback()).toHaveLength(1);
+    expect(feedback()[0]?.textContent).toContain("Copied");
+    // Single expiry: exactly at 2 s of the latest gesture the feedback clears once.
+    act(() => {
+      vi.advanceTimersByTime(1999);
+    });
+    expect(feedback()).toHaveLength(1);
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(feedback()).toHaveLength(0);
+  });
+});
