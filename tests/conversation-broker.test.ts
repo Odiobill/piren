@@ -345,6 +345,11 @@ function makeBroker(options?: {
   /** B3 correction: test-only lock interleaving seams (see broker docs). */
   mutationLockAcquiredSignal?: () => void;
   mutationLockHoldBarrier?: Promise<void>;
+  /** CI 33001825179 regression seam: hold the target builder so a run
+   * registers (hasActiveRun flips true) while fake-client construction has
+   * not yet run — the exact contended-runner interleaving, made
+   * deterministic. */
+  targetBuilderBarrier?: Promise<void>;
 }): { broker: ConversationBroker; clients: FakeConversationClient[]; timers: ReturnType<typeof makeTimers>; targets: RpcSpawnTarget[] } {
   const behaviors = options?.behaviors ?? [];
   const approvalMethods = options?.approvalMethods ?? [];
@@ -354,7 +359,10 @@ function makeBroker(options?: {
   const broker = new ConversationBroker({
     vaultRoot: root,
     runnableAgents: options?.runnableAgents ?? ["zai", "dipu"],
-    targetBuilder: async (agent): Promise<RpcSpawnTarget> => ({ command: "fake", args: [agent], cwd: root, env: {} }),
+    targetBuilder: async (agent): Promise<RpcSpawnTarget> => {
+      if (options?.targetBuilderBarrier !== undefined) await options.targetBuilderBarrier;
+      return { command: "fake", args: [agent], cwd: root, env: {} };
+    },
     clientFactory: (target: RpcSpawnTarget) => {
       targets.push(target);
       const client = new FakeConversationClient(behaviors[clients.length] ?? "complete");
@@ -831,6 +839,27 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
   }
 }
 
+/**
+ * CI 33001825179 release-readiness regression synchronization: a run is
+ * REGISTERED (hasActiveRun flips true) before its fake client is
+ * constructed, and the broker subscribes to the client's events even later
+ * (after the durable run_started append). A manual `settleCompleted()` fired
+ * before that subscription is a silent no-op, leaving the run settleable
+ * only by the never-fired fake deadline, so `await dispatch` hangs until the
+ * test timeout. Every manual settle therefore waits for this explicit
+ * readiness predicate first: the indexed client exists AND the broker has
+ * handed it the run prompt, which strictly postdates the broker's event
+ * subscription in executeConversationRun.
+ */
+async function waitForSettleableClient(clients: FakeConversationClient[], index: number): Promise<void> {
+  await waitFor(() => (clients[index]?.prompts.length ?? 0) > 0);
+}
+
+/** Same settle-readiness predicate, resolved by prompt content instead of index. */
+async function waitForPromptedClient(clients: FakeConversationClient[], promptIncludes: string): Promise<void> {
+  await waitFor(() => clients.some((client) => (client.prompts[0] ?? "").includes(promptIncludes)));
+}
+
 describe("ConversationBroker approval/abort core (C3-C1)", () => {
   it("parseConversationApprovalResponse accepts exactly one of confirmed|value|cancelled and rejects everything else", () => {
     expect(parseConversationApprovalResponse({ confirmed: true })).toEqual({ confirmed: true });
@@ -1182,6 +1211,7 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
 
     // Child launches only after the source settles completed.
     expect(clients).toHaveLength(1);
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     const outcome = await dispatch;
     expect(outcome.status).toBe("completed");
@@ -1245,6 +1275,7 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
     const manifest = await readConversation({ vaultRoot: root, conversationId });
     expect(manifest.audience).toEqual(["zai", "dipu"]);
 
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     await dispatch;
     await broker.close();
@@ -1297,6 +1328,7 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
     await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
     const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
     if (accepted.status !== "accepted") throw new Error("expected accepted");
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     const outcome = await dispatch;
     expect(outcome.status).toBe("completed");
@@ -1378,6 +1410,7 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
     await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
     const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "Please review the diff" });
     if (accepted.status !== "accepted") throw new Error("expected accepted");
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     await dispatch;
 
@@ -1423,6 +1456,7 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
     for (const [source, to] of steps) {
       const accepted = await broker.requestConversationHandoff(conversationId, source, { to, text: `step to ${to}` });
       expect(accepted.status).toBe("accepted");
+      await waitForPromptedClient(clients, `agent '${source}'`);
       const clientIndex = clients.findIndex((c) => (c.prompts[0] ?? "").includes(`agent '${source}'`));
       const sourceClient = clients[clientIndex >= 0 ? clientIndex : clients.length - 1];
       sourceClient?.settleCompleted();
@@ -1435,6 +1469,7 @@ describe("ConversationBroker C5-1 sequential handoff lifecycle", () => {
       expect(rejected.reason).toMatch(/budget exhausted: depth/);
     }
     // Clean up: settle the final stage.
+    await waitForPromptedClient(clients, "agent 'sam'");
     const samClient = clients.find((c) => (c.prompts[0] ?? "").includes("agent 'sam'"));
     samClient?.settleCompleted();
     await dispatch;
@@ -1540,6 +1575,7 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
     }
 
     // Source completes -> the deferred child launches with the C5-1 stage prompt.
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     const outcome = await dispatch;
     expect(outcome.status).toBe("completed");
@@ -1588,6 +1624,7 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
     expect(broker.hasPendingApproval(conversationId, "zai", again.requestId)).toBe(false);
 
     // No handoff event, no audience change, no child; the run completes normally.
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     const outcome = await dispatch;
     expect(outcome.status).toBe("completed");
@@ -1622,6 +1659,37 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
     await broker.close();
   });
 
+  it("release-readiness CI 33001825179: a run registered before its fake client exists needs an explicit settle-readiness wait", async () => {
+    // Deterministically force the contended-runner interleaving reported from
+    // GitHub run 33001825179 (release artifact verification, public 0f52358):
+    // the run registers (hasActiveRun flips true) while the fake client
+    // factory is still held by the target-builder barrier.
+    let releaseBuilder: () => void = () => {};
+    const builderGate = new Promise<void>((resolve) => {
+      releaseBuilder = resolve;
+    });
+    const { broker, clients } = makeBroker({ behaviors: ["hang"], targetBuilderBarrier: builderGate });
+    const conversationId = await makeConversation(["zai"], "Hello @zai");
+    const stewardEventId = await makeStewardEvent(conversationId, "Go");
+    const dispatch = broker.dispatchConversationMention({ conversationId, agent: "zai", text: "Go", stewardEventId, priorEvents: [] });
+    await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
+    // The ordering gap, pinned deterministically: the run is active while the
+    // fake client has not been constructed at all.
+    expect(clients).toHaveLength(0);
+    // Unsafe original synchronization (the CI failure): settle without any
+    // readiness predicate. With the barrier held this is a silent no-op, and
+    // the run can then only be settled by the never-fired fake 60s deadline,
+    // so `await dispatch` hangs until the test timeout.
+    // The fix: wait for the explicit settle-readiness predicate before
+    // manually settling.
+    releaseBuilder();
+    await waitForSettleableClient(clients, 0);
+    clients[0]?.settleCompleted();
+    await dispatch;
+    expect(clients).toHaveLength(1);
+    await broker.close();
+  });
+
   it("stale gate responses after settlement, abort, or close are bounded rejections with no child", async () => {
     // Source settles completed without confirmation: the pending gate is
     // cleared and a late confirm is a bounded stale rejection.
@@ -1632,6 +1700,7 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
     await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
     const gate = await broker.requestInitialHandoffGate(conversationId, "zai", { to: "dipu", text: "help" });
     if (gate.status !== "pending") throw new Error("expected pending");
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     await dispatch;
     await expect(
@@ -1715,6 +1784,7 @@ describe("ConversationBroker C5-2 initial steward gate", () => {
     // The root uses the delivered C5-1 acceptance path; stages need no gate.
     const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "Please review" });
     expect(accepted.status).toBe("accepted");
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     await waitFor(() => broker.hasActiveRun(conversationId, "dipu"));
 
@@ -1875,6 +1945,7 @@ describe("ConversationBroker C5-3 tool control bridge", () => {
     // Accept an edge via the C5-1 path; the child target gets workflow.
     const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "help" });
     expect(accepted.status).toBe("accepted");
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     await dispatch;
     expect(targets.length).toBeGreaterThanOrEqual(2);
@@ -1974,6 +2045,7 @@ describe("ConversationBroker C5-3 tool control bridge", () => {
     await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
     const accepted = await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "start" });
     expect(accepted.status).toBe("accepted");
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     await waitFor(() => broker.hasActiveRun(conversationId, "dipu"));
     // The stage's envelope (to kimi) is answered with ok via C5-1, no gate.
@@ -2757,6 +2829,7 @@ describe("T2 C6 prompt additions (root note + broker-wired stage paragraph, ADR-
       requestId: gate.requestId,
       response: { confirmed: true },
     });
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     const outcome = await dispatch;
     expect(outcome.status).toBe("completed");
@@ -3480,6 +3553,7 @@ describe("ConversationBroker B4: agent workflow status + budgets reads", () => {
     });
     await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
     await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "handoff to dipu" });
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     const outcome = await dispatch;
     expect(outcome.status).toBe("completed");
@@ -3583,6 +3657,7 @@ describe("ConversationBroker B4: agent workflow status + budgets reads", () => {
     });
     await waitFor(() => broker.hasActiveRun(conversationId, "zai"));
     await broker.requestConversationHandoff(conversationId, "zai", { to: "dipu", text: "handoff to dipu" });
+    await waitForSettleableClient(clients, 0);
     clients[0]?.settleCompleted();
     await dispatch;
     await waitFor(() => !broker.hasActiveRun(conversationId, "dipu"));
