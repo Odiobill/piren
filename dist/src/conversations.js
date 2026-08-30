@@ -22,6 +22,7 @@ import { link, mkdir, open, readdir, readFile, rm, rename, writeFile } from "nod
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { applyMembershipChange, transitionLifecycle } from "./conversation-contract.js";
+import { HANDOFF_BUDGET_MAX_EDGES, HANDOFF_BUDGET_MAX_REWORK_ROUNDS } from "./conversation-budget.js";
 export const CONVERSATION_STATUSES = ["open", "archived"];
 export const CONVERSATION_EVENT_KINDS = [
     "steward_message",
@@ -46,6 +47,12 @@ export const CONVERSATION_EVENT_KINDS = [
     // anchor for the greeting run's run_started/agent_message/terminal events.
     // It is never a steward_message and carries no steward-authored text.
     "conversation_start_requested",
+    // B2 (accepted W2/W3 contract §3.1): additive steward-authored budget
+    // update evidence. One immutable event per accepted raise, correlated to
+    // the exact workflow root; append is gated to the durable steward identity
+    // and a well-formed payload, and value-level malformed payloads stay
+    // parseable so the B1 pure core fail-closes them.
+    "handoff_budget_updated",
 ];
 export const CONVERSATION_AUTHOR_KINDS = ["steward", "agent", "system"];
 export const CONVERSATION_RUN_STATUSES = ["running", "completed", "failed", "timed_out", "cancelled"];
@@ -407,21 +414,14 @@ async function atomicReplaceManifest(conversationDir, absolutePath, content) {
 /** Vault-visible per-conversation audience coordination lock file. */
 const AUDIENCE_LOCK_FILENAME = ".audience.lock";
 /**
- * Acquire the per-conversation audience-update lock (vault-visible,
- * no-clobber, cross-process safe): an atomic no-clobber create of
- * `collaboration/conversations/<id>/.audience.lock`. A held/contended lock
- * rejects with a deterministic non-secret conflict — the CALLER surfaces it
- * as 409 BEFORE creating any steward event or dispatch (no false delivery
- * claim). There is NO automatic stale recovery; a crashed holder's lock is
- * recovered manually (see the C2 contract): inspect the lock content, then
- * remove the file after triage. The release removes ONLY our own lock
- * (token-verified) so a manually replaced lock is never deleted by a stale
- * holder. No hidden DB, queue, retry, or fallback.
- *
- * Exported as a test seam (C5-1 lock-failure containment): tests hold the
- * lock to prove a busy audience append is contained.
+ * B3 final correction: module-private ownership for issued capabilities.
+ * The token is NEVER exposed on the capability object, so a caller cannot
+ * forge `{ conversationId, token, release }` from the visible lock file —
+ * only an object returned by this module has private ownership here, and
+ * `updateConversationAudienceUnderLock` verifies it fail-closed.
  */
-export async function acquireAudienceLock(options) {
+const CONVERSATION_MUTATION_LOCK_OWNERSHIP = new WeakMap();
+export async function acquireConversationMutationLock(options) {
     const root = resolve(options.vaultRoot);
     const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
     const lockPath = join(conversationDir, AUDIENCE_LOCK_FILENAME);
@@ -441,7 +441,8 @@ export async function acquireAudienceLock(options) {
         throw error;
     }
     let released = false;
-    return {
+    const capability = {
+        conversationId: options.conversationId,
         release: async () => {
             if (released)
                 return;
@@ -473,6 +474,8 @@ export async function acquireAudienceLock(options) {
             }
         },
     };
+    CONVERSATION_MUTATION_LOCK_OWNERSHIP.set(capability, { conversationId: options.conversationId, token });
+    return capability;
 }
 /**
  * C2 additive later-mention membership seam: grow the durable manifest
@@ -496,11 +499,11 @@ export async function updateConversationAudience(options) {
     const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
     const absolutePath = join(conversationDir, "index.md");
     assertInside(root, conversationDir);
-    // Cross-process-safe coordination: acquire the vault-visible lock BEFORE any
-    // read, hold it through the read -> C1 union -> atomic manifest replacement,
-    // and release it in a finally (token-verified). A contended lock rejects
-    // with a deterministic non-secret conflict surfaced as 409 by the gateway
-    // before any steward event or dispatch.
+    // Cross-process-safe coordination: acquire the vault-visible mutation lock
+    // BEFORE any read, hold it through the read -> C1 union -> atomic manifest
+    // replacement, and release it in a finally (token-verified). A contended
+    // lock rejects with a deterministic non-secret conflict surfaced as 409 by
+    // the gateway before any steward event or dispatch.
     const lockOptions = {
         vaultRoot: root,
         conversationId: options.conversationId,
@@ -509,33 +512,88 @@ export async function updateConversationAudience(options) {
         lockOptions.now = options.now;
     if (options.lockToken !== undefined)
         lockOptions.token = options.lockToken;
-    const lock = await acquireAudienceLock(lockOptions);
+    const lock = await acquireConversationMutationLock(lockOptions);
     try {
         if (options.holdBarrier !== undefined) {
             await options.holdBarrier;
         }
-        const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
-        const kind = options.kind ?? "steward";
-        const membershipChange = kind === "handoff" ? { kind: "handoff", recipients: options.additions } : { kind: "steward", recipients: options.additions };
-        const audience = applyMembershipChange(current.audience, membershipChange);
-        const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
-        const content = renderConversationManifest({
-            id: current.id,
-            title: current.title,
-            audience,
-            // L1 status-safe rewrite: every manifest mutation preserves the parsed
-            // status, so an audience update never silently reopens an archived
-            // conversation (accepted archive/reopen contract §5.2).
-            status: current.status,
-            timestamp: updatedStamp,
-            created: current.created,
-        });
-        await atomicReplaceManifest(conversationDir, absolutePath, content);
-        return readConversation({ vaultRoot: root, conversationId: options.conversationId });
+        return await updateConversationAudienceUnderLock(options, lock);
     }
     finally {
         await lock.release();
     }
+}
+/**
+ * B3-A: the under-lock audience mutation — read -> C1 additive union ->
+ * atomic manifest replace -> re-read — for callers that ALREADY hold the
+ * conversation mutation lock (the broker's handoff-acceptance critical
+ * section). REQUIRES the held {@link ConversationMutationLock} capability
+ * for the exact conversation and verifies it token-for-token against the
+ * visible lock file (fail closed) before mutating. It NEVER re-acquires
+ * the lock: calling it inside an already-held section is the whole point,
+ * and re-acquiring the same `.audience.lock` would self-deadlock by
+ * construction.
+ */
+export async function updateConversationAudienceUnderLock(options, lock) {
+    assertValidConversationId(options.conversationId);
+    const root = resolve(options.vaultRoot);
+    const conversationDir = resolve(root, "collaboration", "conversations", options.conversationId);
+    const absolutePath = join(conversationDir, "index.md");
+    assertInside(root, conversationDir);
+    // B3 final correction: under-lock OWNERSHIP enforcement. The helper
+    // mutates only for a capability THIS MODULE issued (module-private
+    // ownership lookup; a forged plain object built from the visible lock
+    // token has no ownership entry and fails closed) for THIS conversation,
+    // verified token-for-token against the visible lock file right now (fail
+    // closed on a released capability, a replaced/manually-triaged lock, or a
+    // wrong-conversation capability). It still NEVER re-acquires.
+    const ownership = CONVERSATION_MUTATION_LOCK_OWNERSHIP.get(lock);
+    if (ownership === undefined) {
+        throw new Error("conversation mutation lock capability was not issued by this module; fail closed");
+    }
+    if (ownership.conversationId !== options.conversationId || lock.conversationId !== options.conversationId) {
+        throw new Error("conversation mutation lock capability does not belong to this conversation");
+    }
+    const lockPath = join(conversationDir, AUDIENCE_LOCK_FILENAME);
+    let lockContent;
+    try {
+        lockContent = await readFile(lockPath, "utf8");
+    }
+    catch {
+        throw new Error("conversation mutation lock is not held (the lock file is missing); fail closed");
+    }
+    let parsedLock;
+    try {
+        parsedLock = JSON.parse(lockContent);
+    }
+    catch {
+        throw new Error("conversation mutation lock ownership could not be verified; fail closed");
+    }
+    if (typeof parsedLock !== "object" || parsedLock === null) {
+        throw new Error("conversation mutation lock ownership could not be verified; fail closed");
+    }
+    const lockRecord = parsedLock;
+    if (lockRecord.token !== ownership.token || lockRecord.conversationId !== options.conversationId) {
+        throw new Error("conversation mutation lock ownership could not be verified; fail closed");
+    }
+    const current = await readConversation({ vaultRoot: root, conversationId: options.conversationId });
+    const kind = options.kind ?? "steward";
+    const membershipChange = kind === "handoff" ? { kind: "handoff", recipients: options.additions } : { kind: "steward", recipients: options.additions };
+    const audience = applyMembershipChange(current.audience, membershipChange);
+    const updatedStamp = (options.now ?? (() => new Date()))().toISOString();
+    const content = renderConversationManifest({
+        id: current.id,
+        title: current.title,
+        audience,
+        // L1 status-safe rewrite: every manifest mutation preserves the parsed
+        // status, so an audience update never silently reopens an archived
+        // conversation (accepted archive/reopen contract §5.2).
+        status: current.status,
+        timestamp: updatedStamp,
+        created: current.created,
+    });
+    await atomicReplaceManifest(conversationDir, absolutePath, content);
+    return readConversation({ vaultRoot: root, conversationId: options.conversationId });
 }
 const LIFECYCLE_EVENT_BODY = {
     archive: "Archived by steward.",
@@ -756,6 +814,21 @@ export async function renameConversation(options) {
         await lock.release();
     }
 }
+/**
+ * Legacy name for the conversation mutation lock (exact same function):
+ * existing audience callers and tests keep working unchanged.
+ */
+export const acquireAudienceLock = acquireConversationMutationLock;
+/**
+ * Deterministic busy-contention predicate for the conversation mutation
+ * lock: true exactly for the bounded non-secret contention rejection the
+ * lock itself throws on a held/contended `.audience.lock` — never for raw
+ * filesystem errors, which propagate to the caller unchanged.
+ */
+export function isConversationMutationBusyError(error) {
+    return (error instanceof Error &&
+        error.message.includes("audience update is busy (another update holds the lock)"));
+}
 function renderConversationEvent(options) {
     const fields = [
         "---",
@@ -794,12 +867,76 @@ function renderConversationEvent(options) {
     // U4 run-agent attribution (plain agent-name scalar).
     if (options.runAgent !== undefined)
         fields.push(`runAgent: ${options.runAgent}`);
+    // B2 budget update evidence: a single-quoted YAML scalar wrapping the JSON
+    // payload (contextMetadata precedent) so it round-trips exactly.
+    if (options.handoffBudget !== undefined)
+        fields.push(`handoffBudget: '${JSON.stringify(options.handoffBudget)}'`);
     fields.push("---", "", options.body, "");
     return fields.join("\n");
 }
 function assertValidLifecycleMetadata(lifecycleState) {
     if (lifecycleState !== undefined && lifecycleState !== "open" && lifecycleState !== "archived") {
         throw new Error(`Invalid conversation lifecycleState: '${String(lifecycleState)}'.`);
+    }
+}
+/**
+ * B2: event-kind-bound budget authoring. A `handoff_budget_updated` event is
+ * gated at append to the exact durable steward identity, a non-empty
+ * workflow-root correlation, and a structurally well-formed payload with at
+ * least one dimension; NEW-append dimension VALUES are strictly validated
+ * (finite positive integers, strict raise, within the B1 fixed caps — see
+ * below). Every OTHER kind must not carry a `handoffBudget` payload at all:
+ * that would create an unauthorized generic durable budget-metadata path
+ * (B2 final correction). Only hand-edited STORED values remain tolerant,
+ * via the parser's shape-normalizing read that lets the B1 pure core
+ * fail-close them. No route, browser input, or generic authoring path
+ * exists.
+ */
+function assertValidHandoffBudgetMetadata(options) {
+    if (options.kind !== "handoff_budget_updated") {
+        if (options.handoffBudget !== undefined) {
+            throw new Error(`Invalid conversation event: a handoffBudget payload is only allowed on handoff_budget_updated events.`);
+        }
+        return;
+    }
+    if (options.author !== "steward" || options.authorKind !== "steward") {
+        throw new Error("Invalid conversation handoff budget event: only the durable steward identity may author it.");
+    }
+    if (options.correlationId === undefined || options.correlationId.trim() === "") {
+        throw new Error("Invalid conversation handoff budget event: a non-empty workflow-root correlationId is required.");
+    }
+    const payload = options.handoffBudget;
+    if (payload === undefined || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new Error("Invalid conversation handoff budget event: a handoffBudget payload is required.");
+    }
+    const hasEdges = payload.edges !== undefined;
+    const hasRework = payload.reworkRounds !== undefined;
+    if (!hasEdges && !hasRework) {
+        throw new Error("Invalid conversation handoff budget event: at least one budget dimension is required.");
+    }
+    for (const [name, dimension] of [["edges", payload.edges], ["reworkRounds", payload.reworkRounds]]) {
+        if (dimension === undefined)
+            continue;
+        if (typeof dimension !== "object" || Array.isArray(dimension)) {
+            throw new Error(`Invalid conversation handoff budget event: the ${name} dimension must be an object.`);
+        }
+        // Strict NEW-append value validation (B2 correction): both values must be
+        // finite positive integers, the update must strictly raise, and the target
+        // must stay within the B1 fixed caps (cap constants are reused, never
+        // duplicated). Current-effective chain/CAS validation is B3, not here.
+        const cap = name === "edges" ? HANDOFF_BUDGET_MAX_EDGES : HANDOFF_BUDGET_MAX_REWORK_ROUNDS;
+        const from = dimension.from;
+        const to = dimension.to;
+        const isFinitePositiveInteger = (value) => typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0;
+        if (!isFinitePositiveInteger(from) || !isFinitePositiveInteger(to)) {
+            throw new Error(`Invalid conversation handoff budget event: the ${name} dimension values must be finite positive integers.`);
+        }
+        if (to <= from) {
+            throw new Error(`Invalid conversation handoff budget event: the ${name} dimension must strictly raise (to must exceed from).`);
+        }
+        if (to > cap) {
+            throw new Error(`Invalid conversation handoff budget event: the ${name} dimension exceeds the fixed cap.`);
+        }
     }
 }
 /** U2: rename evidence metadata must be bounded non-empty strings when present. */
@@ -889,6 +1026,7 @@ export async function appendConversationEvent(options) {
     assertValidLifecycleMetadata(options.lifecycleState);
     assertValidRenameMetadata(options.previousTitle, options.title);
     assertValidRunAgentMetadata(options.runAgent);
+    assertValidHandoffBudgetMetadata(options);
     const root = resolve(options.vaultRoot);
     const created = (options.now ?? (() => new Date()))().toISOString();
     const id = `${compactConversationTimestamp(new Date(created))}${options.nonce !== undefined ? `-${options.nonce()}` : ""}`;
@@ -928,6 +1066,7 @@ export async function appendConversationEvent(options) {
             ...(options.previousTitle !== undefined ? { previousTitle: options.previousTitle } : {}),
             ...(options.title !== undefined ? { title: options.title } : {}),
             ...(options.runAgent !== undefined ? { runAgent: options.runAgent } : {}),
+            ...(options.handoffBudget !== undefined ? { handoffBudget: options.handoffBudget } : {}),
             body: options.body,
         });
         try {
@@ -1162,6 +1301,49 @@ function parseConversationEvent(content, path, expectedConversationId) {
     }
     else if (runAgent !== undefined) {
         throw new Error(`Invalid conversation event at ${path}: runAgent must be a string`);
+    }
+    // B2 budget update evidence: rendered as a single-quoted JSON scalar; a
+    // hand-edited YAML block mapping is also tolerated. The payload SHAPE is
+    // normalized here while VALUES are preserved verbatim (including
+    // hand-edited garbage) so the B1 pure core fail-closes them with bounded
+    // ignored metadata. A present-but-non-object payload normalizes to a
+    // dimensionless payload ("mentions no dimension") rather than dropping the
+    // evidence silently.
+    const handoffBudgetRaw = fields.handoffBudget;
+    if (handoffBudgetRaw !== undefined) {
+        let parsed;
+        if (typeof handoffBudgetRaw === "string") {
+            try {
+                parsed = JSON.parse(handoffBudgetRaw);
+            }
+            catch {
+                // B2 correction: a hand-edited valid-YAML invalid-JSON scalar is
+                // preserved evidence, not a parse failure — normalize it to a
+                // dimensionless payload so the B1 pure core returns its bounded
+                // ignored outcome (never a raise/lower, never a dropped record).
+                parsed = null;
+            }
+        }
+        else {
+            parsed = handoffBudgetRaw;
+        }
+        const payload = {};
+        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+            const object = parsed;
+            for (const key of ["edges", "reworkRounds"]) {
+                const value = object[key];
+                if (value === undefined)
+                    continue;
+                if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+                    const dimension = value;
+                    payload[key] = { from: dimension.from, to: dimension.to };
+                }
+                else {
+                    payload[key] = { from: undefined, to: undefined };
+                }
+            }
+        }
+        record.handoffBudget = payload;
     }
     return record;
 }

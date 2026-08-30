@@ -168,6 +168,7 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(expr).toContain("v0.2.1");
       expect(expr).not.toContain("v0.1.4");
       expect(expr).not.toContain("v0.2.2");
+      expect(expr).not.toContain("v0.2.3");
       expect(expr).not.toMatch(/v0\.\*|v\*/);
     });
 
@@ -417,9 +418,9 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 });
 
 describe("ADR-0033: release artifact and public-surface guards", () => {
-  it("package version is the public 0.2.2 release", () => {
+  it("package version is the public 0.2.3 release", () => {
     const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
-    expect(pkg.version).toBe("0.2.2");
+    expect(pkg.version).toBe("0.2.3");
   });
 
   it("does not add a pi runtime dependency to the package", () => {

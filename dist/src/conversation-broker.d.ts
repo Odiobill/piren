@@ -19,6 +19,7 @@
  * into the prompt and records the exact selection metadata on run_started.
  */
 import { type ConversationContextMetadata, type ConversationEventRecord, type ConversationManifest, type ConversationRunFailureKind, type ConversationWriteIo } from "./conversations.js";
+import { type HandoffBudgetValue } from "./conversation-budget.js";
 import { type ConversationHandoffRequest } from "./conversation-handoff.js";
 import { type TransportRpcClient } from "./transport-session-manager.js";
 import type { RpcTargetBuilder } from "./gateway-http.js";
@@ -86,6 +87,17 @@ export interface ConversationBrokerOptions {
     timers?: ConversationBrokerTimers;
     runTimeoutMs?: number;
     io?: ConversationWriteIo | undefined;
+    /**
+     * B3 correction: TEST-ONLY lock interleaving seam. When set, each broker
+     * mutation that acquires the conversation mutation lock signals
+     * `mutationLockAcquiredSignal` and then awaits `mutationLockHoldBarrier`
+     * while HOLDING the lock — letting a test pause one broker's winner mid-
+     * critical-section while an independent second broker attempts its own
+     * mutation against the same vault. No hidden production state: both fields
+     * are absent in production and never used by non-test callers.
+     */
+    mutationLockAcquiredSignal?: () => void;
+    mutationLockHoldBarrier?: Promise<void>;
     conversationReader?: (options: {
         vaultRoot: string;
         conversationId: string;
@@ -292,6 +304,97 @@ export declare function selectConversationContext(priorEvents: readonly Conversa
  * slice maps the bounded rejection to its HTTP vocabulary).
  */
 export declare function parseConversationApprovalResponse(value: unknown): ExtensionUiResponse | null;
+/**
+ * B3-D input: the steward's budget update for one exact workflow root. No
+ * browser-derived workflow/usage/run facts are accepted — the broker derives
+ * everything from the durable event chain under the mutation lock.
+ */
+/**
+ * B4: derived per-root budget facts exposed by the status/budgets reads.
+ * All values are broker-derived from durable records — never browser state.
+ */
+export type AgentWorkflowBudgetFacts = {
+    root_event_id: string;
+    association: "active-run" | "latest-run";
+    base: HandoffBudgetValue;
+    effective: HandoffBudgetValue;
+    consumed: {
+        edges: number;
+    };
+    worstPairOccurrences: number;
+    low: boolean;
+    exhausted: boolean;
+    /** Bounded deterministic warnings for THIS root (capped at 20). */
+    warnings: string[];
+    /** Count of same-root ignored facts beyond the warnings cap (never hidden). */
+    omittedWarnings: number;
+};
+/** B4 closed status shape (contract §4.1). */
+export type AgentWorkflowStatus = {
+    run_active: boolean;
+    workflow: null;
+} | {
+    run_active: boolean;
+    workflow: AgentWorkflowBudgetFacts;
+};
+/** B4: one durable workflow root's budget view (durable sequence order). */
+export type ConversationWorkflowBudgetRootView = Omit<AgentWorkflowBudgetFacts, "association"> & {
+    sequence: number;
+};
+/** B4: conversation-wide budgets read with the server-resolved association map. */
+export type ConversationWorkflowBudgetsView = {
+    roots: ConversationWorkflowBudgetRootView[];
+    /** Total durable workflow roots, including any beyond the response bound. */
+    total: number;
+    /** How many older roots fall outside the returned newest window. */
+    omitted: number;
+    association: Record<string, {
+        root_event_id: string;
+        association: "active-run" | "latest-run";
+    } | null>;
+};
+/** Bounded number of durable roots the budgets read derives (contract: bounded roots). */
+export declare const WORKFLOW_BUDGETS_MAX_ROOTS = 20;
+export type ConversationBudgetUpdateInput = {
+    conversationId: string;
+    /** The exact workflow root steward_message event id. */
+    rootEventId: string;
+    /** Optional adjustable target; at least one dimension is required. */
+    edges?: number | undefined;
+    /** Optional adjustable target; at least one dimension is required. */
+    reworkRounds?: number | undefined;
+    /** Mandatory compare-and-set guard: the caller's last seen effective budget. */
+    expectedEffective: HandoffBudgetValue;
+};
+/**
+ * B3-D closed outcome union for the budget-update mutation. `conflict`
+ * carries the current effective facts; `busy`/`not-open`/`unknown-root`/
+ * `rejected` are bounded non-success results with NO write. No HTTP
+ * mapping, endpoint, SSE frame, or browser state lives here (B4/B5).
+ */
+export type ConversationBudgetUpdateOutcome = {
+    status: "updated";
+    conversationId: string;
+    rootEventId: string;
+    eventId: string;
+    effective: HandoffBudgetValue;
+} | {
+    status: "rejected";
+    reason: string;
+} | {
+    status: "conflict";
+    reason: string;
+    currentEffective: HandoffBudgetValue;
+} | {
+    status: "busy";
+    reason: string;
+} | {
+    status: "not-open";
+    reason: string;
+} | {
+    status: "unknown-root";
+    reason: string;
+};
 export declare class ConversationBroker {
     private readonly vaultRoot;
     private readonly runnableAgents;
@@ -300,6 +403,8 @@ export declare class ConversationBroker {
     private readonly nonce;
     private readonly timers;
     private readonly runTimeoutMs;
+    private readonly mutationLockAcquiredSignal;
+    private readonly mutationLockHoldBarrier;
     private readonly io;
     private readonly conversationReader;
     private readonly fallbackPolicyLoader;
@@ -526,6 +631,39 @@ export declare class ConversationBroker {
      * semantics; a late response gets the bounded stale rejection.
      */
     requestInitialHandoffGate(conversationId: string, agent: string, request: ConversationHandoffRequest, handoffRequestId?: string): Promise<ConversationGateRequestResult>;
+    /**
+     * B3-D: the steward budget-update mutation seam (NO HTTP route — B4 adds
+     * that). Under the conversation mutation lock: read events -> require the
+     * Conversation `open` -> require the exact root steward_message -> derive
+     * root workflow/usage + current B1 effective budget -> compare the exact
+     * `expectedEffective` (stale mismatch is a bounded typed conflict carrying
+     * current facts) -> validate raise/caps via B1 -> append exactly one
+     * immutable steward-authored `handoff_budget_updated` event with
+     * `{from,to}` for the mentioned dimensions -> release. It permits updates
+     * while gate/run/deferred state exists, and it NEVER launches, dispatches,
+     * steers, aborts, approves, or touches a pending gate. Contention and
+     * archived/unknown-root states are bounded typed non-success results with
+     * no event, manifest, or dispatch side effect.
+     */
+    updateConversationWorkflowBudget(input: ConversationBudgetUpdateInput): Promise<ConversationBudgetUpdateOutcome>;
+    /** Shared derivation: usage + durable B2 evidence -> B1 facts for one root. */
+    private deriveRootBudgetFacts;
+    /**
+     * B4: broker-authoritative per-agent workflow status for one exact
+     * `conversation × agent` pair. `run_active` is an independent snapshot
+     * over EVERY run type (including non-C5 agent-first runs); the workflow
+     * association precedence is active/deferred C5 run first, then the most
+     * recent durably attributed run event, then null. All facts derive from
+     * durable records through the B1 pure core — never from browser input.
+     */
+    getAgentWorkflowStatus(conversationId: string, agent: string): Promise<AgentWorkflowStatus>;
+    /**
+     * B4: conversation-wide budgets read — every durable workflow root in
+     * durable sequence order (bounded to the most recent
+     * WORKFLOW_BUDGETS_MAX_ROOTS) plus the server-resolved per-agent
+     * association map for the durable audience. No client root selection.
+     */
+    getConversationWorkflowBudgets(conversationId: string): Promise<ConversationWorkflowBudgetsView>;
     /**
      * C5-1/C5-2 shared accept: derive the durable workflow, plan the edge,
      * grow the audience additively (M1) through the authoritative no-clobber

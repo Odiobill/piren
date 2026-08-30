@@ -120,7 +120,11 @@ export function planConversationHandoffEdge(input) {
     if (sourceDepth === undefined) {
         return { ok: false, reason: "source agent is not part of the conversation handoff workflow" };
     }
-    if (input.workflow.edges.length >= CONVERSATION_HANDOFF_MAX_EDGES) {
+    // B3-C: derived effective limits (B1 output) with the fixed C5 base as the
+    // absent-input default. Depth stays the fixed constant.
+    const effectiveEdges = input.limits !== undefined ? input.limits.edges : CONVERSATION_HANDOFF_MAX_EDGES;
+    const effectiveReworkRounds = input.limits !== undefined ? input.limits.reworkRounds : CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS;
+    if (input.workflow.edges.length >= effectiveEdges) {
         return { ok: false, reason: "conversation handoff workflow budget exhausted: edges" };
     }
     if (sourceDepth + 1 > CONVERSATION_HANDOFF_MAX_DEPTH) {
@@ -128,7 +132,7 @@ export function planConversationHandoffEdge(input) {
     }
     const pairKey = `${input.sourceAgent}->${to}`;
     const occurrences = input.workflow.pairOccurrences.get(pairKey) ?? 0;
-    if (occurrences >= 1 + CONVERSATION_HANDOFF_MAX_REWORK_ROUNDS) {
+    if (occurrences >= 1 + effectiveReworkRounds) {
         return { ok: false, reason: "conversation handoff workflow budget exhausted: rework" };
     }
     return { ok: true, depth: sourceDepth + 1 };
@@ -140,6 +144,59 @@ export function planConversationHandoffEdge(input) {
  * list, complete, or validate tasks, and the C5 wire stays `{to, text}`.
  */
 export const CONVERSATION_TASK_DIRECTED_STAGE_PARAGRAPH = "C6 task-directed protocol (instruction discipline, not runtime enforcement): if the handoff request names one exact vault-relative inbox task path (team/<agent>/inbox/<task>.md), read and explicitly `task_claim` exactly that path; never use `inbox_list` to discover work and never claim any other task. Derive your lifecycle role from the claimed task's own `to`, `from`, and body, never from new wire metadata. Implementation shape (you are the Developer named in `to`; the Lead is named in `from`): execute the task, record `task_update_status(<path>, completed, result)` with the required evidence, create the Lead's review-request task referencing this exact task path, then hand back to that Lead naming the exact review-request path. Review shape (you are the Lead named in `to`; the Developer is named in `from`): inspect, claim, and review; only you record the accepted/blocked/correction/exceptional-Consultant verdict; never accept your own work and never create a review request for your own review. If the path is missing, ambiguous, unclaimable, or the task's roles match neither shape: visibly report the exact condition; do not improvise, substitute, retry, scan, or reroute; any return handoff is bounded to reporting that condition. If the handoff request names no task path, complete it as an ordinary handoff.";
+/**
+ * B4: pure durable association resolver — the most recent durable run event
+ * attributed to `agent` (`runAgent`, U4) whose correlation chain resolves to
+ * a root `steward_message`. A stage run's run event correlates to its
+ * handoff `agent_message`, whose own correlation is the workflow root.
+ * Bounded and cycle-safe: a fixed chain depth, a visited-id set, and
+ * unrelated/malformed/unattributed records are skipped (an unattributed
+ * launch-failure terminal has no historical association). Returns null when
+ * no attributed run event resolves. The broker layers active-run precedence
+ * on top; the browser never selects or infers a root.
+ */
+export const AGENT_WORKFLOW_ASSOCIATION_MAX_CHAIN_DEPTH = 16;
+export function resolveLatestRunWorkflowAssociation(events, agent) {
+    // B4 correction: duplicate visible ids are malformed/unresolvable — no
+    // association may pass through them (fail closed, never last-writer-wins).
+    const idCounts = new Map();
+    for (const event of events)
+        idCounts.set(event.id, (idCounts.get(event.id) ?? 0) + 1);
+    const byId = new Map();
+    for (const event of events)
+        if ((idCounts.get(event.id) ?? 0) === 1)
+            byId.set(event.id, event);
+    const attributedRunEvents = events
+        .filter((event) => (event.kind === "run_started" || event.kind === "run_finished" || event.kind === "run_cancelled") &&
+        event.runAgent === agent)
+        .sort((a, b) => b.sequence - a.sequence);
+    for (const runEvent of attributedRunEvents) {
+        const visited = new Set();
+        let currentId = runEvent.correlationId;
+        for (let depth = 0; depth <= AGENT_WORKFLOW_ASSOCIATION_MAX_CHAIN_DEPTH; depth += 1) {
+            if (typeof currentId !== "string" || currentId === "" || visited.has(currentId))
+                break;
+            visited.add(currentId);
+            const current = byId.get(currentId);
+            if (current === undefined)
+                break; // missing or duplicate-visible id: unresolvable
+            if (current.kind === "steward_message") {
+                return { rootEventId: current.id, association: "latest-run" };
+            }
+            // B4 correction: a stage handoff is traversable only when it addresses
+            // the attributed agent; a handoff addressed to anyone else belongs to a
+            // different chain and yields no association here.
+            if (current.kind === "agent_message") {
+                if (current.addressedAgent !== agent)
+                    break;
+                currentId = current.correlationId;
+                continue;
+            }
+            break;
+        }
+    }
+    return null;
+}
 /** Render the bounded prompt for one handoff stage run (C5-1). */
 export function buildConversationStagePrompt(input) {
     const context = input.priorLines.length === 0

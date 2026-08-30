@@ -441,6 +441,27 @@ export declare class GatewayServer {
      * agent-name shape follow the existing Conversation route conventions.
      */
     private handleConversationTelemetry;
+    /**
+     * B4: authenticated GET /api/conversations/<id>/agents/<agent>/workflow-status.
+     * Broker-authoritative per-agent facts: existence 404, malformed agent 400,
+     * audience check 404, then the broker's association/active snapshot. The
+     * browser never selects a root or derives any fact.
+     */
+    private handleConversationWorkflowStatus;
+    /**
+     * B4: authenticated GET /api/conversations/<id>/workflow-budgets — every
+     * durable workflow root in sequence order plus the server-resolved
+     * per-agent association map. No client root selection or inference.
+     */
+    private handleConversationWorkflowBudgets;
+    /**
+     * B4: authenticated POST /api/conversations/<id>/workflow-budget — the
+     * closed request body adapts ONLY to the B3 broker mutation seam. Exact
+     * mapping: success 200; stale CAS conflict 409 with the current effective
+     * view; archived/busy 409; unknown root/conversation 404; malformed or
+     * invalid candidate 400 with no event. All errors bounded/non-secret.
+     */
+    private handleConversationWorkflowBudgetUpdate;
     private handleConversationEventStream;
     private writeJson;
     private writeSse;

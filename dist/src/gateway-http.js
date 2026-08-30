@@ -2000,6 +2000,23 @@ export class GatewayServer {
             }
             await this.handleConversationTelemetry(res, conversationId, telemetryAgent);
         }
+        else if (rest[0] === "agents" && rest.length === 3 && rest[2] === "workflow-status" && req.method === "GET") {
+            let workflowAgent = "";
+            try {
+                workflowAgent = decodeURIComponent(rest[1] ?? "");
+            }
+            catch {
+                this.writeJson(res, 400, { error: "malformed agent name" });
+                return;
+            }
+            await this.handleConversationWorkflowStatus(res, conversationId, workflowAgent);
+        }
+        else if (rest[0] === "workflow-budgets" && rest.length === 1 && req.method === "GET") {
+            await this.handleConversationWorkflowBudgets(res, conversationId);
+        }
+        else if (rest[0] === "workflow-budget" && rest.length === 1 && req.method === "POST") {
+            await this.handleConversationWorkflowBudgetUpdate(req, res, conversationId);
+        }
         else if ((rest[0] === "archive" || rest[0] === "reopen") && rest.length === 1 && req.method === "POST") {
             await this.handleConversationLifecycle(res, conversationId, rest[0]);
         }
@@ -2718,6 +2735,158 @@ export class GatewayServer {
         }
         const result = await this.conversationBroker.readConversationTelemetry(conversationId, agent);
         this.writeJson(res, 200, result);
+    }
+    /**
+     * B4: authenticated GET /api/conversations/<id>/agents/<agent>/workflow-status.
+     * Broker-authoritative per-agent facts: existence 404, malformed agent 400,
+     * audience check 404, then the broker's association/active snapshot. The
+     * browser never selects a root or derives any fact.
+     */
+    async handleConversationWorkflowStatus(res, conversationId, agent) {
+        let manifest;
+        try {
+            manifest = await readConversation({ vaultRoot: this.vaultRoot, conversationId });
+        }
+        catch (error) {
+            this.conversationError(res, error);
+            return;
+        }
+        if (!CONVERSATION_AGENT_NAME_PATTERN.test(agent)) {
+            this.writeJson(res, 400, { error: "invalid agent name" });
+            return;
+        }
+        if (!manifest.audience.includes(agent)) {
+            this.writeJson(res, 404, { error: "agent is not in the conversation audience" });
+            return;
+        }
+        try {
+            const result = await this.conversationBroker.getAgentWorkflowStatus(conversationId, agent);
+            this.writeJson(res, 200, result);
+        }
+        catch (error) {
+            // B4 final correction: a strict-invalid durable event rejects inside
+            // the broker read; the route guarantees a bounded response (never an
+            // unhandled rejection, never a raw error or vault path).
+            this.conversationError(res, error);
+        }
+    }
+    /**
+     * B4: authenticated GET /api/conversations/<id>/workflow-budgets — every
+     * durable workflow root in sequence order plus the server-resolved
+     * per-agent association map. No client root selection or inference.
+     */
+    async handleConversationWorkflowBudgets(res, conversationId) {
+        try {
+            await readConversation({ vaultRoot: this.vaultRoot, conversationId });
+        }
+        catch (error) {
+            this.conversationError(res, error);
+            return;
+        }
+        try {
+            const result = await this.conversationBroker.getConversationWorkflowBudgets(conversationId);
+            this.writeJson(res, 200, result);
+        }
+        catch (error) {
+            // B4 final correction: bounded 500 boundary — see the status handler.
+            this.conversationError(res, error);
+        }
+    }
+    /**
+     * B4: authenticated POST /api/conversations/<id>/workflow-budget — the
+     * closed request body adapts ONLY to the B3 broker mutation seam. Exact
+     * mapping: success 200; stale CAS conflict 409 with the current effective
+     * view; archived/busy 409; unknown root/conversation 404; malformed or
+     * invalid candidate 400 with no event. All errors bounded/non-secret.
+     */
+    async handleConversationWorkflowBudgetUpdate(req, res, conversationId) {
+        try {
+            await readConversation({ vaultRoot: this.vaultRoot, conversationId });
+        }
+        catch (error) {
+            this.conversationError(res, error);
+            return;
+        }
+        const parsed = await this.readJsonBody(req);
+        if (!parsed.ok) {
+            this.writeJson(res, parsed.status, { error: parsed.error });
+            return;
+        }
+        const value = parsed.value;
+        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+            this.writeJson(res, 400, { error: "workflow budget update body must be a JSON object" });
+            return;
+        }
+        const body = value;
+        const allowed = new Set(["root_event_id", "edges", "rework_rounds", "expected_effective"]);
+        for (const key of Object.keys(body)) {
+            if (!allowed.has(key)) {
+                this.writeJson(res, 400, { error: `unknown workflow budget update field: ${key}` });
+                return;
+            }
+        }
+        const rootEventId = body.root_event_id;
+        if (typeof rootEventId !== "string" || rootEventId.trim() === "") {
+            this.writeJson(res, 400, { error: "root_event_id must be a non-empty string" });
+            return;
+        }
+        const edges = body.edges;
+        if (edges !== undefined && (typeof edges !== "number" || !Number.isInteger(edges))) {
+            this.writeJson(res, 400, { error: "edges must be an integer when present" });
+            return;
+        }
+        const reworkRounds = body.rework_rounds;
+        if (reworkRounds !== undefined && (typeof reworkRounds !== "number" || !Number.isInteger(reworkRounds))) {
+            this.writeJson(res, 400, { error: "rework_rounds must be an integer when present" });
+            return;
+        }
+        if (edges === undefined && reworkRounds === undefined) {
+            this.writeJson(res, 400, { error: "at least one adjustable budget dimension is required" });
+            return;
+        }
+        const expected = body.expected_effective;
+        if (expected === null || typeof expected !== "object" || Array.isArray(expected)) {
+            this.writeJson(res, 400, { error: "expected_effective is required" });
+            return;
+        }
+        const expectedRecord = expected;
+        const expectedKeys = Object.keys(expectedRecord);
+        if (expectedKeys.length !== 2 ||
+            expectedKeys.some((key) => key !== "edges" && key !== "reworkRounds") ||
+            typeof expectedRecord.edges !== "number" || !Number.isInteger(expectedRecord.edges) ||
+            typeof expectedRecord.reworkRounds !== "number" || !Number.isInteger(expectedRecord.reworkRounds)) {
+            this.writeJson(res, 400, { error: "expected_effective must carry exactly integer edges and reworkRounds" });
+            return;
+        }
+        const outcome = await this.conversationBroker.updateConversationWorkflowBudget({
+            conversationId,
+            rootEventId,
+            ...(edges !== undefined ? { edges } : {}),
+            ...(reworkRounds !== undefined ? { reworkRounds } : {}),
+            expectedEffective: { edges: expectedRecord.edges, reworkRounds: expectedRecord.reworkRounds },
+        });
+        if (outcome.status === "updated") {
+            this.writeJson(res, 200, {
+                status: "updated",
+                root_event_id: outcome.rootEventId,
+                event_id: outcome.eventId,
+                effective: outcome.effective,
+            });
+            return;
+        }
+        if (outcome.status === "conflict") {
+            this.writeJson(res, 409, { error: outcome.reason, current_effective: outcome.currentEffective });
+            return;
+        }
+        if (outcome.status === "busy" || outcome.status === "not-open") {
+            this.writeJson(res, 409, { error: outcome.reason });
+            return;
+        }
+        if (outcome.status === "unknown-root") {
+            this.writeJson(res, 404, { error: outcome.reason });
+            return;
+        }
+        this.writeJson(res, 400, { error: outcome.reason });
     }
     async handleConversationEventStream(req, res, conversationId) {
         // Validate the conversation exists before opening the stream.

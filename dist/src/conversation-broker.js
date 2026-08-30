@@ -18,8 +18,9 @@
  * (maxItems 8 / maxChars 16384 via the accepted C1 `selectDurableTranscript`)
  * into the prompt and records the exact selection metadata on run_started.
  */
-import { appendConversationEvent, readConversation, readConversationEvents, updateConversationAudience, } from "./conversations.js";
-import { buildConversationStagePrompt, buildConversationGateApprovalPayload, CONVERSATION_GATE_APPROVAL_METHOD, deriveConversationWorkflowState, parseConversationHandoffRequest, planConversationHandoffEdge, } from "./conversation-handoff.js";
+import { appendConversationEvent, readConversation, readConversationEvents, acquireConversationMutationLock, isConversationMutationBusyError, updateConversationAudienceUnderLock, } from "./conversations.js";
+import { deriveHandoffBudget, handoffBudgetEvidenceFromRecord, validateHandoffBudgetUpdateCandidate, } from "./conversation-budget.js";
+import { buildConversationStagePrompt, buildConversationGateApprovalPayload, CONVERSATION_GATE_APPROVAL_METHOD, deriveConversationWorkflowState, parseConversationHandoffRequest, planConversationHandoffEdge, resolveLatestRunWorkflowAssociation, } from "./conversation-handoff.js";
 import { CONVERSATION_HANDOFF_ENABLED_ENV_VAR, isConversationHandoffInputRequest, parseConversationHandoffInputRequest, renderConversationHandoffResultValue, } from "./conversation-handoff-protocol.js";
 import { selectDurableTranscript, validateTranscriptBudget, } from "./conversation-contract.js";
 import { TransportSessionManager } from "./transport-session-manager.js";
@@ -182,6 +183,8 @@ export function parseConversationApprovalResponse(value) {
     }
     return null;
 }
+/** Bounded number of durable roots the budgets read derives (contract: bounded roots). */
+export const WORKFLOW_BUDGETS_MAX_ROOTS = 20;
 export class ConversationBroker {
     vaultRoot;
     runnableAgents;
@@ -190,6 +193,8 @@ export class ConversationBroker {
     nonce;
     timers;
     runTimeoutMs;
+    mutationLockAcquiredSignal;
+    mutationLockHoldBarrier;
     io;
     conversationReader;
     fallbackPolicyLoader;
@@ -217,6 +222,8 @@ export class ConversationBroker {
         // deadline (workbench video-capture readiness contract §6); production
         // wiring passes the vault-root workbench.yml-resolved value instead.
         this.runTimeoutMs = options.runTimeoutMs ?? DEFAULT_WORKBENCH_RUN_TIMEOUT_MS;
+        this.mutationLockAcquiredSignal = options.mutationLockAcquiredSignal;
+        this.mutationLockHoldBarrier = options.mutationLockHoldBarrier;
         this.io = options.io;
         this.conversationReader = options.conversationReader ?? readConversation;
         // TB6: production default reads the agent-local config best-effort; an
@@ -1455,6 +1462,225 @@ export class ConversationBroker {
         return { status: "pending", requestId };
     }
     /**
+     * B3-D: the steward budget-update mutation seam (NO HTTP route — B4 adds
+     * that). Under the conversation mutation lock: read events -> require the
+     * Conversation `open` -> require the exact root steward_message -> derive
+     * root workflow/usage + current B1 effective budget -> compare the exact
+     * `expectedEffective` (stale mismatch is a bounded typed conflict carrying
+     * current facts) -> validate raise/caps via B1 -> append exactly one
+     * immutable steward-authored `handoff_budget_updated` event with
+     * `{from,to}` for the mentioned dimensions -> release. It permits updates
+     * while gate/run/deferred state exists, and it NEVER launches, dispatches,
+     * steers, aborts, approves, or touches a pending gate. Contention and
+     * archived/unknown-root states are bounded typed non-success results with
+     * no event, manifest, or dispatch side effect.
+     */
+    async updateConversationWorkflowBudget(input) {
+        const conversationId = input.conversationId;
+        const candidate = {};
+        if (input.edges !== undefined)
+            candidate.edges = input.edges;
+        if (input.reworkRounds !== undefined)
+            candidate.reworkRounds = input.reworkRounds;
+        let lock;
+        try {
+            const lockOptions = {
+                vaultRoot: this.vaultRoot,
+                conversationId,
+            };
+            if (this.now !== undefined)
+                lockOptions.now = this.now;
+            if (this.nonce !== undefined)
+                lockOptions.token = this.nonce;
+            lock = await acquireConversationMutationLock(lockOptions);
+        }
+        catch (error) {
+            if (isConversationMutationBusyError(error)) {
+                return { status: "busy", reason: "conversation mutation lock is busy (another mutation holds it); retry after it completes" };
+            }
+            return { status: "busy", reason: "budget update could not acquire the conversation mutation lock" };
+        }
+        try {
+            // B3 final correction: the test-only seam runs INSIDE the releasing
+            // try/finally — a throwing signal or rejected barrier can never leak
+            // the visible `.audience.lock`.
+            if (this.mutationLockAcquiredSignal !== undefined)
+                this.mutationLockAcquiredSignal();
+            if (this.mutationLockHoldBarrier !== undefined)
+                await this.mutationLockHoldBarrier;
+            let conversation;
+            try {
+                conversation = await this.conversationReader({ vaultRoot: this.vaultRoot, conversationId });
+            }
+            catch {
+                return { status: "not-open", reason: "budget update could not read the conversation" };
+            }
+            if (conversation.status !== "open") {
+                return { status: "not-open", reason: `conversation is not open (${conversation.status}); budget update rejected` };
+            }
+            let events;
+            try {
+                events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+            }
+            catch {
+                return { status: "not-open", reason: "budget update could not read the conversation history" };
+            }
+            const root = events.find((event) => event.id === input.rootEventId && event.kind === "steward_message");
+            if (root === undefined) {
+                return { status: "unknown-root", reason: "budget update root event id does not name a steward_message in this conversation" };
+            }
+            const workflow = deriveConversationWorkflowState(events, input.rootEventId);
+            let worstPairOccurrences = 0;
+            for (const occurrences of workflow.pairOccurrences.values()) {
+                if (occurrences > worstPairOccurrences)
+                    worstPairOccurrences = occurrences;
+            }
+            const budget = deriveHandoffBudget({
+                rootEventId: input.rootEventId,
+                updates: events
+                    .filter((event) => event.kind === "handoff_budget_updated")
+                    .map((event) => handoffBudgetEvidenceFromRecord(event, input.rootEventId)),
+                usage: { consumedEdges: workflow.edges.length, worstPairOccurrences },
+            });
+            const current = budget.effective;
+            // Exact CAS: the caller must have seen the current effective budget.
+            if (input.expectedEffective.edges !== current.edges || input.expectedEffective.reworkRounds !== current.reworkRounds) {
+                return { status: "conflict", reason: "expected effective budget does not match the current effective budget", currentEffective: { ...current } };
+            }
+            // B1 validation against the current effective values (raise-only, caps).
+            const validation = validateHandoffBudgetUpdateCandidate({ candidate, current });
+            if (!validation.ok) {
+                return { status: "rejected", reason: validation.reason };
+            }
+            const payload = {};
+            if (validation.edges !== undefined)
+                payload.edges = { from: current.edges, to: validation.edges };
+            if (validation.reworkRounds !== undefined)
+                payload.reworkRounds = { from: current.reworkRounds, to: validation.reworkRounds };
+            let appended;
+            try {
+                appended = await this.appendAndPublish(conversationId, {
+                    kind: "handoff_budget_updated",
+                    authorKind: "steward",
+                    author: "steward",
+                    body: "Workflow handoff budget raised by the steward.",
+                    correlationId: input.rootEventId,
+                    handoffBudget: payload,
+                });
+            }
+            catch {
+                return { status: "rejected", reason: "budget update could not be recorded" };
+            }
+            const effective = {
+                edges: validation.edges !== undefined ? validation.edges : current.edges,
+                reworkRounds: validation.reworkRounds !== undefined ? validation.reworkRounds : current.reworkRounds,
+            };
+            return { status: "updated", conversationId, rootEventId: input.rootEventId, eventId: appended.id, effective };
+        }
+        finally {
+            await lock.release();
+        }
+    }
+    /** Shared derivation: usage + durable B2 evidence -> B1 facts for one root. */
+    deriveRootBudgetFacts(events, rootEventId, association) {
+        const workflow = deriveConversationWorkflowState(events, rootEventId);
+        let worstPairOccurrences = 0;
+        for (const occurrences of workflow.pairOccurrences.values()) {
+            if (occurrences > worstPairOccurrences)
+                worstPairOccurrences = occurrences;
+        }
+        // B4 correction: scope B2 evidence to the EXACT root correlation before
+        // B1 derivation — valid updates belonging to other roots never surface
+        // as this root's warnings, and malformed same-root evidence still
+        // fail-closes. Warnings are deterministically capped (same 20-item
+        // bound) with an omitted count so truncation is never hidden.
+        const rootBudgetEvents = events.filter((event) => event.kind === "handoff_budget_updated" && event.correlationId === rootEventId);
+        const budget = deriveHandoffBudget({
+            rootEventId,
+            updates: rootBudgetEvents.map((event) => handoffBudgetEvidenceFromRecord(event, rootEventId)),
+            usage: { consumedEdges: workflow.edges.length, worstPairOccurrences },
+        });
+        const allWarnings = budget.ignored.map((entry) => entry.reason);
+        const warnings = allWarnings.slice(0, WORKFLOW_BUDGETS_MAX_ROOTS);
+        return {
+            root_event_id: rootEventId,
+            association,
+            base: { ...budget.base },
+            effective: { ...budget.effective },
+            consumed: { edges: workflow.edges.length },
+            worstPairOccurrences,
+            low: budget.low,
+            exhausted: budget.exhausted,
+            warnings,
+            omittedWarnings: Math.max(0, allWarnings.length - warnings.length),
+        };
+    }
+    /**
+     * B4: broker-authoritative per-agent workflow status for one exact
+     * `conversation × agent` pair. `run_active` is an independent snapshot
+     * over EVERY run type (including non-C5 agent-first runs); the workflow
+     * association precedence is active/deferred C5 run first, then the most
+     * recent durably attributed run event, then null. All facts derive from
+     * durable records through the B1 pure core — never from browser input.
+     */
+    async getAgentWorkflowStatus(conversationId, agent) {
+        const key = `${conversationId}:${agent}`;
+        const activeRun = this.activeRuns.get(key);
+        const runActive = activeRun !== undefined;
+        const events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+        let rootEventId;
+        let association;
+        if (activeRun?.c5?.rootEventId !== undefined) {
+            rootEventId = activeRun.c5.rootEventId;
+            association = "active-run";
+        }
+        else {
+            const latest = resolveLatestRunWorkflowAssociation(events, agent);
+            if (latest !== null) {
+                rootEventId = latest.rootEventId;
+                association = "latest-run";
+            }
+        }
+        if (rootEventId === undefined || association === undefined) {
+            return { run_active: runActive, workflow: null };
+        }
+        return { run_active: runActive, workflow: this.deriveRootBudgetFacts(events, rootEventId, association) };
+    }
+    /**
+     * B4: conversation-wide budgets read — every durable workflow root in
+     * durable sequence order (bounded to the most recent
+     * WORKFLOW_BUDGETS_MAX_ROOTS) plus the server-resolved per-agent
+     * association map for the durable audience. No client root selection.
+     */
+    async getConversationWorkflowBudgets(conversationId) {
+        const manifest = await this.conversationReader({ vaultRoot: this.vaultRoot, conversationId });
+        const events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+        const stewardRoots = events
+            .filter((event) => event.kind === "steward_message")
+            .sort((a, b) => a.sequence - b.sequence);
+        const boundedRoots = stewardRoots.slice(-WORKFLOW_BUDGETS_MAX_ROOTS);
+        const roots = boundedRoots.map((rootEvent) => {
+            const facts = this.deriveRootBudgetFacts(events, rootEvent.id, "latest-run");
+            const { association: _association, ...rest } = facts;
+            return { ...rest, sequence: rootEvent.sequence };
+        });
+        // B4 correction: truncation is truthful and inspectable — the newest
+        // window is returned in durable sequence order with total/omitted counts.
+        const total = stewardRoots.length;
+        const omitted = Math.max(0, total - boundedRoots.length);
+        const association = {};
+        for (const agent of manifest.audience) {
+            const activeRun = this.activeRuns.get(`${conversationId}:${agent}`);
+            if (activeRun?.c5?.rootEventId !== undefined) {
+                association[agent] = { root_event_id: activeRun.c5.rootEventId, association: "active-run" };
+                continue;
+            }
+            const latest = resolveLatestRunWorkflowAssociation(events, agent);
+            association[agent] = latest === null ? null : { root_event_id: latest.rootEventId, association: "latest-run" };
+        }
+        return { roots, total, omitted, association };
+    }
+    /**
      * C5-1/C5-2 shared accept: derive the durable workflow, plan the edge,
      * grow the audience additively (M1) through the authoritative no-clobber
      * lock path, append the exactly-one durable handoff event, and store the
@@ -1464,87 +1690,152 @@ export class ConversationBroker {
      */
     async acceptHandoffEdge(run, request, rootEventId) {
         const conversationId = run.conversationId;
-        let events;
+        // B3-B: the WHOLE acceptance is one vault-visible serialized mutation —
+        // acquire the conversation mutation lock FIRST, then read -> open check
+        // -> derive workflow + B1 budget -> plan -> under-lock audience update ->
+        // immutable handoff append -> release. Contention is a bounded rejected
+        // handoff with no event, no audience mutation, no budget consumption, and
+        // no dispatch; raw filesystem failures are mapped to the same bounded
+        // rejection shape (never leaked, never browser-derived).
+        let lock;
         try {
-            events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
-        }
-        catch {
-            return { status: "rejected", reason: "conversation handoff could not read the workflow history" };
-        }
-        // Broker-owned active-run identity: when this run IS the steward-
-        // dispatched root (zero-mention single-member dispatch included), its
-        // agent is the workflow root even though the root steward_message
-        // carries no mentions. Workflow-stage runs derive the root from the
-        // durable first edge instead.
-        const workflow = deriveConversationWorkflowState(events, rootEventId, run.c5?.role === "root" ? run.agent : undefined);
-        const plan = planConversationHandoffEdge({
-            conversationId,
-            sourceAgent: run.agent,
-            request,
-            runnableAgents: this.runnableAgents,
-            activeKeys: [...this.activeRuns.keys()],
-            workflow,
-        });
-        if (!plan.ok) {
-            return { status: "rejected", reason: plan.reason };
-        }
-        // M1: grow the durable audience additively through the authoritative
-        // no-clobber lock path BEFORE the handoff event, so a busy lock can
-        // never leave an orphan handoff edge.
-        try {
-            await updateConversationAudience({
+            const lockOptions = {
                 vaultRoot: this.vaultRoot,
                 conversationId,
-                additions: { __validatedRecipients: true, recipients: [request.to] },
-                kind: "handoff",
-                now: this.now,
-            });
-        }
-        catch {
-            return {
-                status: "rejected",
-                reason: "conversation handoff could not grow the audience (another update holds the lock); retry later",
             };
+            if (this.now !== undefined)
+                lockOptions.now = this.now;
+            if (this.nonce !== undefined)
+                lockOptions.token = this.nonce;
+            lock = await acquireConversationMutationLock(lockOptions);
         }
-        // Durable handoff edge: exactly one immutable agent_message with the
-        // addressed agent, correlated to the workflow root.
-        let handoff;
+        catch (error) {
+            if (isConversationMutationBusyError(error)) {
+                return { status: "rejected", reason: "conversation mutation lock is busy (another mutation holds it); retry after it completes" };
+            }
+            return { status: "rejected", reason: "conversation handoff could not acquire the conversation mutation lock" };
+        }
         try {
-            handoff = await this.appendAndPublish(conversationId, {
-                kind: "agent_message",
-                authorKind: "agent",
-                author: run.agent,
-                body: request.text,
-                addressedAgent: request.to,
-                correlationId: rootEventId,
+            // B3 final correction: the test-only seam runs INSIDE the releasing
+            // try/finally — a throwing signal or rejected barrier can never leak
+            // the visible `.audience.lock`.
+            if (this.mutationLockAcquiredSignal !== undefined)
+                this.mutationLockAcquiredSignal();
+            if (this.mutationLockHoldBarrier !== undefined)
+                await this.mutationLockHoldBarrier;
+            // Open check under the lock: an archived Conversation accepts no
+            // handoffs (bounded rejection, no side effects).
+            let conversation;
+            try {
+                conversation = await this.conversationReader({ vaultRoot: this.vaultRoot, conversationId });
+            }
+            catch {
+                return { status: "rejected", reason: "conversation handoff could not read the conversation" };
+            }
+            if (conversation.status !== "open") {
+                return { status: "rejected", reason: `conversation is not open (${conversation.status}); handoff rejected` };
+            }
+            let events;
+            try {
+                events = await readConversationEvents({ vaultRoot: this.vaultRoot, conversationId });
+            }
+            catch {
+                return { status: "rejected", reason: "conversation handoff could not read the workflow history" };
+            }
+            // Broker-owned active-run identity: when this run IS the steward-
+            // dispatched root (zero-mention single-member dispatch included), its
+            // agent is the workflow root even though the root steward_message
+            // carries no mentions. Workflow-stage runs derive the root from the
+            // durable first edge instead.
+            const workflow = deriveConversationWorkflowState(events, rootEventId, run.c5?.role === "root" ? run.agent : undefined);
+            // B3-C: derive the effective budget from the actual workflow usage and
+            // the durable B2 evidence via the B1 pure core (fail-closed, no policy
+            // reimplemented here).
+            let worstPairOccurrences = 0;
+            for (const occurrences of workflow.pairOccurrences.values()) {
+                if (occurrences > worstPairOccurrences)
+                    worstPairOccurrences = occurrences;
+            }
+            const budget = deriveHandoffBudget({
+                rootEventId,
+                updates: events
+                    .filter((event) => event.kind === "handoff_budget_updated")
+                    .map((event) => handoffBudgetEvidenceFromRecord(event, rootEventId)),
+                usage: { consumedEdges: workflow.edges.length, worstPairOccurrences },
             });
+            const plan = planConversationHandoffEdge({
+                conversationId,
+                sourceAgent: run.agent,
+                request,
+                runnableAgents: this.runnableAgents,
+                activeKeys: [...this.activeRuns.keys()],
+                workflow,
+                limits: { edges: budget.effective.edges, reworkRounds: budget.effective.reworkRounds },
+            });
+            if (!plan.ok) {
+                return { status: "rejected", reason: plan.reason };
+            }
+            // M1: grow the durable audience additively through the ALREADY-HELD
+            // mutation lock (under-lock helper; never re-acquires) BEFORE the
+            // handoff event, so a busy lock can never leave an orphan handoff edge.
+            try {
+                await updateConversationAudienceUnderLock({
+                    vaultRoot: this.vaultRoot,
+                    conversationId,
+                    additions: { __validatedRecipients: true, recipients: [request.to] },
+                    kind: "handoff",
+                    ...(this.now !== undefined ? { now: this.now } : {}),
+                }, lock);
+            }
+            catch {
+                return {
+                    status: "rejected",
+                    reason: "conversation handoff could not grow the audience; retry later",
+                };
+            }
+            // Durable handoff edge: exactly one immutable agent_message with the
+            // addressed agent, correlated to the workflow root.
+            let handoff;
+            try {
+                handoff = await this.appendAndPublish(conversationId, {
+                    kind: "agent_message",
+                    authorKind: "agent",
+                    author: run.agent,
+                    body: request.text,
+                    addressedAgent: request.to,
+                    correlationId: rootEventId,
+                });
+            }
+            catch {
+                // Containment: an additive membership may already exist (inspectable),
+                // but no deferred child is scheduled and the budget is not consumed.
+                return { status: "rejected", reason: "conversation handoff could not be recorded" };
+            }
+            run.deferredHandoff = {
+                handoffEventId: handoff.id,
+                rootEventId,
+                to: request.to,
+                text: request.text,
+                depth: plan.depth,
+            };
+            if (run.settled) {
+                // The source settled while this accept was in flight (an external gate
+                // confirm, or a timeout racing a stage's own handoff request): the
+                // dispatch-time defer-launch check may already have run and missed this
+                // edge. Await finalization — the source terminal is durable and that
+                // check has completed — then run the idempotent defer-launch: an
+                // accepted edge on a completed source still launches its child exactly
+                // once; any other terminal stays fail-closed. The launch itself is NOT
+                // awaited: the caller (e.g. the gate confirm route) must not block on
+                // the child's run.
+                await run.finalized;
+                void this.maybeLaunchDeferredChild(run);
+            }
+            return { status: "accepted", to: request.to, handoffEventId: handoff.id };
         }
-        catch {
-            // Containment: an additive membership may already exist (inspectable),
-            // but no deferred child is scheduled and the budget is not consumed.
-            return { status: "rejected", reason: "conversation handoff could not be recorded" };
+        finally {
+            await lock.release();
         }
-        run.deferredHandoff = {
-            handoffEventId: handoff.id,
-            rootEventId,
-            to: request.to,
-            text: request.text,
-            depth: plan.depth,
-        };
-        if (run.settled) {
-            // The source settled while this accept was in flight (an external gate
-            // confirm, or a timeout racing a stage's own handoff request): the
-            // dispatch-time defer-launch check may already have run and missed this
-            // edge. Await finalization — the source terminal is durable and that
-            // check has completed — then run the idempotent defer-launch: an
-            // accepted edge on a completed source still launches its child exactly
-            // once; any other terminal stays fail-closed. The launch itself is NOT
-            // awaited: the caller (e.g. the gate confirm route) must not block on
-            // the child's run.
-            await run.finalized;
-            void this.maybeLaunchDeferredChild(run);
-        }
-        return { status: "accepted", to: request.to, handoffEventId: handoff.id };
     }
     /**
      * C5-1 sequential defer-launch: start the accepted handoff child ONLY on

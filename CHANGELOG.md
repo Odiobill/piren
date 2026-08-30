@@ -5,6 +5,24 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-08-30
+
+The 0.2.3 release adds durable Conversation workflow budgets with bounded authenticated gateway routes and Workbench surfaces, scheduler agent scoping, canonical Conversation message copy, and a test-only CI release-readiness stabilization.
+
+### Added
+
+- **Durable workflow budgets:** a bounded per-handoff budget recorded as durable `handoff_budget_updated` evidence, with strictly ordered fail-closed append validation and a pure derivation adapter.
+- **Serialized Conversation mutations:** Conversation mutations are serialized through an unforgeable mutation lock, and the broker consumes the derived handoff budget during planning.
+- **Authenticated workflow-status and budget routes:** bounded fail-closed gateway routes for workflow status, budgets, and compare-and-swap budget updates, with truthful bounded reads and bounded 500s on durable-read failures.
+- **Workbench workflow surfaces:** a Workflow budget section in the Conversation details dialog and per-agent workflow status on the existing context cards, backed by a strict exact-pair transport and a pure view model.
+- **Canonical message copy:** copy a Conversation message's canonical durable text, with a latest-gesture-wins rule across out-of-order clipboard promises.
+- **Scheduler agent scope:** an optional `scheduler.agent_scope` local policy restricting which agents the scheduler may claim for.
+
+### Fixed
+
+- Live telemetry is preserved when the read-only Vault Explorer opens.
+- Test-only release-readiness stabilization: ConversationBroker fake-client manual settles wait for an explicit settle-readiness predicate before settling (GitHub run 33001825179 CI timeout). Test synchronization only — no production behavior change.
+
 ## [0.2.2] - 2026-08-26
 
 The 0.2.2 release adds the Conversation-native Workbench and a broad operator-surface refresh.

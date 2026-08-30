@@ -103,6 +103,17 @@ export interface PlanConversationHandoffEdgeInput {
     /** `conversationId:agent` keys currently holding an active run. */
     activeKeys: readonly string[];
     workflow: ConversationWorkflowState;
+    /**
+     * B3-C: derived effective budget limits for this workflow root (B1
+     * derivation output). Absent/undefined preserves the fixed C5 base
+     * constants exactly, so Conversations without accepted updates behave
+     * byte-compatibly. Depth is NOT adjustable: it stays the fixed C5
+     * constant regardless of limits.
+     */
+    limits?: {
+        edges: number;
+        reworkRounds: number;
+    } | undefined;
 }
 export type PlanConversationHandoffEdgeResult = {
     ok: true;
@@ -125,6 +136,23 @@ export declare function planConversationHandoffEdge(input: PlanConversationHando
  * list, complete, or validate tasks, and the C5 wire stays `{to, text}`.
  */
 export declare const CONVERSATION_TASK_DIRECTED_STAGE_PARAGRAPH = "C6 task-directed protocol (instruction discipline, not runtime enforcement): if the handoff request names one exact vault-relative inbox task path (team/<agent>/inbox/<task>.md), read and explicitly `task_claim` exactly that path; never use `inbox_list` to discover work and never claim any other task. Derive your lifecycle role from the claimed task's own `to`, `from`, and body, never from new wire metadata. Implementation shape (you are the Developer named in `to`; the Lead is named in `from`): execute the task, record `task_update_status(<path>, completed, result)` with the required evidence, create the Lead's review-request task referencing this exact task path, then hand back to that Lead naming the exact review-request path. Review shape (you are the Lead named in `to`; the Developer is named in `from`): inspect, claim, and review; only you record the accepted/blocked/correction/exceptional-Consultant verdict; never accept your own work and never create a review request for your own review. If the path is missing, ambiguous, unclaimable, or the task's roles match neither shape: visibly report the exact condition; do not improvise, substitute, retry, scan, or reroute; any return handoff is bounded to reporting that condition. If the handoff request names no task path, complete it as an ordinary handoff.";
+/**
+ * B4: pure durable association resolver — the most recent durable run event
+ * attributed to `agent` (`runAgent`, U4) whose correlation chain resolves to
+ * a root `steward_message`. A stage run's run event correlates to its
+ * handoff `agent_message`, whose own correlation is the workflow root.
+ * Bounded and cycle-safe: a fixed chain depth, a visited-id set, and
+ * unrelated/malformed/unattributed records are skipped (an unattributed
+ * launch-failure terminal has no historical association). Returns null when
+ * no attributed run event resolves. The broker layers active-run precedence
+ * on top; the browser never selects or infers a root.
+ */
+export declare const AGENT_WORKFLOW_ASSOCIATION_MAX_CHAIN_DEPTH = 16;
+export interface AgentLatestRunWorkflowAssociation {
+    rootEventId: string;
+    association: "latest-run";
+}
+export declare function resolveLatestRunWorkflowAssociation(events: readonly ConversationEventRecord[], agent: string): AgentLatestRunWorkflowAssociation | null;
 /** Render the bounded prompt for one handoff stage run (C5-1). */
 export declare function buildConversationStagePrompt(input: {
     conversationId: string;

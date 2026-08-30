@@ -20,7 +20,7 @@
 import { type ConversationLifecycleTransition, type ValidatedRecipients } from "./conversation-contract.js";
 export declare const CONVERSATION_STATUSES: readonly ["open", "archived"];
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
-export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition", "conversation_renamed", "conversation_start_requested"];
+export declare const CONVERSATION_EVENT_KINDS: readonly ["steward_message", "run_started", "agent_message", "model_fallback", "run_finished", "run_cancelled", "lifecycle_transition", "conversation_renamed", "conversation_start_requested", "handoff_budget_updated"];
 export type ConversationEventKind = (typeof CONVERSATION_EVENT_KINDS)[number];
 export declare const CONVERSATION_AUTHOR_KINDS: readonly ["steward", "agent", "system"];
 export type ConversationAuthorKind = (typeof CONVERSATION_AUTHOR_KINDS)[number];
@@ -186,28 +186,46 @@ export interface UpdateConversationAudienceOptions {
     lockToken?: () => string;
 }
 /**
- * Acquire the per-conversation audience-update lock (vault-visible,
- * no-clobber, cross-process safe): an atomic no-clobber create of
- * `collaboration/conversations/<id>/.audience.lock`. A held/contended lock
- * rejects with a deterministic non-secret conflict — the CALLER surfaces it
- * as 409 BEFORE creating any steward event or dispatch (no false delivery
- * claim). There is NO automatic stale recovery; a crashed holder's lock is
- * recovered manually (see the C2 contract): inspect the lock content, then
- * remove the file after triage. The release removes ONLY our own lock
- * (token-verified) so a manually replaced lock is never deleted by a stale
- * holder. No hidden DB, queue, retry, or fallback.
+ * Acquire the per-conversation MUTATION lock (vault-visible, no-clobber,
+ * cross-process safe): an atomic no-clobber create of
+ * `collaboration/conversations/<id>/.audience.lock` — the exact historical
+ * filename is PRESERVED so old/new binaries contend on the same lock file
+ * (a second lock filename would be a split-brain). This is the ONE
+ * serialized Conversation mutation authority (accepted W2/W3 contract
+ * §4.3): audience growth, lifecycle transitions, renames, handoff
+ * acceptance, and budget updates all exclude each other through it. A
+ * held/contended lock rejects with a deterministic non-secret conflict —
+ * the CALLER surfaces it as 409 (or a bounded typed rejection) BEFORE
+ * creating any event or dispatch (no false delivery claim). There is NO
+ * automatic stale recovery; a crashed holder's lock is recovered manually
+ * (see the C2 contract): inspect the lock content, then remove the file
+ * after triage. The release removes ONLY our own lock (token-verified) so
+ * a manually replaced lock is never deleted by a stale holder. No hidden
+ * DB, queue, retry, or fallback.
+ *
+ * `acquireAudienceLock` remains exported as the exact same function for the
+ * established audience callers and tests.
  *
  * Exported as a test seam (C5-1 lock-failure containment): tests hold the
- * lock to prove a busy audience append is contained.
+ * lock to prove a busy mutation is contained.
  */
-export declare function acquireAudienceLock(options: {
+/**
+ * B3 correction: the opaque-ish mutation-lock capability returned by
+ * `acquireConversationMutationLock`. Under-lock helpers REQUIRE this
+ * capability and verify it (exact conversation + token-verified against the
+ * visible lock file, fail closed) before mutating — an unowned call can
+ * never bypass the serialization boundary.
+ */
+export interface ConversationMutationLock {
+    readonly conversationId: string;
+    release(): Promise<void>;
+}
+export declare function acquireConversationMutationLock(options: {
     vaultRoot: string;
     conversationId: string;
     now?: () => Date;
     token?: () => string;
-}): Promise<{
-    release: () => Promise<void>;
-}>;
+}): Promise<ConversationMutationLock>;
 /**
  * C2 additive later-mention membership seam: grow the durable manifest
  * `audience` with validated steward recipients only, preserving existing
@@ -225,6 +243,18 @@ export declare function acquireAudienceLock(options: {
  * contract); no hidden DB, queue, retry, or fallback.
  */
 export declare function updateConversationAudience(options: UpdateConversationAudienceOptions): Promise<ConversationManifest>;
+/**
+ * B3-A: the under-lock audience mutation — read -> C1 additive union ->
+ * atomic manifest replace -> re-read — for callers that ALREADY hold the
+ * conversation mutation lock (the broker's handoff-acceptance critical
+ * section). REQUIRES the held {@link ConversationMutationLock} capability
+ * for the exact conversation and verifies it token-for-token against the
+ * visible lock file (fail closed) before mutating. It NEVER re-acquires
+ * the lock: calling it inside an already-held section is the whole point,
+ * and re-acquiring the same `.audience.lock` would self-deadlock by
+ * construction.
+ */
+export declare function updateConversationAudienceUnderLock(options: UpdateConversationAudienceOptions, lock: ConversationMutationLock): Promise<ConversationManifest>;
 /**
  * L1 — durable Conversation lifecycle transitions (accepted archive/reopen
  * contract §4/§5, selected defaults).
@@ -371,11 +401,41 @@ export interface AppendConversationEventOptions {
     title?: string | undefined;
     /** U4 durable run-agent attribution for run events (optional, additive; U5 consumes it). */
     runAgent?: string | undefined;
+    /** B2 handoff-budget update evidence (optional; kind-gated at append). */
+    handoffBudget?: HandoffBudgetEventPayload | undefined;
     now?: () => Date;
     nonce?: () => string;
     io?: ConversationWriteIo | undefined;
     /** Injected sequence counter (testable); production derives it from the event count. */
     sequence?: number | undefined;
+}
+/**
+ * Legacy name for the conversation mutation lock (exact same function):
+ * existing audience callers and tests keep working unchanged.
+ */
+export declare const acquireAudienceLock: typeof acquireConversationMutationLock;
+/**
+ * Deterministic busy-contention predicate for the conversation mutation
+ * lock: true exactly for the bounded non-secret contention rejection the
+ * lock itself throws on a held/contended `.audience.lock` — never for raw
+ * filesystem errors, which propagate to the caller unchanged.
+ */
+export declare function isConversationMutationBusyError(error: unknown): boolean;
+/**
+ * B2: durable handoff-budget update payload (accepted contract §3.1). The
+ * SHAPE is validated at append (steward identity, root correlation, at
+ * least one dimension, plain-object dimensions) while the VALUES are
+ * deliberately unconstrained (`unknown`): hand-edited value-level garbage
+ * must survive parsing so the B1 pure core — not the parser — fail-closes
+ * it with a bounded ignored result.
+ */
+export interface HandoffBudgetDimensionPayload {
+    from: unknown;
+    to: unknown;
+}
+export interface HandoffBudgetEventPayload {
+    edges?: HandoffBudgetDimensionPayload | undefined;
+    reworkRounds?: HandoffBudgetDimensionPayload | undefined;
 }
 /** C2 context-handoff selection metadata (shape mirrors C1 selection metadata). */
 export interface ConversationContextMetadata {
@@ -438,6 +498,8 @@ export interface ConversationEventRecord {
     title?: string | undefined;
     /** U4 durable run-agent attribution for run events (additive, optional). */
     runAgent?: string | undefined;
+    /** B2 handoff-budget update evidence (additive, optional; kind-gated). */
+    handoffBudget?: HandoffBudgetEventPayload | undefined;
     body: string;
     path: string;
 }

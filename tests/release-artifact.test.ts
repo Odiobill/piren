@@ -18,9 +18,13 @@ import { readVersion } from "../src/version.js";
  * the same protected tag-only OIDC workflow from immutable tag `v0.1.6`.
  * `@odiobill/piren@0.1.7` restores Discord gateway availability after transient
  * WebSocket disconnects through the same protected OIDC workflow from `v0.1.7`.
- * `0.2.2` is the public release. `v0.2.0` (incomplete committed artifact) and
+ * `0.2.3` is the current public release (durable Conversation workflow budgets,
+ * bounded gateway workflow routes, Workbench workflow surfaces, canonical message
+ * copy, scheduler agent scope, and the test-only CI release-readiness
+ * stabilization). `0.2.2` was published through the normal OIDC path.
+ * `v0.2.0` (incomplete committed artifact) and
  * `v0.2.1` (failed CI test gate) were tagged but never published; both are
- * superseded by `v0.2.2` and must never be moved, recreated, or published. These guards keep package metadata,
+ * superseded and must never be moved, recreated, or published. These guards keep package metadata,
  * version, and changelog truthful across the manual-bootstrap 0.1.3 and later
  * OIDC releases.
  */
@@ -31,15 +35,15 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("scoped @odiobill/piren releases (0.2.2 public release; 0.2.1/0.2.0 unpublished; 0.1.7/0.1.6/0.1.5/0.1.4 OIDC; 0.1.3 bootstrap)", () => {
+describe("scoped @odiobill/piren releases (0.2.3 public release; 0.2.2/0.1.7/0.1.6/0.1.5/0.1.4 OIDC; 0.1.3 bootstrap; 0.2.1/0.2.0 unpublished)", () => {
   it("package.json name is the scoped @odiobill/piren identity", () => {
     const pkg = JSON.parse(read("package.json")) as { name: string };
     expect(pkg.name).toBe("@odiobill/piren");
   });
 
-  it("package.json version is the public 0.2.2 release", () => {
+  it("package.json version is the public 0.2.3 release", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
-    expect(pkg.version).toBe("0.2.2");
+    expect(pkg.version).toBe("0.2.3");
   });
 
   it("the executable bin name stays piren (scoped package, unchanged command)", () => {
@@ -62,8 +66,8 @@ describe("scoped @odiobill/piren releases (0.2.2 public release; 0.2.1/0.2.0 unp
     expect(pkg.private === undefined || pkg.private === false).toBe(true);
   });
 
-  it("readVersion reports 0.2.2 from the real package.json", () => {
-    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.2.2");
+  it("readVersion reports 0.2.3 from the real package.json", () => {
+    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.2.3");
   });
 
   it("package-lock.json name and version agree with package.json", () => {
@@ -73,21 +77,36 @@ describe("scoped @odiobill/piren releases (0.2.2 public release; 0.2.1/0.2.0 unp
       packages?: Record<string, { name?: string; version?: string }>;
     };
     expect(lock.name).toBe("@odiobill/piren");
-    expect(lock.version).toBe("0.2.2");
+    expect(lock.version).toBe("0.2.3");
     expect(lock.packages?.[""]?.name).toBe("@odiobill/piren");
-    expect(lock.packages?.[""]?.version).toBe("0.2.2");
+    expect(lock.packages?.[""]?.version).toBe("0.2.3");
   });
 
-  it("CHANGELOG has a dated public [0.2.2] entry above 0.1.7", () => {
+  it("CHANGELOG has a dated public [0.2.3] entry above [0.2.2]", () => {
+    const cl = read("CHANGELOG.md");
+    const start = cl.indexOf("## [0.2.3]");
+    const next = cl.indexOf("## [0.2.2]");
+    expect(start).toBeGreaterThan(-1);
+    expect(next).toBeGreaterThan(start);
+    const section = cl.slice(start, next);
+    expect(section).toMatch(/## \[0\.2\.3\] - 2026-08-30/);
+    expect(section).toMatch(/budget/i);
+    expect(section).toMatch(/Workbench/i);
+    expect(section).toMatch(/scheduler/i);
+    expect(section).toMatch(/copy/i);
+    expect(section).toMatch(/test-only/i);
+    expect(section).not.toMatch(/not yet tagged or published|unreleased|internal pilot/i);
+  });
+
+  it("CHANGELOG retains the dated public [0.2.2] entry", () => {
     const cl = read("CHANGELOG.md");
     const start = cl.indexOf("## [0.2.2]");
-    const next = cl.indexOf("## [0.1.7]");
+    const next = cl.indexOf("## [0.2.1]");
     expect(start).toBeGreaterThan(-1);
     expect(next).toBeGreaterThan(start);
     const section = cl.slice(start, next);
     expect(section).toMatch(/## \[0\.2\.2\] - 2026-08-26/);
     expect(section).toMatch(/Workbench/i);
-    expect(section).toMatch(/Settings/i);
     expect(section).toMatch(/model fallback/i);
     expect(section).toMatch(/scheduler/i);
     expect(section).not.toMatch(/not yet tagged or published|unreleased|internal pilot/i);
