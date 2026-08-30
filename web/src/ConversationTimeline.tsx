@@ -13,6 +13,16 @@ import {
   type ReconnectBudget,
 } from "./conversation-timeline";
 import {
+  copyMessageAccessibleName,
+  copyMessagePayload,
+  copyStateAfterFailure,
+  copyStateAfterSuccess,
+  isCopyableMessageRow,
+  scheduleFeedbackExpiry,
+  type CopyFeedbackState,
+  type ScheduledExpiry,
+} from "./conversation-copy-message";
+import {
   applyConversationActivityFrame,
   clearConversationActivity,
   compactActivityRuns,
@@ -36,7 +46,7 @@ import {
   type ConversationTranscriptRow,
 } from "./conversation-transcript";
 import { SafeMarkdownBody } from "./SafeMarkdown";
-import { RetryIcon } from "./icons";
+import { ClipboardIcon, RetryIcon } from "./icons";
 import type { ConversationEventRecord } from "./conversations";
 
 /**
@@ -461,8 +471,77 @@ function ConversationTranscriptRow({ row }: { row: ConversationTranscriptRow }) 
           steward bodies stay literal (handoff evidence rows above are literal
           too, preserving their explicit evidence identity). */}
       {steward ? <p className="transcript-body">{event.body}</p> : <SafeMarkdownBody text={event.body} />}
+      <CopyMessageControl event={event} />
       {statuses.length > 0 && <StatusCluster statuses={statuses} />}
     </li>
+  );
+}
+
+/**
+ * W4 — the copy control for one eligible durable message card (accepted
+ * workbench-copy-conversation-message-contract.md). Native Clipboard API
+ * only (guarded `navigator.clipboard.writeText` with the canonical stored
+ * body); no `document.execCommand` or other fallback, no storage, no
+ * polling, no durable effect. Per-card session-only feedback: success is
+ * announced and visible for exactly the steward-resolved 2 seconds; failure
+ * is an announced bounded non-revealing reason class that stays until the
+ * next deliberate gesture or cleanup. A promise settling after unmount or a
+ * Conversation selection change is fully inert (no unhandled rejection, no
+ * cross-conversation feedback).
+ */
+function CopyMessageControl({ event }: { event: ConversationEventRecord }) {
+  const [feedback, setFeedback] = useState<CopyFeedbackState>({ kind: "idle" });
+  const mountedRef = useRef(true);
+  const expiryRef = useRef<ScheduledExpiry | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      expiryRef.current?.cancel();
+    };
+  }, []);
+
+  if (!isCopyableMessageRow({ type: "message", event, statuses: [] })) return null;
+
+  async function handleCopy(): Promise<void> {
+    expiryRef.current?.cancel();
+    expiryRef.current = null;
+    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+    if (clipboard === undefined || typeof clipboard.writeText !== "function") {
+      setFeedback((previous) => copyStateAfterFailure(previous, { available: false }));
+      return;
+    }
+    try {
+      await clipboard.writeText(copyMessagePayload(event));
+      if (!mountedRef.current) return; // stale completion: fully inert
+      setFeedback((previous) => copyStateAfterSuccess(previous));
+      expiryRef.current = scheduleFeedbackExpiry(() => {
+        if (mountedRef.current) setFeedback({ kind: "idle" });
+      });
+    } catch {
+      if (!mountedRef.current) return; // stale failure: fully inert
+      setFeedback((previous) => copyStateAfterFailure(previous, { available: true, rejected: true }));
+    }
+  }
+
+  return (
+    <span className="transcript-copy">
+      <button type="button" className="button button-small" aria-label={copyMessageAccessibleName(event)} onClick={() => void handleCopy()}>
+        <ClipboardIcon size={12} />
+        Copy
+      </button>
+      {feedback.kind === "copied" && (
+        <span className="transcript-copy-feedback" role="status">
+          Copied
+        </span>
+      )}
+      {feedback.kind === "failed" && (
+        <span className="transcript-copy-feedback" role="alert">
+          Copy failed: {feedback.reason}
+        </span>
+      )}
+    </span>
   );
 }
 

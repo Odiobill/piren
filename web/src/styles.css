@@ -1770,6 +1770,23 @@ code {
   font-size: 0.95rem;
 }
 
+/* W4 — per-card copy control on durable Conversation message cards. The
+   labelled button lives inside the existing card semantics (no autofocus,
+   no focus theft); feedback is per-card session-only text, announced via
+   role=status (success) / role=alert (failure), with no persistence. */
+.transcript-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.transcript-copy-feedback {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+
 .transcript-evidence,
 .transcript-handoff,
 .transcript-error {

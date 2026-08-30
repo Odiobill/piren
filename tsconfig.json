@@ -49,6 +49,8 @@
     "tests/web-conversation-workflow-budget.test.ts",
     "tests/web-conversation-budget-status.test.ts",
     "tests/web-conversation-workflow-status-ui.test.ts",
+    "tests/web-conversation-copy-ui.test.ts",
+    "tests/web-conversation-copy-message.test.ts",
     "tests/web-conversation-telemetry-timeline.test.ts",
     "tests/web-tracer-b-history-tray.test.ts",
     "tests/web-tracer-b-navigator.test.ts",

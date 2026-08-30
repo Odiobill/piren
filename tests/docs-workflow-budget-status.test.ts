@@ -129,3 +129,27 @@ describe("README.md — live activity vs workflow-status sourcing (B7 correction
     expect(readme).toMatch(/[Nn]o browser persistence|never (?:written|persisted) (?:to|in) the browser|in browser memory only/);
   });
 });
+
+describe("README.md + docs/gateway.md — W4 copy control on durable message cards", () => {
+  it("documents the copy control scope, canonical body, native-only clipboard, and no durable effect", async () => {
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const readme = await readFile(join(repoRoot, "README.md"), "utf8");
+    const gateway = await readFile(join(repoRoot, "docs", "gateway.md"), "utf8");
+    // Control scope: ordinary durable message cards only.
+    expect(readme).toMatch(/copy/i);
+    expect(gateway).toContain("message");
+    // Canonical payload including Markdown source — never a rendered projection.
+    expect(gateway).toContain("canonical");
+    expect(gateway).toContain("Markdown source");
+    // Native Clipboard API only; no fallback.
+    expect(gateway).toContain("Clipboard API");
+    expect(gateway).toContain("fallback");
+    // Bounded per-card feedback; no persistence/telemetry/durable effect.
+    expect(gateway).toContain("feedback");
+    expect(gateway).toMatch(/2 seconds|two seconds/i);
+    expect(gateway).toMatch(/[Nn]o (?:browser )?persistence|never persists/);
+    // No copy control on handoff/evidence rows (binding exclusion).
+    expect(gateway).toContain("handoff");
+    expect(gateway).toMatch(/no copy control|excluded/);
+  });
+});
