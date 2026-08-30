@@ -1,0 +1,85 @@
+# Release preflight (0.2.4 release-recovery contract).
+#
+# NON-PUBLISHING pretag verification lane. Runs the SAME named shared quality
+# kernels as the tag verifiers (release-verify.yml and release-publish.yml
+# verify) on every push to main and on manual dispatch, so a broken main is
+# discovered BEFORE any release tag is cut — never again only at tag time.
+#
+# Hard boundaries (intentional):
+#   - No registry publication step, no npm token secret, no OIDC write
+#     permission, no GitHub Environment, no artifact upload, no publish
+#     command of any kind. Publication remains exclusively the tag-only
+#     OIDC path in release-publish.yml.
+#   - Node is pinned to the exact trusted-publishing floor 22.14.0, matching
+#     the tag verifiers.
+#   - The hermetic unit suite runs BEFORE the CI-only fake pi shim is placed
+#     on PATH; the shared runtime kernel (typecheck, build, smoke) and the
+#     packed-tarball clean-install check run after the shim.
+name: Release preflight
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Read-only. Explicitly no OIDC write permission, no contents: write.
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Pretag release preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22.14.0 (same floor as the tag verifiers) with npm lockfile cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.14.0"
+          cache: "npm"
+
+      - name: Install dependencies from the repository lockfile
+        run: npm ci
+
+      # Shared kernel 1: hermetic unit suite. No pi shim exists yet, so the
+      # unit gate proves Piren tests stay hermetic with no runner Pi.
+      - name: Quality kernel - unit tests (shared verify:unit)
+        run: npm run verify:unit
+
+      # Narrowly scoped CI-only fake pi. Piren's policy requires a `pi`
+      # command on PATH; smoke (buildPiRunCommand) and the clean-install check
+      # both need it. Installed AFTER unit tests (so unit tests stay
+      # hermetic) and BEFORE the runtime kernel + packed-tarball verification.
+      # NOT shipped with Piren, does not alter production runtime resolution,
+      # and calls no network installer.
+      - name: Provide CI-only fake pi on PATH (pretag verification only)
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/fake-pi"
+          mkdir -p "$dir"
+          cat > "$dir/pi" <<'SHIM'
+          #!/usr/bin/env bash
+          # CI-only fake pi shim for the release preflight. NOT shipped with Piren.
+          case "${1:-}" in
+            --version)
+              echo "0.0.0-piren-ci-shim"
+              ;;
+            *)
+              echo "fake pi shim for piren release verification"
+              ;;
+          esac
+          exit 0
+          SHIM
+          chmod +x "$dir/pi"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      # Shared kernel 2: runtime quality (typecheck, build, smoke) after the shim.
+      - name: Quality kernel - runtime verification (shared verify:runtime)
+        run: npm run verify:runtime
+
+      # Shared kernel 3: packed-tarball clean-install verification.
+      - name: Packed-tarball clean-install check (ADR-0033 R1)
+        run: npm run clean-install:check

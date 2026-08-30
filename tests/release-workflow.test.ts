@@ -54,8 +54,8 @@ describe("ADR-0033 R2: release-artifact verification workflow", () => {
   });
 
   describe("runtime: Node and lockfile", () => {
-    it("uses Node 22", () => {
-      expect(blob).toMatch(/node-version.*22/);
+    it("uses the exact tag-verifier Node floor 22.14.0 (shared with preflight and publish)", () => {
+      expect(blob).toMatch(/node-version:\s*"22\.14\.0"/);
     });
 
     it("installs from the repository lockfile via npm ci", () => {
@@ -66,11 +66,18 @@ describe("ADR-0033 R2: release-artifact verification workflow", () => {
   });
 
   describe("quality gates", () => {
-    it("runs all four normal quality gates", () => {
-      expect(blob).toContain("npm test");
-      expect(blob).toContain("npm run typecheck");
-      expect(blob).toContain("npm run build");
-      expect(blob).toContain("npm run smoke");
+    it("runs the shared named quality kernels (verify:unit + verify:runtime)", () => {
+      expect(blob).toContain("npm run verify:unit");
+      expect(blob).toContain("npm run verify:runtime");
+    });
+
+    it("the shared runtime kernel resolves to the four normal quality gates", () => {
+      const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { scripts?: Record<string, string> };
+      expect(pkg.scripts?.["verify:unit"]).toContain("vitest run");
+      const runtime = pkg.scripts?.["verify:runtime"] ?? "";
+      expect(runtime).toContain("npm run typecheck");
+      expect(runtime).toContain("npm run build");
+      expect(runtime).toContain("npm run smoke");
     });
   });
 
@@ -133,21 +140,22 @@ describe("ADR-0033 R2: release-artifact verification workflow", () => {
   });
 
   describe("ADR-0036 P3d: CI fake-Pi ordering (release-verify)", () => {
-    it("installs the CI-only fake Pi after unit tests but before smoke and clean-install", () => {
+    it("installs the CI-only fake Pi after the unit kernel but before the runtime kernel and clean-install", () => {
       // Steps appear in execution order in the file; step names are unique, so
       // their raw-text positions reflect the run order.
-      const unitTestsIdx = raw.indexOf("Quality gate - unit tests");
+      const unitTestsIdx = raw.indexOf("shared verify:unit");
       const fakePiIdx = raw.indexOf("Provide CI-only fake pi on PATH");
-      const smokeIdx = raw.indexOf("Quality gate - smoke");
+      const runtimeIdx = raw.indexOf("shared verify:runtime");
       const cleanInstallIdx = raw.indexOf("npm run clean-install:check");
       expect(unitTestsIdx).toBeGreaterThan(-1);
       expect(fakePiIdx).toBeGreaterThan(-1);
-      expect(smokeIdx).toBeGreaterThan(-1);
+      expect(runtimeIdx).toBeGreaterThan(-1);
       expect(cleanInstallIdx).toBeGreaterThan(-1);
       // Unit tests run BEFORE the shim (no runner Pi during tests -> hermetic).
       expect(fakePiIdx).toBeGreaterThan(unitTestsIdx);
-      // Smoke and packed-tarball clean-install run AFTER the shim (Pi on PATH).
-      expect(fakePiIdx).toBeLessThan(smokeIdx);
+      // The runtime kernel (typecheck, build, smoke) and packed-tarball
+      // clean-install run AFTER the shim (Pi on PATH).
+      expect(fakePiIdx).toBeLessThan(runtimeIdx);
       expect(fakePiIdx).toBeLessThan(cleanInstallIdx);
     });
   });

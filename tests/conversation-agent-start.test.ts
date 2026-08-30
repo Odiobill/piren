@@ -19,7 +19,7 @@ import {
 import type { RpcEvent, RpcSpawnTarget, ExtensionUiResponse } from "../src/gateway-rpc.js";
 import { initVault } from "../src/init.js";
 
-type StartFakeBehavior = "complete" | "with-text" | "start-fail" | "prompt-fail" | "exit-mid-run" | "provider-error-empty";
+type StartFakeBehavior = "complete" | "with-text" | "start-fail" | "prompt-fail" | "exit-mid-run" | "provider-error-empty" | "hang";
 
 /** Minimal fake ConversationRpcClient for the ADR-0044 broker start path. */
 class FakeStartClient implements ConversationRpcClient {
@@ -67,6 +67,11 @@ class FakeStartClient implements ConversationRpcClient {
     if (this.behavior === "prompt-fail") {
       throw new Error("prompt failed (fake)");
     }
+    if (this.behavior === "hang") {
+      // CI 33333177569 ordering seam: hold the run active (never settles on
+      // its own) so the reservation stays observable and deterministic.
+      return;
+    }
     if (this.behavior === "exit-mid-run") {
       for (const listener of [...this.exitListeners]) listener();
       return;
@@ -104,15 +109,27 @@ class FakeStartClient implements ConversationRpcClient {
   private emit(event: RpcEvent): void {
     for (const listener of [...this.listeners]) listener(event);
   }
+
+  /** Settle a held (hang) run as completed on demand (reservation-ordering tests). */
+  settleCompleted(): void {
+    this.emit({ type: "agent_end", messages: [] });
+    this.emit({ type: "agent_settled" });
+  }
 }
 
 function makeStartBroker(options?: {
   runnableAgents?: string[];
   behaviors?: StartFakeBehavior[];
+  /** CI 33333177569 ordering seam: hold the FIRST start's conversation read
+   * (before its active-run reservation) until released, making the
+   * contended-runner reservation interleaving deterministic. One-shot: only
+   * the first reader call awaits the gate. */
+  conversationReaderGate?: Promise<void>;
 }): { broker: ConversationBroker; clients: FakeStartClient[]; targets: RpcSpawnTarget[] } {
   const behaviors = options?.behaviors ?? [];
   const clients: FakeStartClient[] = [];
   const targets: RpcSpawnTarget[] = [];
+  let readerGateConsumed = false;
   const broker = new ConversationBroker({
     vaultRoot: root,
     runnableAgents: options?.runnableAgents ?? ["dipu", "zai"],
@@ -123,11 +140,32 @@ function makeStartBroker(options?: {
       clients.push(client);
       return client;
     },
+    ...(options?.conversationReaderGate !== undefined
+      ? {
+          conversationReader: async (readerOptions: { vaultRoot: string; conversationId: string }) => {
+            if (!readerGateConsumed) {
+              readerGateConsumed = true;
+              await options.conversationReaderGate;
+            }
+            return readConversation(readerOptions);
+          },
+        }
+      : {}),
     now: tick,
     nonce: () => `n${++nonceSeq}`,
     runTimeoutMs: 60_000,
   });
   return { broker, clients, targets };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("waitFor timed out");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 /** Create a started conversation + its durable system origin event; returns ids. */
@@ -365,14 +403,52 @@ describe("ConversationBroker.startConversationAgentRun (ADR-0044 separately type
   });
 
   it("preserves the one active conversation × agent run invariant (conflict, never queued)", async () => {
-    const { broker } = makeStartBroker({ behaviors: ["complete", "complete"] });
+    // CI 33333177569 repair: the active run is RESERVED asynchronously (the
+    // conversation read happens before reserveRun), so the conflicting second
+    // start must synchronize on the exact reservation invariant —
+    // hasActiveRun — before being issued, never on wall-clock luck. The
+    // first run is held active (hang) so the reservation cannot vanish
+    // before the conflict, and both promises are captured/awaited so no
+    // rejection or fake-Pi write escapes the test.
+    const { broker, clients } = makeStartBroker({ behaviors: ["hang"] });
     const { conversationId, originEventId } = await makeStartedConversation();
     const first = broker.startConversationAgentRun({ conversationId, agent: "dipu", originEventId });
+    await waitFor(() => broker.hasActiveRun(conversationId, "dipu"));
     await expect(
       broker.startConversationAgentRun({ conversationId, agent: "dipu", originEventId }),
     ).rejects.toThrow(/already active/);
+    // Settle the held first run exactly once, after the conflict is proven,
+    // and only once the broker has handed the client its prompt (which
+    // strictly postdates the broker's event subscription).
+    await waitFor(() => (clients[0]?.prompts.length ?? 0) > 0);
+    clients[0]?.settleCompleted();
     const outcome = await first;
     expect(outcome.status).toBe("completed");
+    await broker.close();
+  });
+
+  it("either invocation may win the asynchronous reservation; the loser rejects with the bounded conflict (CI 33333177569 ordering pin)", async () => {
+    // Deterministic pin of the contended interleaving behind CI 33333177569:
+    // the one-shot reader gate holds the FIRST start before its reservation,
+    // so the second start reserves first and wins. The loser always rejects
+    // with the exact bounded conflict — never queues.
+    let releaseReader: () => void = () => {};
+    const readerGate = new Promise<void>((resolve) => {
+      releaseReader = resolve;
+    });
+    const { broker } = makeStartBroker({ behaviors: ["hang"], conversationReaderGate: readerGate });
+    const { conversationId, originEventId } = await makeStartedConversation();
+    const first = broker.startConversationAgentRun({ conversationId, agent: "dipu", originEventId });
+    const second = broker.startConversationAgentRun({ conversationId, agent: "dipu", originEventId });
+    // The second invocation owns the reservation (first is held pre-reservation).
+    await waitFor(() => broker.hasActiveRun(conversationId, "dipu"));
+    releaseReader();
+    await expect(first).rejects.toThrow(/already active/);
+    // The winning run is held (hang): abort it, then await its outcome so no
+    // promise escapes the test.
+    const aborted = await broker.abort(conversationId, "dipu");
+    expect(aborted.status).toBe("cancelled");
+    expect(await second).toMatchObject({ status: "cancelled" });
     await broker.close();
   });
 

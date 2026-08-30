@@ -37,30 +37,26 @@ jobs:
       - name: Checkout tag source
         uses: actions/checkout@v4
 
-      - name: Setup Node 22 with npm lockfile cache
+      - name: Setup Node 22.14.0 (tag-verifier floor, shared with preflight and publish) with npm lockfile cache
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.14.0"
           cache: "npm"
 
       - name: Install dependencies from the repository lockfile
         run: npm ci
 
-      - name: Quality gate - unit tests
-        run: npm test
-
-      - name: Quality gate - typecheck
-        run: npm run typecheck
-
-      - name: Quality gate - build
-        run: npm run build
+      # Shared kernel 1: hermetic unit suite (named package script shared with
+      # release-publish.yml verify and release-preflight.yml).
+      - name: Quality kernel - unit tests (shared verify:unit)
+        run: npm run verify:unit
 
       # Narrowly scoped CI-only fake pi. Piren's policy requires a `pi` command
       # on PATH; smoke (buildPiRunCommand) and the clean-install check both need
       # it. Installed AFTER unit tests (so unit tests stay hermetic with no
-      # runner Pi) and BEFORE smoke + packed-tarball verification. NOT shipped
-      # with Piren, does not alter production runtime resolution, and calls no
-      # network installer.
+      # runner Pi) and BEFORE the shared runtime kernel + packed-tarball
+      # verification. NOT shipped with Piren, does not alter production runtime
+      # resolution, and calls no network installer.
       - name: Provide CI-only fake pi on PATH (release verification only)
         run: |
           set -euo pipefail
@@ -82,8 +78,8 @@ jobs:
           chmod +x "$dir/pi"
           echo "$dir" >> "$GITHUB_PATH"
 
-      - name: Quality gate - smoke
-        run: npm run smoke
+      - name: Quality kernel - runtime verification (shared verify:runtime)
+        run: npm run verify:runtime
 
       - name: Packed-tarball clean-install check (ADR-0033 R1)
         run: npm run clean-install:check

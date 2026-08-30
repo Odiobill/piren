@@ -151,7 +151,7 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   describe("ADR-0035/0036/0037 bootstrap exception (P1c + P3c + P3e)", () => {
     it("the publish job is skipped for the unpublished tags on push and manual dispatch", () => {
       const expr = wf.jobs?.publish?.if ?? "";
-      for (const t of ["v0.1.1", "v0.1.2", "v0.1.3", "v0.2.0", "v0.2.1"]) {
+      for (const t of ["v0.1.1", "v0.1.2", "v0.1.3", "v0.2.0", "v0.2.1", "v0.2.3"]) {
         expect(expr).toContain(`github.ref_name != '${t}'`);
         expect(expr).toContain(`inputs.release_tag != '${t}'`);
       }
@@ -166,9 +166,10 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       expect(expr).toContain("v0.1.3");
       expect(expr).toContain("v0.2.0");
       expect(expr).toContain("v0.2.1");
+      expect(expr).toContain("v0.2.3");
       expect(expr).not.toContain("v0.1.4");
       expect(expr).not.toContain("v0.2.2");
-      expect(expr).not.toContain("v0.2.3");
+      expect(expr).not.toContain("v0.2.4");
       expect(expr).not.toMatch(/v0\.\*|v\*/);
     });
 
@@ -206,12 +207,12 @@ describe("ADR-0033 P1: registry publication workflow", () => {
   });
 
   describe("verify job (pre-approval)", () => {
-    it("runs the four quality gates", () => {
+    it("runs the shared named quality kernels (verify:unit + verify:runtime)", () => {
       const t = runText(wf.jobs?.verify);
-      expect(t).toContain("npm test");
-      expect(t).toContain("npm run typecheck");
-      expect(t).toContain("npm run build");
-      expect(t).toContain("npm run smoke");
+      expect(t).toContain("npm run verify:unit");
+      expect(t).toContain("npm run verify:runtime");
+      // The publish verifier pins the exact trusted-publishing Node floor.
+      expect(nodeVersion(wf.jobs?.verify)).toBe("22.14.0");
     });
 
     it("checks the resolved tag against package version", () => {
@@ -239,20 +240,20 @@ describe("ADR-0033 P1: registry publication workflow", () => {
       );
     });
 
-    it("installs the CI-only fake Pi after unit tests but before smoke and clean-install (ADR-0036 P3d)", () => {
+    it("installs the CI-only fake Pi after the unit kernel but before the runtime kernel and clean-install (ADR-0036 P3d)", () => {
       const verify = wf.jobs?.verify;
-      const unitTestsIdx = stepIndex(verify, (s) => /\bnpm test\b/.test(s.run ?? ""));
+      const unitTestsIdx = stepIndex(verify, (s) => /verify:unit/.test(s.run ?? ""));
       const fakePiIdx = stepIndex(verify, (s) => /fake pi/i.test(s.name ?? "") || /fake pi/i.test(s.run ?? ""));
-      const smokeIdx = stepIndex(verify, (s) => /npm run smoke/.test(s.run ?? ""));
+      const runtimeIdx = stepIndex(verify, (s) => /verify:runtime/.test(s.run ?? ""));
       const cleanInstallIdx = stepIndex(verify, (s) => /npm run clean-install:check/.test(s.run ?? ""));
       expect(unitTestsIdx).toBeGreaterThanOrEqual(0);
       expect(fakePiIdx).toBeGreaterThanOrEqual(0);
-      expect(smokeIdx).toBeGreaterThanOrEqual(0);
+      expect(runtimeIdx).toBeGreaterThanOrEqual(0);
       expect(cleanInstallIdx).toBeGreaterThanOrEqual(0);
       // Unit tests run BEFORE the shim (no runner Pi during tests -> hermetic).
       expect(fakePiIdx).toBeGreaterThan(unitTestsIdx);
-      // Smoke and packed-tarball clean-install run AFTER the shim (Pi on PATH).
-      expect(fakePiIdx).toBeLessThan(smokeIdx);
+      // The runtime kernel and packed-tarball clean-install run AFTER the shim.
+      expect(fakePiIdx).toBeLessThan(runtimeIdx);
       expect(fakePiIdx).toBeLessThan(cleanInstallIdx);
     });
   });
@@ -418,9 +419,9 @@ describe("ADR-0033 P1: verification workflow stays verification-only", () => {
 });
 
 describe("ADR-0033: release artifact and public-surface guards", () => {
-  it("package version is the public 0.2.3 release", () => {
+  it("package version is the public 0.2.4 release", () => {
     const pkg = JSON.parse(readRaw(join(repoRoot, "package.json"))) as { version: string };
-    expect(pkg.version).toBe("0.2.3");
+    expect(pkg.version).toBe("0.2.4");
   });
 
   it("does not add a pi runtime dependency to the package", () => {

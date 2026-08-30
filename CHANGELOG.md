@@ -5,9 +5,9 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.3] - 2026-08-30
+## [0.2.4] - 2026-08-30
 
-The 0.2.3 release adds durable Conversation workflow budgets with bounded authenticated gateway routes and Workbench surfaces, scheduler agent scoping, canonical Conversation message copy, and a test-only CI release-readiness stabilization.
+The 0.2.4 release recovers publication from the immutable unpublished v0.2.3 candidate and carries all accepted 0.2.3 work: durable Conversation workflow budgets with bounded authenticated gateway routes and Workbench surfaces, scheduler agent scoping, canonical Conversation message copy, the test-only CI release-readiness stabilization, and a new fail-closed pretag verification lane.
 
 ### Added
 
@@ -17,11 +17,17 @@ The 0.2.3 release adds durable Conversation workflow budgets with bounded authen
 - **Workbench workflow surfaces:** a Workflow budget section in the Conversation details dialog and per-agent workflow status on the existing context cards, backed by a strict exact-pair transport and a pure view model.
 - **Canonical message copy:** copy a Conversation message's canonical durable text, with a latest-gesture-wins rule across out-of-order clipboard promises.
 - **Scheduler agent scope:** an optional `scheduler.agent_scope` local policy restricting which agents the scheduler may claim for.
+- **Release preflight:** a non-publishing pretag verification workflow on pushes to main that runs the same named shared quality kernels as the tag verifiers (hermetic unit suite, then a CI-only fake Pi, then the runtime kernel and packed-tarball clean-install) on the exact Node 22.14.0 floor, so release-breaking failures are discovered before any tag is cut.
 
 ### Fixed
 
 - Live telemetry is preserved when the read-only Vault Explorer opens.
 - Test-only release-readiness stabilization: ConversationBroker fake-client manual settles wait for an explicit settle-readiness predicate before settling (GitHub run 33001825179 CI timeout). Test synchronization only — no production behavior change.
+- Test-only start-conflict ordering: the expected-conflicting second agent-start synchronizes on the exact active-run reservation invariant instead of racing the asynchronous reservation (GitHub run 33333177569 CI failure). Test synchronization only — no production behavior change.
+
+## [0.2.3] - 2026-08-30
+
+Immutable unpublished candidate, superseded by 0.2.4. Tagged `v0.2.3`; its Release artifact verification passed, but the publish-path verification failed its unit gate (a start-conflict test raced the asynchronous active-run reservation and sometimes completed), so it was never published. Do not move, recreate, or publish `v0.2.3`.
 
 ## [0.2.2] - 2026-08-26
 

@@ -84,20 +84,16 @@ jobs:
       - name: Install dependencies from the repository lockfile
         run: npm ci
 
-      - name: Quality gate - unit tests
-        run: npm test
-
-      - name: Quality gate - typecheck
-        run: npm run typecheck
-
-      - name: Quality gate - build
-        run: npm run build
+      # Shared kernel 1: hermetic unit suite (named package script shared with
+      # release-verify.yml and release-preflight.yml).
+      - name: Quality kernel - unit tests (shared verify:unit)
+        run: npm run verify:unit
 
       # Narrowly scoped CI-only fake pi (same approach as release-verify.yml).
       # Piren's policy requires a `pi` command on PATH; smoke (buildPiRunCommand)
       # and the clean-install check both need it. Installed AFTER unit tests (so
-      # unit tests stay hermetic with no runner Pi) and BEFORE smoke + packed-
-      # tarball verification. NOT shipped with Piren.
+      # unit tests stay hermetic with no runner Pi) and BEFORE the shared runtime
+      # kernel + packed-tarball verification. NOT shipped with Piren.
       - name: Provide CI-only fake pi on PATH (release verification only)
         run: |
           set -euo pipefail
@@ -119,8 +115,9 @@ jobs:
           chmod +x "$dir/pi"
           echo "$dir" >> "$GITHUB_PATH"
 
-      - name: Quality gate - smoke
-        run: npm run smoke
+      # Shared kernel 2: runtime quality (typecheck, build, smoke) after the shim.
+      - name: Quality kernel - runtime verification (shared verify:runtime)
+        run: npm run verify:runtime
 
       # Fail before any publish if the resolved tag and package.json versions disagree.
       # RELEASE_TAG is the exact push tag or manual dispatch input; strip the leading "v".
@@ -167,7 +164,7 @@ jobs:
     name: Publish verified release to npm
     runs-on: ubuntu-latest
     needs: verify
-    # Five permanent unpublished-tag exceptions. The first three are the
+    # Six permanent unpublished-tag exceptions. The first three are the
     # historical manual-bootstrap exceptions (ADR-0035 + ADR-0036 + ADR-0037):
     #   - v0.1.1: tagged candidate whose release verification FAILED before
     #     registry publication; permanently unpublished.
@@ -180,13 +177,17 @@ jobs:
     #   - v0.2.1: immutable tag whose verification gate failed (a conversation-
     #     broker concurrency test timed out); never published. Superseded by
     #     v0.2.2 and never to be published.
-    # Skip the publish job for exactly these five unpublished tags so the
+    #   - v0.2.3: immutable tag whose artifact verification passed but whose
+    #     publish-path verification failed its unit gate (a start-conflict test
+    #     raced the asynchronous active-run reservation); never published.
+    #     Superseded by v0.2.4 and never to be published.
+    # Skip the publish job for exactly these six unpublished tags so the
     # workflow still verifies the artifact (verify runs) but never attempts an
-    # npm publish for any of them. v0.1.4, v0.2.2, and later use the normal
-    # provenance path below.
+    # npm publish for any of them. v0.1.4, v0.2.2, v0.2.4, and later use the
+    # normal provenance path below.
     if: >-
-      (github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3' && github.ref_name != 'v0.2.0' && github.ref_name != 'v0.2.1') ||
-      (github.event_name == 'workflow_dispatch' && inputs.release_tag != 'v0.1.1' && inputs.release_tag != 'v0.1.2' && inputs.release_tag != 'v0.1.3' && inputs.release_tag != 'v0.2.0' && inputs.release_tag != 'v0.2.1')
+      (github.event_name == 'push' && github.ref_name != 'v0.1.1' && github.ref_name != 'v0.1.2' && github.ref_name != 'v0.1.3' && github.ref_name != 'v0.2.0' && github.ref_name != 'v0.2.1' && github.ref_name != 'v0.2.3') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != 'v0.1.1' && inputs.release_tag != 'v0.1.2' && inputs.release_tag != 'v0.1.3' && inputs.release_tag != 'v0.2.0' && inputs.release_tag != 'v0.2.1' && inputs.release_tag != 'v0.2.3')
     # Protected GitHub Environment: a steward approves this job in GitHub before
     # it runs. Because publish needs verify, approval happens AFTER the
     # tag-triggered verification path has completed. Configured in P2.

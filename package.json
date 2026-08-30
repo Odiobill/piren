@@ -1,6 +1,6 @@
 {
   "name": "@odiobill/piren",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "description": "Piren: lightweight, local-first agent layer on top of Pi Coding Agent",
   "repository": {
@@ -23,7 +23,9 @@
     "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json && tsx scripts/copy-templates.ts && vite build --config web/vite.config.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "clean-install:check": "tsx scripts/clean-install-check.ts"
+    "clean-install:check": "tsx scripts/clean-install-check.ts",
+    "verify:unit": "vitest run",
+    "verify:runtime": "npm run typecheck && npm run build && npm run smoke"
   },
   "dependencies": {
     "typebox": "1.2.19",
