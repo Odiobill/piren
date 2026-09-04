@@ -40,10 +40,12 @@ describe("docs/api.md — the three workflow-budget/status routes are documented
     expect(api).toContain("500");
   });
 
-  it("documents the bounded budgets read (total/omitted, warnings, association map)", () => {
+  it("documents the bounded inspection read without making it the Context-popup editor source", () => {
     expect(api).toContain("total");
     expect(api).toContain("omitted");
     expect(api).toContain("warnings");
+    expect(api).toContain("Context telemetry popup");
+    expect(api).not.toMatch(/Details modal[^\n]*budget/i);
   });
 
   it("documents the closed POST body with absolute strictly-raising targets and fixed caps/depth", () => {
@@ -68,11 +70,13 @@ describe("docs/api.md — the three workflow-budget/status routes are documented
 });
 
 describe("docs/gateway.md — Workbench budget control and card status boundaries", () => {
-  it("documents the Conversation Details Workflow budget section", () => {
-    expect(gateway).toContain("Workflow budget");
-    // Root-scoped durable facts; zero workflows render no fabricated budget.
+  it("documents the associated workflow-root budget in the Context telemetry popup, not Conversation Details", () => {
+    expect(gateway).toContain("Associated handoff workflow");
+    expect(gateway).toContain("Context telemetry popup");
+    // Root-scoped durable facts; no association renders no fabricated budget.
     expect(gateway).toMatch(/root-scoped|per root|each root/);
-    expect(gateway).toMatch(/[Zz]ero(?:\s+\w+)*\s+workflow/);
+    expect(gateway).toMatch(/[Nn]o (?:associated )?workflow|workflow:\s*null/);
+    expect(gateway).not.toMatch(/Workflow budgets? \(Conversation Details|Conversation Details[^\n]*Workflow budget/i);
   });
 
   it("documents explicit Save with CAS re-read and manual-only retry", () => {
@@ -94,20 +98,21 @@ describe("docs/gateway.md — Workbench budget control and card status boundarie
 
   it("documents the explicit status-read moments and the no-polling/no-persistence/no-browser-derivation boundaries", () => {
     expect(gateway).toMatch(/attach|selection/i);
-    expect(gateway).toMatch(/[Dd]etails modal|details modal/);
+    expect(gateway).toMatch(/[Cc]ontext telemetry popup|popup close/);
     expect(gateway).toContain("polling");
     expect(gateway).toMatch(/[Nn]o browser (?:persistence|storage)|never persists to the browser|in-memory only/);
     expect(gateway).toMatch(/never (?:derived|inferred|chosen) (?:by|in) the browser|browser never/);
   });
 
-  it("keeps workflow budgets distinct from per-agent budgets and Pi context telemetry", () => {
+  it("keeps associated workflow-root budgets distinct from per-agent budgets and Context telemetry", () => {
     expect(gateway).toContain("per-agent");
     expect(gateway).toContain("Context");
+    expect(gateway).toMatch(/associated workflow-root|workflow-root/i);
     expect(gateway).toMatch(/Pi context|context telemetry/i);
   });
 });
 
-describe("README.md — live activity vs workflow-status sourcing (B7 correction)", () => {
+describe("README.md — live activity vs workflow-status sourcing and Context-popup budget remedy", () => {
   it("no longer claims status cards come only from the live stream", async () => {
     const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
     const readme = await readFile(join(repoRoot, "README.md"), "utf8");
@@ -115,7 +120,7 @@ describe("README.md — live activity vs workflow-status sourcing (B7 correction
     expect(readme).not.toMatch(/status cards are transient, come only from the live stream/);
   });
 
-  it("pins the truthful separation: live activity from the stream; workflow status from explicit gateway snapshots with interim activity, no persistence", async () => {
+  it("pins the truthful separation and directs budget changes to the associated Context telemetry popup", async () => {
     const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
     const readme = await readFile(join(repoRoot, "README.md"), "utf8");
     // Live activity cards: live-stream transient state, never reconstructed.
@@ -127,6 +132,8 @@ describe("README.md — live activity vs workflow-status sourcing (B7 correction
     expect(readme).toMatch(/[Ll]ive activity/);
     expect(readme).toMatch(/[Nn]o (?:browser )?polling/);
     expect(readme).toMatch(/[Nn]o browser persistence|never (?:written|persisted) (?:to|in) the browser|in browser memory only/);
+    expect(readme).toContain("Context telemetry popup");
+    expect(readme).not.toMatch(/Conversation \*\*Details\*\* include a Workflow budget/i);
   });
 });
 
