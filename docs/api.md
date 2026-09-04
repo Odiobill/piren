@@ -116,6 +116,12 @@ Vault browser and graph:
 - `GET /api/vault/read?path=...`
 - `GET /api/vault/graph`
 
+Steward Alerts (same Bearer gate; authoritative records are direct active Markdown files under `steward-inbox/alerts/`):
+
+- `GET /api/steward-alerts` — bounded strict projection `{attention_count, alerts}`. `attention_count` includes only open `high`/`urgent` alerts; each list entry carries only exact path, id, severity, status, title, created, and closed evidence when applicable.
+- `GET /api/steward-alerts/read?path=...` — one exact direct active alert, including its content. Traversal, nested archive, malformed, missing, and non-alert paths are rejected; this is not a generic vault reader.
+- `POST /api/steward-alerts/close` — body exactly `{path, expected_status: "open"}`. It is the one-way `open → closed` acknowledgement, preserving alert evidence and adding `closed_at`/`closed_via: workbench`. Missing/malformed paths are bounded errors and stale/already-closed input is `409`; there is no reopen, delete, bulk close, mirror send, or archive-on-close.
+
 Managed service observation:
 
 - `GET /api/services/status` — one fresh, read-only snapshot of the fixed Piren service targets `telegram`, `discord`, and `scheduler` (always in that order), sampled locally by the gateway at request time. Success is `200` with exactly `{observedAt, manager, targets}`: `observedAt` is the server-generated ISO sample time, `manager` is `systemd-user`, `tmux-cron`, or `unavailable`, and each target's `state` is one of `active`, `inactive`, `not-installed`, `unavailable`, or `unknown`. A target the gateway cannot classify safely is reported as `unknown` for that target only — never as inactive, and never as a whole-snapshot failure. The route accepts no target, manager, command, path, or timeout selection; it never probes the gateway service itself (a successful authenticated read already establishes the gateway-connection fact) and returns no command text, paths, logs, process identifiers, or other diagnostics. When no observation can be produced, the response is a bounded `503 {"error": "service observation unavailable"}`, never a fabricated snapshot. The read changes nothing: no service control, install, removal, config write, polling, caching, or history.

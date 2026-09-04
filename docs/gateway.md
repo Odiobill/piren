@@ -60,6 +60,7 @@ The Workbench is Piren's steward-facing, Conversation-native workspace. It provi
 - composer interlock: while a Conversation has live agent work or a pending approval, the composer is read-only with a visible reason and preserves any unsent draft until the work settles
 - per-agent **Context cards** below the composer: session-only context usage with an explicit Refresh only, held in browser memory and cleared on reload; a card can additionally show one truthful workflow-status indicator and open its existing Context telemetry popup, which may expose that exact agent's associated workflow-root budget (see [Workflow budgets and card status](#conversations))
 - a read-only **Vault Explorer** companion beside the selected Conversation (or full-page with no selection) over the existing vault list/read routes; read-only with fresh rereads and no Knowledge Graph presentation
+- **Steward Alerts**: a red circular header count for open high/urgent alerts and a companion module (or full-page with no selected Conversation) that lists and opens exact durable alerts. Selecting an open alert exposes one **Close alert** button; one click performs only the durable `open → closed` acknowledgement. A stale/error close fresh-reads rather than retrying the mutation. The badge/module do not mark alerts read, poll, store state, resend mirrors, delete, reopen, or automatically archive alerts.
 - a full-page typed **Settings** module (see [Settings](#settings))
 - a focus-managed **Conversation details** modal with the editable title, metadata, and Archive/Reopen controls
 - stable `#conversation/<id>` deep links that re-read the manifest and re-run the attach gate on load and Back/Forward
@@ -83,6 +84,16 @@ Routes:
 - `GET /api/vault/graph`
 
 The browser is read-only, hides dotfiles, caps listings and reads, and enforces vault path boundaries. The graph route is also read-only: it indexes OKF-typed Markdown documents across the vault from the root, including project indexes, decision records, runbooks, concepts, and entities, then extracts directed links and returns JSON for external integrations. The Workbench's Vault Explorer companion uses only the list/read routes; Knowledge Graph presentation is not part of the current Workbench.
+
+## Steward Alerts
+
+Routes (Bearer-gated whenever the gateway has a token):
+
+- `GET /api/steward-alerts` — bounded, strict active-alert projection: `attention_count` is open high/urgent only; list entries contain structural facts, not content.
+- `GET /api/steward-alerts/read?path=...` — full content of one exact direct active alert path only; archive/traversal/non-alert paths are rejected.
+- `POST /api/steward-alerts/close` — the only alert mutation. The body is exactly `{path, expected_status: "open"}`; it performs `open → closed` with durable closure time/provenance or returns 409 for an already-closed/stale alert.
+
+The authoritative Markdown alert remains under `steward-inbox/alerts/`. Telegram/Discord mirrors remain advisory and are never changed by viewing or closing. A closed alert is **not automatically archived**; archival remains a separate explicit protocol action.
 
 ## Local runnable-agent roster
 

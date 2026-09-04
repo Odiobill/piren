@@ -80,7 +80,7 @@ Group-scoped skills sit between shared skills and agent-specific skills in the l
 - `skills/`: shared vault skills available to all agents.
 - `cron/jobs/`: shared scheduled jobs.
 - `cron/runs/`: shared scheduled run records.
-- `steward-inbox/alerts/`: alert files created by `flag_steward`.
+- `steward-inbox/alerts/`: authoritative alert files created by `flag_steward`. Active records begin `status: open`; the authenticated Workbench can explicitly close one exact alert (`status: closed` with closure evidence). Closing never deletes or archives the record.
 - `wiki/concepts/` and `wiki/entities/`: curated reference knowledge.
 - `wiki/runbooks/`: reusable operational procedures.
 
