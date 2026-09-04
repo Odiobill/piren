@@ -15,16 +15,17 @@ const closedAlert = {
 
 describe("steward-alert archive planning", () => {
   it("plans one exact closed direct alert into a date-partitioned archive without mutating evidence", () => {
-    expect(planStewardAlertArchive(closedAlert)).toEqual({
+    expect(planStewardAlertArchive({ alert: closedAlert, archiveAt: "2026-09-05T00:00:00.000Z" })).toEqual({
       sourcePath: closedAlert.path,
-      destinationPath: "steward-inbox/alerts/archive/2026/09/04/20260904T164500000Z-vault-unavailable.md",
+      destinationPath: "steward-inbox/alerts/archive/2026/09/05/20260904T164500000Z-vault-unavailable.md",
     });
   });
 
   it("fails closed for open, malformed, or non-direct alert candidates", () => {
-    expect(() => planStewardAlertArchive({ ...closedAlert, status: "open" })).toThrow("closed");
-    expect(() => planStewardAlertArchive({ ...closedAlert, path: "steward-inbox/alerts/archive/old.md" })).toThrow("direct");
+    expect(() => planStewardAlertArchive({ alert: { ...closedAlert, status: "open" }, archiveAt: "2026-09-04T18:00:00.000Z" })).toThrow("closed");
+    expect(() => planStewardAlertArchive({ alert: { ...closedAlert, path: "steward-inbox/alerts/archive/old.md" }, archiveAt: "2026-09-04T18:00:00.000Z" })).toThrow("direct");
     const { closedAt: _closedAt, ...missingClosure } = closedAlert;
-    expect(() => planStewardAlertArchive(missingClosure)).toThrow("closure");
+    expect(() => planStewardAlertArchive({ alert: missingClosure, archiveAt: "2026-09-04T18:00:00.000Z" })).toThrow("closure");
+    expect(() => planStewardAlertArchive({ alert: closedAlert, archiveAt: "bad" })).toThrow("operation time");
   });
 });

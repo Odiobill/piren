@@ -33,13 +33,14 @@ async function rootWithAlert(): Promise<string> {
 describe("stored steward-alert archive preview", () => {
   it("returns a no-mutation exact plan only when its destination is absent", async () => {
     const root = await rootWithAlert();
-    await expect(previewStoredStewardAlertArchive(root, path)).resolves.toEqual({
+    const now = () => new Date("2026-09-04T18:00:00.000Z");
+    await expect(previewStoredStewardAlertArchive(root, path, now)).resolves.toEqual({
       sourcePath: path,
       destinationPath: "steward-inbox/alerts/archive/2026/09/04/closed.md",
     });
 
     await mkdir(join(root, "steward-inbox", "alerts", "archive", "2026", "09", "04"), { recursive: true });
     await writeFile(join(root, "steward-inbox", "alerts", "archive", "2026", "09", "04", "closed.md"), "existing");
-    await expect(previewStoredStewardAlertArchive(root, path)).rejects.toEqual(expect.objectContaining<Partial<StewardAlertStoreError>>({ kind: "conflict" }));
+    await expect(previewStoredStewardAlertArchive(root, path, now)).rejects.toEqual(expect.objectContaining<Partial<StewardAlertStoreError>>({ kind: "conflict" }));
   });
 });

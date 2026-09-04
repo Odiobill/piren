@@ -96,11 +96,15 @@ export async function listStewardAlerts(vaultRoot: string): Promise<StewardAlert
  * Preview one exact closed alert archive. This adapter only validates current
  * source evidence and destination vacancy; it never creates or moves anything.
  */
-export async function previewStoredStewardAlertArchive(vaultRoot: string, path: string) {
+export async function previewStoredStewardAlertArchive(
+  vaultRoot: string,
+  path: string,
+  now: () => Date = () => new Date(),
+) {
   const current = await readStewardAlert(vaultRoot, path);
   let plan: ReturnType<typeof planStewardAlertArchive>;
   try {
-    plan = planStewardAlertArchive(current.alert);
+    plan = planStewardAlertArchive({ alert: current.alert, archiveAt: now().toISOString() });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new StewardAlertStoreError(`alert cannot be archived: ${message}`, "conflict");
