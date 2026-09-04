@@ -1,5 +1,6 @@
-import { mkdir, open, readFile, readdir, rename } from "node:fs/promises";
+import { access, mkdir, open, readFile, readdir, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { planStewardAlertArchive } from "./steward-alert-archive.js";
 import {
   closeStewardAlert,
   isDirectActiveStewardAlertPath,
@@ -89,6 +90,30 @@ export async function listStewardAlerts(vaultRoot: string): Promise<StewardAlert
     alerts.push(result.alert);
   }
   return projectStewardAlerts(alerts);
+}
+
+/**
+ * Preview one exact closed alert archive. This adapter only validates current
+ * source evidence and destination vacancy; it never creates or moves anything.
+ */
+export async function previewStoredStewardAlertArchive(vaultRoot: string, path: string) {
+  const current = await readStewardAlert(vaultRoot, path);
+  let plan: ReturnType<typeof planStewardAlertArchive>;
+  try {
+    plan = planStewardAlertArchive(current.alert);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new StewardAlertStoreError(`alert cannot be archived: ${message}`, "conflict");
+  }
+  try {
+    await access(resolve(vaultRoot, plan.destinationPath));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return plan;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new StewardAlertStoreError(`cannot inspect archive destination: ${message}`, "bad-request");
+  }
+  throw new StewardAlertStoreError("alert archive destination already exists", "conflict");
 }
 
 /**
