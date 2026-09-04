@@ -70,7 +70,7 @@ describe("B6 workflow status view model — exact truth table (§6)", () => {
     const indicator = workflowStatusIndicator("dipu", snapshot, true);
     expect(indicator.state).toBe("red");
     expect(indicator.accessibleText).toBe(
-      "Workflow budget exhausted for dipu's associated workflow; open conversation details to extend",
+      "Workflow budget exhausted for dipu's associated workflow; open Context telemetry to extend",
     );
   });
 

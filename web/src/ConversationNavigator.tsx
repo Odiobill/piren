@@ -10,6 +10,7 @@ import {
   fetchConversationTelemetry,
   fetchConversationWorkflowStatus,
   isConversationWorkflowStatusSnapshot,
+  type ConversationWorkflowStatusSnapshot,
   LifecycleHttpError,
   RenameHttpError,
   renameConversation,
@@ -281,6 +282,8 @@ export function ConversationNavigator({
    * automatic retry; a non-401 failed read yields no fabricated indicator.
    */
   const [workflowStatusByAgent, setWorkflowStatusByAgent] = useState<ReadonlyMap<string, WorkflowStatusIndicator>>(new Map());
+  /** W5b: full strict exact-pair snapshots for the associated-popup editor. */
+  const [workflowStatusSnapshotsByAgent, setWorkflowStatusSnapshotsByAgent] = useState<ReadonlyMap<string, ConversationWorkflowStatusSnapshot>>(new Map());
   const workflowStatusReadSeqRef = useRef(0);
   const activeWorkflowStatusTargetRef = useRef<{ conversationId: string; audience: readonly string[] } | null>(null);
   const handleTelemetry = useCallback((frame: ConversationTelemetryFrame) => {
@@ -324,6 +327,8 @@ export function ConversationNavigator({
     setRestoredByAgent(new Map());
     setTelemetryPopupAgent(null);
     setTelemetryRefresh(null);
+    setWorkflowStatusByAgent(new Map());
+    setWorkflowStatusSnapshotsByAgent(new Map());
     onUnauthorized();
   }, [onUnauthorized]);
 
@@ -353,22 +358,25 @@ export function ConversationNavigator({
       // Stale-completion guards: a newer explicit read supersedes this one,
       // and a selection that is no longer exactly this active conversation
       // (id AND audience) makes this completion fully inert.
-      if (seq !== workflowStatusReadSeqRef.current) return;
+      if (seq !== workflowStatusReadSeqRef.current) return false;
       const target = activeWorkflowStatusTargetRef.current;
-      if (target === null || target.conversationId !== conversationId || target.audience.join("\u0000") !== audience.join("\u0000")) return;
+      if (target === null || target.conversationId !== conversationId || target.audience.join("\u0000") !== audience.join("\u0000")) return false;
       if (results.some((result) => "error" in result && result.error instanceof UnauthorizedError)) {
         setWorkflowStatusByAgent(new Map());
+        setWorkflowStatusSnapshotsByAgent(new Map());
         handleUnauthorized();
-        return;
+        return false;
       }
       const activityActiveAgents = new Set(previousDockRunsRef.current.map((run) => run.agent));
       const next = new Map<string, WorkflowStatusIndicator>();
+      const snapshots = new Map<string, ConversationWorkflowStatusSnapshot>();
       for (const result of results) {
         // B6 correction: the trusted-adapter boundary. Any unexpected
         // runtime non-snapshot value is treated exactly like a non-401
         // failed read — no indicator, no crash, no unhandled rejection,
         // no fabricated fact, no retry.
         if ("snapshot" in result && isConversationWorkflowStatusSnapshot(result.snapshot)) {
+          snapshots.set(result.agent, result.snapshot);
           next.set(
             result.agent,
             workflowStatusIndicator(
@@ -380,6 +388,8 @@ export function ConversationNavigator({
         }
       }
       setWorkflowStatusByAgent(next);
+      setWorkflowStatusSnapshotsByAgent(snapshots);
+      return true;
     },
     [token, handleUnauthorized],
   );
@@ -494,6 +504,7 @@ export function ConversationNavigator({
   useLayoutEffect(() => {
     workflowStatusReadSeqRef.current += 1;
     setWorkflowStatusByAgent(new Map());
+    setWorkflowStatusSnapshotsByAgent(new Map());
     activeWorkflowStatusTargetRef.current = workflowStatusTargetFor(selection);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surfaceKey]);
@@ -1013,6 +1024,8 @@ export function ConversationNavigator({
     setRestoredByAgent(new Map());
     setTelemetryPopupAgent(null);
     setTelemetryRefresh(null);
+    setWorkflowStatusByAgent(new Map());
+    setWorkflowStatusSnapshotsByAgent(new Map());
   }, [token]);
 
   function openTelemetryPopup(agent: string) {
@@ -1025,6 +1038,11 @@ export function ConversationNavigator({
     const agent = telemetryPopupAgent;
     setTelemetryPopupAgent(null);
     if (agent !== null) telemetryCardRefs.current.get(agent)?.focus();
+    // W5b explicit read moment: this popup may have accepted a workflow
+    // budget update, so close re-reads the exact current audience only.
+    if (selection.phase === "active") {
+      void refreshWorkflowStatuses(selection.conversation.id, selection.conversation.audience);
+    }
   }
 
   function openDetails() {
@@ -1034,11 +1052,6 @@ export function ConversationNavigator({
   function closeDetails() {
     setDetailsOpen(false);
     detailsButtonRef.current?.focus();
-    // B6 explicit moment: the details modal closed (it may have changed
-    // audience or budgets) — one fresh exact-pair status read per agent.
-    if (selection.phase === "active") {
-      void refreshWorkflowStatuses(selection.conversation.id, selection.conversation.audience);
-    }
   }
 
   if (load.phase === "loading") {
@@ -1284,6 +1297,19 @@ export function ConversationNavigator({
                 error={telemetryRefresh?.agent === telemetryPopupAgent && telemetryRefresh.phase === "error" ? telemetryRefresh.message : null}
                 onRefresh={() => void refreshTelemetry(selection.conversation.id, telemetryPopupAgent)}
                 onClose={closeTelemetryPopup}
+                {...(() => {
+                  const snapshot = workflowStatusSnapshotsByAgent.get(telemetryPopupAgent);
+                  return snapshot === undefined
+                    ? {}
+                    : {
+                        workflowBudget: {
+                          conversationId: selection.conversation.id,
+                          token,
+                          snapshot,
+                          onStatusReread: () => refreshWorkflowStatuses(selection.conversation.id, selection.conversation.audience),
+                        },
+                      };
+                })()}
               />
             )}
           </>
@@ -1334,8 +1360,6 @@ export function ConversationNavigator({
             }}
             onRename={handleRenameRequest}
             onClose={closeDetails}
-            token={token}
-            onWorkflowBudgetsChanged={(conversationId) => void openConversationById(conversationId)}
           />
         )}
       </section>

@@ -1,6 +1,20 @@
-import { useEffect, useRef } from "react";
-import { RefreshIcon, XIcon } from "./icons";
+import { useEffect, useRef, useState } from "react";
+import { RefreshIcon, RetryIcon, XIcon } from "./icons";
+import { updateConversationWorkflowBudget, WorkflowBudgetHttpError, type ConversationWorkflowStatusSnapshot } from "./api";
+import {
+  associatedWorkflowBudgetView,
+  buildAssociatedWorkflowBudgetUpdateRequest,
+} from "./conversation-associated-workflow-budget";
 import type { TelemetryPopupViewModel } from "./conversation-context-cards";
+import { WORKFLOW_BUDGET_FIXED_DEPTH, type WorkflowBudgetDraft } from "./conversation-workflow-budget";
+
+export interface AssociatedWorkflowBudgetPopupProps {
+  conversationId: string;
+  token: string;
+  snapshot: ConversationWorkflowStatusSnapshot;
+  /** Re-read exact workflow statuses after an accepted mutation. */
+  onStatusReread: () => Promise<boolean>;
+}
 
 /**
  * Telemetry details popup (accepted design
@@ -12,17 +26,13 @@ import type { TelemetryPopupViewModel } from "./conversation-context-cards";
  * and truthful state first, then context tokens/window/percent (two-decimal
  * percent; unavailable states never fabricate a number), model, thinking,
  * and auto-compaction from the in-memory T6 entry. It never fetches on open
- * — the explicit Refresh control is the only fetch trigger, wired by the
- * navigator through the preserved T6 generation guard.
+ * — the explicit Refresh control is the only telemetry fetch trigger, wired
+ * by the navigator through the preserved T6 generation guard.
  *
- * Accessibility (mirrors the ConversationDetailsModal pattern): opening moves
- * focus to the Refresh control (the popup's primary explicit action);
- * Tab/Shift+Tab trap focus inside; Escape and Close dismiss (Escape is
- * suppressed while a Refresh is in flight so a bounded failure and its
- * message stay visible); dismissal returns focus to the invoking card (the
- * caller owns focus return). The bar is a non-interactive labelled
- * progressbar: aria-valuenow only for a real measured percent (including a
- * truthful 0), neutral otherwise. No animation; reduced-motion safe.
+ * W5b adds an adjacent Associated handoff workflow section only when the
+ * gateway has already supplied an exact-pair root association. It is a shared
+ * workflow-root coordination budget, never Context telemetry or an agent
+ * budget. Its update uses the existing CAS route and never chooses a root.
  */
 export function ConversationTelemetryPopup({
   viewModel,
@@ -30,19 +40,23 @@ export function ConversationTelemetryPopup({
   error,
   onRefresh,
   onClose,
+  workflowBudget,
 }: {
   viewModel: TelemetryPopupViewModel;
   busy: boolean;
   error: string | null;
   onRefresh: () => void;
   onClose: () => void;
+  workflowBudget?: AssociatedWorkflowBudgetPopupProps;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const refreshRef = useRef<HTMLButtonElement>(null);
+  const [savingBudget, setSavingBudget] = useState(false);
+  const popupBusy = busy || savingBudget;
   // Ref mirror so the one-time document keydown listener always sees the
   // current in-flight state (never a stale render's `busy`).
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
+  const busyRef = useRef(popupBusy);
+  busyRef.current = popupBusy;
 
   // Open focus (explicit Refresh control) + trap + Escape.
   useEffect(() => {
@@ -57,8 +71,8 @@ export function ConversationTelemetryPopup({
       );
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        // While a Refresh is in flight, Escape must never dismiss the popup:
-        // if the request then fails, the bounded failure must stay visible.
+        // While a Refresh or budget Save is in flight, Escape must never
+        // dismiss the popup: any bounded failure must remain visible.
         if (busyRef.current) return;
         event.preventDefault();
         onClose();
@@ -86,6 +100,7 @@ export function ConversationTelemetryPopup({
   }, [onClose]);
 
   const { bar } = viewModel;
+  const associatedWorkflow = workflowBudget === undefined ? null : associatedWorkflowBudgetView(workflowBudget.snapshot);
   return (
     <div className="telemetry-popup-backdrop">
       <div
@@ -104,7 +119,7 @@ export function ConversationTelemetryPopup({
             className="button button-small telemetry-popup-close"
             aria-label={viewModel.closeLabel}
             onClick={onClose}
-            disabled={busy}
+            disabled={popupBusy}
           >
             <XIcon size={14} />
           </button>
@@ -133,6 +148,13 @@ export function ConversationTelemetryPopup({
             ))}
           </dl>
         )}
+        {associatedWorkflow !== null && workflowBudget !== undefined && (
+          <AssociatedWorkflowBudgetSection
+            workflowBudget={workflowBudget}
+            telemetryBusy={busy}
+            onSavingChange={setSavingBudget}
+          />
+        )}
         <div className="telemetry-popup-actions">
           <button
             type="button"
@@ -140,7 +162,7 @@ export function ConversationTelemetryPopup({
             className="button button-small telemetry-refresh"
             aria-label={viewModel.refreshLabel}
             title={viewModel.refreshLabel}
-            disabled={busy}
+            disabled={popupBusy}
             onClick={onRefresh}
           >
             <RefreshIcon size={14} />
@@ -154,5 +176,133 @@ export function ConversationTelemetryPopup({
         )}
       </div>
     </div>
+  );
+}
+
+function AssociatedWorkflowBudgetSection({
+  workflowBudget,
+  telemetryBusy,
+  onSavingChange,
+}: {
+  workflowBudget: AssociatedWorkflowBudgetPopupProps;
+  telemetryBusy: boolean;
+  onSavingChange: (saving: boolean) => void;
+}) {
+  const workflow = associatedWorkflowBudgetView(workflowBudget.snapshot);
+  const [draft, setDraft] = useState<WorkflowBudgetDraft>({ edges: "", reworkRounds: "" });
+  const [saving, setSaving] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [reloadError, setReloadError] = useState<string | null>(null);
+  if (workflow === null) return null;
+
+  const busy = telemetryBusy || saving;
+  const request = buildAssociatedWorkflowBudgetUpdateRequest({ snapshot: workflowBudget.snapshot, draft, busy });
+  const remainingEdges = Math.max(0, workflow.effective.edges - workflow.consumed.edges);
+  const remainingReworkRounds = Math.max(0, 1 + workflow.effective.reworkRounds - workflow.worstPairOccurrences);
+
+  async function rereadOnly(): Promise<void> {
+    setReloadError(null);
+    let reread = false;
+    try {
+      reread = await workflowBudget.onStatusReread();
+    } catch {
+      reread = false;
+    }
+    if (!reread) setReloadError("Workflow budget could not be re-read. Check the gateway and retry.");
+  }
+
+  async function save(): Promise<void> {
+    if (request === null) return;
+    setSaving(true);
+    onSavingChange(true);
+    setRequestError(null);
+    setReloadError(null);
+    try {
+      await updateConversationWorkflowBudget(workflowBudget.conversationId, request, workflowBudget.token);
+    } catch (cause) {
+      setRequestError(
+        cause instanceof WorkflowBudgetHttpError
+          ? cause.message
+          : "The workflow budget update failed. Check the gateway and retry.",
+      );
+      setSaving(false);
+      onSavingChange(false);
+      return;
+    }
+    await rereadOnly();
+    setSaving(false);
+    onSavingChange(false);
+  }
+
+  return (
+    <section className="associated-workflow-budget" aria-labelledby="associated-workflow-budget-heading">
+      <h3 id="associated-workflow-budget-heading">Associated handoff workflow</h3>
+      <p className="field-help">Context telemetry is separate from this workflow-root budget. Other agents can share this root.</p>
+      <p className="associated-workflow-budget-root">Root <code>{workflow.rootEventId}</code></p>
+      <dl className="associated-workflow-budget-facts">
+        <div>
+          <dt>Edges</dt>
+          <dd>consumed {workflow.consumed.edges} of {workflow.effective.edges} effective (base {workflow.base.edges}, remaining {remainingEdges})</dd>
+        </div>
+        <div>
+          <dt>Rework rounds</dt>
+          <dd>{workflow.effective.reworkRounds} effective (base {workflow.base.reworkRounds}); worst pair has used {workflow.worstPairOccurrences} of {1 + workflow.effective.reworkRounds} allowed (remaining {remainingReworkRounds})</dd>
+        </div>
+        <div><dt>Depth</dt><dd>Depth: {WORKFLOW_BUDGET_FIXED_DEPTH} (fixed)</dd></div>
+      </dl>
+      <div className="associated-workflow-budget-edit">
+        <label htmlFor={`associated-workflow-budget-edges-${workflow.rootEventId}`}>New edges limit</label>
+        <input
+          id={`associated-workflow-budget-edges-${workflow.rootEventId}`}
+          type="text"
+          inputMode="numeric"
+          value={draft.edges}
+          disabled={busy}
+          onChange={(event) => setDraft((previous) => ({ ...previous, edges: event.target.value }))}
+        />
+        <label htmlFor={`associated-workflow-budget-rework-${workflow.rootEventId}`}>New rework rounds limit</label>
+        <input
+          id={`associated-workflow-budget-rework-${workflow.rootEventId}`}
+          type="text"
+          inputMode="numeric"
+          value={draft.reworkRounds}
+          disabled={busy}
+          onChange={(event) => setDraft((previous) => ({ ...previous, reworkRounds: event.target.value }))}
+        />
+        <button
+          type="button"
+          className="button button-small"
+          aria-label={`Save workflow budget for associated root ${workflow.rootEventId}`}
+          disabled={request === null}
+          onClick={() => void save()}
+        >
+          Save
+        </button>
+      </div>
+      {workflow.warnings.length > 0 && (
+        <ul className="associated-workflow-budget-warnings">
+          {workflow.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
+          {workflow.omittedWarnings > 0 && <li>{workflow.omittedWarnings} more ignored budget update(s) not shown</li>}
+        </ul>
+      )}
+      {requestError !== null && (
+        <div className="associated-workflow-budget-error" role="alert">
+          <p className="error-message">{requestError}</p>
+          <button type="button" className="button button-small" onClick={() => void save()}>
+            <RetryIcon size={14} />
+            Retry
+          </button>
+        </div>
+      )}
+      {reloadError !== null && (
+        <div className="associated-workflow-budget-reload-error" role="alert">
+          <p className="error-message">{reloadError}</p>
+          <button type="button" className="button button-small" onClick={() => void rereadOnly()}>
+            <RetryIcon size={14} />
+            Retry
+          </button>
+        </div>
+      )}
+    </section>
   );
 }

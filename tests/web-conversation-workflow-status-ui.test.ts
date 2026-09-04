@@ -205,11 +205,30 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
     expect(red?.className).toContain("context-card-workflow-status-red");
     expect(red?.textContent).toContain("budget exhausted");
     expect(cardButton("dipu")?.getAttribute("aria-label")).toContain(
-      "Workflow budget exhausted for dipu's associated workflow; open conversation details to extend",
+      "Workflow budget exhausted for dipu's associated workflow; open Context telemetry to extend",
     );
     const yellow = workflowIndicator("zai");
     expect(yellow?.className).toContain("context-card-workflow-status-yellow");
     expect(cardButton("zai")?.getAttribute("aria-label")).toContain("Workflow budget low: 2 of 10 handoff edges remaining");
+  });
+
+  it("opens the associated workflow budget only in that agent's Context popup", async () => {
+    vi.mocked(fetchConversationWorkflowStatus).mockResolvedValue(
+      snapshot({ runActive: true, workflow: facts({ low: true, consumed: { edges: 8 } }) }),
+    );
+    await mountNavigator();
+    await act(async () => {
+      cardButton("dipu")?.click();
+    });
+    await flush();
+
+    const section = container.querySelector<HTMLElement>(".associated-workflow-budget");
+    expect(section?.textContent).toContain("Associated handoff workflow");
+    expect(section?.textContent).toContain("root-1");
+    expect(section?.querySelector('input[id^="associated-workflow-budget-edges-"]')).not.toBeNull();
+    // Opening the card reuses its last explicit exact-pair status snapshot;
+    // it must not make another status read.
+    expect(vi.mocked(fetchConversationWorkflowStatus).mock.calls).toHaveLength(2);
   });
 
   it("a live activity transition gives busy with NO status fetch, and settled clears it", async () => {
@@ -242,7 +261,7 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
     expect(red?.className).not.toContain("busy");
   });
 
-  it("re-reads only at explicit moments: attach, history reread, and details-modal close — never card open, SSE, or a timer", async () => {
+  it("re-reads only at explicit moments: attach, history reread, and Context-popup close — never card open, SSE, timer, or Details close", async () => {
     vi.mocked(fetchConversationWorkflowStatus).mockResolvedValue(snapshot());
     await mountNavigator();
     const afterAttach = vi.mocked(fetchConversationWorkflowStatus).mock.calls.length;
@@ -257,16 +276,25 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
     deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]);
     await flush();
     expect(vi.mocked(fetchConversationWorkflowStatus).mock.calls.length).toBe(afterAttach);
-    // Details-modal close IS an explicit moment: one fresh read per audience agent.
-    const closeButton = container.querySelector<HTMLButtonElement>(".conversation-details-toggle");
-    expect(closeButton).not.toBeNull();
+    // Context-popup close IS the relocated explicit moment: one fresh read
+    // per audience agent. The Context card activation itself made none.
+    const popupClose = container.querySelector<HTMLButtonElement>(".telemetry-popup-close");
+    expect(popupClose).not.toBeNull();
     await act(async () => {
-      closeButton?.click(); // open details
+      popupClose?.click();
     });
     await flush();
-    const closeInModal = container.querySelector<HTMLButtonElement>('[data-testid="mock-details-close"]');
+    expect(vi.mocked(fetchConversationWorkflowStatus).mock.calls.length).toBe(afterAttach + 2);
+
+    // Conversation Details no longer contains a budget editor, so close has
+    // no workflow-status reread side effect.
+    const detailsButton = container.querySelector<HTMLButtonElement>(".conversation-details-toggle");
     await act(async () => {
-      closeInModal?.click();
+      detailsButton?.click();
+    });
+    await flush();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="mock-details-close"]')?.click();
     });
     await flush();
     expect(vi.mocked(fetchConversationWorkflowStatus).mock.calls.length).toBe(afterAttach + 2);

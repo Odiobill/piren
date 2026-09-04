@@ -43,8 +43,6 @@ function Harness({ onRename }: { onRename: (title: string) => Promise<RenameErro
     lifecyclePhase: "idle",
     lifecycleError: null,
     confirmingArchive: false,
-    token: "t",
-    onWorkflowBudgetsChanged: () => {},
     archiveButtonRef,
     confirmArchiveRef,
     onArchiveRequest: () => {},
@@ -130,8 +128,8 @@ describe("ConversationDetailsModal Escape while rename Save is in flight (U2 cor
     const alert = container.querySelector<HTMLElement>('[role="alert"]');
     expect(alert).not.toBeNull();
     expect(alert?.textContent).toContain("busy");
-    // B5: scoped to the rename error region — the workflow-budget section renders
-    // its own Retry only for its own bounded load/save failures.
+    // W5b: Conversation Details has no workflow-budget retry; this is the
+    // sole retry affordance in the modal.
     const retryButtons = Array.from(
       container.querySelectorAll<HTMLElement>(".details-rename-error button"),
     ).filter((button) => button.textContent === "Retry");

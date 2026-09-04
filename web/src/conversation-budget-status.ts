@@ -113,7 +113,7 @@ export function workflowStatusIndicator(
     return {
       state: "red",
       shortText: "budget exhausted",
-      accessibleText: `Workflow budget exhausted for ${agent}'s associated workflow; open conversation details to extend`,
+      accessibleText: `Workflow budget exhausted for ${agent}'s associated workflow; open Context telemetry to extend`,
     };
   }
   if (workflow !== null && workflow.low) {

@@ -388,8 +388,6 @@ describe("P1 modal X close focus/semantics (jsdom component)", () => {
           lifecyclePhase: "idle",
           lifecycleError: null,
           confirmingArchive: false,
-          token: "t",
-          onWorkflowBudgetsChanged: () => {},
           archiveButtonRef: { current: null },
           confirmArchiveRef: { current: null },
           onArchiveRequest: () => {},
