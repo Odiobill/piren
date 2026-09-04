@@ -479,19 +479,24 @@ export async function updateConversationWorkflowBudget(
 }
 
 /**
- * B6 — the strictly parsed exact-pair workflow-status snapshot consumed by
- * the pure status view model. The full B4 workflow facts are validated, but
- * only the status-relevant projection is carried.
+ * W5a — strictly parsed exact-pair workflow-status snapshot. The B4 route
+ * already returns the complete associated-root facts. Retain every validated
+ * field here so the later popup can render and CAS-update only the
+ * gateway-resolved root; no browser root selection is needed.
  */
 export interface ConversationWorkflowStatusSnapshot {
   runActive: boolean;
   workflow: {
     rootEventId: string;
     association: "active-run" | "latest-run";
-    effectiveEdges: number;
-    consumedEdges: number;
+    base: WorkflowBudgetDimensionView;
+    effective: WorkflowBudgetDimensionView;
+    consumed: { edges: number };
+    worstPairOccurrences: number;
     low: boolean;
     exhausted: boolean;
+    warnings: string[];
+    omittedWarnings: number;
   } | null;
 }
 
@@ -564,10 +569,14 @@ function parseWorkflowStatusFacts(value: unknown): NonNullable<ConversationWorkf
   return {
     rootEventId: record.root_event_id,
     association: record.association as "active-run" | "latest-run",
-    effectiveEdges: (record.effective as { edges: number }).edges,
-    consumedEdges: consumedEdges as number,
+    base: record.base as WorkflowBudgetDimensionView,
+    effective: record.effective as WorkflowBudgetDimensionView,
+    consumed: { edges: consumedEdges as number },
+    worstPairOccurrences: record.worstPairOccurrences as number,
     low: record.low as boolean,
     exhausted: record.exhausted as boolean,
+    warnings: record.warnings as string[],
+    omittedWarnings: record.omittedWarnings as number,
   };
 }
 
@@ -590,6 +599,52 @@ export function parseConversationWorkflowStatus(payload: unknown): ConversationW
     runActive: record.run_active as boolean,
     workflow: record.workflow === null ? null : parseWorkflowStatusFacts(record.workflow),
   };
+}
+
+/** Trusted-adapter guard for stale/untyped browser completions. */
+export function isConversationWorkflowStatusSnapshot(value: unknown): value is ConversationWorkflowStatusSnapshot {
+  if (typeof value !== "object" || value === null || !hasExactlyOwnKeys(value, ["runActive", "workflow"])) return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.runActive !== "boolean") return false;
+  if (record.workflow === null) return true;
+  if (typeof record.workflow !== "object" || record.workflow === null) return false;
+  const workflow = record.workflow as Record<string, unknown>;
+  if (
+    !hasExactlyOwnKeys(workflow, [
+      "rootEventId",
+      "association",
+      "base",
+      "effective",
+      "consumed",
+      "worstPairOccurrences",
+      "low",
+      "exhausted",
+      "warnings",
+      "omittedWarnings",
+    ]) ||
+    typeof workflow.rootEventId !== "string" ||
+    workflow.rootEventId === "" ||
+    !WORKFLOW_STATUS_ASSOCIATIONS.includes(workflow.association as string) ||
+    typeof workflow.low !== "boolean" ||
+    typeof workflow.exhausted !== "boolean" ||
+    !isNonNegativeInteger(workflow.worstPairOccurrences) ||
+    !isNonNegativeInteger(workflow.omittedWarnings) ||
+    !Array.isArray(workflow.warnings) ||
+    workflow.warnings.some((warning) => typeof warning !== "string") ||
+    typeof workflow.consumed !== "object" ||
+    workflow.consumed === null ||
+    !hasExactlyOwnKeys(workflow.consumed, ["edges"]) ||
+    !isNonNegativeInteger((workflow.consumed as Record<string, unknown>).edges)
+  ) {
+    return false;
+  }
+  try {
+    parseWorkflowStatusDimension(workflow.base);
+    parseWorkflowStatusDimension(workflow.effective);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

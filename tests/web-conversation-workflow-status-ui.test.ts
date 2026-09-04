@@ -112,7 +112,19 @@ function snapshot(overrides: Partial<ConversationWorkflowStatusSnapshot> = {}): 
 }
 
 function facts(overrides: Partial<NonNullable<ConversationWorkflowStatusSnapshot["workflow"]>> = {}): NonNullable<ConversationWorkflowStatusSnapshot["workflow"]> {
-  return { rootEventId: "root-1", association: "latest-run", effectiveEdges: 10, consumedEdges: 4, low: false, exhausted: false, ...overrides };
+  return {
+    rootEventId: "root-1",
+    association: "latest-run",
+    base: { edges: 8, reworkRounds: 2 },
+    effective: { edges: 10, reworkRounds: 3 },
+    consumed: { edges: 4 },
+    worstPairOccurrences: 1,
+    low: false,
+    exhausted: false,
+    warnings: [],
+    omittedWarnings: 0,
+    ...overrides,
+  };
 }
 
 beforeEach(async () => {
@@ -186,7 +198,7 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
   it("red > yellow > busy with red/yellow tied only to the associated workflow", async () => {
     vi.mocked(fetchConversationWorkflowStatus).mockImplementation(async (_id: string, agent: string) => {
       if (agent === "dipu") return snapshot({ runActive: true, workflow: facts({ exhausted: true, low: true }) });
-      return snapshot({ runActive: true, workflow: facts({ low: true, consumedEdges: 8 }) });
+      return snapshot({ runActive: true, workflow: facts({ low: true, consumed: { edges: 8 } }) });
     });
     await mountNavigator();
     const red = workflowIndicator("dipu");
@@ -320,7 +332,10 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
       // C2's own read carries a RED budget fact (exhausted workflow) so the
       // test can observe whether the stale completion REPLACED C2's map.
       if (conversationId === "c2" && agent === "zai") {
-        return snapshot({ runActive: false, workflow: facts({ rootEventId: "root-c2", exhausted: true, low: true, effectiveEdges: 10, consumedEdges: 10 }) });
+        return snapshot({
+          runActive: false,
+          workflow: facts({ rootEventId: "root-c2", exhausted: true, low: true, effective: { edges: 10, reworkRounds: 3 }, consumed: { edges: 10 } }),
+        });
       }
       return snapshot();
     });

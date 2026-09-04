@@ -9,6 +9,7 @@ import {
   fetchConversationAgents,
   fetchConversationTelemetry,
   fetchConversationWorkflowStatus,
+  isConversationWorkflowStatusSnapshot,
   LifecycleHttpError,
   RenameHttpError,
   renameConversation,
@@ -72,9 +73,9 @@ import {
 import { contextCardsForSelection, telemetryPopupViewModel } from "./conversation-context-cards";
 import {
   applyWorkflowStatusActivity,
-  isWorkflowStatusSnapshotView,
   workflowStatusAccessibleName,
   workflowStatusIndicator,
+  workflowStatusViewFromSnapshot,
   type WorkflowStatusIndicator,
 } from "./conversation-budget-status";
 import { contextContinuityStore, type ContextContinuityEntry } from "./context-continuity-store";
@@ -367,8 +368,15 @@ export function ConversationNavigator({
         // runtime non-snapshot value is treated exactly like a non-401
         // failed read — no indicator, no crash, no unhandled rejection,
         // no fabricated fact, no retry.
-        if ("snapshot" in result && isWorkflowStatusSnapshotView(result.snapshot)) {
-          next.set(result.agent, workflowStatusIndicator(result.agent, result.snapshot, activityActiveAgents.has(result.agent)));
+        if ("snapshot" in result && isConversationWorkflowStatusSnapshot(result.snapshot)) {
+          next.set(
+            result.agent,
+            workflowStatusIndicator(
+              result.agent,
+              workflowStatusViewFromSnapshot(result.snapshot),
+              activityActiveAgents.has(result.agent),
+            ),
+          );
         }
       }
       setWorkflowStatusByAgent(next);

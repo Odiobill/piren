@@ -42,6 +42,34 @@ export interface WorkflowStatusActivityRun {
   phase: "working" | "typing";
 }
 
+/**
+ * W5a — project a complete, already strictly validated B4 status snapshot
+ * into the small status-only shape used by the card indicator. The complete
+ * snapshot remains available to the associated-workflow budget model.
+ */
+export function workflowStatusViewFromSnapshot(snapshot: {
+  runActive: boolean;
+  workflow: {
+    effective: { edges: number };
+    consumed: { edges: number };
+    low: boolean;
+    exhausted: boolean;
+  } | null;
+}): WorkflowStatusSnapshotView {
+  return {
+    runActive: snapshot.runActive,
+    workflow:
+      snapshot.workflow === null
+        ? null
+        : {
+            effectiveEdges: snapshot.workflow.effective.edges,
+            consumedEdges: snapshot.workflow.consumed.edges,
+            low: snapshot.workflow.low,
+            exhausted: snapshot.workflow.exhausted,
+          },
+  };
+}
+
 function busyIndicator(agent: string): WorkflowStatusIndicator {
   return { state: "busy", shortText: "running", accessibleText: `${agent} is currently running` };
 }

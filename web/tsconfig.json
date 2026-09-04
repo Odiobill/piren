@@ -25,6 +25,7 @@
     "vite.config.ts",
     "../tests/web-conversation-details-modal.test.ts",
     "../tests/web-conversation-budget-status.test.ts",
+    "../tests/web-conversation-associated-workflow-budget.test.ts",
     "../tests/web-conversation-workflow-status-ui.test.ts",
     "../tests/web-conversation-copy-ui.test.ts",
     "../tests/web-conversation-copy-message.test.ts",

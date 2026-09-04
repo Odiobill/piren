@@ -178,7 +178,18 @@ describe("fetchConversationWorkflowStatus transport (B4 exact-pair route)", () =
     const snapshot = await fetchConversationWorkflowStatus("c 1", "agent x", "secret-token");
     expect(snapshot).toEqual({
       runActive: true,
-      workflow: { rootEventId: "root-1", association: "active-run", effectiveEdges: 10, consumedEdges: 4, low: false, exhausted: false },
+      workflow: {
+        rootEventId: "root-1",
+        association: "active-run",
+        base: { edges: 8, reworkRounds: 2 },
+        effective: { edges: 10, reworkRounds: 3 },
+        consumed: { edges: 4 },
+        worstPairOccurrences: 1,
+        low: false,
+        exhausted: false,
+        warnings: [],
+        omittedWarnings: 0,
+      },
     });
     expect(fake).toHaveBeenCalledTimes(1);
     const [path, init] = fake.mock.calls[0] as unknown as [string, RequestInit];
