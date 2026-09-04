@@ -2,11 +2,8 @@ import type { DependencyTaskNode, LoadedInboxTask } from "./scheduler-dependenci
 import { evaluateTaskDependencyEligibility, loadSchedulerInboxState } from "./scheduler-dependencies.js";
 import { parseRetryPolicy, parseRetryState } from "./scheduler-retry.js";
 import { readYamlConfig, resolveEnabledAgents, DEFAULT_CONFIG_PATH } from "./scheduler-cli.js";
-import {
-  resolveSchedulerConfig,
-  type ResolvedSchedulerAutomation,
-  type SchedulerLegacyMasterGateState,
-} from "./scheduler-loop.js";
+import { formatSchedulerEffectivePolicy, type SchedulerEffectivePolicy } from "./scheduler-effective-policy.js";
+import { resolveSchedulerConfig } from "./scheduler-loop.js";
 
 /**
  * Read-only scheduler operator report (ADR-0038 R3 operator surface).
@@ -181,14 +178,11 @@ const CONTINUATION_INDENT = " ".repeat(4 /*indent*/ + 8 /*tag field*/ + 1 /*spac
  * report cannot identify which from vault state alone.
  */
 /**
- * Resolved automation/legacy gate state rendered by the report (0.2 Settings
- * contract §4.3). The report stays read-only regardless of the gates; these
- * lines only make the effective automation surface inspectable.
+ * Existing resolved effective policy rendered by the report. The report stays
+ * read-only: these lines make automation, legacy-gate, class-scope, and
+ * bounded resolver-warning facts inspectable without parsing local config.
  */
-export interface SchedulerReportGateState {
-  automation: ResolvedSchedulerAutomation;
-  legacyMasterGate: SchedulerLegacyMasterGateState;
-}
+export type SchedulerReportGateState = SchedulerEffectivePolicy;
 
 export function formatSchedulerReport(enabledAgents: string[], findings: SchedulerReportFinding[], gates?: SchedulerReportGateState): string {
   const lines: string[] = [];
@@ -196,20 +190,9 @@ export function formatSchedulerReport(enabledAgents: string[], findings: Schedul
   lines.push("");
 
   if (gates !== undefined) {
-    // 0.2 Settings contract §4.3: bounded resolved automation state (never
-    // config content).
-    const onOff = (value: boolean): string => (value ? "on" : "off");
-    lines.push(
-      `automation: inbox_tasks=${onOff(gates.automation.inboxTasks)} ` +
-        `agent_cron=${onOff(gates.automation.agentCron)} ` +
-        `script_cron=${onOff(gates.automation.scriptCron)}`,
-    );
-    if (gates.legacyMasterGate === "gated") {
-      // Read-only notice only: the report never persists or migrates config.
-      lines.push("legacy gate: retired scheduler.enabled key present with a disabled/malformed value; all automation classes resolve disabled (fail closed); operator-confirmed migration required (read-only notice, not persisted)");
-    } else if (gates.legacyMasterGate === "ignored") {
-      lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
-    }
+    // P1a: render only the existing resolver's bounded effective facts; the
+    // report remains read-only and never parses raw local config itself.
+    lines.push(...formatSchedulerEffectivePolicy(gates));
     lines.push("");
   }
 
@@ -292,6 +275,8 @@ export async function schedulerReport(options: SchedulerReportOptions): Promise<
   const gates: SchedulerReportGateState = {
     automation: schedulerConfig.automation,
     legacyMasterGate: schedulerConfig.legacyMasterGate,
+    agentScope: schedulerConfig.agentScope,
+    warnings: schedulerConfig.warnings,
   };
   return formatSchedulerReport(enabledAgents, findings, gates);
 }

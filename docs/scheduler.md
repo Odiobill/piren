@@ -8,7 +8,7 @@ The scheduler provides four explicit ways to operate: a read-only dry-run planne
 
 ```bash
 piren scheduler --dry-run   # LLM-free, claim-free: preview proposed claims for one tick
-piren scheduler --report    # read-only operator report: cycles, retry metadata, claimed-task triage items
+piren scheduler --report    # read-only operator report: effective policy, cycles, retry metadata, claimed-task triage items
 piren scheduler --once      # one live tick: refresh, plan, claim, execute at most one item, stop
 piren scheduler --once --force  # non-persistent override of only a disabled inbox automation class
 piren scheduler             # opt-in loop: repeats --once every poll interval until SIGINT/SIGTERM
@@ -52,7 +52,7 @@ Semantics:
 - Configured names that are not locally enabled agents produce a bounded count-only warning and are ignored: they never widen eligibility.
 - A malformed present `agent_scope`, class scope, or allow/exclude list fails **closed** for the affected class (no candidates for that class) with a deterministic non-secret warning. Unknown class keys and unknown keys inside a class scope are warned-and-ignored.
 - An excluded agent's work is never proposed, claimed, spawned, retried, or completion-released through any scheduler path. In `--dry-run`, an enabled inbox class whose pending task belongs to an excluded agent is printed as `[BLOCK] inbox_task <path> - class agent excluded (no claim proposed)`, never as a `[CLAIM]`.
-- The dry-run, one-shot summary, and loop startup summary report the effective policy as a bounded count-only line (`agent scope: inbox_tasks=1 agent(s) agent_cron=all script_cron=all`) plus any non-secret config warnings.
+- The dry-run, one-shot summary, loop startup summary, and `--report` render the effective policy as a bounded count-only line (`agent scope: inbox_tasks=1 agent(s) agent_cron=all script_cron=all`) plus any non-secret config warnings. This output never exposes configured allow/exclude names.
 
 A typical use: keep `inbox_tasks` automation enabled while excluding agents reserved for interactive Workbench Conversations (for example `exclude: [agent-a, agent-b]`), so the scheduler never claims their inbox tasks while those agents remain fully available for explicit work.
 
@@ -172,7 +172,7 @@ Triage workflow for a claimed task `team/<agent>/inbox/<task>.claimed.<device>.m
 
 ## Operator report (`--report`)
 
-`piren scheduler --report` prints a read-only diagnostic for the locally enabled agent set (`allowed_agents` minus `excluded_agents`, same scope as `--dry-run`). It reads only the vault and local config: it never claims, spawns, refreshes heartbeats, writes files, or calls an LLM, and it persists nothing.
+`piren scheduler --report` prints a read-only diagnostic for the locally enabled agent set (`allowed_agents` minus `excluded_agents`, same scope as `--dry-run`). It reads only the vault and local config: it never claims, spawns, refreshes heartbeats, writes files, or calls an LLM, and it persists nothing. Before findings, it renders the existing resolved effective policy: automation state, any legacy-gate notice, a count-only `agent scope:` line for each class (`all` or a count, including zero), and existing non-secret resolver warnings. It never prints configured allow/exclude names or raw local config.
 
 It surfaces exactly four actionable conditions, grouped per agent in deterministic order. Each finding renders three aligned parts: the condition/evidence (reason), a non-action `authority:` boundary stating what Piren cannot infer or will not change, and exactly one inspection `next:` action (`piren task show <path>`). The authority text is never an instruction and never prescribes a mutation; the triage/dependency/retry references stay in this document, not in the displayed next line.
 

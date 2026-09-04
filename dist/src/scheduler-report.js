@@ -1,7 +1,8 @@
 import { evaluateTaskDependencyEligibility, loadSchedulerInboxState } from "./scheduler-dependencies.js";
 import { parseRetryPolicy, parseRetryState } from "./scheduler-retry.js";
 import { readYamlConfig, resolveEnabledAgents, DEFAULT_CONFIG_PATH } from "./scheduler-cli.js";
-import { resolveSchedulerConfig, } from "./scheduler-loop.js";
+import { formatSchedulerEffectivePolicy } from "./scheduler-effective-policy.js";
+import { resolveSchedulerConfig } from "./scheduler-loop.js";
 /**
  * Deterministic, non-action authority boundaries per category (ADR-0039 E2-S1).
  * Each states what Piren cannot infer or will not change; none instructs a
@@ -113,19 +114,9 @@ export function formatSchedulerReport(enabledAgents, findings, gates) {
     lines.push("SCHEDULER REPORT");
     lines.push("");
     if (gates !== undefined) {
-        // 0.2 Settings contract §4.3: bounded resolved automation state (never
-        // config content).
-        const onOff = (value) => (value ? "on" : "off");
-        lines.push(`automation: inbox_tasks=${onOff(gates.automation.inboxTasks)} ` +
-            `agent_cron=${onOff(gates.automation.agentCron)} ` +
-            `script_cron=${onOff(gates.automation.scriptCron)}`);
-        if (gates.legacyMasterGate === "gated") {
-            // Read-only notice only: the report never persists or migrates config.
-            lines.push("legacy gate: retired scheduler.enabled key present with a disabled/malformed value; all automation classes resolve disabled (fail closed); operator-confirmed migration required (read-only notice, not persisted)");
-        }
-        else if (gates.legacyMasterGate === "ignored") {
-            lines.push("legacy: retired scheduler.enabled key present with value true; inert-to-ignore (read-only notice, not persisted)");
-        }
+        // P1a: render only the existing resolver's bounded effective facts; the
+        // report remains read-only and never parses raw local config itself.
+        lines.push(...formatSchedulerEffectivePolicy(gates));
         lines.push("");
     }
     const byAgent = new Map();
@@ -192,6 +183,8 @@ export async function schedulerReport(options) {
     const gates = {
         automation: schedulerConfig.automation,
         legacyMasterGate: schedulerConfig.legacyMasterGate,
+        agentScope: schedulerConfig.agentScope,
+        warnings: schedulerConfig.warnings,
     };
     return formatSchedulerReport(enabledAgents, findings, gates);
 }

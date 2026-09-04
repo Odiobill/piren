@@ -640,4 +640,18 @@ describe("schedulerReport resolved master/class state (0.2.0 S2)", () => {
 
     expect(output).toContain("automation: inbox_tasks=off agent_cron=off script_cron=off");
   });
+
+  it("renders the existing resolved count-only agent scope and warnings before findings", async () => {
+    await writeFile(
+      configPath,
+      `vault_root: ${vault}\nallowed_agents:\n  - thor\nscheduler:\n  agent_scope:\n    inbox_tasks:\n      allow: [thor, ghost]\n    script_cron:\n      allow: []\n`,
+    );
+
+    const output = await schedulerReport({ configPath });
+
+    expect(output).toContain("agent scope: inbox_tasks=1 agent(s) agent_cron=all script_cron=0 agent(s)");
+    expect(output).toContain("scheduler.agent_scope.inbox_tasks.allow contains 1 name(s) that are not locally enabled agents");
+    expect(output.indexOf("agent scope:")).toBeLessThan(output.indexOf("  agent: thor"));
+    expect(output).not.toContain("ghost");
+  });
 });
