@@ -2,7 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 import { fetchConversations, UnauthorizedError } from "./api";
 import { formatConversationHash, selectedConversationIdFromHash } from "./hash-route";
 import { conversationAudienceSummary, formatConversationCreatedTimestamp, type ConversationRecord } from "./conversations";
-import { ExpandIcon, FolderIcon, GearIcon, HomeIcon, MessageIcon } from "./icons";
+import { AlertIcon, ExpandIcon, FolderIcon, GearIcon, HomeIcon, MessageIcon } from "./icons";
 import type { Page } from "./nav";
 
 /** ADR-0044: the Dashboard is the default surface; the sidebar stays the conversation switcher. */
@@ -32,6 +32,9 @@ export function Sidebar({
   explorerToggleRef,
   onOpenExplorerFullPage,
   explorerFullPage = false,
+  alertsOpen = false,
+  onToggleAlerts = () => {},
+  alertsToggleRef,
 }: {
   page: Page;
   token: string;
@@ -57,6 +60,9 @@ export function Sidebar({
    * though the underlying page stays mounted underneath.
    */
   explorerFullPage?: boolean;
+  alertsOpen?: boolean;
+  onToggleAlerts?: () => void;
+  alertsToggleRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,6 +155,14 @@ export function Sidebar({
             onClick={onOpenExplorerFullPage}
           >
             <ExpandIcon size={14} />
+          </button>
+        </li>
+      </ul>
+      <ul className="sidebar-companions">
+        <li>
+          <button type="button" ref={alertsToggleRef} className={alertsOpen ? "nav-item active" : "nav-item"} aria-pressed={alertsOpen} onClick={onToggleAlerts}>
+            <AlertIcon size={14} />
+            <span>Steward Alerts</span>
           </button>
         </li>
       </ul>

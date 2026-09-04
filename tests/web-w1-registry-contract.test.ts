@@ -51,9 +51,9 @@ describe("static module registry placement (W1)", () => {
     expect(registry).not.toContain("new Function");
   });
 
-  it("the only companion module registered is the W2 vault-explorer (graph stays deferred)", async () => {
+  it("the bounded companion set contains Vault Explorer and Steward Alerts only", async () => {
     const companions = WORKBENCH_MODULES.filter((m) => m.placement === "companion");
-    expect(companions.map((m) => m.id)).toEqual(["vault-explorer"]);
+    expect(companions.map((m) => m.id)).toEqual(["vault-explorer", "steward-alerts"]);
   });
 });
 

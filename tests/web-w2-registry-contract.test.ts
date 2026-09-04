@@ -28,9 +28,9 @@ const FORBIDDEN_STORAGE_TRANSPORT = [
 ];
 
 describe("first companion module registry entry (W2)", () => {
-  it("registers exactly one companion module: vault-explorer, placement companion", () => {
+  it("keeps Vault Explorer as a companion alongside the separately bounded Steward Alerts companion", () => {
     expect(Array.isArray(WORKBENCH_MODULES)).toBe(true);
-    expect(WORKBENCH_MODULES.filter((m) => m.placement === "companion")).toHaveLength(1);
+    expect(WORKBENCH_MODULES.filter((m) => m.placement === "companion")).toHaveLength(2);
     const explorer = WORKBENCH_MODULES.find((m) => m.id === "vault-explorer");
     expect(explorer).toBeDefined();
     expect(explorer?.label).toBe("Vault Explorer");

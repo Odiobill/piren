@@ -12,6 +12,8 @@ import { getModuleById } from "./registry";
 import { VaultExplorer } from "./VaultExplorer";
 import { VAULT_ROOT_PATH, type VaultExplorerLocation, type VaultOrdering } from "./vault-explorer";
 import { SettingsView } from "./SettingsView";
+import { StewardAlerts } from "./StewardAlerts";
+import { StewardAlertBadge } from "./StewardAlertBadge";
 import { formatConversationHash } from "./hash-route";
 
 /**
@@ -77,7 +79,10 @@ export function AppShell({
    * opening never steals chat focus, closing returns focus to the opener.
    */
   const [explorerOpen, setExplorerOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [alertsReloadKey, setAlertsReloadKey] = useState(0);
   const explorerButtonRef = useRef<HTMLButtonElement>(null);
+  const alertsButtonRef = useRef<HTMLButtonElement>(null);
   /**
    * WUX-B — the explorer's retained in-memory location, lifted here so a
    * split <-> full-page presentation switch remounts into the SAME
@@ -102,7 +107,10 @@ export function AppShell({
   // WUX-A: the open Explorer with NO selected Conversation is a full-page
   // module surface; it is then the sole highlighted sidebar module.
   const explorerFullPage = explorerOpen && !hasSelectedConversation;
+  const alertsFullPage = alertsOpen && !hasSelectedConversation;
+  const companionFullPage = explorerFullPage || alertsFullPage;
   const vaultExplorerLabel = getModuleById("vault-explorer")?.label ?? "Vault Explorer";
+  const stewardAlertsLabel = getModuleById("steward-alerts")?.label ?? "Steward Alerts";
 
   function handleToggleExplorer() {
     if (explorerOpen) {
@@ -117,6 +125,7 @@ export function AppShell({
     // portrait the Explorer pane is selected first; the labelled toggle
     // still retains the chat mounted/live underneath.
     setExplorerOpen(true);
+    setAlertsOpen(false);
     setSplitState((previous) => mobileSelectPane(previous, "companion"));
     // A selected Conversation opens the companion beside that Conversation,
     // even when its still-mounted workspace was previously hidden by Dashboard.
@@ -125,6 +134,21 @@ export function AppShell({
     );
     // A drawer action unmounts with the drawer; return focus to its persistent
     // menu opener instead of leaving focus on a removed button.
+    if (nav.drawerOpen) toggleRef.current?.focus();
+  }
+
+  function handleToggleAlerts() {
+    if (alertsOpen) {
+      setAlertsOpen(false);
+      setNav((previous) => closeDrawer(previous));
+      const target = nav.drawerOpen ? toggleRef.current : alertsButtonRef.current ?? toggleRef.current;
+      target?.focus();
+      return;
+    }
+    setAlertsOpen(true);
+    setExplorerOpen(false);
+    setSplitState((previous) => mobileSelectPane(previous, "companion"));
+    setNav((previous) => hasSelectedConversation ? selectPage(closeDrawer(previous), "conversations") : closeDrawer(previous));
     if (nav.drawerOpen) toggleRef.current?.focus();
   }
 
@@ -142,6 +166,7 @@ export function AppShell({
    */
   function handleOpenExplorerFullPage() {
     setExplorerOpen(true);
+    setAlertsOpen(false);
     setSplitState((previous) => mobileSelectPane(previous, "companion"));
     if (hasSelectedConversation && window.location.hash !== "") {
       window.location.hash = "";
@@ -157,7 +182,10 @@ export function AppShell({
     // no-selection full-page Explorer cannot obscure Dashboard or Settings.
     // Selecting Conversations intentionally preserves it: a fresh selection
     // may turn the Explorer into the W1 split.
-    if (page !== "conversations") setExplorerOpen(false);
+    if (page !== "conversations") {
+      setExplorerOpen(false);
+      setAlertsOpen(false);
+    }
     // A selection made from the open mobile drawer closes it and must return
     // focus to the menu toggle; desktop sidebar selections never move focus.
     const restoreFocus = shouldRestoreFocusAfterSelect(nav);
@@ -191,7 +219,7 @@ export function AppShell({
     <div
       className={`shell${nav.page === "conversations" ? " shell-conversation" : ""}${
         conversationActive && nav.page === "conversations" ? " shell-conversation-active" : ""
-      }${explorerFullPage ? " shell-explorer-fullpage" : ""}`}
+      }${explorerFullPage ? " shell-explorer-fullpage" : alertsFullPage ? " shell-alerts-fullpage" : ""}`}
     >
       <header className="shell-header">
         <img src={logoUrl} alt="Piren logo" className="shell-logo" width={48} height={48} />
@@ -214,6 +242,7 @@ export function AppShell({
           </span>
           <span className="sr-only">Menu</span>
         </button>
+        <StewardAlertBadge token={token} reloadKey={alertsReloadKey} onOpen={handleToggleAlerts} onUnauthorized={onUnauthorized} onValidated={onValidated} />
         {phase !== "ready-local" && <StatusBadge phase={phase} />}
       </header>
 
@@ -230,7 +259,10 @@ export function AppShell({
             onToggleExplorer={handleToggleExplorer}
             explorerToggleRef={explorerButtonRef}
             onOpenExplorerFullPage={handleOpenExplorerFullPage}
-            explorerFullPage={explorerFullPage}
+            explorerFullPage={companionFullPage}
+            alertsOpen={alertsOpen}
+            onToggleAlerts={handleToggleAlerts}
+            alertsToggleRef={alertsButtonRef}
           />
         </div>
 
@@ -245,7 +277,9 @@ export function AppShell({
             explorerOpen={explorerOpen}
             onToggleExplorer={handleToggleExplorer}
             onOpenExplorerFullPage={handleOpenExplorerFullPage}
-            explorerFullPage={explorerFullPage}
+            explorerFullPage={companionFullPage}
+            alertsOpen={alertsOpen}
+            onToggleAlerts={handleToggleAlerts}
           />
         </MobileDrawer>
 
@@ -282,12 +316,17 @@ export function AppShell({
               />
             </div>
           )}
+          {alertsOpen && !hasSelectedConversation && (
+            <div className="workspace-panel steward-alerts-fullpage">
+              <StewardAlerts token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} reloadKey={alertsReloadKey} onClosed={() => setAlertsReloadKey((key) => key + 1)} />
+            </div>
+          )}
           <div
             className="workspace-panel workspace-panel-conversations"
-            hidden={nav.page !== "conversations" || (explorerOpen && !hasSelectedConversation)}
+            hidden={nav.page !== "conversations" || companionFullPage}
           >
             <SplitWorkspaceShell
-              state={{ ...splitState, open: explorerOpen && hasSelectedConversation }}
+              state={{ ...splitState, open: (explorerOpen || alertsOpen) && hasSelectedConversation }}
               onStateChange={setSplitState}
               chat={
                 <ConversationNavigator
@@ -310,15 +349,17 @@ export function AppShell({
                     ordering={explorerOrdering}
                     onOrderingChange={setExplorerOrdering}
                   />
+                ) : alertsOpen ? (
+                  <StewardAlerts token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} reloadKey={alertsReloadKey} onClosed={() => setAlertsReloadKey((key) => key + 1)} />
                 ) : undefined
               }
               resizerLabel="Resize chat pane"
               chatLabel="Chat"
-              companionLabel={vaultExplorerLabel}
+              companionLabel={explorerOpen ? vaultExplorerLabel : stewardAlertsLabel}
               onReAnchor={handleSplitReAnchor}
             />
           </div>
-          <div className="workspace-panel" hidden={nav.page !== "dashboard" || (explorerOpen && !hasSelectedConversation)}>
+          <div className="workspace-panel" hidden={nav.page !== "dashboard" || companionFullPage}>
             <DashboardView
               token={token}
               onValidated={onValidated}
@@ -331,7 +372,7 @@ export function AppShell({
           {/* W3: the static full-page Settings shell — a plain typed nav
               page. Read-only inventory only; no fetch, no state, no controls.
               Hidden-toggling preserves the mounted Conversation surface. */}
-          <div className="workspace-panel" hidden={nav.page !== "settings" || (explorerOpen && !hasSelectedConversation)}>
+          <div className="workspace-panel" hidden={nav.page !== "settings" || companionFullPage}>
             <SettingsView token={token} onUnauthorized={onUnauthorized} onValidated={onValidated} />
           </div>
         </main>

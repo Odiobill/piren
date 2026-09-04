@@ -72,6 +72,16 @@ export function InfoIcon({ size = 18 }: IconProps): ReactElement {
   );
 }
 
+/** Steward alert/notification glyph; the calling control supplies its label. */
+export function AlertIcon({ size = 16 }: IconProps): ReactElement {
+  return (
+    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+      <path d="M10 21h4" />
+    </svg>
+  );
+}
+
 /** P5: square stop glyph for the transient-run abort control. */
 export function StopIcon({ size = 14 }: IconProps): ReactElement {
   return (

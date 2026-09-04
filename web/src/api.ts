@@ -52,6 +52,7 @@ import {
 } from "./conversation-controls";
 import { parseConversationTelemetryReadResponse, type ConversationTelemetryReadResult } from "./conversation-telemetry";
 import { parseVaultListResponse, parseVaultReadResponse, type VaultListResponse, type VaultOrdering, type VaultReadResponse } from "./vault-explorer";
+import { parseStewardAlertDetail, parseStewardAlertsResponse, type StewardAlertDetail, type StewardAlertsResponse } from "./steward-alerts";
 import { buildAssignTaskBody, parseInboxTaskCreated, type InboxTaskCreated } from "./dashboard-task";
 import {
   buildAgentContextInjectionEnvelope,
@@ -712,6 +713,34 @@ export async function fetchVaultRead(path: string, token: string, signal?: Abort
   const res = await authedFetch(`/api/vault/read?path=${encodeURIComponent(path)}`, token, signal === undefined ? undefined : { signal });
   if (!res.ok) throw new Error(`vault read HTTP ${res.status}`);
   return parseVaultReadResponse(await res.json());
+}
+
+/** One bounded gateway-owned alert projection; no browser file scan or polling. */
+export async function fetchStewardAlerts(token: string, signal?: AbortSignal): Promise<StewardAlertsResponse> {
+  const res = await authedFetch("/api/steward-alerts", token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`steward alerts HTTP ${res.status}`);
+  return parseStewardAlertsResponse(await res.json());
+}
+
+/** Read the exact server-derived alert path selected by the steward. */
+export async function fetchStewardAlert(path: string, token: string, signal?: AbortSignal): Promise<StewardAlertDetail> {
+  const res = await authedFetch(`/api/steward-alerts/read?path=${encodeURIComponent(path)}`, token, signal === undefined ? undefined : { signal });
+  if (!res.ok) throw new Error(`steward alert read HTTP ${res.status}`);
+  return parseStewardAlertDetail(await res.json());
+}
+
+/** The only browser mutation: close one exact currently-open alert. */
+export async function closeStewardAlert(path: string, token: string): Promise<StewardAlertDetail> {
+  const res = await authedFetch("/api/steward-alerts/close", token, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path, expected_status: "open" }),
+  });
+  if (!res.ok) throw new Error(`steward alert close HTTP ${res.status}`);
+  // The close response has no body content; retain the strictly-decoded
+  // structural fields and let the module reread before displaying it.
+  const json = await res.json();
+  return parseStewardAlertDetail({ ...json, content: "" });
 }
 
 /**

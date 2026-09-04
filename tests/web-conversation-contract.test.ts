@@ -50,9 +50,9 @@ function conversationModuleFiles(): string[] {
 }
 
 describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
-  it("the registry is a compile-time const array with the Conversation page module, the W2 companion, and the W3 Settings page", () => {
+  it("the registry is a compile-time const array with the Conversation page, two bounded companions, and Settings", () => {
     expect(Array.isArray(WORKBENCH_MODULES)).toBe(true);
-    expect(WORKBENCH_MODULES).toHaveLength(3);
+    expect(WORKBENCH_MODULES).toHaveLength(4);
     expect(WORKBENCH_MODULES[0]).toEqual({
       id: "conversations",
       label: "Conversations",
@@ -72,12 +72,21 @@ describe("first-party Conversation registry entry (minimal W0 wiring)", () => {
       consumes: ["vault-list", "vault-read"],
       emits: [],
     });
+    expect(WORKBENCH_MODULES[2]).toEqual({
+      id: "steward-alerts",
+      label: "Steward Alerts",
+      navOrder: 2,
+      page: "conversations",
+      placement: "companion",
+      consumes: ["steward-alerts"],
+      emits: [],
+    });
     // W5: the Settings module consumes only the narrow transport settings
     // family (typed Telegram/Discord read/write routes; W3 was zero-consumption).
-    expect(WORKBENCH_MODULES[2]).toEqual({
+    expect(WORKBENCH_MODULES[3]).toEqual({
       id: "settings",
       label: "Settings",
-      navOrder: 2,
+      navOrder: 3,
       page: "settings",
       placement: "page",
       consumes: ["settings-transports", "settings-scheduler", "settings-agents"],

@@ -60,12 +60,21 @@ export const WORKBENCH_MODULES: readonly WorkbenchModule[] = [
     emits: [],
   },
   {
+    id: "steward-alerts",
+    label: "Steward Alerts",
+    navOrder: 2,
+    page: "conversations",
+    placement: "companion",
+    consumes: ["steward-alerts"],
+    emits: [],
+  },
+  {
     // W3 (0.2.0 amendment §5; ADR-0046): the full-page Settings module.
     // W5 adds the typed transport Settings family; W6 adds the scheduler and
     // vault-owned agent-preference families. Nothing broader is consumed.
     id: "settings",
     label: "Settings",
-    navOrder: 2,
+    navOrder: 3,
     page: "settings",
     placement: "page",
     consumes: ["settings-transports", "settings-scheduler", "settings-agents"],

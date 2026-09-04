@@ -2432,12 +2432,14 @@ code {
    scrolling card host. The shell-main region clips to the viewport and the
    Explorer's own entries/document region is the sole vertical scroll owner;
    no second outer shell scrollbar appears. */
-.shell.shell-explorer-fullpage .shell-main {
+.shell.shell-explorer-fullpage .shell-main,
+.shell.shell-alerts-fullpage .shell-main {
   overflow: hidden;
   padding: 0;
 }
 
-.workspace-panel.vault-explorer-fullpage {
+.workspace-panel.vault-explorer-fullpage,
+.workspace-panel.steward-alerts-fullpage {
   width: 100%;
   max-width: none;
   margin-inline: 0;
@@ -2656,6 +2658,41 @@ code {
   font-size: 0.75rem;
   color: var(--muted);
 }
+
+/* P1b — notification-like red count: action-required high/urgent alerts only. */
+.steward-alert-badge {
+  margin-left: auto;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.35rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--error, #b00020);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.steward-alerts {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.steward-alerts-header { display: flex; align-items: center; gap: 12px; }
+.steward-alerts-header h2 { margin: 0; }
+.steward-alert-list { list-style: none; margin: 0; padding: 0; }
+.steward-alert-list button { width: 100%; display: grid; gap: 3px; text-align: left; border: 0; background: none; color: var(--text); padding: 10px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.steward-alert-list small, .steward-alert-detail time { color: var(--muted); }
+.steward-alert-severity { width: fit-content; margin: 0; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+.severity-high, .severity-urgent { color: var(--error, #b00020); }
+.steward-alert-detail { display: grid; gap: 10px; }
+.steward-alert-detail h3 { margin: 0; }
+.steward-alert-detail .button { width: fit-content; }
+.steward-alerts-error { color: var(--error, #b00020); }
 
 /* W3: static full-page Settings shell — typography/spacing only, no new
    scroll regions and no layout-geometry change (reuses document flow). */
