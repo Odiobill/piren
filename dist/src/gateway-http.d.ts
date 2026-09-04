@@ -240,6 +240,11 @@ export declare class GatewayServer {
     private handleSessions;
     private handleAgents;
     private handleSwitch;
+    private stewardAlertJson;
+    private writeStewardAlertError;
+    private handleStewardAlertsList;
+    private handleStewardAlertRead;
+    private handleStewardAlertClose;
     private handleVaultList;
     private handleVaultRead;
     private handleVaultGraph;

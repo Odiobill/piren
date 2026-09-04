@@ -9,6 +9,13 @@ import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
 import { createInboxTask } from "./inbox.js";
 import {
+  StewardAlertStoreError,
+  closeStoredStewardAlert,
+  listStewardAlerts,
+  readStewardAlert,
+} from "./steward-alert-store.js";
+import type { StewardAlert } from "./steward-alerts.js";
+import {
   applyAgentSettingsIntent,
   applyLocalSettingsIntent,
   createNodeSettingsFoundationIo,
@@ -527,6 +534,12 @@ export class GatewayServer {
       await this.handleSessions(res);
     } else if (req.method === "POST" && url.pathname === "/api/v1/chat/completions") {
       await this.handleOpenAiChatCompletions(req, res);
+    } else if (req.method === "GET" && url.pathname === "/api/steward-alerts") {
+      await this.handleStewardAlertsList(res);
+    } else if (req.method === "GET" && url.pathname === "/api/steward-alerts/read") {
+      await this.handleStewardAlertRead(res, url);
+    } else if (req.method === "POST" && url.pathname === "/api/steward-alerts/close") {
+      await this.handleStewardAlertClose(req, res);
     } else if (req.method === "GET" && url.pathname === "/api/vault/list") {
       await this.handleVaultList(res, url);
     } else if (req.method === "GET" && url.pathname === "/api/vault/read") {
@@ -1460,6 +1473,89 @@ export class GatewayServer {
       this.writeJson(res, 200, { agent, switched: true });
     } catch (err) {
       this.writeJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private stewardAlertJson(alert: StewardAlert): Record<string, string> {
+    const result: Record<string, string> = {
+      path: alert.path,
+      id: alert.id,
+      severity: alert.severity,
+      status: alert.status,
+      title: alert.title,
+      created: alert.created,
+    };
+    if (alert.closedAt !== undefined) result.closed_at = alert.closedAt;
+    if (alert.closedVia !== undefined) result.closed_via = alert.closedVia;
+    return result;
+  }
+
+  private writeStewardAlertError(res: ServerResponse, error: unknown): void {
+    if (error instanceof StewardAlertStoreError) {
+      const status = error.kind === "not-found" ? 404 : error.kind === "conflict" ? 409 : 400;
+      this.writeJson(res, status, { error: error.message });
+      return;
+    }
+    this.writeJson(res, 500, { error: "steward alert operation failed" });
+  }
+
+  private async handleStewardAlertsList(res: ServerResponse): Promise<void> {
+    if (!this.vaultRoot) {
+      this.writeJson(res, 404, { error: "steward alerts not configured" });
+      return;
+    }
+    try {
+      const result = await listStewardAlerts(this.vaultRoot);
+      this.writeJson(res, 200, {
+        attention_count: result.attentionCount,
+        alerts: result.alerts.map((alert) => this.stewardAlertJson(alert)),
+      });
+    } catch (error) {
+      this.writeStewardAlertError(res, error);
+    }
+  }
+
+  private async handleStewardAlertRead(res: ServerResponse, url: URL): Promise<void> {
+    if (!this.vaultRoot) {
+      this.writeJson(res, 404, { error: "steward alerts not configured" });
+      return;
+    }
+    const path = url.searchParams.get("path");
+    if (path === null || path === "") {
+      this.writeJson(res, 400, { error: "path is required" });
+      return;
+    }
+    try {
+      const result = await readStewardAlert(this.vaultRoot, path);
+      this.writeJson(res, 200, { ...this.stewardAlertJson(result.alert), content: result.content });
+    } catch (error) {
+      this.writeStewardAlertError(res, error);
+    }
+  }
+
+  private async handleStewardAlertClose(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.vaultRoot) {
+      this.writeJson(res, 404, { error: "steward alerts not configured" });
+      return;
+    }
+    const parsed = await this.readJsonBody(req);
+    if (!parsed.ok) {
+      this.writeJson(res, parsed.status, { error: parsed.error });
+      return;
+    }
+    if (!hasExactKeys(parsed.value, ["path", "expected_status"]) || typeof parsed.value.path !== "string" || parsed.value.expected_status !== "open") {
+      this.writeJson(res, 400, { error: "body must contain exact path and expected_status: open" });
+      return;
+    }
+    try {
+      const alert = await closeStoredStewardAlert({
+        vaultRoot: this.vaultRoot,
+        path: parsed.value.path,
+        expectedStatus: "open",
+      });
+      this.writeJson(res, 200, this.stewardAlertJson(alert));
+    } catch (error) {
+      this.writeStewardAlertError(res, error);
     }
   }
 

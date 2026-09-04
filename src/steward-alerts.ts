@@ -39,8 +39,12 @@ const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const SEVERITY_RANK: Record<AlertSeverity, number> = { urgent: 3, high: 2, normal: 1, low: 0 };
 const MAX_PROJECTED_ALERTS = 100;
 
+export function isDirectActiveStewardAlertPath(path: string): boolean {
+  return ALERT_PATH.test(path);
+}
+
 function assertActiveAlertPath(path: string): void {
-  if (!ALERT_PATH.test(path)) {
+  if (!isDirectActiveStewardAlertPath(path)) {
     throw new Error("Alert path must name one direct active alert under steward-inbox/alerts/.");
   }
 }

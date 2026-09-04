@@ -26,6 +26,7 @@ export interface StewardAlertProjection {
     attentionCount: number;
     alerts: StewardAlert[];
 }
+export declare function isDirectActiveStewardAlertPath(path: string): boolean;
 /** Parse one direct active steward-alert file without touching the filesystem. */
 export declare function parseStewardAlert(options: ParseStewardAlertOptions): StewardAlert;
 /**
