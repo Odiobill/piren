@@ -87,9 +87,10 @@ describe("public documentation preferred-path ordering", () => {
     ]) {
       expect(doc, `missing surface row: ${row}`).toContain(row);
     }
-    // Critical no-wiring fact appears inside the fallback section.
     const section = doc.slice(doc.indexOf("### Model fallback"));
-    expect(section).toContain("Not wired");
+    expect(section).toContain("Not wired"); // script-mode cron remains LLM-free
+    expect(section).toContain("`piren run` and `piren chat` | Wired locally");
+    expect(section).toContain("manual recovery");
   });
 
   it("configuration opens with a Where do I change X matrix and pins no-UI boundaries", () => {

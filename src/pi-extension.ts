@@ -5,6 +5,16 @@ import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
 import { loadPirenContext, type BootstrapOptions, type PirenContext } from "./bootstrap.js";
 import { readAgentConfigFileBestEffort } from "./agent-config.js";
+import { parseModelFallbackConfig } from "./model-fallback-config.js";
+import { isFallbackEligibleOutcome } from "./model-fallback-outcome.js";
+import { buildFallbackHandoffPrompt, planFallbackAttempt } from "./model-fallback-rotation.js";
+import {
+  createInteractiveFallbackIncident,
+  recordInteractiveFallbackEvent,
+  settleInteractiveFallbackIncident,
+  type InteractiveFallbackEventName,
+  type InteractiveFallbackIncident,
+} from "./interactive-model-fallback.js";
 import { resolveContextInjectionMode, shouldInjectContext } from "./context-injection.js";
 import { createVaultTools } from "./vault-tools.js";
 import { writeSessionSummary } from "./session.js";
@@ -99,6 +109,8 @@ interface ExtensionAPI {
     },
   ) => void;
   on: (event: string, handler: (...args: any[]) => Promise<unknown> | unknown) => void;
+  setModel?: (model: unknown) => Promise<boolean>;
+  sendUserMessage?: (content: unknown) => Promise<void> | void;
   exec?: (command: string, args: string[], options?: { signal?: AbortSignal; timeout?: number }) => Promise<{ code: number; stdout?: string; stderr?: string }>;
 }
 
@@ -240,6 +252,44 @@ function scriptCronTimeoutMs(env: NodeJS.ProcessEnv | Record<string, string | un
 // Extract the user-facing text from a Pi message event payload, tolerating
 // both string and TextContent[] content shapes. Returns null for unknown shapes,
 // non-user roles, or empty text.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractInteractiveModelId(ctx: unknown): string | null {
+  if (!isRecord(ctx) || !isRecord(ctx.model)) return null;
+  const provider = ctx.model.provider;
+  const id = ctx.model.id;
+  if (typeof provider !== "string" || provider === "" || typeof id !== "string" || id === "") return null;
+  return `${provider}/${id}`;
+}
+
+function splitInteractiveModelId(modelId: string): { provider: string; id: string } | null {
+  const slash = modelId.indexOf("/");
+  if (slash <= 0 || slash === modelId.length - 1) return null;
+  return { provider: modelId.slice(0, slash), id: modelId.slice(slash + 1) };
+}
+
+function extractInteractivePrompt(event: unknown): string | null {
+  if (!isRecord(event) || typeof event.prompt !== "string" || event.prompt === "") return null;
+  return event.prompt;
+}
+
+function extractInteractiveImages(event: unknown): unknown[] {
+  return isRecord(event) && Array.isArray(event.images) ? [...event.images] : [];
+}
+
+function isInteractiveSessionIdle(ctx: unknown): boolean {
+  if (!isRecord(ctx) || typeof ctx.isIdle !== "function") return false;
+  try {
+    return ctx.isIdle() === true;
+  } catch {
+    // Pi marks contexts stale after some session transitions. A stale context
+    // is ambiguous evidence, never permission to select/re-prompt a model.
+    return false;
+  }
+}
+
 function extractUserMessageText(payload: unknown): string | null {
   if (typeof payload !== "object" || payload === null) return null;
   const message = (payload as { message?: unknown }).message;
@@ -508,6 +558,10 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Pire
   // correction is detected. It never writes to the vault on its own; the
   // agent decides which visible artifact to capture, if any.
   const agentConfigRaw = await readAgentConfigFileBestEffort(context.paths.config);
+  const fallbackRaw = isRecord(agentConfigRaw) && isRecord(agentConfigRaw.model)
+    ? agentConfigRaw.model.fallback
+    : undefined;
+  const parsedFallback = parseModelFallbackConfig(fallbackRaw);
 
   // Context-injection runtime preference (design slice C2). Resolved once per
   // Pi process from the same agent-config read; PIREN_CONTEXT_INJECTION can
@@ -523,6 +577,20 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Pire
   // initial value is fail-useful: a session that never fires session_start
   // still injects exactly once on its first prompt.
   let contextInjectedThisSession = false;
+
+  // P2 interactive fallback state is strictly per live extension/session. It
+  // is deliberately not persisted: Pi's session owns model affinity, while an
+  // incomplete or malformed incident remains terminal/manual recovery.
+  let interactiveIncident: {
+    evidence: InteractiveFallbackIncident;
+    originalPrompt: string;
+    currentModelId: string;
+    attemptedModelIds: string[];
+    images: unknown[];
+  } | undefined;
+  let pendingInteractiveContinuation: { originalPrompt: string; attemptedModelIds: string[]; images: unknown[] } | undefined;
+  let interactiveExplicitModelSelected = false;
+  let automaticInteractiveModelId: string | undefined;
   const autoNudge = resolveAutoNudgeConfig({
     env: env as Record<string, string | undefined>,
     config: agentConfigRaw,
@@ -1500,4 +1568,138 @@ export default async function pirenExtension(pi: ExtensionAPI, testOptions: Pire
       },
     };
   });
+
+  // P2 interactive `piren run` / `piren chat` fallback adapter. Pi owns the
+  // TUI/session; Piren only records the documented lifecycle and can continue
+  // after the same session is fully idle. Absent/malformed policy is inert.
+  if (parsedFallback.ok && parsedFallback.present) {
+    pi.on("model_select", async (event: unknown) => {
+    // `/model` and model cycling are steward choices for this live session.
+    // Session restore is Pi affinity recovery, not a new explicit selection.
+    if (!isRecord(event) || event.source === "restore") return;
+    const selected = extractInteractiveModelId({ model: event.model });
+    if (selected !== null && selected === automaticInteractiveModelId) {
+      automaticInteractiveModelId = undefined;
+      return;
+    }
+    interactiveExplicitModelSelected = true;
+  });
+
+  pi.on("before_agent_start", async (event: unknown, ctx: unknown) => {
+    const prompt = extractInteractivePrompt(event);
+    if (prompt === null) {
+      interactiveIncident = undefined;
+      pendingInteractiveContinuation = undefined;
+      return;
+    }
+    const pending = pendingInteractiveContinuation;
+    pendingInteractiveContinuation = undefined;
+    interactiveIncident = {
+      evidence: createInteractiveFallbackIncident(),
+      originalPrompt: pending?.originalPrompt ?? prompt,
+      currentModelId: extractInteractiveModelId(ctx) ?? "",
+      attemptedModelIds: pending?.attemptedModelIds ?? [],
+      images: pending?.images ?? extractInteractiveImages(event),
+    };
+  });
+
+  const interactiveEvidenceEvents: readonly InteractiveFallbackEventName[] = [
+    "message_start",
+    "message_update",
+    "message_end",
+    "turn_end",
+    "agent_end",
+    "tool_execution_start",
+    "tool_execution_update",
+    "tool_execution_end",
+    "extension_ui_request",
+    "auto_retry_end",
+  ];
+  for (const type of interactiveEvidenceEvents) {
+    pi.on(type, async (event: unknown) => {
+      if (interactiveIncident !== undefined) {
+        recordInteractiveFallbackEvent(interactiveIncident.evidence, type, event);
+      }
+    });
+  }
+
+  pi.on("agent_settled", async (event: unknown, ctx: unknown) => {
+    const incident = interactiveIncident;
+    interactiveIncident = undefined;
+    if (incident === undefined || !parsedFallback.ok || !parsedFallback.present) return;
+
+    const isIdle = isInteractiveSessionIdle(ctx);
+    recordInteractiveFallbackEvent(incident.evidence, "agent_settled", event);
+    const outcome = settleInteractiveFallbackIncident(incident.evidence, { isIdle }).outcome;
+    if (!isFallbackEligibleOutcome(outcome)) return;
+    const plan = planFallbackAttempt({
+      configuredFallbacks: parsedFallback.config.models,
+      autoSwitch: parsedFallback.config.autoSwitch,
+      explicitModelSelected: interactiveExplicitModelSelected,
+      aborted: false,
+      outcome,
+      currentModelId: extractInteractiveModelId(ctx) ?? incident.currentModelId,
+      attemptedModelIds: incident.attemptedModelIds,
+    });
+    if (plan.kind !== "attempt") return;
+
+    const notify = isRecord(ctx) && isRecord(ctx.ui) ? ctx.ui.notify : undefined;
+    const manualRecovery = (reason: string) => {
+      if (typeof notify === "function") notify(`[model fallback: manual recovery required (${reason}).]`, "warning");
+    };
+    const target = splitInteractiveModelId(plan.modelId);
+    const registry = isRecord(ctx) && isRecord(ctx.modelRegistry) ? ctx.modelRegistry : undefined;
+    if (target === null || registry === undefined || typeof registry.find !== "function" || typeof pi.setModel !== "function" || typeof pi.sendUserMessage !== "function") {
+      manualRecovery("fallback switching is unavailable");
+      return;
+    }
+    // Pi's real ModelRegistry methods require their registry receiver. Do not
+    // detach `find` (the fake adapter's arrow function hid this initially).
+    const model = registry.find(target.provider, target.id);
+    if (model === undefined || model === null) {
+      manualRecovery("declared fallback model is unavailable");
+      return;
+    }
+
+    let switched = false;
+    automaticInteractiveModelId = plan.modelId;
+    try {
+      switched = await pi.setModel(model);
+    } catch {
+      automaticInteractiveModelId = undefined;
+      manualRecovery("fallback model switch failed");
+      return;
+    }
+    if (!switched) {
+      automaticInteractiveModelId = undefined;
+      manualRecovery("declared fallback model is unavailable");
+      return;
+    }
+    // A selection does not start a turn; check the documented idle signal once
+    // more immediately before the visible continuation handoff.
+    if (!isInteractiveSessionIdle(ctx)) {
+      manualRecovery("the interactive session is no longer idle");
+      return;
+    }
+
+    pendingInteractiveContinuation = {
+      originalPrompt: incident.originalPrompt,
+      attemptedModelIds: [...incident.attemptedModelIds, plan.modelId],
+      images: incident.images,
+    };
+    if (typeof notify === "function") {
+      notify(`[model fallback: ${incident.currentModelId || "current model"} failed (${outcome.category}) → ${plan.modelId}]`, "warning");
+    }
+    try {
+      const handoff = buildFallbackHandoffPrompt(incident.originalPrompt, incident.currentModelId || "current model", outcome.category);
+      const message = incident.images.length === 0 ? handoff : [{ type: "text", text: handoff }, ...incident.images];
+      await pi.sendUserMessage(message);
+    } catch {
+      // The model change is already visible in Pi. Leave the session untouched
+      // and require manual recovery rather than retrying or reverting it.
+      pendingInteractiveContinuation = undefined;
+      manualRecovery("continuation could not be sent");
+    }
+    });
+  }
 }

@@ -32,6 +32,8 @@ interface ExtensionAPI {
         execute?: () => Promise<string> | string;
     }) => void;
     on: (event: string, handler: (...args: any[]) => Promise<unknown> | unknown) => void;
+    setModel?: (model: unknown) => Promise<boolean>;
+    sendUserMessage?: (content: unknown) => Promise<void> | void;
     exec?: (command: string, args: string[], options?: {
         signal?: AbortSignal;
         timeout?: number;

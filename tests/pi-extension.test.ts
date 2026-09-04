@@ -49,6 +49,274 @@ function fakePi() {
 }
 
 describe("Pi extension", () => {
+  it("continues an idle settled zero-side-effect provider error on the declared fallback", async () => {
+    await writeFile(join(agentDir, "config.yml"), [
+      "model:",
+      "  id: openai/primary",
+      "  fallback:",
+      "    models:",
+      "      - anthropic/fallback",
+      "",
+    ].join("\n"));
+    const pi = Object.assign(fakePi(), {
+      selectedModels: [] as unknown[],
+      sentMessages: [] as unknown[],
+      async setModel(model: unknown) {
+        this.selectedModels.push(model);
+        return true;
+      },
+      async sendUserMessage(message: unknown) {
+        this.sentMessages.push(message);
+      },
+    });
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    await pi.events.before_agent_start?.at(-1)?.({ prompt: "Repair the issue", images: [] }, {});
+    await pi.events.agent_end?.[0]?.({
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider status text" }],
+    }, {});
+    await pi.events.agent_settled?.[0]?.({}, {
+      isIdle: () => true,
+      model: { provider: "openai", id: "primary" },
+      modelRegistry: {
+        runtime: "registry",
+        find(provider: string, id: string) {
+          if (this.runtime !== "registry") throw new Error("model registry receiver lost");
+          return { provider, id };
+        },
+      },
+      ui: { notify() {} },
+    });
+
+    expect(pi.selectedModels).toEqual([{ provider: "anthropic", id: "fallback" }]);
+    expect(pi.sentMessages).toEqual([expect.stringContaining("Repair the issue")]);
+  });
+
+  it("never switches after interactive text or tool evidence", async () => {
+    await writeFile(join(agentDir, "config.yml"), [
+      "model:",
+      "  id: openai/primary",
+      "  fallback:",
+      "    models:",
+      "      - anthropic/fallback",
+      "",
+    ].join("\n"));
+    const pi = Object.assign(fakePi(), {
+      selectedModels: [] as unknown[],
+      async setModel(model: unknown) { this.selectedModels.push(model); return true; },
+      async sendUserMessage() {},
+    });
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    await pi.events.before_agent_start?.at(-1)?.({ prompt: "Repair the issue" }, {});
+    await pi.events.message_update?.[0]?.({ assistantMessageEvent: { type: "text_delta", delta: "partial" } }, {});
+    await pi.events.tool_execution_start?.[0]?.({ toolCallId: "tool-1", toolName: "write" }, {});
+    await pi.events.agent_end?.[0]?.({
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider status text" }],
+    }, {});
+    await pi.events.agent_settled?.[0]?.({}, {
+      isIdle: () => true,
+      model: { provider: "openai", id: "primary" },
+      modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
+      ui: { notify() {} },
+    });
+
+    expect(pi.selectedModels).toEqual([]);
+  });
+
+  it("fails closed without an extension error when Pi marks the settled context stale", async () => {
+    await writeFile(join(agentDir, "config.yml"), [
+      "model:",
+      "  id: openai/primary",
+      "  fallback:",
+      "    models:",
+      "      - anthropic/fallback",
+      "",
+    ].join("\n"));
+    const pi = Object.assign(fakePi(), {
+      selectedModels: [] as unknown[],
+      async setModel(model: unknown) { this.selectedModels.push(model); return true; },
+      async sendUserMessage() {},
+    });
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+    await pi.events.before_agent_start?.at(-1)?.({ prompt: "Repair the issue" }, {});
+    await pi.events.agent_end?.[0]?.({
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider status text" }],
+    }, {});
+
+    await expect(pi.events.agent_settled?.[0]?.({}, {
+      isIdle() { throw new Error("stale extension context"); },
+      model: { provider: "openai", id: "primary" },
+      modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
+      ui: { notify() {} },
+    })).resolves.toBeUndefined();
+    expect(pi.selectedModels).toEqual([]);
+  });
+
+  it("reports manual recovery and never re-prompts when the fallback model is unavailable", async () => {
+    await writeFile(join(agentDir, "config.yml"), [
+      "model:",
+      "  id: openai/primary",
+      "  fallback:",
+      "    models:",
+      "      - anthropic/fallback",
+      "",
+    ].join("\n"));
+    const pi = Object.assign(fakePi(), {
+      sentMessages: [] as unknown[],
+      async setModel() { return false; },
+      async sendUserMessage(message: unknown) { this.sentMessages.push(message); },
+    });
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    await pi.events.before_agent_start?.at(-1)?.({ prompt: "Repair the issue" }, {});
+    await pi.events.agent_end?.[0]?.({
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider status text" }],
+    }, {});
+    const notifications: Array<{ message: string; level: string }> = [];
+    await pi.events.agent_settled?.[0]?.({}, {
+      isIdle: () => true,
+      model: { provider: "openai", id: "primary" },
+      modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
+      ui: { notify(message: string, level: string) { notifications.push({ message, level }); } },
+    });
+
+    expect(pi.sentMessages).toEqual([]);
+    expect(notifications).toEqual([{ message: expect.stringContaining("unavailable"), level: "warning" }]);
+  });
+
+  it("preserves original images in the visible fallback handoff", async () => {
+    await writeFile(join(agentDir, "config.yml"), [
+      "model:",
+      "  id: openai/primary",
+      "  fallback:",
+      "    models:",
+      "      - anthropic/fallback",
+      "",
+    ].join("\n"));
+    const image = { type: "image", source: { type: "base64", mediaType: "image/png", data: "AA==" } };
+    const pi = Object.assign(fakePi(), {
+      async setModel() { return true; },
+      sentMessages: [] as unknown[],
+      async sendUserMessage(message: unknown) { this.sentMessages.push(message); },
+    });
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    await pi.events.before_agent_start?.at(-1)?.({ prompt: "Describe this image", images: [image] }, {});
+    await pi.events.agent_end?.[0]?.({
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider status text" }],
+    }, {});
+    await pi.events.agent_settled?.[0]?.({}, {
+      isIdle: () => true,
+      model: { provider: "openai", id: "primary" },
+      modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
+      ui: { notify() {} },
+    });
+
+    expect(pi.sentMessages).toEqual([[expect.objectContaining({ type: "text", text: expect.stringContaining("Describe this image") }), image]]);
+  });
+
+  it("rotates each declared interactive fallback once and keeps the original request", async () => {
+    await writeFile(join(agentDir, "config.yml"), [
+      "model:",
+      "  id: openai/primary",
+      "  fallback:",
+      "    models:",
+      "      - anthropic/first",
+      "      - anthropic/second",
+      "",
+    ].join("\n"));
+    const pi = Object.assign(fakePi(), {
+      selectedModels: [] as unknown[],
+      sentMessages: [] as unknown[],
+      async setModel(model: unknown) { this.selectedModels.push(model); return true; },
+      async sendUserMessage(message: unknown) { this.sentMessages.push(message); },
+    });
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+    const providerError = {
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider status text" }],
+    };
+    const idleContext = (provider: string, id: string) => ({
+      isIdle: () => true,
+      model: { provider, id },
+      modelRegistry: { find: (nextProvider: string, nextId: string) => ({ provider: nextProvider, id: nextId }) },
+      ui: { notify() {} },
+    });
+
+    await pi.events.before_agent_start?.at(-1)?.({ prompt: "Repair the original issue" }, {});
+    await pi.events.agent_end?.[0]?.(providerError, {});
+    await pi.events.agent_settled?.[0]?.({}, idleContext("openai", "primary"));
+    await pi.events.before_agent_start?.at(-1)?.({ prompt: "fallback handoff", images: [] }, idleContext("anthropic", "first"));
+    await pi.events.agent_end?.[0]?.(providerError, {});
+    await pi.events.agent_settled?.[0]?.({}, idleContext("anthropic", "first"));
+
+    expect(pi.selectedModels).toEqual([
+      { provider: "anthropic", id: "first" },
+      { provider: "anthropic", id: "second" },
+    ]);
+    expect(pi.sentMessages).toHaveLength(2);
+    expect(pi.sentMessages[1]).toEqual(expect.stringContaining("Repair the original issue"));
+  });
+
+  it("does not override an explicit interactive model selection", async () => {
+    await writeFile(join(agentDir, "config.yml"), [
+      "model:",
+      "  id: openai/primary",
+      "  fallback:",
+      "    models:",
+      "      - anthropic/fallback",
+      "",
+    ].join("\n"));
+    const pi = Object.assign(fakePi(), {
+      selectedModels: [] as unknown[],
+      async setModel(model: unknown) { this.selectedModels.push(model); return true; },
+      async sendUserMessage() {},
+    });
+    await extension(pi as any, {
+      cliAgentDir: agentDir,
+      env: { PIREN_DEVICE_ID: "heimdall", PIREN_HOSTNAME: "heimdall.local" },
+      configPath: join(root, "missing-config.yml"),
+    });
+
+    await pi.events.model_select?.[0]?.({ source: "set", model: { provider: "openai", id: "manual" } }, {});
+    await pi.events.before_agent_start?.at(-1)?.({ prompt: "Repair the issue" }, {});
+    await pi.events.agent_end?.[0]?.({
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "provider status text" }],
+    }, {});
+    await pi.events.agent_settled?.[0]?.({}, {
+      isIdle: () => true,
+      model: { provider: "openai", id: "manual" },
+      modelRegistry: { find: (provider: string, id: string) => ({ provider, id }) },
+      ui: { notify() {} },
+    });
+
+    expect(pi.selectedModels).toEqual([]);
+  });
+
   it("boots with defaults when the agent config is missing or malformed (extension contract pin)", async () => {
     // Missing file: extension boot tolerates it as null/default.
     await rm(join(agentDir, "config.yml"));
@@ -1067,7 +1335,7 @@ describe("Pi extension OKF conformance tool (ADR-0022)", () => {
     expect(result.content[0].text).toContain("wiki_update_concept");
   });
 
-  it("does not register an auto-nudge message_end handler when auto-nudge is disabled (default)", async () => {
+  it("does not register an auto-nudge or fallback message_end handler when both are disabled", async () => {
     const pi = fakePi();
     await extension(pi as any, {
       cliAgentDir: agentDir,

@@ -134,7 +134,7 @@ What triggers fallback:
 
 - Only a run that fully settles (`agent_settled`) as a zero-side-effect provider error (`provider_error_other` or `provider_error_transient_exhausted`) is eligible. Prompt rejections, aborts, non-settled or contaminated runs, and launch failures keep existing behavior with no fallback.
 - Rotation stays on the same live client/session of the same agent. After a success the fallback model remains for that session's affinity; a fresh session starts on the configured primary again.
-- An explicit steward model selection via `POST /api/chat/model` disables automatic fallback for that session; `autoFallback: true` on the same route re-enables it explicitly.
+- An explicit steward model selection via `POST /api/chat/model`, or an interactive Pi `/model`/model-cycle selection, disables automatic fallback for that session; `autoFallback: true` on the gateway route re-enables it explicitly.
 - Fallback never auto-approves, retries, reroutes, re-claims, or re-dispatches anything, and it never changes provider credentials: credentials stay Pi-native under `~/.pi/agent/`; this vault configuration only names model IDs.
 
 Where it applies:
@@ -148,7 +148,7 @@ Where it applies:
 | `piren ask` | Wired. Switches model and re-prompts with the verbatim handoff, printing a bounded `[model fallback: <from> failed (<category>) → <to>]` advisory before the fallback reply; exhaustion surfaces typed evidence only, never raw provider errors. |
 | Scheduler claimed inbox tasks and agent cron | Wired through the same ask runner. Normal completion keeps the existing success and completion-release path; terminal exhaustion stays claimed for manual triage with typed evidence visible in `piren scheduler --once`; only a typed launch failure reaches the unchanged retry policy. |
 | Script-mode cron | Not wired: script-mode jobs stay LLM-free with no fallback. |
-| `piren run` and Pi native `models:` cycling | Not wired to this policy. |
+| `piren run` and `piren chat` | Wired locally through the Pi extension. After the settled zero-side-effect gate, it selects one declared fallback in the same live session and writes a visible handoff (including supported images). A Pi `/model` or model-cycle choice disables automatic fallback; unavailable/stale/non-idle/send-failed paths leave the model/session truthful and require visible manual recovery. Pi native `models:` remains a model-cycling list, never a fallback declaration. |
 
 Inspectable self-improvement is configured per agent and defaults to off:
 
