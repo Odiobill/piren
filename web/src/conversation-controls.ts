@@ -10,6 +10,7 @@
  * C3-C2 routes, and never fabricates an agent outcome: a successful POST is
  * delivery acceptance only.
  */
+import { agentDisplayName } from "./agent-display.js";
 
 /** The only three approvable Pi UI methods (contract §9.3). */
 export type ConversationApprovalMethod = "confirm" | "select" | "input";
@@ -153,7 +154,7 @@ export function approvalCardTitle(approval: PendingApproval): string {
   if (typeof approval.payload.title === "string" && approval.payload.title !== "") {
     return approval.payload.title;
   }
-  return `Approval requested by ${approval.agent}.`;
+  return `Approval requested by ${agentDisplayName(approval.agent)}.`;
 }
 
 /** Request message from the bounded payload (may be empty). */
@@ -194,21 +195,21 @@ export function parseConversationHandoffGate(approval: PendingApproval): Convers
 
 /** Bounded semantic label naming the source agent and the proposed target. */
 export function conversationHandoffGateLabel(gate: ConversationHandoffGate, source: string): string {
-  return `handoff from ${source} to ${gate.to}`;
+  return `handoff from ${agentDisplayName(source)} to ${agentDisplayName(gate.to)}`;
 }
 
 /** Polite status announcement for a recognized gate (no raw internals). */
 export function handoffGateRequestedAnnouncement(approval: PendingApproval, gate: ConversationHandoffGate): string {
-  return `Handoff gate requested by ${approval.agent} to ${gate.to}.`;
+  return `Handoff gate requested by ${agentDisplayName(approval.agent)} to ${agentDisplayName(gate.to)}.`;
 }
 
 /** Polite status announcements (never raw internals). */
 export function approvalRequestedAnnouncement(approval: PendingApproval): string {
-  return `Approval requested by ${approval.agent}.`;
+  return `Approval requested by ${agentDisplayName(approval.agent)}.`;
 }
 
 export function approvalResponseAnnouncement(agent: string): string {
-  return `Approval response sent to ${agent}.`;
+  return `Approval response sent to ${agentDisplayName(agent)}.`;
 }
 
 export function abortAnnouncement(outcome: ConversationAbortOutcome): string {

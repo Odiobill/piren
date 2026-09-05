@@ -11,6 +11,7 @@ import {
   type ServiceStatusSnapshot,
 } from "./service-observation";
 import { ClipboardIcon, MessageIcon, RefreshIcon, RetryIcon } from "./icons";
+import { agentDisplayName } from "./agent-display";
 
 /**
  * ADR-0044 + D1 — the Dashboard: the default Workbench surface. Presentation
@@ -265,7 +266,7 @@ export function DashboardView({
       throw cause;
     }
     setAssignModalOpen(false);
-    setAssignNotice(`A task was created for ${agent}.`);
+    setAssignNotice(`A task was created for ${agentDisplayName(agent)}.`);
   }
 
   async function handleStart() {
@@ -351,7 +352,7 @@ export function DashboardView({
                     }
                     aria-pressed={selection.includes(agent.name)}
                     disabled={!agent.online || start.phase === "busy" || peerStart.phase === "busy"}
-                    title={agent.online ? `Select ${agent.name}` : `${agent.name} is not runnable on this installation`}
+                    title={agent.online ? `Select ${agentDisplayName(agent.name)}` : `${agentDisplayName(agent.name)} is not runnable on this installation`}
                     onClick={() => handleSelect(agent)}
                   >
                     {/* D1 bounded presentation slots: avatar/accent now, a
@@ -362,7 +363,7 @@ export function DashboardView({
                     </span>
                     <span className="agent-card-body">
                       <span className="agent-card-title-row">
-                        <span className="agent-name">{agent.name}</span>
+                        <span className="agent-name">{agentDisplayName(agent.name)}</span>
                         {agent.online ? (
                           <span className="agent-status status-ok">Online</span>
                         ) : (

@@ -88,12 +88,12 @@ describe("ConversationComposer interlock (U2)", () => {
   });
 
   it("interlocked: read-only textarea, aria-disabled, aria-describedby reason, disabled submit/policy controls", async () => {
-    render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" }));
+    render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Dipu is working…" }));
     const input = textarea();
     expect(input.readOnly).toBe(true);
     expect(input.getAttribute("aria-disabled")).toBe("true");
     expect(input.getAttribute("aria-describedby")).toBe("conversation-message-c1-interlock-reason");
-    expect(reason()?.textContent).toBe("dipu is working…");
+    expect(reason()?.textContent).toBe("Dipu is working…");
     // The policy toggle (the only submit-adjacent control) is disabled.
     const toggle = container.querySelector<HTMLButtonElement>(".composer-submit-toggle");
     expect(toggle?.disabled).toBe(true);
@@ -106,10 +106,10 @@ describe("ConversationComposer interlock (U2)", () => {
     expect(textarea().value).toBe("unsent \u2026 draft");
 
     // Interlock begins: the draft is preserved read-only.
-    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…", onAnnounce })));
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Dipu is working…", onAnnounce })));
     expect(textarea().readOnly).toBe(true);
     expect(textarea().value).toBe("unsent \u2026 draft");
-    expect(onAnnounce).toHaveBeenLastCalledWith("dipu is working…");
+    expect(onAnnounce).toHaveBeenLastCalledWith("Dipu is working…");
 
     // Interlock clears: the draft is restored editable byte-for-byte.
     act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: false, onAnnounce })));
@@ -146,7 +146,7 @@ describe("ConversationComposer interlock (U2)", () => {
 
     // The run the send caused now interlocks the composer: EMPTY, never the
     // accepted message re-shown as a read-only acknowledgement.
-    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…", onAnnounce })));
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Dipu is working…", onAnnounce })));
     expect(textarea().readOnly).toBe(true);
     expect(textarea().value).toBe("");
 
@@ -171,7 +171,7 @@ describe("ConversationComposer interlock (U2)", () => {
 
     // Broker activity arrives while the POST is in flight: empty read-only
     // composer (the cleared state is protected), NOT the sent message.
-    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" })));
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Dipu is working…" })));
     await act(async () => resolveSend?.());
     expect(textarea().readOnly).toBe(true);
     expect(textarea().value).toBe("");
@@ -194,7 +194,7 @@ describe("ConversationComposer interlock (U2)", () => {
     act(() => key(textarea(), "Enter"));
 
     // A REAL interlock begins mid-flight: the composer is read-only empty.
-    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" })));
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Dipu is working…" })));
     expect(textarea().readOnly).toBe(true);
 
     // The POST fails while the real interlock holds: the exact failed draft
@@ -238,7 +238,7 @@ describe("ConversationComposer interlock (U2)", () => {
     // cleared. A later, independent broker interlock must preserve the new
     // unsent draft, never resurrect that old message as an acknowledgement.
     await act(async () => typeText(textarea(), "new unsent draft"));
-    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" })));
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Dipu is working…" })));
     expect(textarea().readOnly).toBe(true);
     expect(textarea().value).toBe("new unsent draft");
   });
@@ -265,7 +265,7 @@ describe("ConversationComposer interlock (U2)", () => {
     (Element.prototype as unknown as { scrollTo: () => void }).scrollTo = scrollSpy;
     const sendCalls = vi.mocked(sendConversationMessage).mock.calls.length;
 
-    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "dipu is working…" })));
+    act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Dipu is working…" })));
     act(() => root.render(createElement(Harness, { conversationId: "c1", interlocked: false })));
 
     // No new send call, focus still on the other element, no scroll.
@@ -276,7 +276,7 @@ describe("ConversationComposer interlock (U2)", () => {
   });
 
   it("an interlocked composer cannot submit via Enter", async () => {
-    render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Approval required for dipu" }));
+    render(createElement(Harness, { conversationId: "c1", interlocked: true, interlockReason: "Approval required for Dipu" }));
     const input = textarea();
     await act(async () => key(input, "Enter"));
     expect(sendConversationMessage).not.toHaveBeenCalled();

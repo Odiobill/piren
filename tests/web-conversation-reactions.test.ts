@@ -33,22 +33,22 @@ function event(overrides: Partial<ConversationEventRecord>): ConversationEventRe
 describe("conversationReactionForEvent (pure, durable-only mapping)", () => {
   it("maps run_started with runAgent to the received reaction", () => {
     const reaction = conversationReactionForEvent(event({ kind: "run_started", authorKind: "system", author: "system", runStatus: "running", runAgent: "dipu" }));
-    expect(reaction).toEqual({ kind: "received", agent: "dipu", status: "received", label: "dipu received" });
+    expect(reaction).toEqual({ kind: "received", agent: "dipu", status: "received", label: "Dipu received" });
   });
 
   it("maps durable terminal evidence to completed/failed/cancelled with the actual supplied status", () => {
     expect(conversationReactionForEvent(event({ kind: "run_finished", authorKind: "system", author: "system", runStatus: "completed", runAgent: "dipu" }))).toEqual({
-      kind: "completed", agent: "dipu", status: "completed", label: "dipu completed",
+      kind: "completed", agent: "dipu", status: "completed", label: "Dipu completed",
     });
     expect(conversationReactionForEvent(event({ kind: "run_finished", authorKind: "system", author: "system", runStatus: "failed", failureKind: "ambiguous", runAgent: "dipu" }))).toEqual({
-      kind: "failed", agent: "dipu", status: "failed", label: "dipu failed",
+      kind: "failed", agent: "dipu", status: "failed", label: "Dipu failed",
     });
     // A timed-out run is an explicit failure (actual status preserved).
     expect(conversationReactionForEvent(event({ kind: "run_finished", authorKind: "system", author: "system", runStatus: "timed_out", runAgent: "dipu" }))).toEqual({
-      kind: "failed", agent: "dipu", status: "timed out", label: "dipu timed out",
+      kind: "failed", agent: "dipu", status: "timed out", label: "Dipu timed out",
     });
     expect(conversationReactionForEvent(event({ kind: "run_cancelled", authorKind: "system", author: "system", runStatus: "cancelled", runAgent: "dipu" }))).toEqual({
-      kind: "cancelled", agent: "dipu", status: "cancelled", label: "dipu cancelled",
+      kind: "cancelled", agent: "dipu", status: "cancelled", label: "Dipu cancelled",
     });
   });
 
@@ -80,7 +80,7 @@ describe("conversationReactionForEvent (pure, durable-only mapping)", () => {
           : conversationReactionForEvent(
               event({ kind: kind === "cancelled" ? "run_cancelled" : "run_finished", authorKind: "system", author: "system", runStatus: kind === "cancelled" ? "cancelled" : kind, runAgent: "zai" }),
             );
-      expect(reaction?.label).toContain("zai");
+      expect(reaction?.label).toContain("Zai");
       expect(reaction?.label).not.toMatch(/read|seen|delivered/i);
     }
   });

@@ -160,7 +160,7 @@ describe("VR-5 mounted panel capture-readiness (fake Pi, real gateway)", () => {
     const abort = card.querySelector<HTMLButtonElement>(".transient-run-abort");
     expect(abort).not.toBeNull();
     expect(abort!.disabled).toBe(false);
-    expect(abort!.getAttribute("aria-label")).toBe("Abort sam's current work");
+    expect(abort!.getAttribute("aria-label")).toBe("Abort Sam's current work");
     expect(abort!.getAttribute("data-activity-abort-run-id")).not.toBeNull();
     const toolLines = Array.from(card.querySelectorAll(".activity-card-tools li")).map((n) => n.textContent);
     expect(toolLines.length).toBeGreaterThanOrEqual(2);
@@ -218,7 +218,7 @@ describe("VR-5 mounted panel capture-readiness (fake Pi, real gateway)", () => {
 
     await waitFor("hanging work card abort", () => container.querySelector<HTMLButtonElement>(".transient-run-abort") !== null, 20_000);
     const abort = container.querySelector<HTMLButtonElement>(".transient-run-abort")!;
-    expect(abort.getAttribute("aria-label")).toBe("Abort sam's current work");
+    expect(abort.getAttribute("aria-label")).toBe("Abort Sam's current work");
 
     await act(async () => {
       abort.click();
@@ -283,7 +283,7 @@ describe("VR-5 mounted panel capture-readiness (fake Pi, real gateway)", () => {
     expect(popup.textContent).toMatch(/Last observed\d{2}:\d{2}:\d{2} UTC/);
 
     // Explicit Refresh is the only fetch and supersedes the restored label.
-    const refresh = popup.querySelector<HTMLButtonElement>('button[aria-label^="Refresh context telemetry for zai"]');
+    const refresh = popup.querySelector<HTMLButtonElement>('button[aria-label^="Refresh context telemetry for Zai"]');
     expect(refresh).not.toBeNull();
     await act(async () => {
       refresh!.click();

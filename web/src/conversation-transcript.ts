@@ -32,6 +32,7 @@
 import type { ConversationEventRecord } from "./conversations.js";
 import type { ConversationTimelineItem } from "./conversation-timeline.js";
 import { conversationReactionForEvent, type ConversationReaction, type ConversationReactionKind } from "./conversation-reactions.js";
+import { agentDisplayName } from "./agent-display.js";
 
 /** One fixed status attachment to a requester message row. */
 export interface ConversationStatusAttachment {
@@ -90,7 +91,8 @@ export function conversationStartOriginPresentation(event: ConversationEventReco
   const match = START_ORIGIN_BODY_PATTERN.exec(event.body);
   const agent = match?.[1];
   if (agent === undefined || !START_ORIGIN_AGENT_PATTERN.test(agent)) return null;
-  return { label: `Conversation started with agent ${agent}` };
+  // S6: presentation-only display form; the captured durable agent stays canonical.
+  return { label: `Conversation started with agent ${agentDisplayName(agent)}` };
 }
 
 /**

@@ -155,7 +155,7 @@ describe("W4 copy control — rendering and eligibility", () => {
     // Exactly one control per card: 2 eligible message cards → 2 controls.
     expect(container.querySelectorAll("button[aria-label^='Copy message from']")).toHaveLength(2);
     // C5 handoff row: durable agent_message but transcript-handoff card → no control.
-    expect(container.textContent).toContain("handoff from dipu to zai");
+    expect(container.textContent).toContain("handoff from Dipu to Zai");
     expect(container.textContent).toContain("handoff directive text");
     expect(copyButton("dipu")).toBe(agentButton); // sanity: only one dipu card
     expect(container.querySelectorAll("button")).toHaveLength(2); // only the two copy controls exist

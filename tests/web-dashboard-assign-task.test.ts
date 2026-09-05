@@ -183,7 +183,7 @@ describe("DashboardView Assign task (T1)", () => {
     await openModalFor("dipu");
     const d = dialog();
     expect(d.getAttribute("aria-labelledby")).toBe("assign-task-heading");
-    expect(d.textContent).toContain("dipu");
+    expect(d.textContent).toContain("Dipu");
     expect(document.activeElement).toBe(subjectInput());
     // Required fields carry native accessible-required semantics; the
     // trimmed-content submit gating stays in place.
@@ -289,7 +289,7 @@ describe("DashboardView Assign task (T1)", () => {
     });
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     const notice = container.querySelector(".dashboard-assign-notice");
-    expect(notice?.textContent).toContain("A task was created for dipu.");
+    expect(notice?.textContent).toContain("A task was created for Dipu.");
     const text = container.textContent ?? "";
     expect(text).not.toContain("notified");
     expect(text).not.toContain("contacted");

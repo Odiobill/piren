@@ -14,6 +14,7 @@
 
 import type { ConversationTelemetryEntry, ConversationTelemetryLiveFacts, ConversationTelemetryState } from "./conversation-telemetry.js";
 import { formatObservedTime, type ContextContinuityEntry } from "./context-continuity-store.js";
+import { agentDisplayName } from "./agent-display.js";
 
 /** The exact truthful states a card/popup can present. */
 export type ContextCardStateKey = "ok" | "post_compaction_pending" | "no_window" | "no_live_session" | "not_sampled";
@@ -119,7 +120,7 @@ function contextCardViewModel(agent: string, entry: ConversationTelemetryEntry |
     bar: presentation.bar,
     shortText: presentation.shortText,
     stateText: presentation.stateText,
-    accessibleName: `${agent}: ${presentation.stateText}; activate for details`,
+    accessibleName: `${agentDisplayName(agent)}: ${presentation.stateText}; activate for details`,
   };
 }
 
@@ -169,7 +170,7 @@ export function telemetryPopupViewModel(
   // labelled lines — agent and truthful state first (always present), then
   // tokens/window/percent, model, thinking, and auto-compaction when present.
   const fields: TelemetryPopupField[] = [
-    { label: "Agent", value: agent },
+    { label: "Agent", value: agentDisplayName(agent) },
     { label: "State", value: presentation.stateText },
   ];
   if (entry !== undefined && entry.kind === "live") {
@@ -194,9 +195,9 @@ export function telemetryPopupViewModel(
     fields.push({ label: "Last observed", value: `${formatObservedTime(restoredObservedAt)} UTC` });
   }
   return {
-    title: `Context telemetry for ${agent}`,
-    closeLabel: `Close context telemetry for ${agent}`,
-    refreshLabel: `Refresh context telemetry for ${agent}`,
+    title: `Context telemetry for ${agentDisplayName(agent)}`,
+    closeLabel: `Close context telemetry for ${agentDisplayName(agent)}`,
+    refreshLabel: `Refresh context telemetry for ${agentDisplayName(agent)}`,
     stateKey: presentation.stateKey,
     stateText: presentation.stateText,
     bar: presentation.bar,

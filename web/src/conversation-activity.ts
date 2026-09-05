@@ -14,6 +14,7 @@
  * delivery-to-model claim.
  */
 import type { ConversationEventRecord } from "./conversations.js";
+import { agentDisplayName } from "./agent-display.js";
 
 export type ConversationActivityKind = "working" | "text_delta" | "settled" | "tool";
 export type ConversationActivityOutcome = "completed" | "failed" | "timed_out" | "cancelled";
@@ -187,7 +188,7 @@ export function conversationActivityRunStateLabel(phase: "working" | "typing"): 
 
 /** U1 — the normally focusable, labelled scoped abort action for one exact agent run. */
 export function conversationActivityRunAbortLabel(agent: string): string {
-  return `Abort ${agent}'s current work`;
+  return `Abort ${agentDisplayName(agent)}'s current work`;
 }
 
 /**
@@ -209,12 +210,12 @@ export function conversationActivityLiveAnnouncement(
   for (const item of next) {
     const prior = prevByRun.get(item.runId);
     if (prior === undefined || prior.phase !== item.phase) {
-      parts.push(`${item.agent} ${conversationActivityRunStateLabel(item.phase)}`);
+      parts.push(`${agentDisplayName(item.agent)} ${conversationActivityRunStateLabel(item.phase)}`);
     }
   }
   for (const item of previous) {
     if (!nextByRun.has(item.runId)) {
-      parts.push(`${item.agent} is no longer working`);
+      parts.push(`${agentDisplayName(item.agent)} is no longer working`);
     }
   }
   return parts.length === 0 ? null : parts.join(". ");

@@ -159,8 +159,8 @@ describe("formatConversationTelemetryEntry (text-first, truthful)", () => {
         autoCompactionEnabled: true,
       },
     });
-    expect(line.text).toBe("dipu · 60.0k / 200.0k context · 30% · auto-compaction on · anthropic/claude-sonnet-4 · thinking high");
-    expect(line.ariaLabel).toContain("dipu");
+    expect(line.text).toBe("Dipu · 60.0k / 200.0k context · 30% · auto-compaction on · anthropic/claude-sonnet-4 · thinking high");
+    expect(line.ariaLabel).toContain("Dipu");
     expect(line.ariaLabel).toContain("30 percent");
   });
 
@@ -171,12 +171,12 @@ describe("formatConversationTelemetryEntry (text-first, truthful)", () => {
       runId: null,
       facts: { contextState: "post_compaction_pending", context: { tokens: null, contextWindow: 200000, percent: null } },
     });
-    expect(pending.text).toBe("dipu · context usage temporarily unavailable after compaction");
+    expect(pending.text).toBe("Dipu · context usage temporarily unavailable after compaction");
     expect(pending.text).not.toContain("%");
     const noWindow = formatConversationTelemetryEntry({ kind: "live", agent: "zai", runId: null, facts: { contextState: "no_window" } });
-    expect(noWindow.text).toBe("zai · no context window information");
+    expect(noWindow.text).toBe("Zai · no context window information");
     const noLive = formatConversationTelemetryEntry({ kind: "no-live", agent: "zai" });
-    expect(noLive.text).toBe("zai · no live session");
+    expect(noLive.text).toBe("Zai · no live session");
   });
 });
 

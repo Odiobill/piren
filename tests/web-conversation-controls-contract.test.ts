@@ -118,8 +118,8 @@ describe("announcement vocabulary", () => {
       method: "confirm",
       payload: { title: "Approve action?" },
     };
-    expect(approvalRequestedAnnouncement(approval)).toBe("Approval requested by zai.");
-    expect(approvalResponseAnnouncement("zai")).toBe("Approval response sent to zai.");
+    expect(approvalRequestedAnnouncement(approval)).toBe("Approval requested by Zai.");
+    expect(approvalResponseAnnouncement("zai")).toBe("Approval response sent to Zai.");
     expect(abortAnnouncement({ status: "cancelled" })).toBe("Run aborted.");
     expect(abortAnnouncement({ status: "no-active-run" })).toBe("No active run.");
   });
@@ -160,8 +160,8 @@ describe("C5-4 gate-card recognition (pure, display-only, fail-closed)", () => {
   });
 
   it("labels and announces a recognized gate truthfully without raw internals", () => {
-    expect(conversationHandoffGateLabel({ to: "dipu", text: "x" }, "sam")).toBe("handoff from sam to dipu");
-    expect(handoffGateRequestedAnnouncement(gateApproval(), { to: "dipu", text: "x" })).toBe("Handoff gate requested by sam to dipu.");
+    expect(conversationHandoffGateLabel({ to: "dipu", text: "x" }, "sam")).toBe("handoff from Sam to Dipu");
+    expect(handoffGateRequestedAnnouncement(gateApproval(), { to: "dipu", text: "x" })).toBe("Handoff gate requested by Sam to Dipu.");
   });
 });
 

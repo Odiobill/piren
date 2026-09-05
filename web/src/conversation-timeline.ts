@@ -13,6 +13,7 @@
 import type { ConversationEventRecord } from "./conversations.js";
 import { createSseParser, streamEnded, initialReconnectBudget, MAX_AUTO_RECONNECT_ATTEMPTS, type ReconnectBudget, type SseFrame } from "./timeline.js";
 import { lifecycleTransitionLabel } from "./conversation-lifecycle.js";
+import { agentDisplayName } from "./agent-display.js";
 
 export { streamEnded, initialReconnectBudget, MAX_AUTO_RECONNECT_ATTEMPTS };
 export type { ReconnectBudget };
@@ -30,7 +31,7 @@ export function isConversationHandoffEvent(event: ConversationEventRecord): bool
 /** Bounded label naming the handoff source → target (no raw internals). */
 export function conversationHandoffEventLabel(event: ConversationEventRecord): string {
   const target = typeof event.addressedAgent === "string" ? event.addressedAgent : "";
-  return `handoff from ${event.author} to ${target}`;
+  return `handoff from ${agentDisplayName(event.author)} to ${agentDisplayName(target)}`;
 }
 
 /**
@@ -44,13 +45,13 @@ export function conversationEventLabel(event: ConversationEventRecord): string {
     case "steward_message":
       return "steward message";
     case "agent_message":
-      return isConversationHandoffEvent(event) ? conversationHandoffEventLabel(event) : `${event.author} replied`;
+      return isConversationHandoffEvent(event) ? conversationHandoffEventLabel(event) : `${agentDisplayName(event.author)} replied`;
     case "run_started":
-      return `run started for ${event.author} (${event.runStatus ?? "running"})`;
+      return `run started for ${agentDisplayName(event.author)} (${event.runStatus ?? "running"})`;
     case "run_finished":
-      return `run finished for ${event.author} (${event.runStatus ?? "completed"}${event.failureKind !== undefined ? `, ${event.failureKind}` : ""})`;
+      return `run finished for ${agentDisplayName(event.author)} (${event.runStatus ?? "completed"}${event.failureKind !== undefined ? `, ${event.failureKind}` : ""})`;
     case "run_cancelled":
-      return `run cancelled for ${event.author}`;
+      return `run cancelled for ${agentDisplayName(event.author)}`;
     case "model_fallback":
       return "model fallback";
     case "lifecycle_transition":

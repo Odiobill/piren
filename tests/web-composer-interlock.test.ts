@@ -104,12 +104,12 @@ describe("composeInterlockReason (broker state reflection)", () => {
         activeRuns: [{ agent: "dipu", phase: "working" }],
         approvals: [{ agent: "dipu" }],
       }),
-    ).toBe("Approval required for dipu");
+    ).toBe("Approval required for Dipu");
   });
 
   it("falls back to the active run working/typing reason when no approval is pending", () => {
-    expect(composeInterlockReason({ activeRuns: [{ agent: "dipu", phase: "working" }], approvals: [] })).toBe("dipu is working…");
-    expect(composeInterlockReason({ activeRuns: [{ agent: "zai", phase: "typing" }], approvals: [] })).toBe("zai is typing…");
+    expect(composeInterlockReason({ activeRuns: [{ agent: "dipu", phase: "working" }], approvals: [] })).toBe("Dipu is working…");
+    expect(composeInterlockReason({ activeRuns: [{ agent: "zai", phase: "typing" }], approvals: [] })).toBe("Zai is typing…");
   });
 
   it("returns null when there is neither an active run nor a pending approval", () => {
@@ -125,10 +125,10 @@ describe("composeInterlockReason (broker state reflection)", () => {
         ],
         approvals: [],
       }),
-    ).toBe("dipu is working…");
+    ).toBe("Dipu is working…");
     expect(
       composeInterlockReason({ activeRuns: [], approvals: [{ agent: "zai" }, { agent: "dipu" }] }),
-    ).toBe("Approval required for zai");
+    ).toBe("Approval required for Zai");
   });
 });
 

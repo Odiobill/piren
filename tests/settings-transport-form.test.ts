@@ -817,7 +817,7 @@ describe("AgentPreferencesForm: roster + fallback confirmation (W6)", () => {
     expect(initial!.getAttribute("aria-hidden")).toBe("true");
     expect(initial!.textContent).toBe("K");
     // ...and the name itself remains available text.
-    expect(card!.querySelector(".settings-agent-card-name")?.textContent).toBe("kimi");
+    expect(card!.querySelector(".settings-agent-card-name")?.textContent).toBe("Kimi");
   });
 
   it("ST-3 context: the Default option label names the core default exactly", async () => {

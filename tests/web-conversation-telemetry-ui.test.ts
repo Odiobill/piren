@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentDisplayName } from "../web/src/agent-display.js";
 
 // React 19 requires the act environment flag for component-test state flushing.
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -83,7 +84,8 @@ function cardsRow(): HTMLElement | null {
 }
 
 function cardButton(agent: string): HTMLButtonElement | null {
-  return cardsRow()?.querySelector<HTMLButtonElement>(`button[aria-label^="${agent}:"]`) ?? null;
+  // S6: the card's accessible name renders the display form; match on it.
+  return cardsRow()?.querySelector<HTMLButtonElement>(`button[aria-label^="${agentDisplayName(agent)}:"]`) ?? null;
 }
 
 function cardProgressbar(agent: string): HTMLElement | null {
@@ -107,7 +109,7 @@ async function openPopup(agent: string): Promise<HTMLElement> {
 }
 
 function popupRefresh(dialog: HTMLElement, agent: string): HTMLButtonElement {
-  const button = dialog.querySelector<HTMLButtonElement>(`button[aria-label="Refresh context telemetry for ${agent}"]`);
+  const button = dialog.querySelector<HTMLButtonElement>(`button[aria-label="Refresh context telemetry for ${agentDisplayName(agent)}"]`);
   if (button === null) throw new Error("no popup Refresh control");
   return button;
 }
@@ -176,8 +178,8 @@ describe("Context cards tray row", () => {
     // One native button per durable audience member, in durable order.
     const buttons = Array.from(row?.querySelectorAll("button") ?? []);
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
-      "dipu: No context telemetry yet; activate for details",
-      "zai: No context telemetry yet; activate for details",
+      "Dipu: No context telemetry yet; activate for details",
+      "Zai: No context telemetry yet; activate for details",
     ]);
     for (const button of buttons) {
       expect(button.type).toBe("button");
@@ -210,7 +212,7 @@ describe("Context cards tray row", () => {
     expect(bar?.getAttribute("aria-valuenow")).toBe("30");
     expect(bar?.getAttribute("aria-valuetext")).toBe("Context usage: 30.00% of 200.0k window");
     expect(cardButton("dipu")?.textContent).toContain("30.00%");
-    expect(cardButton("dipu")?.getAttribute("aria-label")).toBe("dipu: Context usage: 30.00% of 200.0k window; activate for details");
+    expect(cardButton("dipu")?.getAttribute("aria-label")).toBe("Dipu: Context usage: 30.00% of 200.0k window; activate for details");
     // zai remains in the truthful never-sampled state.
     expect(cardProgressbar("zai")?.getAttribute("aria-valuenow")).toBeNull();
     expect(cardButton("zai")?.textContent).not.toContain("30.00%");
@@ -270,7 +272,7 @@ describe("Telemetry details popup", () => {
     const dialog = await openPopup("dipu");
     expect(container.querySelectorAll('[role="dialog"]')).toHaveLength(1);
     expect(dialog.getAttribute("aria-modal")).toBe("true");
-    expect(dialog.querySelector("#telemetry-popup-heading")?.textContent).toBe("Context telemetry for dipu");
+    expect(dialog.querySelector("#telemetry-popup-heading")?.textContent).toBe("Context telemetry for Dipu");
     expect(dialog.getAttribute("aria-labelledby")).toBe("telemetry-popup-heading");
     // Initial focus is the explicit Refresh control.
     const refresh = popupRefresh(dialog, "dipu");
@@ -299,7 +301,7 @@ describe("Telemetry details popup", () => {
     const rows = Array.from(dialog.querySelectorAll(".telemetry-popup-field"));
     const pairs = rows.map((row) => [row.querySelector("dt")?.textContent, row.querySelector("dd")?.textContent]);
     expect(pairs).toEqual([
-      ["Agent", "dipu"],
+      ["Agent", "Dipu"],
       ["State", "Context usage: 30.00% of 200.0k window"],
       ["Context tokens", "60.0k"],
       ["Context window", "200.0k"],
@@ -329,7 +331,7 @@ describe("Telemetry details popup", () => {
     expect(document.activeElement).toBe(card);
 
     const dialog2 = await openPopup("dipu");
-    const close = dialog2.querySelector<HTMLButtonElement>('button[aria-label="Close context telemetry for dipu"]');
+    const close = dialog2.querySelector<HTMLButtonElement>('button[aria-label="Close context telemetry for Dipu"]');
     expect(close).not.toBeNull();
     await act(async () => {
       close?.click();
@@ -361,15 +363,15 @@ describe("Telemetry details popup", () => {
   it("activating a second card swaps the single popup to that exact pair", async () => {
     await mountNavigator();
     await openPopup("dipu");
-    expect(popup()?.textContent).toContain("Context telemetry for dipu");
+    expect(popup()?.textContent).toContain("Context telemetry for Dipu");
     await act(async () => {
       cardButton("zai")?.click();
     });
     await flush();
     const dialogs = container.querySelectorAll('[role="dialog"]');
     expect(dialogs).toHaveLength(1);
-    expect(popup()?.textContent).toContain("Context telemetry for zai");
-    expect(popup()?.textContent).not.toContain("Context telemetry for dipu");
+    expect(popup()?.textContent).toContain("Context telemetry for Zai");
+    expect(popup()?.textContent).not.toContain("Context telemetry for Dipu");
     expect(vi.mocked(fetchConversationTelemetry)).not.toHaveBeenCalled();
   });
 
@@ -428,7 +430,7 @@ describe("explicit-only popup Refresh", () => {
     });
     await flush();
     expect(vi.mocked(fetchConversationTelemetry)).toHaveBeenCalledTimes(1);
-    const busyButton = popup()?.querySelector<HTMLButtonElement>('button[aria-label="Refresh context telemetry for dipu"]');
+    const busyButton = popup()?.querySelector<HTMLButtonElement>('button[aria-label="Refresh context telemetry for Dipu"]');
     expect(busyButton?.disabled).toBe(true);
     expect(busyButton?.textContent).toContain("Refreshing…");
     await act(async () => {
@@ -586,7 +588,7 @@ describe("cross-selection refresh race guard (T6, preserved)", () => {
     await flush();
     // The popup closed with the selection change; B's cards show no busy state.
     expect(popup()).toBeNull();
-    expect(cardsRow()?.textContent).toContain("dipu");
+    expect(cardsRow()?.textContent).toContain("Dipu");
 
     // A's refresh resolves late: fully inert for B — no telemetry, no error,
     // no busy state, no second request.
@@ -676,7 +678,7 @@ describe("commit-window race guard (T6 final correction, preserved)", () => {
 
     expect(popup()).toBeNull();
     expect(cardsRow()).not.toBeNull();
-    expect(cardsRow()?.textContent).toContain("dipu");
+    expect(cardsRow()?.textContent).toContain("Dipu");
     expect(cardProgressbar("dipu")?.getAttribute("aria-valuenow")).toBeNull();
     expect(cardsRow()?.textContent).not.toContain("Refreshing…");
     expect(container.querySelector('[role="alert"]')).toBeNull();

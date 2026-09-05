@@ -24,6 +24,7 @@ import {
   nextCompletionIndex,
 } from "./conversation-autocomplete";
 import { PlusIcon, ReturnKeyIcon } from "./icons";
+import { agentDisplayName } from "./agent-display";
 import type { ConversationAgentEntry } from "./conversation-agents";
 
 /**
@@ -397,7 +398,7 @@ export function ConversationComposer({
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => chooseCompletion(name)}
                   >
-                    @{name}
+                    @{agentDisplayName(name)}
                   </li>
                 ))}
               </ul>

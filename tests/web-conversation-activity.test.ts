@@ -343,8 +343,8 @@ describe("fail-closed invalid/stale/contradictory activity (U4 correction)", () 
 
 describe("U1 status-only card helpers (pure)", () => {
   it("labels the scoped abort action as the exact agent's current work", () => {
-    expect(conversationActivityRunAbortLabel("dipu")).toBe("Abort dipu's current work");
-    expect(conversationActivityRunAbortLabel("zai")).toBe("Abort zai's current work");
+    expect(conversationActivityRunAbortLabel("dipu")).toBe("Abort Dipu's current work");
+    expect(conversationActivityRunAbortLabel("zai")).toBe("Abort Zai's current work");
   });
 
   function run(runId: string, agent: string, phase: "working" | "typing"): ConversationCompactActivityRun {
@@ -353,11 +353,11 @@ describe("U1 status-only card helpers (pure)", () => {
 
   it("announces one polite line per card appearance, phase transition, and removal (never per token)", () => {
     // Appearance (working).
-    expect(conversationActivityLiveAnnouncement([], [run("r1", "dipu", "working")])).toBe("dipu is working…");
+    expect(conversationActivityLiveAnnouncement([], [run("r1", "dipu", "working")])).toBe("Dipu is working…");
     // working -> typing transition.
-    expect(conversationActivityLiveAnnouncement([run("r1", "dipu", "working")], [run("r1", "dipu", "typing")])).toBe("dipu is typing…");
+    expect(conversationActivityLiveAnnouncement([run("r1", "dipu", "working")], [run("r1", "dipu", "typing")])).toBe("Dipu is typing…");
     // Removal (neutral, never a completion/failure claim).
-    expect(conversationActivityLiveAnnouncement([run("r1", "dipu", "typing")], [])).toBe("dipu is no longer working");
+    expect(conversationActivityLiveAnnouncement([run("r1", "dipu", "typing")], [])).toBe("Dipu is no longer working");
   });
 
   it("returns null when the card set is byte-identical (no redundant announcement)", () => {
@@ -371,7 +371,7 @@ describe("U1 status-only card helpers (pure)", () => {
     const previous = [run("r1", "dipu", "working"), run("r2", "zai", "typing")];
     const next = [run("r2", "zai", "typing"), run("r3", "kim", "working")];
     // r1 removed, r3 appeared; r2 unchanged (not re-announced).
-    expect(conversationActivityLiveAnnouncement(previous, next)).toBe("kim is working…. dipu is no longer working");
+    expect(conversationActivityLiveAnnouncement(previous, next)).toBe("Kim is working…. Dipu is no longer working");
   });
 });
 

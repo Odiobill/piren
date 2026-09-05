@@ -32,13 +32,13 @@ describe("B6 workflow status view model — exact truth table (§6)", () => {
   it("run_active with no associated workflow renders busy alone (non-C5 agent-first run)", () => {
     const indicator = workflowStatusIndicator("dipu", { runActive: true, workflow: null }, false);
     expect(indicator.state).toBe("busy");
-    expect(indicator.accessibleText).toBe("dipu is currently running");
+    expect(indicator.accessibleText).toBe("Dipu is currently running");
   });
 
   it("a validated scoped live activity run alone renders busy with no association", () => {
     const indicator = workflowStatusIndicator("dipu", { runActive: false, workflow: null }, true);
     expect(indicator.state).toBe("busy");
-    expect(indicator.accessibleText).toBe("dipu is currently running");
+    expect(indicator.accessibleText).toBe("Dipu is currently running");
   });
 
   it("associated workflow, not low, not exhausted, no run renders none", () => {
@@ -49,7 +49,7 @@ describe("B6 workflow status view model — exact truth table (§6)", () => {
   it("associated workflow with run_active and healthy budget renders busy", () => {
     const indicator = workflowStatusIndicator("dipu", { ...BASE, runActive: true }, false);
     expect(indicator.state).toBe("busy");
-    expect(indicator.accessibleText).toBe("dipu is currently running");
+    expect(indicator.accessibleText).toBe("Dipu is currently running");
   });
 
   it("associated workflow with low budget renders yellow, never masked by busy", () => {
@@ -70,7 +70,7 @@ describe("B6 workflow status view model — exact truth table (§6)", () => {
     const indicator = workflowStatusIndicator("dipu", snapshot, true);
     expect(indicator.state).toBe("red");
     expect(indicator.accessibleText).toBe(
-      "Workflow budget exhausted for dipu's associated workflow; open Context telemetry to extend",
+      "Workflow budget exhausted for Dipu's associated workflow; open Context telemetry to extend",
     );
   });
 
@@ -135,7 +135,7 @@ describe("B6 workflow status accessible name composition", () => {
       "dipu: Context usage: 30.00% of 200.0k window; activate for details",
       workflowStatusIndicator("dipu", { runActive: true, workflow: null }, false),
     );
-    expect(name).toBe("dipu: Context usage: 30.00% of 200.0k window; dipu is currently running; activate for details");
+    expect(name).toBe("dipu: Context usage: 30.00% of 200.0k window; Dipu is currently running; activate for details");
   });
 
   it("keeps the base name unchanged when there is no indicator", () => {

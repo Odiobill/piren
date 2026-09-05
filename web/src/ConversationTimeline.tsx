@@ -48,6 +48,7 @@ import {
 import { SafeMarkdownBody } from "./SafeMarkdown";
 import { ClipboardIcon, RetryIcon } from "./icons";
 import type { ConversationEventRecord } from "./conversations";
+import { agentDisplayName } from "./agent-display";
 
 /**
  * Immutable Conversation timeline (C3-A): durable whole-history reread, then
@@ -462,7 +463,7 @@ function ConversationTranscriptRow({ row }: { row: ConversationTranscriptRow }) 
             {conversationAuthorInitial(event.author)}
           </span>
         )}
-        <span className="transcript-author">{steward ? "You" : event.author}</span>
+        <span className="transcript-author">{steward ? "You" : agentDisplayName(event.author)}</span>
         <time className="transcript-time" dateTime={event.created}>
           {event.created}
         </time>

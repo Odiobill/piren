@@ -65,7 +65,7 @@ describe("groupConversationTranscript (pure durable grouping)", () => {
 
     const rows = groupConversationTranscript([item(sm1), item(r1), item(am1), item(r2)]);
     expect(rows.map((row) => (row.type === "message" ? row.event.id : row.type))).toEqual(["sm1", "am1"]);
-    expect(statuses(rows[0] as ConversationTranscriptRow).map((s) => s.reaction.label)).toEqual(["dipu received", "dipu completed"]);
+    expect(statuses(rows[0] as ConversationTranscriptRow).map((s) => s.reaction.label)).toEqual(["Dipu received", "Dipu completed"]);
     expect(statuses(rows[1] as ConversationTranscriptRow)).toEqual([]);
   });
 
@@ -79,7 +79,7 @@ describe("groupConversationTranscript (pure durable grouping)", () => {
 
     const rows = groupConversationTranscript([item(sm1), item(r1), item(r2), item(am1), item(r3), item(r4)]);
     const cluster = statuses(rows[0] as ConversationTranscriptRow).map((s) => s.reaction.label);
-    expect(cluster).toEqual(["dipu received", "zai received", "dipu completed", "zai completed"]);
+    expect(cluster).toEqual(["Dipu received", "Zai received", "Dipu completed", "Zai completed"]);
   });
 
   it("never dedupes or overwrites distinct durable events, even when status/agent match", () => {
@@ -90,7 +90,7 @@ describe("groupConversationTranscript (pure durable grouping)", () => {
 
     const rows = groupConversationTranscript([item(sm1), item(f1), item(f2), item(c1)]);
     const cluster = statuses(rows[0] as ConversationTranscriptRow);
-    expect(cluster.map((s) => s.reaction.label)).toEqual(["dipu completed", "dipu completed", "zai cancelled"]);
+    expect(cluster.map((s) => s.reaction.label)).toEqual(["Dipu completed", "Dipu completed", "Zai cancelled"]);
     expect(cluster.map((s) => s.eventId)).toEqual(["f1", "f2", "c1"]);
   });
 
@@ -104,9 +104,9 @@ describe("groupConversationTranscript (pure durable grouping)", () => {
 
     const rows = groupConversationTranscript([item(sm1), item(r1), item(h1), item(r2), item(r3), item(r4)]);
     expect(rows.map((row) => row.type)).toEqual(["message", "message"]);
-    expect(statuses(rows[0] as ConversationTranscriptRow).map((s) => s.reaction.label)).toEqual(["dipu received", "dipu completed"]);
+    expect(statuses(rows[0] as ConversationTranscriptRow).map((s) => s.reaction.label)).toEqual(["Dipu received", "Dipu completed"]);
     // The handoff requester row carries the child run's own durable statuses.
-    expect(statuses(rows[1] as ConversationTranscriptRow).map((s) => s.reaction.label)).toEqual(["zai received", "zai completed"]);
+    expect(statuses(rows[1] as ConversationTranscriptRow).map((s) => s.reaction.label)).toEqual(["Zai received", "Zai completed"]);
   });
 
   it("fails safe to a visible evidence row for uncorrelated run evidence (with the U5 chip when mapping exists)", () => {
@@ -115,8 +115,8 @@ describe("groupConversationTranscript (pure durable grouping)", () => {
 
     const rows = groupConversationTranscript([item(u1), item(f1)]);
     expect(rows.map((row) => row.type)).toEqual(["evidence", "evidence"]);
-    expect((rows[0] as Extract<ConversationTranscriptRow, { type: "evidence" }>).reaction?.label).toBe("dipu received");
-    expect((rows[1] as Extract<ConversationTranscriptRow, { type: "evidence" }>).reaction?.label).toBe("dipu completed");
+    expect((rows[0] as Extract<ConversationTranscriptRow, { type: "evidence" }>).reaction?.label).toBe("Dipu received");
+    expect((rows[1] as Extract<ConversationTranscriptRow, { type: "evidence" }>).reaction?.label).toBe("Dipu completed");
   });
 
   it("fails safe for missing runAgent, unknown/malformed terminal, and non-run system evidence", () => {

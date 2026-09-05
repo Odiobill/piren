@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // React 19 requires the act environment flag for component-test state flushing.
+import { agentDisplayName } from "../web/src/agent-display.js";
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -90,7 +91,7 @@ function cardsRow(): HTMLElement | null {
 }
 
 function cardButton(agent: string): HTMLButtonElement | null {
-  return cardsRow()?.querySelector<HTMLButtonElement>(`button[aria-label^="${agent}:"]`) ?? null;
+  return cardsRow()?.querySelector<HTMLButtonElement>(`button[aria-label^="${agentDisplayName(agent)}:"]`) ?? null;
 }
 
 function workflowIndicator(agent: string): HTMLElement | null {
@@ -179,7 +180,7 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
     expect(indicator).not.toBeNull();
     expect(indicator?.className).toContain("context-card-workflow-status-busy");
     expect(indicator?.textContent).toContain("running");
-    expect(cardButton("dipu")?.getAttribute("aria-label")).toContain("dipu is currently running");
+    expect(cardButton("dipu")?.getAttribute("aria-label")).toContain("Dipu is currently running");
     // The non-running agent renders no indicator at all.
     expect(workflowIndicator("zai")).toBeNull();
     // The snapshot is the exact-pair route for each audience member.
@@ -205,7 +206,7 @@ describe("B6 per-agent context-card workflow status (browser surface)", () => {
     expect(red?.className).toContain("context-card-workflow-status-red");
     expect(red?.textContent).toContain("budget exhausted");
     expect(cardButton("dipu")?.getAttribute("aria-label")).toContain(
-      "Workflow budget exhausted for dipu's associated workflow; open Context telemetry to extend",
+      "Workflow budget exhausted for Dipu's associated workflow; open Context telemetry to extend",
     );
     const yellow = workflowIndicator("zai");
     expect(yellow?.className).toContain("context-card-workflow-status-yellow");

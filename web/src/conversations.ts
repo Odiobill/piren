@@ -6,6 +6,8 @@
  * `@text` — mentions are server-authoritative; these parsers only decode
  * the durable records the gateway already validated.
  */
+import { agentDisplayName } from "./agent-display.js";
+
 export interface ConversationRecord {
   id: string;
   path: string;
@@ -31,11 +33,7 @@ export const SIDEBAR_AUDIENCE_SUMMARY_FIT_CHARS = 28;
 
 /** Lowercase-kebab agent name → Title Case (`piren-agent` → `Piren Agent`). */
 export function conversationMemberTitle(name: string): string {
-  return name
-    .split("-")
-    .filter((part) => part !== "")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  return agentDisplayName(name);
 }
 
 /**

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+import { agentDisplayName } from "../web/src/agent-display.js";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConversationNavigator } from "../web/src/ConversationNavigator.js";
@@ -73,7 +74,7 @@ function deliverTelemetry(frame: Record<string, unknown>): void {
 }
 
 function cardButton(agent: string): HTMLButtonElement | null {
-  return container.querySelector<HTMLButtonElement>(`button[aria-label^="${agent}:"]`) ?? null;
+  return container.querySelector<HTMLButtonElement>(`button[aria-label^="${agentDisplayName(agent)}:"]`) ?? null;
 }
 
 function cardShortText(agent: string): string | null {
@@ -95,7 +96,7 @@ async function openPopup(agent: string): Promise<HTMLElement> {
 }
 
 function popupRefresh(dialog: HTMLElement, agent: string): HTMLButtonElement {
-  const button = dialog.querySelector<HTMLButtonElement>(`button[aria-label="Refresh context telemetry for ${agent}"]`);
+  const button = dialog.querySelector<HTMLButtonElement>(`button[aria-label="Refresh context telemetry for ${agentDisplayName(agent)}"]`);
   if (button === null) throw new Error("no popup Refresh control");
   return button;
 }

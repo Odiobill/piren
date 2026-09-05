@@ -21,6 +21,7 @@
  * failure restores the exact draft immediately as editable.
  */
 import { conversationActivityRunStateLabel } from "./conversation-activity.js";
+import { agentDisplayName } from "./agent-display.js";
 
 export type ComposerInterlockState =
   | { state: "editable" }
@@ -94,9 +95,9 @@ export function composeInterlockReason(input: {
   approvals: readonly { agent: string }[];
 }): string | null {
   const approval = input.approvals[0];
-  if (approval !== undefined) return `Approval required for ${approval.agent}`;
+  if (approval !== undefined) return `Approval required for ${agentDisplayName(approval.agent)}`;
   const run = input.activeRuns[0];
-  if (run !== undefined) return `${run.agent} ${conversationActivityRunStateLabel(run.phase)}`;
+  if (run !== undefined) return `${agentDisplayName(run.agent)} ${conversationActivityRunStateLabel(run.phase)}`;
   return null;
 }
 

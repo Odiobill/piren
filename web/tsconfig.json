@@ -74,6 +74,7 @@
     "../tests/web-wux-c-context-spacing.test.ts",
     "../tests/web-st-4-groups-panel.test.ts",
     "../tests/web-st-4-groups-layout.test.ts",
-    "../tests/web-groups-detail-client.test.ts"
+    "../tests/web-groups-detail-client.test.ts",
+    "../tests/web-agent-display-names.test.ts"
   ]
 }

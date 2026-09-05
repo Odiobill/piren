@@ -140,7 +140,7 @@ describe("ConversationNavigator VR-3 work cards", () => {
     const toolLines = Array.from(el!.querySelectorAll(".activity-card-tools li")).map((n) => n.textContent);
     expect(toolLines).toEqual(["vault_read — started", "bash — failed"]);
     // Agent identity + truthful state still present.
-    expect(el!.textContent).toContain("dipu");
+    expect(el!.textContent).toContain("Dipu");
     expect(el!.textContent).toContain("typing");
     // Exact scoped abort still works.
     const abort = el!.querySelector<HTMLButtonElement>(".transient-run-abort");

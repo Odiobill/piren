@@ -177,13 +177,13 @@ describe("U1 status-only activity cards", () => {
     await flush();
 
     const cards = cardsContainer();
-    expect(cards?.textContent).toContain("dipu");
+    expect(cards?.textContent).toContain("Dipu");
     expect(cards?.textContent).toContain("is working…");
-    expect(cards?.textContent).toContain("zai");
+    expect(cards?.textContent).toContain("Zai");
     expect(cards?.textContent).toContain("is typing…");
     // The exact scoped abort action, with the U1 pinned label.
-    expect(cards?.querySelector('[aria-label="Abort dipu\'s current work"]')).not.toBeNull();
-    expect(cards?.querySelector('[aria-label="Abort zai\'s current work"]')).not.toBeNull();
+    expect(cards?.querySelector('[aria-label="Abort Dipu\'s current work"]')).not.toBeNull();
+    expect(cards?.querySelector('[aria-label="Abort Zai\'s current work"]')).not.toBeNull();
     // Status-only: no raw partial text, no tool/reasoning/thinking labels.
     expect(cards?.textContent).not.toContain("Hel");
     expect(cards?.textContent).not.toContain("tool");
@@ -201,13 +201,13 @@ describe("U1 status-only activity cards", () => {
     await mountNavigator();
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
-    const abort = cardsContainer()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]');
+    const abort = cardsContainer()?.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]');
     expect(abort).toBeDefined();
     act(() => {
       abort?.click();
     });
     expect(vi.mocked(abortConversationRun)).toHaveBeenCalledWith("c1", "dipu", "t");
-    expect(cardsContainer()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]')?.disabled).toBe(true);
+    expect(cardsContainer()?.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]')?.disabled).toBe(true);
     await act(async () => {
       release?.();
     });
@@ -215,7 +215,7 @@ describe("U1 status-only activity cards", () => {
 
     vi.mocked(abortConversationRun).mockRejectedValueOnce(new Error("abort HTTP 500"));
     await act(async () => {
-      cardsContainer()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]')?.click();
+      cardsContainer()?.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]')?.click();
     });
     await flush();
     const error = cardsContainer()?.querySelector("[role='alert']");
@@ -259,24 +259,24 @@ describe("U1 status-only activity cards", () => {
     // Appearance.
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
-    expect(activityAnnouncement()?.textContent).toBe("dipu is working…");
+    expect(activityAnnouncement()?.textContent).toBe("Dipu is working…");
 
     // working -> typing transition (one announcement, no delta content).
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "typing" }]));
     await flush();
-    expect(activityAnnouncement()?.textContent).toBe("dipu is typing…");
+    expect(activityAnnouncement()?.textContent).toBe("Dipu is typing…");
 
     // Removal (neutral, never a completion/failure claim).
     await act(async () => deliverActivity([]));
     await flush();
-    expect(activityAnnouncement()?.textContent).toBe("dipu is no longer working");
+    expect(activityAnnouncement()?.textContent).toBe("Dipu is no longer working");
   });
 
   it("restores focus to the composer when the focused abort's card disappears", async () => {
     await mountNavigator();
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
-    const abort = cardsContainer()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]');
+    const abort = cardsContainer()?.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]');
     expect(abort).toBeDefined();
     abort?.focus();
     expect(document.activeElement).toBe(abort);

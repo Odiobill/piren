@@ -80,6 +80,7 @@ import {
   type WorkflowStatusIndicator,
 } from "./conversation-budget-status";
 import { contextContinuityStore, type ContextContinuityEntry } from "./context-continuity-store";
+import { agentDisplayName } from "./agent-display";
 import { ConversationTelemetryPopup } from "./ConversationTelemetryPopup";
 
 /**
@@ -1152,7 +1153,7 @@ export function ConversationNavigator({
                       const card = workCards.find((item) => item.runId === run.runId);
                       return (
                         <div key={run.runId} className={`activity-card activity-card-${run.phase}`}>
-                          <span className="activity-card-agent">{run.agent}</span>
+                          <span className="activity-card-agent">{agentDisplayName(run.agent)}</span>
                           <span className="activity-card-state">{conversationActivityRunStateLabel(run.phase)}</span>
                           <button
                             type="button"
@@ -1258,7 +1259,7 @@ export function ConversationNavigator({
                           <span className="context-card-initial" aria-hidden="true">
                             {card.initial}
                           </span>
-                          <span className="context-card-name">{card.agent}</span>
+                          <span className="context-card-name">{agentDisplayName(card.agent)}</span>
                         </span>
                         {/* B6: the compact labelled workflow-status indicator.
                             It lives INSIDE the existing card button semantics
@@ -1572,18 +1573,18 @@ function ApprovalCard({
       aria-label={
         gate !== null
           ? `Handoff request: ${conversationHandoffGateLabel(gate, approval.agent)}`
-          : `Approval requested by ${approval.agent}`
+          : `Approval requested by ${agentDisplayName(approval.agent)}`
       }
     >
       <p className="approval-title">{gate !== null ? "Handoff request" : approvalCardTitle(approval)}</p>
       {message !== "" && <p className="muted">{message}</p>}
       {gate !== null ? (
         <p className="approval-meta">
-          <code>{approval.agent}</code> → <code>{gate.to}</code>
+          <code>{agentDisplayName(approval.agent)}</code> → <code>{agentDisplayName(gate.to)}</code>
         </p>
       ) : (
         <p className="approval-meta">
-          <code>{approval.agent}</code> · {approval.method}
+          <code>{agentDisplayName(approval.agent)}</code> · {approval.method}
         </p>
       )}
       {needsInput && (

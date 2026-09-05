@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
+import { agentDisplayName } from "../web/src/agent-display.js";
 import {
   contextCardsForSelection,
   telemetryPopupViewModel,
@@ -54,7 +55,7 @@ describe("contextCardsForSelection — membership, ordering, states", () => {
       expect(card.bar).toEqual({ kind: "neutral" });
       expect(card.shortText).toBe("not sampled");
       expect(card.stateText).toBe("No context telemetry yet");
-      expect(card.accessibleName).toBe(`${card.agent}: No context telemetry yet; activate for details`);
+      expect(card.accessibleName).toBe(`${agentDisplayName(card.agent)}: No context telemetry yet; activate for details`);
       // No invented zero/percent anywhere.
       expect(card.stateText).not.toContain("0%");
       expect(card.shortText).not.toContain("%");
@@ -76,7 +77,7 @@ describe("contextCardsForSelection — membership, ordering, states", () => {
     expect(card.bar).toEqual({ kind: "percent", percent: 30 });
     expect(card.shortText).toBe("30.00%");
     expect(card.stateText).toBe("Context usage: 30.00% of 200.0k window");
-    expect(card.accessibleName).toBe("dipu: Context usage: 30.00% of 200.0k window; activate for details");
+    expect(card.accessibleName).toBe("Dipu: Context usage: 30.00% of 200.0k window; activate for details");
   });
 
   it("fractional percents render with exactly two decimals (8.74% / 7.50%)", () => {
@@ -154,14 +155,14 @@ describe("contextCardsForSelection — membership, ordering, states", () => {
 describe("telemetryPopupViewModel — bounded permitted fields only", () => {
   it("ok entry: title, labels, state line, and exactly the permitted detail fields", () => {
     const model = telemetryPopupViewModel("dipu", stateWith(OK_ENTRY_FRAME).get("dipu"));
-    expect(model.title).toBe("Context telemetry for dipu");
-    expect(model.closeLabel).toBe("Close context telemetry for dipu");
-    expect(model.refreshLabel).toBe("Refresh context telemetry for dipu");
+    expect(model.title).toBe("Context telemetry for Dipu");
+    expect(model.closeLabel).toBe("Close context telemetry for Dipu");
+    expect(model.refreshLabel).toBe("Refresh context telemetry for Dipu");
     expect(model.stateKey).toBe("ok");
     expect(model.stateText).toBe("Context usage: 30.00% of 200.0k window");
     expect(model.bar).toEqual({ kind: "percent", percent: 30 });
     expect(model.fields).toEqual([
-      { label: "Agent", value: "dipu" },
+      { label: "Agent", value: "Dipu" },
       { label: "State", value: "Context usage: 30.00% of 200.0k window" },
       { label: "Context tokens", value: "60.0k" },
       { label: "Context window", value: "200.0k" },
@@ -190,7 +191,7 @@ describe("telemetryPopupViewModel — bounded permitted fields only", () => {
     expect(model.stateText).toBe("Context usage temporarily unavailable after compaction");
     expect(model.bar).toEqual({ kind: "neutral" });
     expect(model.fields).toEqual([
-      { label: "Agent", value: "dipu" },
+      { label: "Agent", value: "Dipu" },
       { label: "State", value: "Context usage temporarily unavailable after compaction" },
       { label: "Context window", value: "200.0k" },
     ]);
@@ -199,7 +200,7 @@ describe("telemetryPopupViewModel — bounded permitted fields only", () => {
   it("no_window and no_live_session and never-sampled carry only the agent and truthful state lines", () => {
     const noWindow = applyConversationTelemetryRead(emptyConversationTelemetryState(), "dipu", { sessionState: "live", contextState: "no_window" });
     expect(telemetryPopupViewModel("dipu", noWindow.get("dipu")).fields).toEqual([
-      { label: "Agent", value: "dipu" },
+      { label: "Agent", value: "Dipu" },
       { label: "State", value: "No context window information for this session" },
     ]);
     const noLive = applyConversationTelemetryRead(emptyConversationTelemetryState(), "dipu", { sessionState: "no_live_session" });
@@ -207,14 +208,14 @@ describe("telemetryPopupViewModel — bounded permitted fields only", () => {
     expect(noLiveModel.stateKey).toBe("no_live_session");
     expect(noLiveModel.stateText).toBe("No live session");
     expect(noLiveModel.fields).toEqual([
-      { label: "Agent", value: "dipu" },
+      { label: "Agent", value: "Dipu" },
       { label: "State", value: "No live session" },
     ]);
     const neverSampled = telemetryPopupViewModel("dipu", undefined);
     expect(neverSampled.stateKey).toBe("not_sampled");
     expect(neverSampled.stateText).toBe("No context telemetry yet");
     expect(neverSampled.fields).toEqual([
-      { label: "Agent", value: "dipu" },
+      { label: "Agent", value: "Dipu" },
       { label: "State", value: "No context telemetry yet" },
     ]);
   });
@@ -231,7 +232,7 @@ describe("telemetryPopupViewModel — bounded permitted fields only", () => {
     });
     const model = telemetryPopupViewModel("dipu", partial.get("dipu"));
     expect(model.fields).toEqual([
-      { label: "Agent", value: "dipu" },
+      { label: "Agent", value: "Dipu" },
       { label: "State", value: "Context usage: 10.00% of 1.0k window" },
       { label: "Context tokens", value: "100" },
       { label: "Context window", value: "1.0k" },

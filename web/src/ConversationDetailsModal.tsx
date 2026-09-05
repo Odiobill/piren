@@ -5,6 +5,7 @@ import type { ConversationAgentEntry } from "./conversation-agents";
 import type { ConversationLifecycleAction, LifecycleActionError } from "./conversation-lifecycle";
 import { normalizeConversationTitle, type RenameError } from "./conversation-details";
 import { ArchiveIcon, CheckIcon, ReopenIcon, RetryIcon, XIcon } from "./icons";
+import { agentDisplayName } from "./agent-display";
 
 /**
  * U2 — Conversation details modal (accepted
@@ -266,7 +267,7 @@ function AudienceMembers({ audience, agents }: { audience: string[]; agents: Con
       <ul className="member-list">
         {members.map((member) => (
           <li key={member.name} className={member.runnable ? "member-chip" : "member-chip member-offline"}>
-            <span className="member-name">{member.name}</span>
+            <span className="member-name">{agentDisplayName(member.name)}</span>
             {member.runnable ? (
               <span className="member-status status-ok">Runnable</span>
             ) : (

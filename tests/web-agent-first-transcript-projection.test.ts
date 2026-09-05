@@ -13,6 +13,7 @@ import {
   type ConversationTimelineItem,
 } from "../web/src/conversation-timeline.js";
 import { parseConversationEventRecord, type ConversationEventRecord } from "../web/src/conversations.js";
+import { agentDisplayName } from "../web/src/agent-display.js";
 
 /**
  * D3 — agent-first Conversation event projection (accepted
@@ -240,7 +241,7 @@ describe("D3 agent-first start envelope projection", () => {
     const stewardRow = rowFor(rows, "sm1");
     if (stewardRow.type !== "message") throw new Error("expected message row");
     // The ordinary successful run keeps its exact current cluster behavior.
-    expect(stewardRow.statuses.map((s) => s.reaction.label)).toEqual(["dipu received", "dipu completed"]);
+    expect(stewardRow.statuses.map((s) => s.reaction.label)).toEqual(["Dipu received", "Dipu completed"]);
     expect(rowIds(rows)).toEqual(["o1", "am1", "sm1"]);
   });
 
@@ -253,7 +254,7 @@ describe("D3 agent-first start envelope projection", () => {
     ]);
     const handoffRow = rowFor(rows, "h1");
     if (handoffRow.type !== "message") throw new Error("expected message row");
-    expect(handoffRow.statuses.map((s) => s.reaction.label)).toEqual(["zai received", "zai completed"]);
+    expect(handoffRow.statuses.map((s) => s.reaction.label)).toEqual(["Zai received", "Zai completed"]);
   });
 
   it("suppresses each origin's envelopes independently (a second origin's failure stays visible)", () => {
@@ -304,7 +305,7 @@ describe("D3 agent-first start envelope projection", () => {
 describe("D5 conversation-start origin presentation", () => {
   it("labels only the exact system-authored origin with concise agent-start language", () => {
     const presentation = conversationStartOriginPresentation(origin());
-    expect(presentation).toEqual({ label: "Conversation started with agent dipu" });
+    expect(presentation).toEqual({ label: "Conversation started with agent Dipu" });
   });
 
   it("extracts the exact durable agent name from the system origin body", () => {
@@ -316,7 +317,7 @@ describe("D5 conversation-start origin presentation", () => {
         body: "The steward requested starting this conversation with agent 'kimi'.",
       }),
     );
-    expect(presentation).toEqual({ label: "Conversation started with agent kimi" });
+    expect(presentation).toEqual({ label: "Conversation started with agent Kimi" });
   });
 
   it("accepts boundary-valid Piren agent names (single letter, digits, dashes)", () => {
@@ -329,7 +330,7 @@ describe("D5 conversation-start origin presentation", () => {
           body: `The steward requested starting this conversation with agent '${agent}'.`,
         }),
       );
-      expect(presentation, agent).toEqual({ label: `Conversation started with agent ${agent}` });
+      expect(presentation, agent).toEqual({ label: `Conversation started with agent ${agentDisplayName(agent)}` });
     }
   });
 

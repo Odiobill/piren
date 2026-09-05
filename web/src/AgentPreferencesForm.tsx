@@ -17,6 +17,7 @@ import {
   type AgentPreferencesProjection,
 } from "./settings-transport";
 import { ArrowDownIcon, ArrowUpIcon, CheckIcon, PlusIcon, SaveIcon, XIcon } from "./icons";
+import { agentDisplayName } from "./agent-display";
 
 /**
  * W6 + ST-3 (Settings contract §2.4/§4.4): the typed vault-owned agent
@@ -358,7 +359,7 @@ export function AgentPreferencesForm({
                   <span className="settings-agent-initial" aria-hidden="true">
                     {name.charAt(0).toUpperCase()}
                   </span>
-                  <span className="settings-agent-card-name">{name}</span>
+                  <span className="settings-agent-card-name">{agentDisplayName(name)}</span>
                 </label>
               ))}
             </div>

@@ -226,23 +226,26 @@ export interface ConversationTelemetryLine {
   ariaLabel: string;
 }
 
+import { agentDisplayName } from "./agent-display.js";
+
 /** Text-first display line for one entry. Never color-only; never a badge. */
 export function formatConversationTelemetryEntry(entry: ConversationTelemetryEntry): ConversationTelemetryLine {
+  const displayAgent = agentDisplayName(entry.agent);
   if (entry.kind === "no-live") {
-    return { text: `${entry.agent} · no live session`, ariaLabel: `${entry.agent}: no live session` };
+    return { text: `${displayAgent} · no live session`, ariaLabel: `${displayAgent}: no live session` };
   }
   const { facts } = entry;
   let base: string;
   let aria: string;
   if (facts.contextState === "ok" && facts.context !== undefined && facts.context.tokens !== null && facts.context.percent !== null) {
-    base = `${entry.agent} · ${formatTokenCount(facts.context.tokens)} / ${formatTokenCount(facts.context.contextWindow)} context · ${facts.context.percent}%`;
-    aria = `${entry.agent} context usage ${facts.context.percent} percent of ${formatTokenCount(facts.context.contextWindow)} token window`;
+    base = `${displayAgent} · ${formatTokenCount(facts.context.tokens)} / ${formatTokenCount(facts.context.contextWindow)} context · ${facts.context.percent}%`;
+    aria = `${displayAgent} context usage ${facts.context.percent} percent of ${formatTokenCount(facts.context.contextWindow)} token window`;
   } else if (facts.contextState === "post_compaction_pending") {
-    base = `${entry.agent} · context usage temporarily unavailable after compaction`;
-    aria = `${entry.agent}: context usage temporarily unavailable after compaction`;
+    base = `${displayAgent} · context usage temporarily unavailable after compaction`;
+    aria = `${displayAgent}: context usage temporarily unavailable after compaction`;
   } else {
-    base = `${entry.agent} · no context window information`;
-    aria = `${entry.agent}: no context window information for this session`;
+    base = `${displayAgent} · no context window information`;
+    aria = `${displayAgent}: no context window information for this session`;
   }
   const suffixes: string[] = [];
   if (facts.autoCompactionEnabled !== undefined) suffixes.push(`auto-compaction ${facts.autoCompactionEnabled ? "on" : "off"}`);

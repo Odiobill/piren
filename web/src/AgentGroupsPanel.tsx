@@ -11,6 +11,7 @@ import {
   type GroupValidationIssueDto,
 } from "./groups-api";
 import { stageFallbackCandidate } from "./groups-fallback";
+import { agentDisplayName } from "./agent-display";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -255,10 +256,10 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
     const agent = fallbackMember;
     const candidates = [...fallbackCandidates];
     openConfirm(
-      `Save fallback order for ${agent} in ${group.name}?`,
+      `Save fallback order for ${agentDisplayName(agent)} in ${group.name}?`,
       candidates.length === 0
-        ? `Saves an EMPTY fallback order for ${agent}; this clears any existing saved candidates for ${agent}.`
-        : `Saves the ordered candidate list (${candidates.join(", ")}) exactly as shown.`,
+        ? `Saves an EMPTY fallback order for ${agentDisplayName(agent)}; this clears any existing saved candidates for ${agentDisplayName(agent)}.`
+        : `Saves the ordered candidate list (${candidates.map(agentDisplayName).join(", ")}) exactly as shown.`,
       () =>
         void run(async () => {
           await postGroupAction(
@@ -401,17 +402,17 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
           <ul className="settings-agent-fallback-list">
             {detail.agents.map((member) => (
               <li key={member} className="settings-agent-fallback-row">
-                <span className="settings-agent-fallback-model">{member}</span>
+                <span className="settings-agent-fallback-model">{agentDisplayName(member)}</span>
                 {runnableOf(member) === false && (
                   <span className="settings-groups-not-runnable">Not locally runnable</span>
                 )}
                 <button
                   type="button"
                   className="settings-groups-remove"
-                  aria-label={`Remove ${member}`}
+                  aria-label={`Remove ${agentDisplayName(member)}`}
                   onClick={(event) =>
                     openConfirm(
-                      `Remove ${member} from ${detail.name}?`,
+                      `Remove ${agentDisplayName(member)} from ${detail.name}?`,
                       "Removes the member and prunes its fallback entries.",
                       () =>
                         void run(async () => {
@@ -442,7 +443,7 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
               <option value="">Choose a vault agent…</option>
               {rosterChoices.map((entry) => (
                 <option key={entry.name} value={entry.name}>
-                  {entry.name}{entry.locallyRunnable ? "" : " (Not locally runnable)"}
+                  {agentDisplayName(entry.name)}{entry.locallyRunnable ? "" : " (Not locally runnable)"}
                 </option>
               ))}
             </select>
@@ -476,7 +477,7 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
               >
                 <option value="">Choose a member…</option>
                 {detail.agents.map((member) => (
-                  <option key={member} value={member}>{member}</option>
+                  <option key={member} value={member}>{agentDisplayName(member)}</option>
                 ))}
               </select>
             </label>
@@ -486,11 +487,11 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
               <ol className="settings-agent-fallback-list settings-groups-fallback-list">
                 {fallbackCandidates.map((candidate, index) => (
                   <li key={`${candidate}-${index}`} className="settings-agent-fallback-row">
-                    <span className="settings-agent-fallback-model">{candidate}</span>
+                    <span className="settings-agent-fallback-model">{agentDisplayName(candidate)}</span>
                     <button
                       type="button"
                       className="settings-groups-fallback-up"
-                      aria-label={`Move ${candidate} up`}
+                      aria-label={`Move ${agentDisplayName(candidate)} up`}
                       disabled={index === 0}
                       onClick={() => moveFallbackCandidate(index, -1)}
                     >
@@ -499,7 +500,7 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
                     <button
                       type="button"
                       className="settings-groups-fallback-down"
-                      aria-label={`Move ${candidate} down`}
+                      aria-label={`Move ${agentDisplayName(candidate)} down`}
                       disabled={index === fallbackCandidates.length - 1}
                       onClick={() => moveFallbackCandidate(index, 1)}
                     >
@@ -508,7 +509,7 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
                     <button
                       type="button"
                       className="settings-groups-fallback-remove"
-                      aria-label={`Remove ${candidate}`}
+                      aria-label={`Remove ${agentDisplayName(candidate)}`}
                       onClick={() => removeFallbackCandidate(index)}
                     >
                       <XIcon size={13} />
@@ -527,7 +528,7 @@ export function AgentGroupsPanel({ token, onUnauthorized }: { token: string; onU
                 >
                   <option value="">Choose a candidate…</option>
                   {candidateChoices.map((choice) => (
-                    <option key={choice} value={choice}>{choice}</option>
+                    <option key={choice} value={choice}>{agentDisplayName(choice)}</option>
                   ))}
                 </select>
               </div>

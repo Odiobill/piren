@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ClipboardIcon, RetryIcon, XIcon } from "./icons";
+import { agentDisplayName } from "./agent-display";
 
 /**
  * T1 — Dashboard Assign-task modal over the EXISTING authenticated
@@ -127,7 +128,7 @@ export function AssignTaskModal({
           </button>
         </div>
         <p className="muted assign-task-recipient">
-          Recipient: <strong>{agent}</strong>
+          Recipient: <strong>{agentDisplayName(agent)}</strong>
         </p>
         <form onSubmit={onSubmit}>
           <label htmlFor="assign-task-subject">Subject</label>
@@ -150,7 +151,7 @@ export function AssignTaskModal({
             required
           />
           <p className="field-help">
-            Creates one ordinary pending inbox task for {agent} in the vault. It does not contact, wake, or start
+            Creates one ordinary pending inbox task for {agentDisplayName(agent)} in the vault. It does not contact, wake, or start
             the agent; the task is inspectable through Vault Explorer.
           </p>
           <div className="details-rename-actions">

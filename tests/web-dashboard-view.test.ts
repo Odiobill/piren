@@ -140,9 +140,9 @@ describe("DashboardView (ADR-0044)", () => {
     expect(container.textContent).not.toContain("conversations");
     await flush();
     expect(vi.mocked(fetchConversationAgents)).toHaveBeenCalledTimes(1);
-    expect(container.textContent).toContain("dipu");
-    expect(container.textContent).toContain("kimi");
-    expect(container.textContent).toContain("zora");
+    expect(container.textContent).toContain("Dipu");
+    expect(container.textContent).toContain("Kimi");
+    expect(container.textContent).toContain("Zora");
   });
 
   it("renders a welcoming header with the transparent Piren mark and a truthful sidebar pointer (D1)", async () => {
@@ -256,7 +256,7 @@ describe("DashboardView (ADR-0044)", () => {
     await flush();
     const offline = agentButton("zora");
     expect(offline.disabled).toBe(true);
-    expect(offline.getAttribute("title")).toBe("zora is not runnable on this installation");
+    expect(offline.getAttribute("title")).toBe("Zora is not runnable on this installation");
     expect(offline.querySelector(".agent-status")?.textContent).toBe("Offline");
     // The offline agent cannot be selected, so no start can target it.
     await act(async () => {
@@ -414,7 +414,7 @@ describe("DashboardView (ADR-0044)", () => {
       retry?.click();
     });
     await flush();
-    expect(container.textContent).toContain("dipu");
+    expect(container.textContent).toContain("Dipu");
   });
 
   it("shows a truthful empty state for an empty roster", async () => {

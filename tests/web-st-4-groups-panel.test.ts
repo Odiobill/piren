@@ -95,7 +95,7 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     const text = container.textContent ?? "";
-    expect(text).toContain("kimi");
+    expect(text).toContain("Kimi");
     expect(text).toContain("Not locally runnable");
     // Membership add is a bounded roster CHOICE, never free text.
     const addSelect = container.querySelector<HTMLSelectElement>(".settings-groups-add-select");
@@ -133,7 +133,7 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
     const order = Array.from(container.querySelectorAll(".settings-groups-fallback-list .settings-agent-fallback-model")).map(
       (n) => n.textContent,
     );
-    expect(order).toEqual(["offline-one"]);
+    expect(order).toEqual(["Offline One"]);
     // The selector resets after staging so no invisible pending state remains.
     expect(candidateSelect?.value).toBe("");
     // Open confirmation; nothing writes before it.
@@ -203,7 +203,7 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
     const order = Array.from(container.querySelectorAll(".settings-groups-fallback-list .settings-agent-fallback-model")).map(
       (n) => n.textContent,
     );
-    expect(order).toEqual(["offline-two", "offline-one"]);
+    expect(order).toEqual(["Offline Two", "Offline One"]);
     // Nothing left to offer; no local error was needed on the normal path.
     expect(optionValues()).toEqual([""]);
     expect(container.querySelector("[role='alert']")).toBeNull();
@@ -428,7 +428,7 @@ describe("AgentGroupsPanel (ST-4 correction)", () => {
     // No crash: the panel reached render with a defined roster.
     const text = container.textContent ?? "";
     expect(text).toContain("dev");
-    expect(text).toContain("kimi");
+    expect(text).toContain("Kimi");
     expect(text).toContain("Not locally runnable");
     // Roster authority: only offline-two is an addable choice.
     const addSelect = container.querySelector<HTMLSelectElement>(".settings-groups-add-select");

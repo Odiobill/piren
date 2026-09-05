@@ -151,7 +151,7 @@ describe("workbench action icons (decorative only)", () => {
       // control lives inside the card's details popup.
       const row = container.querySelector<HTMLElement>(".conversation-context-cards");
       expect(row).not.toBeNull();
-      const card = row?.querySelector<HTMLButtonElement>('button[aria-label^="dipu:"]') ?? null;
+      const card = row?.querySelector<HTMLButtonElement>('button[aria-label^="Dipu:"]') ?? null;
       expect(card).not.toBeNull();
       await act(async () => {
         card?.click();
@@ -159,8 +159,8 @@ describe("workbench action icons (decorative only)", () => {
       await flush();
       const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
       expect(dialog).not.toBeNull();
-      const refresh = dialog?.querySelector<HTMLButtonElement>('[aria-label="Refresh context telemetry for dipu"]') ?? null;
-      expectDecoratedButton(refresh, "Refresh", "Refresh context telemetry for dipu");
+      const refresh = dialog?.querySelector<HTMLButtonElement>('[aria-label="Refresh context telemetry for Dipu"]') ?? null;
+      expectDecoratedButton(refresh, "Refresh", "Refresh context telemetry for Dipu");
     });
   });
 

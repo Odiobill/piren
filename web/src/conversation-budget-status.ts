@@ -14,6 +14,8 @@
  * reduced-motion static equivalent.
  */
 
+import { agentDisplayName } from "./agent-display.js";
+
 export type WorkflowBudgetStatusState = "red" | "yellow" | "busy" | "none";
 
 export interface WorkflowStatusIndicator {
@@ -71,7 +73,7 @@ export function workflowStatusViewFromSnapshot(snapshot: {
 }
 
 function busyIndicator(agent: string): WorkflowStatusIndicator {
-  return { state: "busy", shortText: "running", accessibleText: `${agent} is currently running` };
+  return { state: "busy", shortText: "running", accessibleText: `${agentDisplayName(agent)} is currently running` };
 }
 
 const NONE_INDICATOR: WorkflowStatusIndicator = { state: "none", shortText: "", accessibleText: "" };
@@ -113,7 +115,7 @@ export function workflowStatusIndicator(
     return {
       state: "red",
       shortText: "budget exhausted",
-      accessibleText: `Workflow budget exhausted for ${agent}'s associated workflow; open Context telemetry to extend`,
+      accessibleText: `Workflow budget exhausted for ${agentDisplayName(agent)}'s associated workflow; open Context telemetry to extend`,
     };
   }
   if (workflow !== null && workflow.low) {

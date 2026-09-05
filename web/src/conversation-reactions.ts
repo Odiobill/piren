@@ -15,6 +15,7 @@
  * user/agent-authored emoji.
  */
 import type { ConversationEventRecord } from "./conversations.js";
+import { agentDisplayName } from "./agent-display.js";
 
 export type ConversationReactionKind = "received" | "completed" | "failed" | "cancelled";
 
@@ -24,7 +25,7 @@ export interface ConversationReaction {
   agent: string;
   /** Bounded truthful status word (the actual supplied durable status). */
   status: "received" | "completed" | "failed" | "timed out" | "cancelled";
-  /** Accessible label, e.g. "dipu completed". */
+  /** Accessible label, e.g. "Dipu completed" (display form; `agent` stays canonical). */
   label: string;
 }
 
@@ -36,23 +37,25 @@ export interface ConversationReaction {
 export function conversationReactionForEvent(event: ConversationEventRecord): ConversationReaction | null {
   const agent = event.runAgent;
   if (typeof agent !== "string" || agent === "") return null;
+  // S6: labels render the display form; the durable `agent` attribution
+  // stays the exact canonical identifier.
   if (event.kind === "run_started") {
-    return { kind: "received", agent, status: "received", label: `${agent} received` };
+    return { kind: "received", agent, status: "received", label: `${agentDisplayName(agent)} received` };
   }
   if (event.kind === "run_finished") {
     if (event.runStatus === "completed") {
-      return { kind: "completed", agent, status: "completed", label: `${agent} completed` };
+      return { kind: "completed", agent, status: "completed", label: `${agentDisplayName(agent)} completed` };
     }
     if (event.runStatus === "failed") {
-      return { kind: "failed", agent, status: "failed", label: `${agent} failed` };
+      return { kind: "failed", agent, status: "failed", label: `${agentDisplayName(agent)} failed` };
     }
     if (event.runStatus === "timed_out") {
-      return { kind: "failed", agent, status: "timed out", label: `${agent} timed out` };
+      return { kind: "failed", agent, status: "timed out", label: `${agentDisplayName(agent)} timed out` };
     }
     return null;
   }
   if (event.kind === "run_cancelled") {
-    return { kind: "cancelled", agent, status: "cancelled", label: `${agent} cancelled` };
+    return { kind: "cancelled", agent, status: "cancelled", label: `${agentDisplayName(agent)} cancelled` };
   }
   return null;
 }

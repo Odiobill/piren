@@ -174,13 +174,13 @@ describe("U1 live activity cards (replace the D4 tray row)", () => {
     expect(trayChildOrder()).toEqual(["approval-cards", "composer-action-row", "conversation-context-cards"]);
     expect(container.querySelector(".composer-action-row .mock-composer")).not.toBeNull();
     // Exact compact source fields: broker-provided agent + truthful phase.
-    expect(cards?.textContent).toContain("dipu");
+    expect(cards?.textContent).toContain("Dipu");
     expect(cards?.textContent).toContain("is working…");
-    expect(cards?.textContent).toContain("zai");
+    expect(cards?.textContent).toContain("Zai");
     expect(cards?.textContent).toContain("is typing…");
     // The exact agent-scoped abort affordance is preserved, with the U1 label.
-    expect(cards?.querySelector('[aria-label="Abort dipu\'s current work"]')).not.toBeNull();
-    expect(cards?.querySelector('[aria-label="Abort zai\'s current work"]')).not.toBeNull();
+    expect(cards?.querySelector('[aria-label="Abort Dipu\'s current work"]')).not.toBeNull();
+    expect(cards?.querySelector('[aria-label="Abort Zai\'s current work"]')).not.toBeNull();
   });
 
   it("keeps the exact abort busy/error/manual-retry semantics in the cards", async () => {
@@ -194,13 +194,13 @@ describe("U1 live activity cards (replace the D4 tray row)", () => {
     await mountNavigator();
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
-    const abort = activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]');
+    const abort = activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]');
     expect(abort).toBeDefined();
     act(() => {
       abort?.click();
     });
     expect(vi.mocked(abortConversationRun)).toHaveBeenCalledWith("c1", "dipu", "t");
-    expect(activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]')?.disabled).toBe(true);
+    expect(activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]')?.disabled).toBe(true);
     await act(async () => {
       release?.();
     });
@@ -209,7 +209,7 @@ describe("U1 live activity cards (replace the D4 tray row)", () => {
     // Error path: bounded visible error; retry is only an explicit fresh click.
     vi.mocked(abortConversationRun).mockRejectedValueOnce(new Error("abort HTTP 500"));
     await act(async () => {
-      activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]')?.click();
+      activityCards()?.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]')?.click();
     });
     await flush();
     const error = activityCards()?.querySelector("[role='alert']");
@@ -273,7 +273,7 @@ describe("D4 recognized handoff approval presentation", () => {
     const card = container.querySelector<HTMLElement>(".approval-card");
     expect(card?.classList.contains("approval-card-handoff")).toBe(true);
     // Recognition/title/meta semantics unchanged.
-    expect(card?.getAttribute("aria-label")).toBe("Handoff request: handoff from dipu to zai");
+    expect(card?.getAttribute("aria-label")).toBe("Handoff request: handoff from Dipu to Zai");
     expect(card?.querySelector(".approval-title")?.textContent).toBe("Handoff request");
     // Decorative icons on the text-labelled actions: svg present, aria-hidden,
     // visible accessible text retained.
@@ -297,7 +297,7 @@ describe("D4 recognized handoff approval presentation", () => {
     await flush();
     const card = container.querySelector<HTMLElement>(".approval-card");
     expect(card?.classList.contains("approval-card-handoff")).toBe(false);
-    expect(card?.getAttribute("aria-label")).toBe("Approval requested by dipu");
+    expect(card?.getAttribute("aria-label")).toBe("Approval requested by Dipu");
     const confirm = confirmButton();
     expect(confirm.querySelector("svg[aria-hidden='true']")).not.toBeNull();
     expect(confirm.textContent).toBe("Confirm");

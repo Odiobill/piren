@@ -139,9 +139,9 @@ describe("U2 composer interlock derivation (navigator)", () => {
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
     expect(composerProps.interlocked).toBe(true);
-    expect(composerProps.interlockReason).toBe("dipu is working…");
+    expect(composerProps.interlockReason).toBe("Dipu is working…");
     expect(composerTextarea().readOnly).toBe(true);
-    expect(container.querySelector("#conversation-message-c1-interlock-reason")?.textContent).toBe("dipu is working…");
+    expect(container.querySelector("#conversation-message-c1-interlock-reason")?.textContent).toBe("Dipu is working…");
   });
 
   it("derives interlock from a pending approval and passes the approval reason (approval precedence)", async () => {
@@ -150,8 +150,8 @@ describe("U2 composer interlock derivation (navigator)", () => {
     await act(async () => deliverApproval("dipu"));
     await flush();
     expect(composerProps.interlocked).toBe(true);
-    expect(composerProps.interlockReason).toBe("Approval required for dipu");
-    expect(container.querySelector("#conversation-message-c1-interlock-reason")?.textContent).toBe("Approval required for dipu");
+    expect(composerProps.interlockReason).toBe("Approval required for Dipu");
+    expect(container.querySelector("#conversation-message-c1-interlock-reason")?.textContent).toBe("Approval required for Dipu");
   });
 
   it("clears interlock when both the active run and approval disappear", async () => {
@@ -188,7 +188,7 @@ describe("U1 focused-abort removal fallback (U2 amendment)", () => {
       ]),
     );
     await flush();
-    const abort = container.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]');
+    const abort = container.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]');
     expect(abort).toBeDefined();
     abort?.focus();
     expect(document.activeElement).toBe(abort);
@@ -205,7 +205,7 @@ describe("U1 focused-abort removal fallback (U2 amendment)", () => {
     await mountNavigator();
     await act(async () => deliverActivity([{ runId: "r1", agent: "dipu", phase: "working" }]));
     await flush();
-    const abort = container.querySelector<HTMLButtonElement>('[aria-label="Abort dipu\'s current work"]');
+    const abort = container.querySelector<HTMLButtonElement>('[aria-label="Abort Dipu\'s current work"]');
     abort?.focus();
     await act(async () => deliverActivity([]));
     await flush();

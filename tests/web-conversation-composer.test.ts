@@ -163,8 +163,8 @@ describe("ConversationComposer (U3)", () => {
       await act(async () => typeText(input, "please @d"));
       const popup = container.querySelector<HTMLElement>('[role="listbox"]');
       expect(popup).not.toBeNull();
-      expect(popup!.textContent).toContain("@dipu");
-      expect(popup!.textContent).not.toContain("@zora");
+      expect(popup!.textContent).toContain("@Dipu");
+      expect(popup!.textContent).not.toContain("@Zora");
 
       // ArrowDown then Enter selects the active option and edits text only.
       await act(async () => key(input, "ArrowDown"));
@@ -208,8 +208,8 @@ describe("ConversationComposer (U3)", () => {
       await act(async () => typeText(input, "@d"));
       const popup = container.querySelector<HTMLElement>('[role="listbox"]');
       expect(popup).not.toBeNull();
-      expect(popup!.textContent).toContain("@dipu");
-      expect(popup!.textContent).toContain("@dima");
+      expect(popup!.textContent).toContain("@Dipu");
+      expect(popup!.textContent).toContain("@Dima");
 
       await act(async () => key(input, "Escape"));
       expect(container.querySelector('[role="listbox"]')).toBeNull();
@@ -219,10 +219,10 @@ describe("ConversationComposer (U3)", () => {
       await act(async () => typeText(input, "@di"));
       const reopened = container.querySelector<HTMLElement>('[role="listbox"]');
       expect(reopened).not.toBeNull();
-      expect(reopened!.textContent).toContain("@dipu");
-      expect(reopened!.textContent).toContain("@dima");
+      expect(reopened!.textContent).toContain("@Dipu");
+      expect(reopened!.textContent).toContain("@Dima");
       // The offline agent is never offered.
-      expect(reopened!.textContent).not.toContain("@zora");
+      expect(reopened!.textContent).not.toContain("@Zora");
     });
   });
 
