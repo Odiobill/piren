@@ -12,7 +12,7 @@ export interface StewardAlert {
   title: string;
   closedAt?: string;
   closedVia?: "workbench";
-  /** Strictly decoded legacy terminal evidence for a historical `status: resolved` record. */
+  /** Optional legacy terminal evidence when a historical resolved record supplied it. */
   resolvedAt?: string;
 }
 
@@ -130,14 +130,16 @@ export function parseStewardAlert(options: ParseStewardAlertOptions): StewardAle
   const closedVia = fields.get("closed_via");
   const resolvedAt = fields.get("resolved");
   if (status === "resolved") {
-    // Legacy read compatibility only: a historical pre-P1b terminal record is
-    // recognized exactly when `status: resolved` carries one required explicit
-    // UTC `resolved` instant. It is preserved as `resolved`, never relabeled
-    // `closed`, and it must not carry workbench closure evidence.
+    // Legacy read compatibility only: pre-P1b terminal records are preserved
+    // as `resolved`, never relabeled `closed`. The oldest legitimate shape had
+    // no resolution timestamp; when present, `resolved` must still be an exact
+    // UTC instant. Workbench closure evidence is never accepted or fabricated.
     if (closedAt !== undefined || closedVia !== undefined) throw new Error("Resolved alert has closure evidence.");
-    const resolved = required(fields, "resolved");
-    assertLegacyResolvedInstant(resolved);
-    alert.resolvedAt = resolved;
+    if (resolvedAt !== undefined) {
+      if (resolvedAt === "") throw new Error("Alert resolved must not be empty.");
+      assertLegacyResolvedInstant(resolvedAt);
+      alert.resolvedAt = resolvedAt;
+    }
   } else if (status === "open") {
     if (closedAt !== undefined || closedVia !== undefined) throw new Error("Open alert has closure evidence.");
     if (resolvedAt !== undefined) throw new Error("Open alert has resolved evidence.");

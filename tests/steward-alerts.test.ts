@@ -102,16 +102,20 @@ describe("steward alert lifecycle core", () => {
     expect(projection.alerts.map((alert) => alert.status)).toEqual(["open", "resolved"]);
   });
 
-  it("fails closed on missing, malformed, or misplaced resolved evidence", () => {
+  it("accepts absent legacy resolved time but fails closed on malformed or misplaced evidence", () => {
     const legacyResolved = (line: string) => openHigh.replace("status: open", `status: resolved\n${line}`);
 
-    // Resolved without its required timestamp evidence is malformed.
-    expect(() => parseStewardAlert({
+    // The oldest legitimate pre-P1b shape had no resolution timestamp. It is
+    // preserved as terminal `resolved` with unknown resolution time — never
+    // relabeled or inferred from another timestamp.
+    const withoutTimestamp = parseStewardAlert({
       path: "steward-inbox/alerts/resolved-no-evidence.md",
       content: openHigh.replace("status: open", "status: resolved"),
-    })).toThrow("missing required resolved");
+    });
+    expect(withoutTimestamp.status).toBe("resolved");
+    expect(withoutTimestamp.resolvedAt).toBeUndefined();
 
-    // Malformed resolved timestamps are rejected.
+    // A present-but-malformed resolved timestamp is rejected.
     expect(() => parseStewardAlert({
       path: "steward-inbox/alerts/resolved-bad-evidence.md",
       content: legacyResolved("resolved: 2026-08-04 11:19:00"),

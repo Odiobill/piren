@@ -48,7 +48,7 @@ describe("steward alert browser response decoders", () => {
     }).alerts[0]).toMatchObject({ resolvedAt: "2026-08-04T11:19:00.000Z" });
   });
 
-  it("fails closed on resolved records with missing, malformed, or misplaced evidence", () => {
+  it("accepts absent legacy resolved time but rejects malformed or misplaced evidence", () => {
     const base = {
       path: "steward-inbox/alerts/historical-resolved.md",
       id: "historical",
@@ -57,9 +57,14 @@ describe("steward alert browser response decoders", () => {
       title: "Credential exposed",
       created: "2026-08-04T11:04:54.270Z",
     };
-    // Resolved without resolved_at is rejected.
-    expect(() => parseStewardAlertsResponse({ attention_count: 0, alerts: [base] })).toThrow();
-    // Malformed resolved_at is rejected.
+    // The oldest legitimate pre-P1b resolved projection has no timestamp.
+    // It remains resolved with unknown time rather than being relabeled or
+    // assigned an inferred timestamp.
+    expect(parseStewardAlertsResponse({ attention_count: 0, alerts: [base] }).alerts[0])
+      .toMatchObject({ status: "resolved" });
+    expect(parseStewardAlertsResponse({ attention_count: 0, alerts: [base] }).alerts[0])
+      .not.toHaveProperty("resolvedAt");
+    // A present-but-malformed resolved_at is rejected.
     expect(() => parseStewardAlertsResponse({
       attention_count: 0,
       alerts: [{ ...base, resolved_at: "2026-08-04 11:19:00" }],

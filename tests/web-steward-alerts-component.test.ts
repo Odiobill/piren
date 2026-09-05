@@ -79,4 +79,25 @@ describe("StewardAlerts historical resolved rendering", () => {
     expect(detail!.textContent).not.toContain("Close alert");
     expect(fetchStewardAlert).toHaveBeenCalledWith(resolvedSummary.path, "t");
   });
+
+  it("renders the oldest resolved shape without fabricating a resolution time", async () => {
+    const { resolvedAt: _ignored, ...withoutTimestamp } = resolvedSummary;
+    vi.mocked(fetchStewardAlerts).mockResolvedValue({ attentionCount: 0, alerts: [withoutTimestamp] });
+    vi.mocked(fetchStewardAlert).mockResolvedValue({ ...withoutTimestamp, content: "# Historical resolution" });
+
+    await act(async () => {
+      root.render(createElement(StewardAlerts, {
+        token: "t",
+        onUnauthorized: () => {},
+        onValidated: () => {},
+        reloadKey: 0,
+        onClosed: () => {},
+      }));
+    });
+    const item = container.querySelector<HTMLButtonElement>(".steward-alert-list button");
+    await act(async () => item!.click());
+
+    expect(container.querySelector(".steward-alert-detail [role='status']")?.textContent).toBe("Resolved");
+    expect(container.querySelector(".steward-alert-detail")?.textContent).not.toContain("Close alert");
+  });
 });

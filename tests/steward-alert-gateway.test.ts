@@ -55,6 +55,23 @@ const historicalResolved = [
   "",
 ].join("\n");
 
+// The oldest legitimate pre-P1b resolved record predates resolution-time
+// evidence. Read compatibility preserves that unknown rather than inferring it.
+const earliestHistoricalResolved = [
+  "---",
+  "type: Alert",
+  "id: 20260720T205927228Z-v0-1-4-published-with-a-p4-migration-verification-failure",
+  "from: sam",
+  "severity: high",
+  "status: resolved",
+  "created: 2026-07-20T20:59:27.228Z",
+  "notify: true",
+  "---",
+  "",
+  "# v0.1.4 published with a P4 migration verification failure",
+  "",
+].join("\n");
+
 describe("steward alert gateway adapter", () => {
   it("authenticates bounded active-alert list/detail and exact one-way close routes", async () => {
     const server = new GatewayServer({ target: fakePiTarget(), vaultRoot: root, authToken: "test-token" });
@@ -102,8 +119,9 @@ describe("steward alert gateway adapter", () => {
     }
   });
 
-  it("lists and reads the historical resolved alert without weakening active authority", async () => {
+  it("lists and reads historical resolved alerts with and without explicit resolution time", async () => {
     await writeFile(join(root, "steward-inbox", "alerts", "historical-resolved.md"), historicalResolved, "utf8");
+    await writeFile(join(root, "steward-inbox", "alerts", "earliest-historical-resolved.md"), earliestHistoricalResolved, "utf8");
     const server = new GatewayServer({ target: fakePiTarget(), vaultRoot: root, authToken: "test-token" });
     try {
       const handle = await server.start();
@@ -120,6 +138,14 @@ describe("steward alert gateway adapter", () => {
         alerts: [
           expect.objectContaining({ path: "steward-inbox/alerts/vault-unavailable.md", status: "open" }),
           expect.objectContaining({ path: resolvedPath, status: "resolved", resolved_at: "2026-08-04T11:19:00Z" }),
+          {
+            path: "steward-inbox/alerts/earliest-historical-resolved.md",
+            id: "20260720T205927228Z-v0-1-4-published-with-a-p4-migration-verification-failure",
+            severity: "high",
+            status: "resolved",
+            title: "v0.1.4 published with a P4 migration verification failure",
+            created: "2026-07-20T20:59:27.228Z",
+          },
         ],
       });
 

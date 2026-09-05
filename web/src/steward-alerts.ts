@@ -10,7 +10,7 @@ export interface StewardAlertSummary {
   created: string;
   closedAt?: string;
   closedVia?: "workbench";
-  /** Strictly decoded legacy terminal evidence for a historical `status: resolved` record. */
+  /** Optional legacy terminal evidence when a historical resolved record supplied it. */
   resolvedAt?: string;
 }
 
@@ -51,7 +51,9 @@ function parseAlert(value: unknown): StewardAlertSummary {
   } else if (status === "closed") {
     if (!exactKeys(value, [...common, "closed_at", "closed_via"])) throw new Error("unexpected closed steward alert");
   } else if (status === "resolved") {
-    if (!exactKeys(value, [...common, "resolved_at"])) throw new Error("unexpected resolved steward alert");
+    if (!exactKeys(value, common) && !exactKeys(value, [...common, "resolved_at"])) {
+      throw new Error("unexpected resolved steward alert");
+    }
   } else {
     throw new Error("unexpected steward alert status");
   }
@@ -78,7 +80,7 @@ function parseAlert(value: unknown): StewardAlertSummary {
     result.closedAt = value.closed_at;
     result.closedVia = value.closed_via;
   }
-  if (status === "resolved") {
+  if (status === "resolved" && Object.prototype.hasOwnProperty.call(value, "resolved_at")) {
     if (!legacyResolvedIso(value.resolved_at)) throw new Error("unexpected resolved steward alert");
     result.resolvedAt = value.resolved_at;
   }

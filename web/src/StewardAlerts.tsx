@@ -106,7 +106,7 @@ export function StewardAlerts({
               {busy ? "Closing…" : "Close alert"}
             </button>
           ) : selected.status === "resolved" ? (
-            <p role="status">Resolved {selected.resolvedAt ?? ""}</p>
+            <p role="status">{selected.resolvedAt === undefined ? "Resolved" : `Resolved ${selected.resolvedAt}`}</p>
           ) : <p role="status">Closed {selected.closedAt ?? ""}</p>}
           {selected.content !== "" && <SafeMarkdownBody text={selected.content} />}
         </article>
