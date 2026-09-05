@@ -1,5 +1,5 @@
-import { access, readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { access, mkdir, readFile, rename, stat } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { planSessionSummaryArchive, type SessionSummaryArchivePlan } from "./session-archive.js";
 
 /**
@@ -29,4 +29,36 @@ export async function previewStoredSessionSummaryArchive(
     throw new Error(`cannot inspect session archive destination: ${message}`);
   }
   throw new Error("session archive destination already exists");
+}
+
+/**
+ * Explicitly confirmed basic-filesystem move for one vault summary. The caller
+ * must send the destination it just previewed; this function never chooses one.
+ */
+export async function archiveStoredSessionSummary(options: {
+  vaultRoot: string;
+  path: string;
+  expectedDestination: string;
+  now?: () => Date;
+}): Promise<SessionSummaryArchivePlan> {
+  const plan = await previewStoredSessionSummaryArchive(options.vaultRoot, options.path, options.now);
+  if (plan.destinationPath !== options.expectedDestination) {
+    throw new Error("session archive destination does not match preview");
+  }
+  const source = resolve(options.vaultRoot, plan.sourcePath);
+  const destination = resolve(options.vaultRoot, plan.destinationPath);
+  await mkdir(dirname(destination), { recursive: true });
+  try {
+    await access(destination);
+    throw new Error("session archive destination already exists");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  try {
+    await rename(source, destination);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`cannot archive session summary: ${message}`);
+  }
+  return plan;
 }
