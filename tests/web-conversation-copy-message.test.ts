@@ -84,7 +84,7 @@ describe("W4 copy payload and accessible name", () => {
   });
 
   it("accessible name names the author exactly once", () => {
-    expect(copyMessageAccessibleName(event())).toBe("Copy message from dipu");
+    expect(copyMessageAccessibleName(event())).toBe("Copy message from Dipu");
     expect(copyMessageAccessibleName(event({ author: "steward", authorKind: "steward" }))).toBe("Copy message from steward");
   });
 });
