@@ -41,6 +41,8 @@ piren task show <path-or-id>                 # print one task's fields and body
 piren task claim <path> [--device <id>]      # claim a task for a device
 piren task complete <path-or-id> [--result <vault-file>]
 piren task cancel <path-or-id>               # terminal: never claimed or retried again
+piren task archive --agent <agent>           # preview terminal inbox cleanup
+piren task archive --agent <agent> --yes     # explicitly archive that preview
 ```
 
 Notes:
@@ -49,6 +51,7 @@ Notes:
 - `show`, `complete`, and `cancel` accept either the vault-relative path or the bare task id. Ids are matched across claimed and unclaimed files; if the same id exists under more than one agent, pass `--agent <agent>` to disambiguate.
 - `claim` renames the file atomically to `<task>.claimed.<device>.md`, so two devices can never silently take the same task. Without `--device`, a sanitized hostname is used.
 - `complete` sets `status: completed` and, with `--result <vault-file>`, writes the file's content into the task's `## Result` section, replacing any previous result content (the file is also vault-scoped). `cancel` marks the task `cancelled`.
+- `archive --agent <agent>` previews every eligible direct `completed`/`cancelled` task in that agent's active inbox, including terminal claimed files. It skips a terminal task only when a still-live task depends on it. Nothing moves without `--yes`; the confirmed command rechecks the exact preview before moving files to the operation-date `inbox/archive/YYYY/MM/DD/` hierarchy. Archive is explicit cleanup, never age-based retention, restore, delete, or retry.
 
 ## A typical operator workflow
 
