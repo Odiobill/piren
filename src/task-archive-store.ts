@@ -1,5 +1,5 @@
-import { readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { access, mkdir, readdir, rename } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { loadInboxDependencyNodes } from "./scheduler-dependencies.js";
 import { planTerminalTaskArchive, type ArchiveTask } from "./task-archive.js";
 
@@ -32,4 +32,33 @@ export async function previewStoredTerminalTaskArchive(
     }
   }
   return planTerminalTaskArchive({ agentName, archiveAt: now().toISOString(), tasks });
+}
+
+/** Confirmed basic-filesystem move for exactly the terminal-task preview set. */
+export async function archiveStoredTerminalTasks(options: {
+  vaultRoot: string;
+  agentName: string;
+  expectedDestinations: readonly string[];
+  now?: () => Date;
+}) {
+  const preview = await previewStoredTerminalTaskArchive(options.vaultRoot, options.agentName, options.now);
+  const destinations = preview.eligible.map((item) => item.destinationPath);
+  if (destinations.length !== options.expectedDestinations.length || destinations.some((value, index) => value !== options.expectedDestinations[index])) {
+    throw new Error("task archive destinations do not match preview");
+  }
+  const moved = [];
+  for (const item of preview.eligible) {
+    const source = resolve(options.vaultRoot, item.sourcePath);
+    const destination = resolve(options.vaultRoot, item.destinationPath);
+    await mkdir(dirname(destination), { recursive: true });
+    try {
+      await access(destination);
+      throw new Error(`task archive destination already exists: ${item.destinationPath}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    await rename(source, destination);
+    moved.push(item);
+  }
+  return { ...preview, moved };
 }

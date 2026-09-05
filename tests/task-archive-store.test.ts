@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { previewStoredTerminalTaskArchive } from "../src/task-archive-store.js";
+import { archiveStoredTerminalTasks, previewStoredTerminalTaskArchive } from "../src/task-archive-store.js";
 
 let roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
@@ -21,5 +21,15 @@ describe("stored terminal task archive preview", () => {
       eligible: [{ sourcePath: "team/thor/inbox/claimed.claimed.nas.md" }, { sourcePath: "team/thor/inbox/done.md" }],
       skipped: [{ sourcePath: "team/thor/inbox/needed.md", reason: "required by live task: 20260905T080300000Z-live" }],
     });
+  });
+
+  it("moves only the exact freshly previewed eligible set", async () => {
+    const root = await mkdtemp(join(tmpdir(), "piren-task-archive-")); roots.push(root);
+    await mkdir(join(root, "team", "thor", "inbox"), { recursive: true });
+    await writeFile(join(root, "team/thor/inbox/done.md"), task("20260905T080000000Z-done", "completed"));
+    const now = () => new Date("2026-09-05T10:00:00.000Z");
+    const preview = await previewStoredTerminalTaskArchive(root, "thor", now);
+    await expect(archiveStoredTerminalTasks({ vaultRoot: root, agentName: "thor", expectedDestinations: ["wrong"], now })).rejects.toThrow("do not match preview");
+    await expect(archiveStoredTerminalTasks({ vaultRoot: root, agentName: "thor", expectedDestinations: preview.eligible.map((item) => item.destinationPath), now })).resolves.toMatchObject({ moved: preview.eligible });
   });
 });
