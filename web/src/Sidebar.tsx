@@ -35,6 +35,7 @@ export function Sidebar({
   alertsOpen = false,
   onToggleAlerts = () => {},
   alertsToggleRef,
+  onOpenAlertsFullPage = () => {},
 }: {
   page: Page;
   token: string;
@@ -63,6 +64,12 @@ export function Sidebar({
   alertsOpen?: boolean;
   onToggleAlerts?: () => void;
   alertsToggleRef?: RefObject<HTMLButtonElement | null>;
+  /**
+   * 0.2.5 correction S3: the Alerts sibling full-page action, matching the
+   * Explorer's V1 affordance. The shell decides hash/selection behavior; the
+   * sidebar only reports the explicit click.
+   */
+  onOpenAlertsFullPage?: () => void;
 }) {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -159,10 +166,22 @@ export function Sidebar({
         </li>
       </ul>
       <ul className="sidebar-companions">
-        <li>
+        <li className="sidebar-companion-row">
           <button type="button" ref={alertsToggleRef} className={alertsOpen ? "nav-item active" : "nav-item"} aria-pressed={alertsOpen} onClick={onToggleAlerts}>
             <AlertIcon size={14} />
             <span>Steward Alerts</span>
+          </button>
+          {/* 0.2.5 correction S3: a DISTINCT SIBLING full-page action — never
+              a nested interactive control inside the toggle. Icon-only with
+              its own accessible name, reusing the Explorer's V1 pattern. */}
+          <button
+            type="button"
+            className="nav-item sidebar-companion-fullpage"
+            aria-label="Open Steward Alerts full page"
+            title="Open Steward Alerts full page"
+            onClick={onOpenAlertsFullPage}
+          >
+            <ExpandIcon size={14} />
           </button>
         </li>
       </ul>

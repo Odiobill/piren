@@ -151,6 +151,102 @@ describe("Sidebar conversation list created timestamp", () => {  let container: 
   });
 });
 
+describe("Sidebar Steward Alerts row sibling full-page action (correction S3)", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  function renderAlertsRow(overrides: { alertsOpen?: boolean } = {}): {
+    onOpenAlertsFullPage: ReturnType<typeof vi.fn>;
+    onToggleAlerts: ReturnType<typeof vi.fn>;
+  } {
+    const onOpenAlertsFullPage = vi.fn();
+    const onToggleAlerts = vi.fn();
+    root = createRoot(container);
+    act(() => {
+      root.render(
+        createElement(Sidebar, {
+          page: "conversations",
+          token: "test-token",
+          onSelect: () => {},
+          onValidated: () => {},
+          onUnauthorized: () => {},
+          conversationsReloadKey: 0,
+          explorerOpen: false,
+          onToggleExplorer: () => {},
+          onOpenExplorerFullPage: () => {},
+          alertsOpen: overrides.alertsOpen ?? false,
+          onToggleAlerts,
+          onOpenAlertsFullPage,
+        }),
+      );
+    });
+    return { onOpenAlertsFullPage, onToggleAlerts };
+  }
+
+  function alertsToggle(scope: ParentNode = container): HTMLButtonElement {
+    const found = Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.trim() === "Steward Alerts",
+    );
+    if (found === undefined) throw new Error("missing Steward Alerts toggle");
+    return found;
+  }
+
+  function alertsFullPageAction(scope: ParentNode = container): HTMLButtonElement {
+    const found = scope.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open Steward Alerts full page"]',
+    );
+    if (found === null) throw new Error("missing Open Steward Alerts full page action");
+    return found;
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    vi.mocked(fetchConversations).mockReset();
+    vi.mocked(fetchConversations).mockResolvedValue({ conversations: [] });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root?.unmount();
+    });
+    container?.remove();
+  });
+
+  it("gives the Steward Alerts row two DISTINCT sibling buttons matching the Explorer row", async () => {
+    renderAlertsRow();
+    const toggle = alertsToggle();
+    const row = toggle.closest("li");
+    if (row === null) throw new Error("toggle has no list row");
+    // The row reuses the EXISTING 80/20 sibling-row styling (the same rules
+    // already pinned for the Vault Explorer row — no new CSS).
+    expect(row.classList.contains("sidebar-companion-row")).toBe(true);
+    // Two distinct buttons in one row; the action is NOT a descendant of the
+    // toggle (never nested interactive controls).
+    expect(row.querySelectorAll("button").length).toBe(2);
+    const action = alertsFullPageAction(row);
+    expect(toggle.contains(action)).toBe(false);
+    // The accessible name exactly names Steward Alerts (label + title).
+    expect(action.getAttribute("aria-label")).toBe("Open Steward Alerts full page");
+    expect(action.getAttribute("title")).toBe("Open Steward Alerts full page");
+    // Icon-only: the ExpandIcon glyph with no text label of its own.
+    expect(action.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+    expect(action.textContent?.trim()).toBe("");
+    // The action reuses the existing full-page action presentation class.
+    expect(action.classList.contains("sidebar-companion-fullpage")).toBe(true);
+  });
+
+  it("reports the explicit click to the shell without toggling the open state", async () => {
+    const handlers = renderAlertsRow({ alertsOpen: false });
+    const action = alertsFullPageAction();
+    await act(async () => action.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(handlers.onOpenAlertsFullPage).toHaveBeenCalledTimes(1);
+    expect(handlers.onToggleAlerts).not.toHaveBeenCalled();
+    // The toggle state is shell-owned; the sidebar stays a reporter.
+    expect(alertsToggle().getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
 describe("Sidebar WUX-A: icons, exclusive active state, and 80/20 Explorer row", () => {
   let container: HTMLDivElement;
   let root: Root;

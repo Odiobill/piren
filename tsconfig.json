@@ -60,6 +60,7 @@
     "tests/web-steward-alerts-component.test.ts",
     "tests/web-action-icons.test.ts",
     "tests/web-sidebar.test.ts",
+    "tests/web-s3-steward-alerts-fullpage.test.ts",
     "tests/web-split-resizer-component.test.ts",
     "tests/web-split-shell-component.test.ts",
     "tests/web-w1-browser-layout.test.ts",

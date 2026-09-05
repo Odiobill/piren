@@ -165,8 +165,26 @@ export function AppShell({
    * focus.
    */
   function handleOpenExplorerFullPage() {
-    setExplorerOpen(true);
-    setAlertsOpen(false);
+    openCompanionFullPage("vault-explorer");
+  }
+
+  /**
+   * 0.2.5 correction S3 — the same explicit full-page action for Steward
+   * Alerts, sharing the V1 semantics exactly (open state, exclusivity,
+   * mobile pane selection, no-selection hash route, drawer focus return).
+   * It never touches alert lifecycle state; closing remains a separate
+   * explicit module action.
+   */
+  function handleOpenAlertsFullPage() {
+    openCompanionFullPage("steward-alerts");
+  }
+
+  /** S3: the narrowly shared internal handler for the two sibling
+      full-page companion actions (identical V1 semantics, one target). */
+  function openCompanionFullPage(target: "vault-explorer" | "steward-alerts") {
+    const openExplorer = target === "vault-explorer";
+    setExplorerOpen(openExplorer);
+    setAlertsOpen(!openExplorer);
     setSplitState((previous) => mobileSelectPane(previous, "companion"));
     if (hasSelectedConversation && window.location.hash !== "") {
       window.location.hash = "";
@@ -263,6 +281,7 @@ export function AppShell({
             alertsOpen={alertsOpen}
             onToggleAlerts={handleToggleAlerts}
             alertsToggleRef={alertsButtonRef}
+            onOpenAlertsFullPage={handleOpenAlertsFullPage}
           />
         </div>
 
@@ -280,6 +299,7 @@ export function AppShell({
             explorerFullPage={companionFullPage}
             alertsOpen={alertsOpen}
             onToggleAlerts={handleToggleAlerts}
+            onOpenAlertsFullPage={handleOpenAlertsFullPage}
           />
         </MobileDrawer>
 
