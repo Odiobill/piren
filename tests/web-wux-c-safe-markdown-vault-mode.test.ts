@@ -118,3 +118,19 @@ describe("parseSafeMarkdownWithVaultLinks — closed vault-page forms", () => {
     expect(parseSafeMarkdownWithVaultLinks("x".repeat(32769)).ok).toBe(false);
   });
 });
+
+describe("parseSafeMarkdownWithVaultLinks — authored ordered-list start markers (0.2.5 S4)", () => {
+  it("carries authored ordered start markers through the same shared parser path as Conversation", () => {
+    // Vault Explorer documents use the identical parser; blank-separated
+    // ordered items must carry their authored markers exactly as in the
+    // default Conversation mode (one shared fix, no per-host behavior).
+    const result = parseSafeMarkdownWithVaultLinks("1. one\n\n2. two\n\n7. seven");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.blocks).toEqual([
+      { type: "list", ordered: true, start: 1, items: [{ children: [{ type: "text", text: "one" }], nested: [] }] },
+      { type: "list", ordered: true, start: 2, items: [{ children: [{ type: "text", text: "two" }], nested: [] }] },
+      { type: "list", ordered: true, start: 7, items: [{ children: [{ type: "text", text: "seven" }], nested: [] }] },
+    ]);
+  });
+});

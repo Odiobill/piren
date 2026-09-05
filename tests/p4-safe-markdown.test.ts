@@ -123,6 +123,7 @@ describe("parseSafeMarkdown — approved blocks", () => {
     expect(ordered.ok && ordered.blocks[0]).toEqual({
       type: "list",
       ordered: true,
+      start: 1,
       items: [
         { children: inline("one"), nested: [] },
         { children: inline("two"), nested: [] },
@@ -150,7 +151,7 @@ describe("parseSafeMarkdown — approved blocks", () => {
       expect(parseSafeMarkdown(literal)).toEqual({ ok: true, blocks: [paragraph(literal)] });
     }
     // 100. is within the approved 1..999 ordered marker range.
-    expect(parseSafeMarkdown("100. ok")).toEqual({ ok: true, blocks: [{ type: "list", ordered: true, items: [{ children: inline("ok"), nested: [] }] }] });
+    expect(parseSafeMarkdown("100. ok")).toEqual({ ok: true, blocks: [{ type: "list", ordered: true, start: 100, items: [{ children: inline("ok"), nested: [] }] }] });
   });
 
   it("parses one-level blockquotes and merges consecutive quote lines", () => {
@@ -349,11 +350,88 @@ describe("P4 static boundary", () => {
     expect(stewardSection).toContain("{event.body}");
   });
 
+  it("the renderer emits semantic <ol start> from the bounded authored-marker model fact (no marker text, CSS counters, or raw HTML)", async () => {
+    const renderer = await readFile(join(webSrc, "SafeMarkdown.tsx"), "utf8");
+    expect(renderer).toContain("start=");
+    // No CSS-counter or generated-marker mechanism: only the semantic start fact.
+    expect(renderer).not.toMatch(/counter\s*\(|counter-reset|counter-increment|content\s*:/);
+    expect(renderer).not.toContain("dangerouslySetInnerHTML");
+  });
+
   it("no new Markdown/sanitizer dependency is introduced", async () => {
     const pkg = await readFile(join(process.cwd(), "package.json"), "utf8");
     const parsed = JSON.parse(pkg) as { dependencies: Record<string, string> };
     for (const name of ["markdown", "marked", "remark", "micromark", "dompurify", "sanitize-html", "react-markdown"]) {
       expect(parsed.dependencies[name] === undefined, `${name} must not be added`).toBe(true);
     }
+  });
+});
+
+describe("parseSafeMarkdown — authored ordered-list start markers (0.2.5 S4)", () => {
+  it("carries the authored start marker of each ordered run, including blank-separated runs", () => {
+    // Blank lines split ordered items into separate list blocks; each block
+    // must remember its authored first marker (bounded 1..999) so rendering
+    // starts every run at its authored number instead of restarting at 1.
+    const result = parseSafeMarkdown("1. one\n\n2. two\n\n3. three");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.blocks).toEqual([
+      { type: "list", ordered: true, start: 1, items: [{ children: inline("one"), nested: [] }] },
+      { type: "list", ordered: true, start: 2, items: [{ children: inline("two"), nested: [] }] },
+      { type: "list", ordered: true, start: 3, items: [{ children: inline("three"), nested: [] }] },
+    ]);
+  });
+
+  it("carries a non-1 authored start marker for a contiguous run", () => {
+    const result = parseSafeMarkdown("7. seven\n8. eight");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.blocks).toEqual([
+      {
+        type: "list",
+        ordered: true,
+        start: 7,
+        items: [{ children: inline("seven"), nested: [] }, { children: inline("eight"), nested: [] }],
+      },
+    ]);
+  });
+
+  it("carries start markers for nested ordered runs and same-depth type changes; unordered lists carry none", () => {
+    const nested = parseSafeMarkdown("- a\n  3. three\n  4. four");
+    expect(nested.ok).toBe(true);
+    if (!nested.ok) throw new Error("expected ok");
+    expect(nested.blocks).toEqual([
+      {
+        type: "list",
+        ordered: false,
+        items: [
+          {
+            children: inline("a"),
+            nested: [
+              {
+                type: "list",
+                ordered: true,
+                start: 3,
+                items: [{ children: inline("three"), nested: [] }, { children: inline("four"), nested: [] }],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const mixed = parseSafeMarkdown("- a\n- b\n1. one\n2. two");
+    expect(mixed.ok).toBe(true);
+    if (!mixed.ok) throw new Error("expected ok");
+    expect(mixed.blocks).toEqual([
+      { type: "list", ordered: false, items: [{ children: inline("a"), nested: [] }, { children: inline("b"), nested: [] }] },
+      { type: "list", ordered: true, start: 1, items: [{ children: inline("one"), nested: [] }, { children: inline("two"), nested: [] }] },
+    ]);
+  });
+
+  it("out-of-range and malformed ordered markers still fail closed to literal text", () => {
+    expect(parseSafeMarkdown("1000. big")).toEqual({ ok: true, blocks: [paragraph("1000. big")] });
+    expect(parseSafeMarkdown("1.2 no marker")).toEqual({ ok: true, blocks: [paragraph("1.2 no marker")] });
+    expect(parseSafeMarkdown("0. zero")).toEqual({ ok: true, blocks: [paragraph("0. zero")] });
   });
 });

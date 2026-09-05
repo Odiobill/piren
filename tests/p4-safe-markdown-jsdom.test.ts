@@ -112,3 +112,40 @@ describe("SafeMarkdownBody — approved rendering (jsdom)", () => {
     act(() => root.unmount());
   });
 });
+
+describe("SafeMarkdownBody — authored ordered-list numbering (0.2.5 S4, jsdom)", () => {
+  it("renders blank-separated 1/2/3 items as ordered runs starting at their authored numbers", () => {
+    const root = renderBody("1. one\n\n2. two\n\n3. three");
+    const ols = container.querySelectorAll("ol");
+    expect(ols).toHaveLength(3);
+    expect(ols[0]?.getAttribute("start")).toBe("1");
+    expect(ols[1]?.getAttribute("start")).toBe("2");
+    expect(ols[2]?.getAttribute("start")).toBe("3");
+    expect(ols[0]?.children).toHaveLength(1);
+    expect(ols[1]?.textContent).toBe("two");
+    act(() => root.unmount());
+  });
+
+  it("renders a list beginning at 7 with semantic start=7 and keeps contiguous 1/2/3 at start=1", () => {
+    const root = renderBody("7. seven\n8. eight");
+    const ol = container.querySelector("ol");
+    expect(ol?.getAttribute("start")).toBe("7");
+    expect(ol?.children).toHaveLength(2);
+    act(() => root.unmount());
+
+    const contiguous = renderBody("1. one\n2. two\n3. three");
+    const contiguousOl = container.querySelector("ol");
+    expect(contiguousOl?.getAttribute("start")).toBe("1");
+    expect(contiguousOl?.children).toHaveLength(3);
+    act(() => contiguous.unmount());
+  });
+
+  it("renders unordered lists without a start attribute", () => {
+    const root = renderBody("- one\n- two");
+    const ul = container.querySelector("ul");
+    expect(ul).not.toBeNull();
+    expect(ul?.hasAttribute("start")).toBe(false);
+    expect(container.querySelector("ol")).toBeNull();
+    act(() => root.unmount());
+  });
+});

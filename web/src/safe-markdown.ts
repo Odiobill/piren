@@ -73,6 +73,14 @@ export interface SafeMarkdownListNode {
   type: "list";
   ordered: boolean;
   items: SafeMarkdownListItem[];
+  /**
+   * 0.2.5 S4 — ordered lists only: the validated authored marker (1..999) of
+   * the run's FIRST item, so rendering starts each ordered run at its authored
+   * number (semantic `<ol start>`; never generated marker text). Unordered
+   * lists never carry this fact. Blank-separated ordered items form separate
+   * sibling runs, each remembering its own authored marker.
+   */
+  start?: number;
 }
 export interface SafeMarkdownParagraphNode {
   type: "paragraph";
@@ -98,10 +106,11 @@ export type SafeMarkdownParseResult =
   | { ok: true; blocks: SafeMarkdownBlock[] }
   | { ok: false; reason: "over-limit" };
 
-/** A parsed list-item source line. */
+/** A parsed list-item source line. `marker` is the authored 1..999 number (0 for unordered). */
 interface ItemLine {
   depth: number;
   ordered: boolean;
+  marker: number;
   content: string;
 }
 
@@ -118,13 +127,13 @@ function listItemLine(line: string): ItemLine | null {
   const rest = line.slice(leading);
   if (rest === "") return null;
   if (rest.startsWith("- ") || rest.startsWith("* ")) {
-    return { depth: leading / 2, ordered: false, content: rest.slice(2) };
+    return { depth: leading / 2, ordered: false, marker: 0, content: rest.slice(2) };
   }
   const ordered = ORDERED_ITEM_RE.exec(rest);
   if (ordered !== null) {
     const number = Number(ordered[1] as string);
     if (number >= 1 && number <= 999) {
-      return { depth: leading / 2, ordered: true, content: ordered[2] as string };
+      return { depth: leading / 2, ordered: true, marker: number, content: ordered[2] as string };
     }
   }
   return null;
@@ -278,16 +287,17 @@ class SafeMarkdownParser {
   private buildListTree(itemLines: readonly ItemLine[]): SafeMarkdownListNode[] {
     const top: SafeMarkdownListNode[] = [];
     const stack: Array<{ depth: number; list: SafeMarkdownListNode }> = [];
-    const pushListAt = (ordered: boolean, depth: number): SafeMarkdownListNode => {
-      const list: SafeMarkdownListNode = { type: "list", ordered, items: [] };
-      if (depth === 0) {
+    const pushListAt = (line: ItemLine): SafeMarkdownListNode => {
+      const list: SafeMarkdownListNode = { type: "list", ordered: line.ordered, items: [] };
+      if (line.ordered) list.start = line.marker;
+      if (line.depth === 0) {
         top.push(list);
       } else {
         const parent = stack[stack.length - 1];
         const lastItem = parent?.list.items[parent.list.items.length - 1];
         lastItem?.nested.push(list);
       }
-      stack.push({ depth, list });
+      stack.push({ depth: line.depth, list });
       return list;
     };
     for (const line of itemLines) {
@@ -295,16 +305,16 @@ class SafeMarkdownParser {
       while (stack.length > 0 && (stack[stack.length - 1] as { depth: number }).depth > line.depth) stack.pop();
       let list: SafeMarkdownListNode;
       if (stack.length === 0) {
-        list = pushListAt(line.ordered, line.depth);
+        list = pushListAt(line);
       } else if ((stack[stack.length - 1] as { depth: number }).depth < line.depth) {
         // Nested under the previous item of the current list.
-        list = pushListAt(line.ordered, line.depth);
+        list = pushListAt(line);
       } else {
         const current = stack[stack.length - 1] as { depth: number; list: SafeMarkdownListNode };
         if (current.list.ordered !== line.ordered) {
           // Type change at the same depth starts a new sibling list.
           stack.pop();
-          list = pushListAt(line.ordered, line.depth);
+          list = pushListAt(line);
         } else {
           list = current.list;
         }

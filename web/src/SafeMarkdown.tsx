@@ -23,6 +23,10 @@ import {
  * explicit Vault mode and closed vault-page links become in-place Explorer
  * navigation controls. Without it (ordinary Conversation rendering) the
  * default parser runs unchanged and vault-link nodes can never occur.
+ *
+ * 0.2.5 S4 — ordered lists render with semantic `<ol start>` from the
+ * bounded authored-marker model fact, so blank-separated runs and non-1
+ * starts keep their authored numbering in Conversation and Vault Explorer.
  */
 export function SafeMarkdownBody({
   text,
@@ -77,9 +81,12 @@ function renderBlock(block: SafeMarkdownBlock, key: number, vault: RenderVaultCo
         </pre>
       );
     case "list":
+      // 0.2.5 S4 — ordered lists carry their bounded authored first marker
+      // (1..999); semantic `<ol start>` starts each run at its authored
+      // number. Never generated marker text, CSS counters, or raw HTML.
       if (block.ordered) {
         return (
-          <ol className="markdown-list" key={key}>
+          <ol className="markdown-list" key={key} start={block.start}>
             {block.items.map((item, index) => renderListItem(item, index, vault))}
           </ol>
         );
