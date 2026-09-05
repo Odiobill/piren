@@ -93,6 +93,26 @@ describe("help: per-command help", () => {
   });
 });
 
+describe("task help: archive discoverability (0.2.5 S1)", () => {
+  it("names archive in the top-level task command description", () => {
+    const taskTopic = HELP_TOPICS.find((t) => t.command === "task");
+    expect(taskTopic).toBeDefined();
+    expect(taskTopic?.short).toContain("archive");
+    expect(formatHelp()).toContain("archive");
+  });
+
+  it("documents archive with --agent, --yes, and a truthful preview/confirm example", () => {
+    const text = formatCommandHelp("task");
+    expect(text).toContain("archive");
+    expect(text).toContain("--agent");
+    expect(text).toContain("--yes");
+    // Truthful preview/confirm semantics: preview first, --yes confirms that exact preview.
+    expect(text).toMatch(/preview/i);
+    expect(text).toMatch(/--yes/);
+    expect(text).toMatch(/example/i);
+  });
+});
+
 describe("scheduler help (0.2.0 S2)", () => {
   it("documents the bounded --force override and the fail-closed default gate", () => {
     const text = formatCommandHelp("scheduler") ?? "";
