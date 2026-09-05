@@ -4,6 +4,7 @@ import {
   parseStewardAlert,
   projectStewardAlerts,
 } from "../src/steward-alerts.js";
+import { planStewardAlertArchive } from "../src/steward-alert-archive.js";
 
 const openHigh = [
   "---",
@@ -69,6 +70,86 @@ describe("steward alert lifecycle core", () => {
     expect(closed.content).toContain("closed_via: workbench");
     expect(closed.content).toContain("id: 20260904T164500000Z-vault-unavailable");
     expect(closed.content).toContain("The source mount is unavailable.");
+  });
+
+  it("parses the historical resolved grammar truthfully without relabeling or counting it", () => {
+    const historical = openHigh
+      .replace("status: open", "status: resolved\nresolved: 2026-08-04T11:19:00Z")
+      .replace("severity: high", "severity: urgent");
+    const parsed = parseStewardAlert({
+      path: "steward-inbox/alerts/20260804T110454270Z-credential-exposed.md",
+      content: historical,
+    });
+
+    expect(parsed.status).toBe("resolved");
+    expect(parsed.resolvedAt).toBe("2026-08-04T11:19:00Z");
+    expect(parsed.closedAt).toBeUndefined();
+    expect(parsed.closedVia).toBeUndefined();
+
+    // The slightly broader legacy timestamp grammar still requires an explicit
+    // UTC instant; canonical millisecond precision is accepted too.
+    expect(parseStewardAlert({
+      path: "steward-inbox/alerts/20260804T110454270Z-credential-exposed.md",
+      content: historical.replace("resolved: 2026-08-04T11:19:00Z", "resolved: 2026-08-04T11:19:00.000Z"),
+    }).resolvedAt).toBe("2026-08-04T11:19:00.000Z");
+
+    const open = parseStewardAlert({
+      path: "steward-inbox/alerts/normal.md",
+      content: openHigh.replace("severity: high", "severity: normal"),
+    });
+    const projection = projectStewardAlerts([parsed, open]);
+    expect(projection.attentionCount).toBe(0);
+    expect(projection.alerts.map((alert) => alert.status)).toEqual(["open", "resolved"]);
+  });
+
+  it("fails closed on missing, malformed, or misplaced resolved evidence", () => {
+    const legacyResolved = (line: string) => openHigh.replace("status: open", `status: resolved\n${line}`);
+
+    // Resolved without its required timestamp evidence is malformed.
+    expect(() => parseStewardAlert({
+      path: "steward-inbox/alerts/resolved-no-evidence.md",
+      content: openHigh.replace("status: open", "status: resolved"),
+    })).toThrow("missing required resolved");
+
+    // Malformed resolved timestamps are rejected.
+    expect(() => parseStewardAlert({
+      path: "steward-inbox/alerts/resolved-bad-evidence.md",
+      content: legacyResolved("resolved: 2026-08-04 11:19:00"),
+    })).toThrow("canonical");
+    expect(() => parseStewardAlert({
+      path: "steward-inbox/alerts/resolved-local-evidence.md",
+      content: legacyResolved("resolved: 2026-08-04T11:19:00+02:00"),
+    })).toThrow("canonical");
+
+    // Closure evidence on a resolved record is rejected.
+    expect(() => parseStewardAlert({
+      path: "steward-inbox/alerts/resolved-with-closure.md",
+      content: legacyResolved("resolved: 2026-08-04T11:19:00Z\nclosed_at: 2026-09-04T17:00:00.000Z\nclosed_via: workbench"),
+    })).toThrow("closure evidence");
+
+    // Resolved evidence outside the legacy resolved status is rejected.
+    expect(() => parseStewardAlert({
+      path: "steward-inbox/alerts/open-with-resolved.md",
+      content: openHigh.replace("notify: true", "notify: true\nresolved: 2026-08-04T11:19:00Z"),
+    })).toThrow("resolved evidence");
+    expect(() => parseStewardAlert({
+      path: "steward-inbox/alerts/closed-with-resolved.md",
+      content: openHigh
+        .replace("status: open", "status: closed\nclosed_at: 2026-09-04T17:00:00.000Z\nclosed_via: workbench")
+        .replace("notify: true", "notify: true\nresolved: 2026-08-04T11:19:00Z"),
+    })).toThrow("resolved evidence");
+  });
+
+  it("keeps a legacy resolved alert outside the new close lifecycle and archive eligibility", () => {
+    const resolved = openHigh.replace("status: open", "status: resolved\nresolved: 2026-08-04T11:19:00Z");
+    const path = "steward-inbox/alerts/20260804T110454270Z-credential-exposed.md";
+
+    expect(() => closeStewardAlert({ path, content: resolved, closedAt: "2026-09-04T17:00:00.000Z" }))
+      .toThrow("not closeable");
+
+    const alert = parseStewardAlert({ path, content: resolved });
+    expect(() => planStewardAlertArchive({ alert, archiveAt: "2026-09-05T14:00:00.000Z" }))
+      .toThrow("Only closed alerts may be archived.");
   });
 
   it("fails closed for malformed, stale, and already-closed evidence", () => {

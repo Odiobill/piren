@@ -37,6 +37,24 @@ beforeEach(async () => {
 
 afterEach(async () => rm(root, { recursive: true, force: true }));
 
+// The real historical pre-P1b record observed in the authoritative vault:
+// `status: resolved` plus one explicit UTC second-precision `resolved` instant.
+const historicalResolved = [
+  "---",
+  "type: Alert",
+  "id: 20260804T110454270Z-credential-exposed-in-team-kimi-config-yml",
+  "from: sam",
+  "severity: urgent",
+  "status: resolved",
+  "created: 2026-08-04T11:04:54.270Z",
+  "resolved: 2026-08-04T11:19:00Z",
+  "notify: true",
+  "---",
+  "",
+  "# Credential exposed in team/kimi/config.yml",
+  "",
+].join("\n");
+
 describe("steward alert gateway adapter", () => {
   it("authenticates bounded active-alert list/detail and exact one-way close routes", async () => {
     const server = new GatewayServer({ target: fakePiTarget(), vaultRoot: root, authToken: "test-token" });
@@ -79,6 +97,47 @@ describe("steward alert gateway adapter", () => {
         body: JSON.stringify({ path, expected_status: "open" }),
       });
       expect(stale.status).toBe(409);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("lists and reads the historical resolved alert without weakening active authority", async () => {
+    await writeFile(join(root, "steward-inbox", "alerts", "historical-resolved.md"), historicalResolved, "utf8");
+    const server = new GatewayServer({ target: fakePiTarget(), vaultRoot: root, authToken: "test-token" });
+    try {
+      const handle = await server.start();
+      const base = `http://${handle.hostname}:${handle.port}`;
+      const headers = { authorization: "Bearer test-token" };
+      const resolvedPath = "steward-inbox/alerts/historical-resolved.md";
+
+      // The bounded whole-list read now succeeds and preserves the legacy
+      // status truthfully; the open urgent alert alone drives the count.
+      const listed = await fetch(`${base}/api/steward-alerts`, { headers });
+      expect(listed.status).toBe(200);
+      expect(await listed.json()).toEqual({
+        attention_count: 1,
+        alerts: [
+          expect.objectContaining({ path: "steward-inbox/alerts/vault-unavailable.md", status: "open" }),
+          expect.objectContaining({ path: resolvedPath, status: "resolved", resolved_at: "2026-08-04T11:19:00Z" }),
+        ],
+      });
+
+      const detail = await fetch(`${base}/api/steward-alerts/read?path=${encodeURIComponent(resolvedPath)}`, { headers });
+      expect(detail.status).toBe(200);
+      const detailBody = await detail.json();
+      expect(detailBody).toEqual(expect.objectContaining({ status: "resolved", resolved_at: "2026-08-04T11:19:00Z" }));
+      expect(detailBody).not.toHaveProperty("closed_at");
+      expect(detailBody).not.toHaveProperty("closed_via");
+
+      // A legacy resolved record is not closeable; the 409 names its real status.
+      const close = await fetch(`${base}/api/steward-alerts/close`, {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ path: resolvedPath, expected_status: "open" }),
+      });
+      expect(close.status).toBe(409);
+      expect(await close.json()).toEqual({ error: "alert is resolved, not open" });
     } finally {
       await server.close();
     }

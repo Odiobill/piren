@@ -105,6 +105,8 @@ export function StewardAlerts({
             <button type="button" className="button" disabled={busy} onClick={() => void closeSelected()}>
               {busy ? "Closing…" : "Close alert"}
             </button>
+          ) : selected.status === "resolved" ? (
+            <p role="status">Resolved {selected.resolvedAt ?? ""}</p>
           ) : <p role="status">Closed {selected.closedAt ?? ""}</p>}
           {selected.content !== "" && <SafeMarkdownBody text={selected.content} />}
         </article>

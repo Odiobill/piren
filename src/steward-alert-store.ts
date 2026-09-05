@@ -163,7 +163,7 @@ export async function closeStoredStewardAlert(options: {
 }): Promise<StewardAlert> {
   const current = await readStewardAlert(options.vaultRoot, options.path);
   if (current.alert.status !== options.expectedStatus) {
-    throw new StewardAlertStoreError("alert is already closed", "conflict");
+    throw new StewardAlertStoreError(`alert is ${current.alert.status}, not open`, "conflict");
   }
   const closedAt = (options.now ?? (() => new Date()))().toISOString();
   let next: ReturnType<typeof closeStewardAlert>;

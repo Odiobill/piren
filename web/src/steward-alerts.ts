@@ -1,5 +1,5 @@
 export type StewardAlertSeverity = "low" | "normal" | "high" | "urgent";
-export type StewardAlertStatus = "open" | "closed";
+export type StewardAlertStatus = "open" | "closed" | "resolved";
 
 export interface StewardAlertSummary {
   path: string;
@@ -10,6 +10,8 @@ export interface StewardAlertSummary {
   created: string;
   closedAt?: string;
   closedVia?: "workbench";
+  /** Strictly decoded legacy terminal evidence for a historical `status: resolved` record. */
+  resolvedAt?: string;
 }
 
 export interface StewardAlertDetail extends StewardAlertSummary {
@@ -34,6 +36,12 @@ function canonicalIso(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && !Number.isNaN(Date.parse(value));
 }
 
+// Legacy read-compatibility grammar for a historical `status: resolved` record:
+// an explicit UTC instant with either second or millisecond precision.
+function legacyResolvedIso(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) && !Number.isNaN(Date.parse(value));
+}
+
 function parseAlert(value: unknown): StewardAlertSummary {
   if (!record(value)) throw new Error("unexpected steward alert");
   const status = value.status;
@@ -42,6 +50,8 @@ function parseAlert(value: unknown): StewardAlertSummary {
     if (!exactKeys(value, common)) throw new Error("unexpected open steward alert");
   } else if (status === "closed") {
     if (!exactKeys(value, [...common, "closed_at", "closed_via"])) throw new Error("unexpected closed steward alert");
+  } else if (status === "resolved") {
+    if (!exactKeys(value, [...common, "resolved_at"])) throw new Error("unexpected resolved steward alert");
   } else {
     throw new Error("unexpected steward alert status");
   }
@@ -67,6 +77,10 @@ function parseAlert(value: unknown): StewardAlertSummary {
     if (!canonicalIso(value.closed_at) || value.closed_via !== "workbench") throw new Error("unexpected closed steward alert");
     result.closedAt = value.closed_at;
     result.closedVia = value.closed_via;
+  }
+  if (status === "resolved") {
+    if (!legacyResolvedIso(value.resolved_at)) throw new Error("unexpected resolved steward alert");
+    result.resolvedAt = value.resolved_at;
   }
   return result;
 }

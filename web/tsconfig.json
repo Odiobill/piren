@@ -48,6 +48,7 @@
     "../tests/web-tracer-b-history-tray.test.ts",
     "../tests/web-tracer-b-navigator.test.ts",
     "../tests/web-approval-pager-component.test.ts",
+    "../tests/web-steward-alerts-component.test.ts",
     "../tests/web-action-icons.test.ts",
     "../tests/web-sidebar.test.ts",
     "../tests/web-split-resizer-component.test.ts",

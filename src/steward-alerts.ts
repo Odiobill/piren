@@ -1,6 +1,6 @@
 import type { AlertSeverity } from "./alerts.js";
 
-export type StewardAlertStatus = "open" | "closed";
+export type StewardAlertStatus = "open" | "closed" | "resolved";
 
 export interface StewardAlert {
   path: string;
@@ -12,6 +12,8 @@ export interface StewardAlert {
   title: string;
   closedAt?: string;
   closedVia?: "workbench";
+  /** Strictly decoded legacy terminal evidence for a historical `status: resolved` record. */
+  resolvedAt?: string;
 }
 
 export interface ParseStewardAlertOptions {
@@ -36,6 +38,9 @@ export interface StewardAlertProjection {
 const ALERT_PATH = /^steward-inbox\/alerts\/[^/.][^/]*\.md$/;
 const AGENT_NAME = /^[a-z][a-z0-9-]*$/;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+// Legacy read-compatibility grammar for pre-P1b `status: resolved` records:
+// an explicit UTC instant with either second or millisecond precision.
+const LEGACY_RESOLVED_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const SEVERITY_RANK: Record<AlertSeverity, number> = { urgent: 3, high: 2, normal: 1, low: 0 };
 const MAX_PROJECTED_ALERTS = 100;
 
@@ -52,6 +57,12 @@ function assertActiveAlertPath(path: string): void {
 function assertIsoInstant(value: string, field: string): void {
   if (!ISO_INSTANT.test(value) || Number.isNaN(Date.parse(value))) {
     throw new Error(`Alert ${field} must be a canonical ISO instant.`);
+  }
+}
+
+function assertLegacyResolvedInstant(value: string): void {
+  if (!LEGACY_RESOLVED_INSTANT.test(value) || Number.isNaN(Date.parse(value))) {
+    throw new Error("Alert resolved must be a canonical UTC ISO instant.");
   }
 }
 
@@ -98,7 +109,7 @@ export function parseStewardAlert(options: ParseStewardAlertOptions): StewardAle
   }
 
   const status = required(fields, "status");
-  if (status !== "open" && status !== "closed") throw new Error("Alert status is invalid.");
+  if (status !== "open" && status !== "closed" && status !== "resolved") throw new Error("Alert status is invalid.");
   const created = required(fields, "created");
   assertIsoInstant(created, "created");
   if (required(fields, "notify") !== "true" && fields.get("notify") !== "false") {
@@ -117,9 +128,21 @@ export function parseStewardAlert(options: ParseStewardAlertOptions): StewardAle
 
   const closedAt = fields.get("closed_at");
   const closedVia = fields.get("closed_via");
-  if (status === "open") {
+  const resolvedAt = fields.get("resolved");
+  if (status === "resolved") {
+    // Legacy read compatibility only: a historical pre-P1b terminal record is
+    // recognized exactly when `status: resolved` carries one required explicit
+    // UTC `resolved` instant. It is preserved as `resolved`, never relabeled
+    // `closed`, and it must not carry workbench closure evidence.
+    if (closedAt !== undefined || closedVia !== undefined) throw new Error("Resolved alert has closure evidence.");
+    const resolved = required(fields, "resolved");
+    assertLegacyResolvedInstant(resolved);
+    alert.resolvedAt = resolved;
+  } else if (status === "open") {
     if (closedAt !== undefined || closedVia !== undefined) throw new Error("Open alert has closure evidence.");
+    if (resolvedAt !== undefined) throw new Error("Open alert has resolved evidence.");
   } else {
+    if (resolvedAt !== undefined) throw new Error("Closed alert has resolved evidence.");
     if (closedAt === undefined || closedVia === undefined) throw new Error("Closed alert is missing closure evidence.");
     assertIsoInstant(closedAt, "closed_at");
     if (closedVia !== "workbench") throw new Error("Alert closed_via must be workbench.");
@@ -136,6 +159,7 @@ export function parseStewardAlert(options: ParseStewardAlertOptions): StewardAle
  */
 export function closeStewardAlert(options: CloseStewardAlertOptions): CloseStewardAlertResult {
   const current = parseStewardAlert(options);
+  if (current.status === "resolved") throw new Error("Resolved alert is not closeable.");
   if (current.status !== "open") throw new Error("Alert is already closed.");
   assertIsoInstant(options.closedAt, "closed_at");
 

@@ -1487,6 +1487,7 @@ export class GatewayServer {
     };
     if (alert.closedAt !== undefined) result.closed_at = alert.closedAt;
     if (alert.closedVia !== undefined) result.closed_via = alert.closedVia;
+    if (alert.resolvedAt !== undefined) result.resolved_at = alert.resolvedAt;
     return result;
   }
 
