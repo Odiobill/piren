@@ -60,6 +60,20 @@ describe("piren task (CLI dispatch)", () => {
     expect(result.stdout).toMatch(/no tasks found/i);
   });
 
+  it("previews terminal cleanup and requires --yes before moving it", async () => {
+    const path = join(vault, "team", "dipu", "inbox", "terminal.md");
+    await writeFile(path, ["---", "id: 20260905T100000000Z-terminal", "status: completed", "---", "", "# Terminal", ""].join("\n"));
+    const preview = runPirenTask(["archive", "--agent", "dipu"], { HOME: home });
+    expect(preview.status).toBe(0);
+    expect(preview.stdout).toContain("ARCHIVE team/dipu/inbox/terminal.md");
+    expect(preview.stdout).toContain("Preview only");
+    await expect(readFile(path, "utf8")).resolves.toContain("status: completed");
+
+    const confirmed = runPirenTask(["archive", "--agent", "dipu", "--yes"], { HOME: home });
+    expect(confirmed.status).toBe(0);
+    expect(confirmed.stdout).toContain("Archived 1 task(s)");
+  });
+
   it("sends a task to an agent and lists it", () => {
     const send = runPirenTask(
       ["send", "dipu", "Write release notes", "--priority", "high"],
