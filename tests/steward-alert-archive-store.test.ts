@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { previewStoredStewardAlertArchive, StewardAlertStoreError } from "../src/steward-alert-store.js";
+import { archiveStoredStewardAlert, previewStoredStewardAlertArchive, StewardAlertStoreError } from "../src/steward-alert-store.js";
 
 const closed = `---
 type: Alert
@@ -42,5 +42,14 @@ describe("stored steward-alert archive preview", () => {
     await mkdir(join(root, "steward-inbox", "alerts", "archive", "2026", "09", "04"), { recursive: true });
     await writeFile(join(root, "steward-inbox", "alerts", "archive", "2026", "09", "04", "closed.md"), "existing");
     await expect(previewStoredStewardAlertArchive(root, path, now)).rejects.toEqual(expect.objectContaining<Partial<StewardAlertStoreError>>({ kind: "conflict" }));
+  });
+
+  it("moves only an exact freshly previewed closed alert after confirmation", async () => {
+    const root = await rootWithAlert();
+    const now = () => new Date("2026-09-04T18:00:00.000Z");
+    const preview = await previewStoredStewardAlertArchive(root, path, now);
+    await expect(archiveStoredStewardAlert({ vaultRoot: root, path, expectedDestination: "steward-inbox/alerts/archive/other.md", now })).rejects.toEqual(expect.objectContaining<Partial<StewardAlertStoreError>>({ kind: "conflict" }));
+    await expect(archiveStoredStewardAlert({ vaultRoot: root, path, expectedDestination: preview.destinationPath, now })).resolves.toEqual(preview);
+    await expect(previewStoredStewardAlertArchive(root, path, now)).rejects.toEqual(expect.objectContaining<Partial<StewardAlertStoreError>>({ kind: "not-found" }));
   });
 });
