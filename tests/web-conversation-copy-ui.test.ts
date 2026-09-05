@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConversationTimeline } from "../web/src/ConversationTimeline.js";
+import { agentDisplayName } from "../web/src/agent-display.js";
 import { fetchConversationEvents, streamConversationEvents } from "../web/src/api.js";
 import type { SseFrame } from "../web/src/timeline.js";
 
@@ -102,7 +103,8 @@ async function settleHistory(): Promise<void> {
 }
 
 function copyButton(author: string): HTMLButtonElement | null {
-  return container.querySelector<HTMLButtonElement>(`button[aria-label="Copy message from ${author}"]`);
+  const displayed = author === "steward" ? author : agentDisplayName(author);
+  return container.querySelector<HTMLButtonElement>(`button[aria-label="Copy message from ${displayed}"]`);
 }
 
 function feedback(): HTMLElement[] {

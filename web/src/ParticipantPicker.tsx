@@ -1,4 +1,5 @@
 import type { ConversationAgentEntry } from "./conversation-agents";
+import { agentDisplayName } from "./agent-display";
 
 /**
  * Roster-aware participant picker (ADR-0041 R3b-2). Every vault-defined agent
@@ -48,7 +49,7 @@ export function ParticipantPicker({
                   aria-describedby={agent.online ? undefined : `${checkboxId}-offline-note`}
                   onChange={(event) => onToggle(agent.name, event.target.checked)}
                 />
-                <span className="agent-name">{agent.name}</span>
+                <span className="agent-name">{agentDisplayName(agent.name)}</span>
                 {agent.online ? (
                   <span className="agent-status status-ok">Online</span>
                 ) : (

@@ -315,7 +315,7 @@ describe("DashboardView (ADR-0044)", () => {
     const busy = container.querySelector(".dashboard-start-busy");
     expect(busy).not.toBeNull();
     expect(busy?.getAttribute("role")).toBe("status");
-    expect(busy?.textContent).toContain("Preparing your conversation with kimi");
+    expect(busy?.textContent).toContain("Preparing your conversation with Kimi");
     // D5: the busy line asks the steward to wait while staying scoped to the
     // submitted browser/gateway operation.
     expect(busy?.textContent).toContain("Please wait");

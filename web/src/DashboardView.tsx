@@ -450,7 +450,7 @@ export function DashboardView({
             )}
             {start.phase === "busy" && selection.length === 1 && (
               <p className="dashboard-start-busy" role="status">
-                Preparing your conversation with {selection[0]}. Please wait
+                Preparing your conversation with {agentDisplayName(selection[0] ?? "")}. Please wait
                 <span className="dashboard-busy-dots" aria-hidden="true">
                   <span>.</span>
                   <span>.</span>

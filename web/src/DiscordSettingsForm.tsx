@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchConversationAgents, fetchDiscordSettings, saveDiscordSettings, SettingsHttpError, UnauthorizedError } from "./api";
 import { parseDiscordSnowflakesInput, type DiscordSettingsProjection } from "./settings-transport";
 import { SaveIcon } from "./icons";
+import { agentDisplayName } from "./agent-display";
 
 /**
  * W5 (0.2.0 amendment §5/§5.1; ADR-0046): the typed Discord transport
@@ -249,13 +250,13 @@ export function DiscordSettingsForm({
               <option value="">No default agent</option>
               {roster.map((name) => (
                 <option key={name} value={name}>
-                  {name}
+                  {agentDisplayName(name)}
                 </option>
               ))}
               {/* A stored but no-longer-runnable agent stays visible and is
                   never silently rewritten or resubmitted. */}
               {defaultAgent !== "" && !roster.includes(defaultAgent) && (
-                <option value={defaultAgent}>{`${defaultAgent} - not locally runnable`}</option>
+                <option value={defaultAgent}>{`${agentDisplayName(defaultAgent)} - not locally runnable`}</option>
               )}
             </select>
           </label>

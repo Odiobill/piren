@@ -4,6 +4,8 @@
  * discard a visible selection.
  */
 
+import { agentDisplayName } from "./agent-display.js";
+
 export type FallbackStageOutcome =
   | { kind: "staged"; candidates: string[] }
   | { kind: "rejected"; reason: string };
@@ -16,9 +18,9 @@ export type FallbackStageOutcome =
  */
 export function stageFallbackCandidate(candidates: string[], member: string, choice: string): FallbackStageOutcome {
   if (choice === "") return { kind: "rejected", reason: "Choose a candidate first." };
-  if (choice === member) return { kind: "rejected", reason: `${member} cannot be its own fallback.` };
+  if (choice === member) return { kind: "rejected", reason: `${agentDisplayName(member)} cannot be its own fallback.` };
   if (candidates.includes(choice)) {
-    return { kind: "rejected", reason: `${choice} is already in the ordered list.` };
+    return { kind: "rejected", reason: `${agentDisplayName(choice)} is already in the ordered list.` };
   }
   return { kind: "staged", candidates: [...candidates, choice] };
 }

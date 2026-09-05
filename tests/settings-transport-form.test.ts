@@ -329,7 +329,8 @@ describe("ST-1B lead correction: runnable-only selectors and roster 401 recovery
     const ghostOption = select.selectedOptions[0] ?? Array.from(select.options).find((o) => o.value === "ghost")!;
     expect(ghostOption.textContent).toMatch(/not locally runnable/i);
     // The runnable choice is ordinary.
-    expect(Array.from(select.options).find((o) => o.value === "kimi")!.textContent).toBe("kimi");
+    expect(Array.from(select.options).find((o) => o.value === "kimi")!.textContent).toBe("Kimi");
+    expect(ghostOption.textContent).toBe("Ghost - not locally runnable");
   });
 
   it("discord: an offline vault agent is ABSENT from ordinary options", async () => {
@@ -359,6 +360,8 @@ describe("ST-1B lead correction: runnable-only selectors and roster 401 recovery
     const options = agentOptions();
     expect(options).toContain("kimi");
     expect(options).not.toContain("ghost");
+    const select = container.querySelector(".settings-form-default-agent") as HTMLSelectElement;
+    expect(Array.from(select.options).find((o) => o.value === "kimi")!.textContent).toBe("Kimi");
   });
 
   it("a roster 401 calls the shell recovery callback (onUnauthorized) for both transports", async () => {

@@ -46,12 +46,16 @@ import {
   telemetryPopupViewModel,
 } from "../web/src/conversation-context-cards.js";
 import { applyMentionCompletion } from "../web/src/conversation-autocomplete.js";
+import { copyMessageAccessibleName } from "../web/src/conversation-copy-message.js";
+import { stageFallbackCandidate } from "../web/src/groups-fallback.js";
 import {
   fetchConversationAgents,
   fetchConversations,
   fetchServiceStatus,
+  startConversation,
 } from "../web/src/api.js";
 import { DashboardView } from "../web/src/DashboardView.js";
+import { ParticipantPicker } from "../web/src/ParticipantPicker.js";
 
 vi.mock("../web/src/api.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../web/src/api.js")>();
@@ -60,6 +64,7 @@ vi.mock("../web/src/api.js", async (importOriginal) => {
     fetchConversationAgents: vi.fn(),
     fetchConversations: vi.fn(),
     fetchServiceStatus: vi.fn(),
+    startConversation: vi.fn(),
   };
 });
 
@@ -205,6 +210,14 @@ describe("pure presentation cores render display names while identity stays cano
     expect(agentLine?.value).toBe("Dipu");
   });
 
+  it("copy and defensive fallback labels display names while their records stay canonical", () => {
+    expect(copyMessageAccessibleName({ authorKind: "agent", author: "piren-agent" } as never)).toBe("Copy message from Piren Agent");
+    expect(stageFallbackCandidate([], "piren-agent", "piren-agent")).toEqual({
+      kind: "rejected",
+      reason: "Piren Agent cannot be its own fallback.",
+    });
+  });
+
   it("mention completion keeps the CANONICAL insertion while the visible label may differ", () => {
     const applied = applyMentionCompletion("hi @di ", 7, 3, "dipu");
     expect(applied.text).toBe("hi @dipu ");
@@ -232,6 +245,7 @@ describe("DashboardView renders display names with canonical interaction identit
       manager: "none",
       targets: [],
     } as never);
+    vi.mocked(startConversation).mockImplementation(() => new Promise(() => {}));
     container = document.createElement("div");
     document.body.appendChild(container);
   });
@@ -245,6 +259,46 @@ describe("DashboardView renders display names with canonical interaction identit
     }
     container?.remove();
     vi.restoreAllMocks();
+  });
+
+  it("renders participant names while preserving canonical checkbox identity", () => {
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        createElement(ParticipantPicker, {
+          agents: [{ name: "piren-agent", online: true }],
+          selected: new Set<string>(),
+          onToggle: () => {},
+        }),
+      );
+    });
+    expect(container.querySelector(".agent-name")?.textContent).toBe("Piren Agent");
+    expect(container.querySelector("input")?.id).toBe("participant-piren-agent");
+  });
+
+  it("renders the display name in the single-agent start progress copy", async () => {
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        createElement(DashboardView, {
+          token: "test-token",
+          onUnauthorized: () => {},
+          onValidated: () => {},
+          onOpenConversation: () => {},
+          reloadKey: 0,
+        }),
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const card = container.querySelector<HTMLButtonElement>('[data-agent="piren-agent"]')!;
+    const start = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+      button.textContent?.includes("Start conversation"),
+    )!;
+    act(() => card.click());
+    act(() => start.click());
+    expect(container.textContent).toContain("Preparing your conversation with Piren Agent.");
   });
 
   it("renders the display name while the card identity stays the canonical agent id", async () => {

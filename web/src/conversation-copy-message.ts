@@ -20,6 +20,7 @@
 import { isConversationHandoffEvent } from "./conversation-timeline.js";
 import type { ConversationTranscriptRow } from "./conversation-transcript.js";
 import type { ConversationEventRecord } from "./conversations.js";
+import { agentDisplayName } from "./agent-display.js";
 
 /** Steward-resolved bounded visible duration for success feedback (ms). */
 export const COPY_FEEDBACK_VISIBLE_MS = 2000;
@@ -77,7 +78,8 @@ export function scheduleFeedbackExpiry(
 
 /** The exact accessible name for one card's copy control. */
 export function copyMessageAccessibleName(event: ConversationEventRecord): string {
-  return `Copy message from ${event.author}`;
+  const author = event.authorKind === "agent" ? agentDisplayName(event.author) : event.author;
+  return `Copy message from ${author}`;
 }
 
 /** Bounded non-secret reason class from the clipboard capability outcome. */
