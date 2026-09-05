@@ -362,6 +362,12 @@ export function parseSchedulerSettingsRead(json: unknown): SchedulerSettingsRead
     if (roster === "invalid" || warnings === "invalid" || inboxTasks === "invalid" || agentCron === "invalid" || scriptCron === "invalid") {
       throw new Error("unexpected scheduler settings read");
     }
+    const runnable = new Set(roster);
+    for (const selected of [inboxTasks, agentCron, scriptCron]) {
+      if (selected !== null && selected.some((name) => !runnable.has(name))) {
+        throw new Error("unexpected scheduler settings read");
+      }
+    }
     return {
       available: true,
       value: {
@@ -389,17 +395,22 @@ export function parseSchedulerSettingsRead(json: unknown): SchedulerSettingsRead
   return { available: false, reason: json.reason };
 }
 
-/** Canonical canonical-name list: array of non-empty strings (no dedup here; rosters are already canonical). */
+/** Canonical agent-name list: unique lowercase-kebab identifiers. */
 function asAgentScopeNameList(value: unknown): string[] | "invalid" {
   if (!Array.isArray(value)) return "invalid";
+  const names: string[] = [];
   for (const entry of value) {
-    if (typeof entry !== "string" || entry === "") return "invalid";
+    if (typeof entry !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(entry) || entry.includes("..") || names.includes(entry)) {
+      return "invalid";
+    }
+    names.push(entry);
   }
-  return value as string[];
+  return names;
 }
 
 function asAgentScopeWarningList(value: unknown): string[] | "invalid" {
-  return asAgentScopeNameList(value);
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry === "")) return "invalid";
+  return value as string[];
 }
 
 /** One effective per-class value: null (unrestricted) or a canonical name array (possibly []). */

@@ -63,6 +63,10 @@ describe("parseSchedulerSettingsRead: agent scope (S7)", () => {
       // Blank or non-string entries in an effective set.
       { ...AVAILABLE, scheduler: { ...AVAILABLE.scheduler, agentScope: { ...AVAILABLE.scheduler.agentScope, inboxTasks: ["kimi", ""] } } },
       { ...AVAILABLE, scheduler: { ...AVAILABLE.scheduler, agentScope: { ...AVAILABLE.scheduler.agentScope, inboxTasks: ["kimi", null] } } },
+      // Effective sets must be unique subsets of the unique authoritative roster.
+      { ...AVAILABLE, runnableAgents: ["kimi", "kimi"] },
+      { ...AVAILABLE, scheduler: { ...AVAILABLE.scheduler, agentScope: { ...AVAILABLE.scheduler.agentScope, inboxTasks: ["kimi", "kimi"] } } },
+      { ...AVAILABLE, scheduler: { ...AVAILABLE.scheduler, agentScope: { ...AVAILABLE.scheduler.agentScope, inboxTasks: ["ghost"] } } },
     ]) {
       expect(() => parseSchedulerSettingsRead(broken), JSON.stringify(broken)).toThrow();
     }
