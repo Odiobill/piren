@@ -7,6 +7,7 @@ import { piEventToSse, type SseEvent } from "./gateway-bridge.js";
 import { vaultBrowserList, vaultBrowserRead } from "./vault-browser.js";
 import { listAgentSessions } from "./session-browser.js";
 import { isBearerAuthorized } from "./gateway-auth.js";
+import { resolveSchedulerAgentScope } from "./scheduler-loop.js";
 import { createInboxTask } from "./inbox.js";
 import {
   StewardAlertStoreError,
@@ -2028,7 +2029,29 @@ export class GatewayServer {
     try {
       const projection = await readLocalConfigRedacted(this.settingsIo, this.settingsConfigPath);
       if (projection.available) {
-        this.writeJson(res, 200, { available: true, scheduler: projection.scheduler });
+        const scheduler = projection.scheduler;
+        if (scheduler === undefined) {
+          this.writeJson(res, 200, { available: false, reason: "Local config is not available." });
+          return;
+        }
+        // 0.2.5 S7: effective per-class agent scope computed server-side with
+        // the EXISTING authoritative resolver; the browser is never a policy
+        // authority and never sees the raw declared container.
+        const resolved = resolveSchedulerAgentScope(scheduler.agentScopeRaw, this.runnableAgents);
+        const { agentScopeRaw: _agentScopeRaw, ...redactedScheduler } = scheduler;
+        this.writeJson(res, 200, {
+          available: true,
+          scheduler: {
+            ...redactedScheduler,
+            agentScope: {
+              inboxTasks: resolved.scope.inboxTasks ?? null,
+              agentCron: resolved.scope.agentCron ?? null,
+              scriptCron: resolved.scope.scriptCron ?? null,
+            },
+          },
+          runnableAgents: this.runnableAgents,
+          agentScopeWarnings: resolved.warnings,
+        });
         return;
       }
       this.writeJson(res, 200, { available: false, reason: projection.reason });
@@ -2057,6 +2080,29 @@ export class GatewayServer {
     if (parsed.intent.surface !== "local" || parsed.intent.family !== "scheduler") {
       this.writeJson(res, 400, { error: "Settings intent does not match the scheduler route." });
       return;
+    }
+    // 0.2.5 S7: duplicate, malformed, or non-runnable submitted agent-scope
+    // names are rejected with a bounded 400 BEFORE any write; submitted names
+    // are never echoed back (bounded errors, mirroring the ST-1B contract).
+    const agentScope = parsed.intent.block.agentScope;
+    if (agentScope !== undefined) {
+      for (const names of [agentScope.inbox_tasks, agentScope.agent_cron, agentScope.script_cron]) {
+        if (names === undefined || names === null) continue;
+        const seen = new Set<string>();
+        let nonRunnable = 0;
+        for (const name of names) {
+          if (seen.has(name)) {
+            this.writeJson(res, 400, { error: "Agent scope contains a duplicate agent name." });
+            return;
+          }
+          seen.add(name);
+          if (!this.runnableAgents.includes(name)) nonRunnable += 1;
+        }
+        if (nonRunnable > 0) {
+          this.writeJson(res, 400, { error: "Agent scope contains a name that is not locally runnable." });
+          return;
+        }
+      }
     }
     try {
       await applyLocalSettingsIntent(this.settingsIo, this.settingsConfigPath, parsed.intent);

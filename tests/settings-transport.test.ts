@@ -211,20 +211,25 @@ describe("closed write intent builders (never include unknown fields)", () => {
 });
 
 describe("W6 scheduler settings read parser", () => {
+  const SCHED_READ = {
+    available: true,
+    scheduler: {
+      present: true,
+      legacyMasterGate: "ignored",
+      automation: { inboxTasks: true, agentCron: false, scriptCron: false },
+      deviceIdConfigured: true,
+      pollIntervalSeconds: 15,
+      staleAfterSeconds: null,
+      maxConcurrentAgents: 1,
+      deviceId: "thor",
+      agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
+    },
+    runnableAgents: ["kimi", "dipu"],
+    agentScopeWarnings: [],
+  };
+
   it("parses the redacted scheduler projection incl. closed legacyMasterGate state (ST-1A)", () => {
-    const read = parseSchedulerSettingsRead({
-      available: true,
-      scheduler: {
-        present: true,
-        legacyMasterGate: "ignored",
-        automation: { inboxTasks: true, agentCron: false, scriptCron: false },
-        deviceIdConfigured: true,
-        pollIntervalSeconds: 15,
-        staleAfterSeconds: null,
-        maxConcurrentAgents: 1,
-        deviceId: "thor",
-      },
-    });
+    const read = parseSchedulerSettingsRead(SCHED_READ);
     expect(read).toEqual({
       available: true,
       value: {
@@ -236,7 +241,10 @@ describe("W6 scheduler settings read parser", () => {
         staleAfterSeconds: null,
         maxConcurrentAgents: 1,
         deviceId: "thor",
+        agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
       },
+      runnableAgents: ["kimi", "dipu"],
+      agentScopeWarnings: [],
     });
   });
 
@@ -245,16 +253,10 @@ describe("W6 scheduler settings read parser", () => {
     expect(() => parseSchedulerSettingsRead({ available: true, scheduler: { enabled: true } })).toThrow();
     expect(() =>
       parseSchedulerSettingsRead({
-        available: true,
+        ...SCHED_READ,
         scheduler: {
-          present: true,
+          ...SCHED_READ.scheduler,
           legacyMasterGate: "sometimes",
-          automation: { inboxTasks: false, agentCron: false, scriptCron: false },
-          deviceIdConfigured: false,
-          pollIntervalSeconds: null,
-          staleAfterSeconds: null,
-          maxConcurrentAgents: null,
-          deviceId: null,
         },
       }),
     ).toThrow();

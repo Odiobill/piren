@@ -56,6 +56,8 @@ Semantics:
 
 A typical use: keep `inbox_tasks` automation enabled while excluding agents reserved for interactive Workbench Conversations (for example `exclude: [agent-a, agent-b]`), so the scheduler never claims their inbox tasks while those agents remain fully available for explicit work.
 
+The Workbench Scheduler Settings page provides a typed editor for this scope: each class renders a runnable-agent checkbox list built from the gateway-authoritative roster, with each class's effective selected set computed server-side by the same resolver. Saving is diff-only per class: selecting every runnable agent clears that class's recognized `allow`/`exclude` (so future runnable agents stay eligible), while any other selection writes that exact subset as `allow` and clears the recognized `exclude`. The gateway rejects duplicate or non-runnable submitted names before any write; the legacy retired-gate state disables the editor like every other scheduler control.
+
 The dry-run loads vault state for every agent in local `allowed_agents`, plans proposed claim attempts for one tick, and prints them grouped by agent. It does not claim, does not spawn, and does not invoke any LLM.
 
 `--once` and the loop call the same one-shot primitive: each tick refreshes this device's heartbeats, plans eligible work from `allowed_agents` minus `excluded_agents`, attempts atomic claims in priority order, and executes **at most one** successfully claimed work item (an inbox task, an agent-mode cron job, or a script-mode cron job). A failed claim is skipped without crashing the tick. The loop sleeps between ticks and stops cleanly on `SIGINT`/`SIGTERM` without starting a new tick or leaving a dangling timer.

@@ -204,7 +204,10 @@ beforeEach(() => {
       staleAfterSeconds: null,
       maxConcurrentAgents: null,
       deviceId: null,
+      agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
     },
+    runnableAgents: ["kimi", "dipu"],
+    agentScopeWarnings: [],
   });
   vi.mocked(fetchAgentPreferences).mockResolvedValue({
     available: true,

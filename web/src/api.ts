@@ -75,6 +75,7 @@ import {
   type DiscordSettingsProjection,
   type SchedulerSettingsPatchInput,
   type SchedulerSettingsProjection,
+  type SchedulerSettingsReadResult,
   type SettingsReadResult,
   type TelegramSettingsPatchInput,
   type TelegramSettingsProjection,
@@ -841,7 +842,7 @@ export async function saveDiscordSettings(block: DiscordSettingsPatchInput, toke
  * path-contained (`/api/settings/agents/<agent>`); the agent is a locally-
  * runnable name only.
  */
-export async function fetchSchedulerSettings(token: string, signal?: AbortSignal): Promise<SettingsReadResult<SchedulerSettingsProjection>> {
+export async function fetchSchedulerSettings(token: string, signal?: AbortSignal): Promise<SchedulerSettingsReadResult> {
   const res = await authedFetch("/api/settings/scheduler", token, signal === undefined ? undefined : { signal });
   if (!res.ok) throw new Error(`scheduler settings HTTP ${res.status}`);
   return parseSchedulerSettingsRead(await res.json());

@@ -276,7 +276,23 @@ export interface SchedulerSettingsProjection {
   staleAfterSeconds: number | null;
   maxConcurrentAgents: number | null;
   deviceId: string | null;
+  /**
+   * 0.2.5 S7: effective per-class selected runnable set computed server-side
+   * by the authoritative resolver. null = unrestricted (every runnable
+   * agent); a canonical array (including []) = the explicit/effective subset.
+   */
+  agentScope: { inboxTasks: string[] | null; agentCron: string[] | null; scriptCron: string[] | null };
 }
+
+/**
+ * 0.2.5 S7: the scheduler read result additionally carries the
+ * gateway-authoritative runnable roster and the bounded resolver warnings
+ * surfaced for truthful malformed/stale config display. The browser is never
+ * a policy authority and never receives the raw declared container.
+ */
+export type SchedulerSettingsReadResult =
+  | { available: true; value: SchedulerSettingsProjection; runnableAgents: string[]; agentScopeWarnings: string[] }
+  | { available: false; reason: string };
 
 export interface AgentPreferencesProjection {
   model: { id: string | null; thinking: string | null };
@@ -310,7 +326,7 @@ function asMode(value: unknown): string | null | "invalid" {
 }
 
 /** Fail-closed parser for the scheduler read projection. */
-export function parseSchedulerSettingsRead(json: unknown): SettingsReadResult<SchedulerSettingsProjection> {
+export function parseSchedulerSettingsRead(json: unknown): SchedulerSettingsReadResult {
   if (!isRecord(json) || typeof json.available !== "boolean") {
     throw new Error("unexpected scheduler settings read");
   }
@@ -335,6 +351,17 @@ export function parseSchedulerSettingsRead(json: unknown): SettingsReadResult<Sc
     ) {
       throw new Error("unexpected scheduler settings read");
     }
+    // S7: effective per-class agent scope + gateway-authoritative roster.
+    const agentScope = s.agentScope;
+    if (!isRecord(agentScope)) throw new Error("unexpected scheduler settings read");
+    const roster = asAgentScopeNameList(json.runnableAgents);
+    const warnings = asAgentScopeWarningList(json.agentScopeWarnings);
+    const inboxTasks = asEffectiveAgentScopeValue(agentScope.inboxTasks);
+    const agentCron = asEffectiveAgentScopeValue(agentScope.agentCron);
+    const scriptCron = asEffectiveAgentScopeValue(agentScope.scriptCron);
+    if (roster === "invalid" || warnings === "invalid" || inboxTasks === "invalid" || agentCron === "invalid" || scriptCron === "invalid") {
+      throw new Error("unexpected scheduler settings read");
+    }
     return {
       available: true,
       value: {
@@ -350,13 +377,35 @@ export function parseSchedulerSettingsRead(json: unknown): SettingsReadResult<Sc
         staleAfterSeconds: s.staleAfterSeconds as number | null,
         maxConcurrentAgents: s.maxConcurrentAgents as number | null,
         deviceId: s.deviceId as string | null,
+        agentScope: { inboxTasks, agentCron, scriptCron },
       },
+      runnableAgents: roster,
+      agentScopeWarnings: warnings,
     };
   }
   if (typeof json.reason !== "string" || json.reason === "") {
     throw new Error("unexpected scheduler settings read");
   }
   return { available: false, reason: json.reason };
+}
+
+/** Canonical canonical-name list: array of non-empty strings (no dedup here; rosters are already canonical). */
+function asAgentScopeNameList(value: unknown): string[] | "invalid" {
+  if (!Array.isArray(value)) return "invalid";
+  for (const entry of value) {
+    if (typeof entry !== "string" || entry === "") return "invalid";
+  }
+  return value as string[];
+}
+
+function asAgentScopeWarningList(value: unknown): string[] | "invalid" {
+  return asAgentScopeNameList(value);
+}
+
+/** One effective per-class value: null (unrestricted) or a canonical name array (possibly []). */
+function asEffectiveAgentScopeValue(value: unknown): string[] | null | "invalid" {
+  if (value === null) return null;
+  return asAgentScopeNameList(value);
 }
 
 /** Fail-closed parser for the agent-preference read projection. */
@@ -428,6 +477,8 @@ export interface SchedulerSettingsPatchInput {
   staleAfterSeconds?: number;
   maxConcurrentAgents?: number;
   deviceId?: string | null;
+  /** 0.2.5 S7 per-class agent-scope intent (changed classes only; diff-only save). */
+  agentScope?: { inbox_tasks?: string[] | null; agent_cron?: string[] | null; script_cron?: string[] | null };
 }
 
 export interface AgentModelPatchInput {

@@ -1,26 +1,60 @@
 import { useEffect, useState } from "react";
 import { fetchSchedulerSettings, saveSchedulerSettings, SettingsHttpError, UnauthorizedError } from "./api";
 import { parseOptionalPositiveInt, type SchedulerSettingsProjection } from "./settings-transport";
+import { agentDisplayName } from "./agent-display";
 import { SaveIcon } from "./icons";
 
 /**
- * W6 (0.2.0 amendment §2/§5/§5.1; ST-1A): the typed scheduler Settings
- * workflow. The form edits only the closed scheduler inventory (the three
- * automation classes, poll/stale/concurrency, device id) — the retired
- * `scheduler.enabled` master gate is not a Settings control. A legacy-GATED
- * projection refuses every save with bounded guidance toward `piren scheduler
- * configure` (Settings never migrates or silently cleans up); a legacy-
- * IGNORED projection shows a bounded inert-key notice but saves normally.
- * It preserves unprompted/unknown fields by sending only fields the steward
- * changed. It never starts/installs/stops/reloads the scheduler, ticks,
- * refreshes heartbeats, or claims/spawns work. No storage, no service action.
+ * W6 (0.2.0 amendment §2/§5/§5.1; ST-1A) + 0.2.5 S7: the typed scheduler
+ * Settings workflow. The form edits only the closed scheduler inventory (the
+ * three automation classes, poll/stale/concurrency, device id, and the
+ * per-class runnable-agent scope) — the retired `scheduler.enabled` master
+ * gate is not a Settings control. A legacy-GATED projection refuses every
+ * save with bounded guidance toward `piren scheduler configure` (Settings
+ * never migrates or silently cleans up); a legacy-IGNORED projection shows a
+ * bounded inert-key notice but saves normally. It preserves unprompted/
+ * unknown fields by sending only fields the steward changed. The agent-scope
+ * editor is presentation-only: effective sets come from the gateway's
+ * authoritative resolver, visible copy uses S6 display names while values,
+ * state, and requests stay canonical lowercase, and a diff-only save sends
+ * only explicitly changed classes (all runnable selected -> null = clear the
+ * recognized narrowing; otherwise the exact selected canonical array,
+ * including [] = none). It never starts/installs/stops/reloads the scheduler,
+ * ticks, refreshes heartbeats, or claims/spawns work. No storage, no service
+ * action.
  */
+
+type ScopeClass = "inbox_tasks" | "agent_cron" | "script_cron";
+
+const SCOPE_CLASSES: ReadonlyArray<{ key: ScopeClass; groupClass: string; label: string }> = [
+  { key: "inbox_tasks", groupClass: "inbox-tasks", label: "Inbox tasks" },
+  { key: "agent_cron", groupClass: "agent-cron", label: "Agent cron" },
+  { key: "script_cron", groupClass: "script-cron", label: "Script cron" },
+];
+
+type ScopeSelection = Record<ScopeClass, string[]>;
+
+function emptyScopeSelection(): ScopeSelection {
+  return { inbox_tasks: [], agent_cron: [], script_cron: [] };
+}
+
+function sameSelection(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((name) => set.has(name));
+}
 
 type ReadState =
   | { phase: "loading" }
   | { phase: "unavailable"; reason: string }
   | { phase: "error"; bounded: string }
-  | { phase: "ready"; projection: SchedulerSettingsProjection };
+  | {
+      phase: "ready";
+      projection: SchedulerSettingsProjection;
+      runnableAgents: string[];
+      agentScopeWarnings: string[];
+      initialScope: ScopeSelection;
+    };
 
 function saveErrorMessage(kind: SettingsHttpError["kind"]): string {
   if (kind === "conflict") return "The config changed since it was read. Re-read and retry.";
@@ -44,6 +78,7 @@ export function SchedulerSettingsForm({
   const [staleText, setStaleText] = useState("");
   const [concurrencyText, setConcurrencyText] = useState("");
   const [deviceText, setDeviceText] = useState("");
+  const [scope, setScope] = useState<ScopeSelection>(emptyScopeSelection());
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -56,14 +91,25 @@ export function SchedulerSettingsForm({
         if (cancelled) return;
         onValidated();
         if (result.available) {
-          setRead({ phase: "ready", projection: result.value });
-          setInboxTasks(result.value.automation.inboxTasks);
-          setAgentCron(result.value.automation.agentCron);
-          setScriptCron(result.value.automation.scriptCron);
-          setPollText(result.value.pollIntervalSeconds === null ? "" : String(result.value.pollIntervalSeconds));
-          setStaleText(result.value.staleAfterSeconds === null ? "" : String(result.value.staleAfterSeconds));
-          setConcurrencyText(result.value.maxConcurrentAgents === null ? "" : String(result.value.maxConcurrentAgents));
-          setDeviceText(result.value.deviceId ?? "");
+          const { value, runnableAgents, agentScopeWarnings } = result;
+          const initialScope: ScopeSelection = {
+            inbox_tasks: value.agentScope.inboxTasks ?? runnableAgents,
+            agent_cron: value.agentScope.agentCron ?? runnableAgents,
+            script_cron: value.agentScope.scriptCron ?? runnableAgents,
+          };
+          setRead({ phase: "ready", projection: value, runnableAgents, agentScopeWarnings, initialScope });
+          setInboxTasks(value.automation.inboxTasks);
+          setAgentCron(value.automation.agentCron);
+          setScriptCron(value.automation.scriptCron);
+          setPollText(value.pollIntervalSeconds === null ? "" : String(value.pollIntervalSeconds));
+          setStaleText(value.staleAfterSeconds === null ? "" : String(value.staleAfterSeconds));
+          setConcurrencyText(value.maxConcurrentAgents === null ? "" : String(value.maxConcurrentAgents));
+          setDeviceText(value.deviceId ?? "");
+          setScope({
+            inbox_tasks: [...initialScope.inbox_tasks],
+            agent_cron: [...initialScope.agent_cron],
+            script_cron: [...initialScope.script_cron],
+          });
         } else {
           setRead({ phase: "unavailable", reason: result.reason });
         }
@@ -89,6 +135,18 @@ export function SchedulerSettingsForm({
     return value;
   }
 
+  function toggleScopeAgent(classKey: ScopeClass, name: string, checked: boolean): void {
+    setScope((prev) => {
+      const current = prev[classKey];
+      const next = checked
+        ? current.includes(name)
+          ? current
+          : [...current, name]
+        : current.filter((entry) => entry !== name);
+      return { ...prev, [classKey]: next };
+    });
+  }
+
   function handleSave(): void {
     setFieldError(null);
     setSaveError(null);
@@ -112,6 +170,7 @@ export function SchedulerSettingsForm({
       staleAfterSeconds?: number;
       maxConcurrentAgents?: number;
       deviceId?: string | null;
+      agentScope?: { inbox_tasks?: string[] | null; agent_cron?: string[] | null; script_cron?: string[] | null };
     } = {};
 
     const automation: { inbox_tasks?: boolean; agent_cron?: boolean; script_cron?: boolean } = {};
@@ -126,6 +185,21 @@ export function SchedulerSettingsForm({
 
     const device = deviceText.trim();
     if (device !== (initial.deviceId ?? "")) patch.deviceId = device === "" ? null : device;
+
+    // S7 diff-only scope save: an untouched class sends nothing; a changed
+    // class sends null when every runnable agent is selected (clearing the
+    // recognized narrowing covers current AND future runnable agents), and
+    // otherwise the exact selected canonical array (roster-ordered, [] = none).
+    const roster = read.runnableAgents;
+    const agentScopePatch: NonNullable<
+      NonNullable<typeof patch.agentScope>
+    > = {};
+    for (const { key } of SCOPE_CLASSES) {
+      const selected = roster.filter((name) => scope[key].includes(name));
+      if (sameSelection(read.initialScope[key], selected)) continue;
+      agentScopePatch[key] = selected.length === roster.length ? null : selected;
+    }
+    if (Object.keys(agentScopePatch).length > 0) patch.agentScope = agentScopePatch;
 
     if (Object.keys(patch).length === 0) {
       setSaved(true);
@@ -217,6 +291,38 @@ export function SchedulerSettingsForm({
             />
             Script cron automation
           </label>
+          {SCOPE_CLASSES.map(({ key, groupClass, label }) => (
+            <fieldset
+              key={key}
+              className={`settings-scheduler-scope-group settings-scheduler-scope-${groupClass}`}
+            >
+              <legend>{label}: eligible agents</legend>
+              {read.runnableAgents.length === 0 ? (
+                <p className="muted">No runnable agents.</p>
+              ) : (
+                read.runnableAgents.map((name) => (
+                  <label key={name} className="settings-field settings-field-checkbox">
+                    <input
+                      className="settings-scheduler-scope-agent"
+                      type="checkbox"
+                      value={name}
+                      checked={scope[key].includes(name)}
+                      disabled={read.projection.legacyMasterGate === "gated"}
+                      onChange={(e) => toggleScopeAgent(key, name, e.target.checked)}
+                    />
+                    {agentDisplayName(name)}
+                  </label>
+                ))
+              )}
+            </fieldset>
+          ))}
+          {read.agentScopeWarnings.length > 0 && (
+            <div className="settings-scheduler-scope-warnings muted">
+              {read.agentScopeWarnings.map((warning, index) => (
+                <p key={index}>{warning}</p>
+              ))}
+            </div>
+          )}
           <label className="settings-field">
             Poll interval (seconds)
             <input

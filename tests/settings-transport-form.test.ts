@@ -492,7 +492,10 @@ describe("SchedulerSettingsForm: closed diff save (W6)", () => {
       staleAfterSeconds: null,
       maxConcurrentAgents: null,
       deviceId: null,
+      agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
     },
+    runnableAgents: ["kimi", "dipu"],
+    agentScopeWarnings: [],
   };
 
   beforeEach(() => {
@@ -533,7 +536,10 @@ describe("SchedulerSettingsForm: closed diff save (W6)", () => {
         staleAfterSeconds: null,
         maxConcurrentAgents: null,
         deviceId: null,
+        agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
       },
+      runnableAgents: ["kimi", "dipu"],
+      agentScopeWarnings: [],
     });
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -581,7 +587,10 @@ describe("SchedulerSettingsForm: closed diff save (W6)", () => {
         staleAfterSeconds: null,
         maxConcurrentAgents: null,
         deviceId: null,
+        agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
       },
+      runnableAgents: ["kimi", "dipu"],
+      agentScopeWarnings: [],
     });
     vi.mocked(saveSchedulerSettings).mockResolvedValue();
     container = document.createElement("div");
@@ -962,7 +971,10 @@ describe("SR-1: truthful service status badges", () => {
         staleAfterSeconds: null,
         maxConcurrentAgents: null,
         deviceId: null,
+        agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
       },
+      runnableAgents: ["kimi", "dipu"],
+      agentScopeWarnings: [],
     });
     await renderForm(SchedulerSettingsForm);
     let badge = container.querySelector(".settings-family-header .agent-status");
@@ -980,7 +992,10 @@ describe("SR-1: truthful service status badges", () => {
         staleAfterSeconds: null,
         maxConcurrentAgents: null,
         deviceId: null,
+        agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
       },
+      runnableAgents: ["kimi", "dipu"],
+      agentScopeWarnings: [],
     });
     await renderForm(SchedulerSettingsForm);
     badge = container.querySelector(".settings-family-header .agent-status");
@@ -1001,7 +1016,10 @@ describe("SR-1: display-only scheduler effective defaults", () => {
       staleAfterSeconds: null,
       maxConcurrentAgents: null,
       deviceId: null,
+      agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
     },
+    runnableAgents: ["kimi", "dipu"],
+    agentScopeWarnings: [],
   };
 
   async function renderScheduler(): Promise<void> {
@@ -1064,3 +1082,149 @@ function saveSelfImprovementButton(): HTMLButtonElement {
   if (el === undefined) throw new Error("missing Save self-improvement button");
   return el as HTMLButtonElement;
 }
+
+describe("SchedulerSettingsForm: agent scope editor (0.2.5 S7)", () => {
+  function schedRead(overrides: Record<string, unknown> = {}) {
+    const value = {
+      present: true,
+      legacyMasterGate: "absent" as const,
+      automation: { inboxTasks: false, agentCron: false, scriptCron: false },
+      deviceIdConfigured: false,
+      pollIntervalSeconds: null,
+      staleAfterSeconds: null,
+      maxConcurrentAgents: null,
+      deviceId: null,
+      agentScope: { inboxTasks: null, agentCron: null, scriptCron: null },
+      ...(overrides.value as object | undefined),
+    };
+    return {
+      available: true as const,
+      value,
+      runnableAgents: (overrides.runnableAgents as string[] | undefined) ?? ["kimi", "dipu"],
+      agentScopeWarnings: (overrides.agentScopeWarnings as string[] | undefined) ?? [],
+    };
+  }
+
+  function scopeInputs(cls: string): HTMLInputElement[] {
+    return [...container.querySelectorAll(`.settings-scheduler-scope-${cls} input`)] as HTMLInputElement[];
+  }
+
+  function scopeCheckbox(cls: string, name: string): HTMLInputElement {
+    const el = scopeInputs(cls).find((input) => input.value === name);
+    if (el === undefined) throw new Error(`missing ${cls} checkbox for ${name}`);
+    return el;
+  }
+
+  async function renderScope(overrides: Record<string, unknown> = {}): Promise<void> {
+    vi.mocked(fetchSchedulerSettings).mockResolvedValue(schedRead(overrides));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(createElement(SchedulerSettingsForm, { token: "T", onUnauthorized: vi.fn(), onValidated: vi.fn() }));
+    });
+    await flush();
+  }
+
+  beforeEach(() => {
+    vi.mocked(saveSchedulerSettings).mockResolvedValue();
+  });
+
+  it("unrestricted classes start with every runnable agent checked; labels are display names, values canonical", async () => {
+    await renderScope();
+    for (const cls of ["inbox-tasks", "agent-cron", "script-cron"]) {
+      const inputs = scopeInputs(cls);
+      expect(inputs.map((i) => i.value)).toEqual(["kimi", "dipu"]);
+      expect(inputs.every((i) => i.checked)).toBe(true);
+    }
+    // S6 display names for visible copy only; canonical values/state stay lowercase.
+    expect(container.textContent).toContain("Kimi");
+    expect(container.textContent).toContain("Dipu");
+    expect(container.textContent).not.toContain('value="Kimi"');
+  });
+
+  it("explicit subsets and explicit none render truthfully", async () => {
+    await renderScope({
+      value: { agentScope: { inboxTasks: ["dipu"], agentCron: [], scriptCron: null } },
+    });
+    expect(scopeCheckbox("inbox-tasks", "dipu").checked).toBe(true);
+    expect(scopeCheckbox("inbox-tasks", "kimi").checked).toBe(false);
+    expect(scopeInputs("agent-cron").every((i) => !i.checked)).toBe(true);
+    expect(scopeInputs("script-cron").every((i) => i.checked)).toBe(true);
+  });
+
+  it("a diff-only save sends only changed classes as the exact canonical remaining subset", async () => {
+    await renderScope();
+    setChecked(scopeCheckbox("inbox-tasks", "kimi"), false);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).toHaveBeenCalledWith({ agentScope: { inbox_tasks: ["dipu"] } }, "T");
+  });
+
+  it("selecting all runnable agents in a changed class saves null (clear recognized narrowing)", async () => {
+    await renderScope({
+      value: { agentScope: { inboxTasks: ["kimi"], agentCron: null, scriptCron: null } },
+    });
+    setChecked(scopeCheckbox("inbox-tasks", "dipu"), true);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).toHaveBeenCalledWith({ agentScope: { inbox_tasks: null } }, "T");
+  });
+
+  it("an empty selection in a changed class saves [] (none) and untouched classes send nothing", async () => {
+    await renderScope();
+    setChecked(scopeCheckbox("inbox-tasks", "kimi"), false);
+    setChecked(scopeCheckbox("inbox-tasks", "dipu"), false);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).toHaveBeenCalledWith({ agentScope: { inbox_tasks: [] } }, "T");
+  });
+
+  it("an untouched class sends nothing even when the projection is an explicit subset", async () => {
+    await renderScope({
+      value: { agentScope: { inboxTasks: ["kimi"], agentCron: [], scriptCron: null } },
+    });
+    setChecked(scopeCheckbox("agent-cron", "kimi"), true);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).toHaveBeenCalledWith(
+      { agentScope: { agent_cron: ["kimi"] } },
+      "T",
+    );
+  });
+
+  it("the legacy GATED state disables the scope groups together with all existing scheduler controls", async () => {
+    await renderScope({
+      value: { legacyMasterGate: "gated" },
+    });
+    for (const cls of ["inbox-tasks", "agent-cron", "script-cron"]) {
+      for (const input of scopeInputs(cls)) expect(input.disabled).toBe(true);
+    }
+    expect(saveButton().disabled).toBe(true);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).not.toHaveBeenCalled();
+  });
+
+  it("a non-empty warning list is surfaced truthfully; an empty list stays silent", async () => {
+    await renderScope({
+      agentScopeWarnings: ["scheduler.agent_scope.inbox_tasks.allow contains 1 name(s) that are not locally enabled agents; they are ignored and never widen eligibility."],
+    });
+    expect(container.textContent).toContain("not locally enabled agents");
+
+    await act(async () => root.unmount());
+    container.remove();
+    await renderScope();
+    expect(container.querySelector(".settings-scheduler-scope-warnings")).toBeNull();
+  });
+
+  it("an empty runnable roster is truthful: no checkboxes, bounded copy, no save payload", async () => {
+    await renderScope({ runnableAgents: [] });
+    expect(scopeInputs("inbox-tasks")).toEqual([]);
+    expect(container.textContent).toMatch(/no runnable agents/i);
+    setChecked(inputByClass("settings-scheduler-inbox"), true);
+    await act(async () => saveButton().dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await flush();
+    expect(saveSchedulerSettings).toHaveBeenCalledWith({ automation: { inbox_tasks: true } }, "T");
+  });
+});
