@@ -44,7 +44,7 @@ export function planTerminalTaskArchive(options: { agentName: string; archiveAt:
   }
   const eligible: TaskArchivePlanItem[] = [];
   const skipped: TaskArchiveSkip[] = [];
-  for (const task of options.tasks) {
+  for (const task of [...options.tasks].sort((left, right) => left.path.localeCompare(right.path))) {
     if (task.agentName !== options.agentName || !TERMINAL.has(task.status)) continue;
     const sourcePath = task.path;
     const dependent = liveDependents.get(task.id);

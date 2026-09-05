@@ -15,8 +15,8 @@ describe("terminal task archive planning", () => {
         { id: "20260905T080300000Z-live", status: "pending" as const, path: "team/piren/inbox/live.md", agentName: "piren", dependsOn: ["20260905T080200000Z-needed"] },
       ],
     });
-    expect(result.eligible.map((item) => item.sourcePath)).toEqual([terminal.path, "team/thor/inbox/claimed.claimed.nas.md"]);
-    expect(result.eligible[1]?.destinationPath).toBe("team/thor/inbox/archive/2026/09/05/claimed.claimed.nas.md");
+    expect(result.eligible.map((item) => item.sourcePath)).toEqual(["team/thor/inbox/claimed.claimed.nas.md", terminal.path]);
+    expect(result.eligible[0]?.destinationPath).toBe("team/thor/inbox/archive/2026/09/05/claimed.claimed.nas.md");
     expect(result.skipped).toEqual([{ sourcePath: "team/thor/inbox/needed.md", reason: "required by live task: 20260905T080300000Z-live" }]);
   });
 
