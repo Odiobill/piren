@@ -100,10 +100,19 @@ describe("scoped @odiobill/piren releases (0.2.5 public release; 0.2.4/0.2.2/0.1
     expect(section).toMatch(/workflow budget/i);
     expect(section).toMatch(/model fallback/i);
     expect(section).toMatch(/steward alert/i);
-    expect(section).toMatch(/archive/i);
+    expect(section).toMatch(/terminal tasks[^\n]*confirmed archive/i);
+    expect(section).toMatch(/session summaries[^\n]*archive (foundations|core)/i);
+    expect(section).not.toMatch(/tasks, sessions, and steward alerts support a confirmed archive action/i);
     expect(section).toMatch(/Workbench/i);
     expect(section).toMatch(/scheduler/i);
     expect(section).not.toMatch(/not yet tagged or published|unreleased|internal pilot|candidate/i);
+  });
+
+  it("README describes the Steward Alerts Workbench as an explicit close surface, not a read-only surface", () => {
+    const readme = read("README.md");
+    expect(readme).toMatch(/Steward alerts:[^\n]*explicit Workbench close lifecycle/i);
+    expect(readme).not.toMatch(/Steward alerts:[^\n]*read-only Workbench surface/i);
+    expect(readme).toMatch(/Web workbench:[^\n]*Steward Alerts with explicit close lifecycle/i);
   });
 
   it("CHANGELOG retains the dated public [0.2.4] recovery entry above [0.2.3]", () => {

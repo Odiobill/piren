@@ -7,12 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.5] - 2026-09-06
 
-The 0.2.5 release refines the Conversation-native Workbench with steward-alert lifecycle and archive surfaces, safer Vault Explorer navigation, typed Scheduler class scopes, and a coherent premium presentation, and extends handoff workflow budgets with retention and control in Context telemetry.
+The 0.2.5 release refines the Conversation-native Workbench with steward-alert lifecycle and bounded archive foundations, safer Vault Explorer navigation, typed Scheduler class scopes, and a coherent premium presentation, and extends handoff workflow budgets with retention and control in Context telemetry.
 
 ### Added
 
 - **Workflow budget retention and control:** the gateway-associated workflow-root budget raised from an agent's Context telemetry popup is retained across sessions and surfaced with explicit, server-validated compare-and-set control.
-- **Confirmed archive with inspection:** tasks, sessions, and steward alerts support a confirmed archive action, and archived items stay inspectable read-only; task archive discoverability is covered by command help.
+- **Confirmed archive foundations and terminal-task command:** terminal tasks support an explicit preview and confirmed archive command. Vault session summaries and closed steward alerts have bounded no-clobber archive core adapters, plus read-only archive inspection primitives.
 - **Typed Scheduler class scopes:** Scheduler agent-scope Settings controls use typed class scopes with a gateway-authoritative, fail-closed policy; inconsistent scope reads fail closed.
 
 ### Fixed
@@ -20,7 +20,7 @@ The 0.2.5 release refines the Conversation-native Workbench with steward-alert l
 - Safe interactive model fallback: fallback continuation is safe to interact with while active, without rerouting or re-dispatching.
 - Practical fail-closed Vault Explorer links: vault-relative links with spaces, frontmatter links, and scheme-like targets are handled safely and rejected when unsafe.
 - Ordered-list semantics in rendered Markdown bodies follow authored start markers.
-- Steward-alert lifecycle, Workbench, and archive compatibility fixes.
+- Steward-alert lifecycle and Workbench compatibility fixes, including read-only support for legitimate historical `resolved` records.
 - Human-readable first-party agent labels across the Workbench, with canonical agent IDs preserved.
 
 ### Changed
