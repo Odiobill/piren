@@ -2623,6 +2623,38 @@ code {
   overflow-wrap: anywhere;
 }
 
+/* S9 — recognized frontmatter `links` values: one operable control per value
+   (internal values are in-place navigation buttons, external values are real
+   new-tab anchors). Minimum styling for metadata operability only; the S10
+   presentation pass owns any further visual refinement. */
+.vault-explorer-frontmatter-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  text-align: right;
+}
+
+.vault-explorer-frontmatter-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.vault-explorer-frontmatter-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .vault-explorer-back {
   background: none;
   border: 0;

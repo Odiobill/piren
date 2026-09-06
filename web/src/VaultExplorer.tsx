@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { fetchVaultList, fetchVaultRead, UnauthorizedError } from "./api";
 import {
   isVaultDirectoryEntry,
@@ -13,7 +13,7 @@ import {
   type VaultReadResponse,
 } from "./vault-explorer";
 import { SafeMarkdownBody } from "./SafeMarkdown";
-import { isMarkdownFileName, parseFrontmatterCard } from "./vault-explorer";
+import { isMarkdownFileName, parseFrontmatterCard, presentFrontmatterLinkValues, type FrontmatterFieldValue, type FrontmatterLinkValue } from "./vault-explorer";
 import { ArrowLeftIcon, ClockIcon, FileIcon, FolderIcon, RetryIcon } from "./icons";
 
 /**
@@ -273,13 +273,20 @@ export function VaultExplorer({
                     {card.fields.map((field) => (
                       <div className="vault-explorer-frontmatter-row" key={field.key}>
                         <dt>{field.key}</dt>
-                        <dd>{Array.isArray(field.value) ? field.value.join(", ") : String(field.value)}</dd>
+                        <dd>
+                          <FrontmatterFieldValue
+                            field={field}
+                            documentPath={documentEntry.path}
+                            onNavigateVaultPath={openDocumentAt}
+                          />
+                        </dd>
                       </div>
                     ))}
                   </dl>
                 )}
                 <SafeMarkdownBody
                   text={card === null ? readPhase.response.content : card.body}
+                  vaultDocumentPath={documentEntry.path}
                   onNavigateVaultPath={openDocumentAt}
                 />
               </>
@@ -339,4 +346,69 @@ export function VaultExplorer({
       )}
     </section>
   );
+}
+
+/**
+ * S9 — metadata presentation for one frontmatter field. Only the recognized
+ * `links` field becomes interactive: internal vault Markdown targets are
+ * in-place navigation buttons, safe absolute HTTP(S) targets are new-tab
+ * anchors, and every unsupported value stays non-interactive text. Arbitrary
+ * scalar fields keep the existing joined plain-text presentation.
+ */
+function FrontmatterFieldValue({
+  field,
+  documentPath,
+  onNavigateVaultPath,
+}: {
+  field: { key: string; value: FrontmatterFieldValue };
+  documentPath: string;
+  onNavigateVaultPath: (path: string) => void;
+}): ReactElement {
+  const links = presentFrontmatterLinkValues(field, documentPath);
+  if (links === null) {
+    return <>{Array.isArray(field.value) ? field.value.join(", ") : String(field.value)}</>;
+  }
+  const single = links.length === 1 ? links[0] : undefined;
+  if (single !== undefined) {
+    return <FrontmatterLinkControl value={single} onNavigateVaultPath={onNavigateVaultPath} />;
+  }
+  return (
+    <ul className="vault-explorer-frontmatter-links">
+      {links.map((value, index) => (
+        <li key={index}>
+          <FrontmatterLinkControl value={value} onNavigateVaultPath={onNavigateVaultPath} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** One metadata link value as its truthful, individually operable control. */
+function FrontmatterLinkControl({
+  value,
+  onNavigateVaultPath,
+}: {
+  value: FrontmatterLinkValue;
+  onNavigateVaultPath: (path: string) => void;
+}): ReactElement {
+  if (value.kind === "vault") {
+    return (
+      <button
+        type="button"
+        className="vault-explorer-frontmatter-link"
+        onClick={() => onNavigateVaultPath(value.path)}
+      >
+        {value.label}
+      </button>
+    );
+  }
+  if (value.kind === "external") {
+    return (
+      <a className="vault-explorer-frontmatter-link" href={value.url} target="_blank" rel="noopener noreferrer">
+        {value.label}
+        <span className="sr-only"> (opens in a new tab)</span>
+      </a>
+    );
+  }
+  return <span className="vault-explorer-frontmatter-text">{value.text}</span>;
 }

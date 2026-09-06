@@ -18,7 +18,7 @@
  * The parser builds a deterministic element model only — it never constructs
  * HTML strings, touches the DOM, fetches, stores, or reads authority.
  */
-import { parseVaultMarkdownHref, parseVaultWikiLink } from "./vault-links.js";
+import { parseVaultWikiLink, resolveVaultMarkdownTarget } from "./vault-links.js";
 
 export const SAFE_MARKDOWN_MAX_INPUT_UTF16 = 32768;
 export const SAFE_MARKDOWN_MAX_BLOCKS = 2048;
@@ -169,6 +169,12 @@ class SafeMarkdownParser {
     private readonly lines: string[],
     /** WUX-C — explicit Vault-only link recognition mode (default off). */
     private readonly vaultLinks: boolean = false,
+    /**
+     * S9 — the current open document's vault-relative path: the ONLY base
+     * for bounded document-relative Markdown destinations. Null (ordinary
+     * Vault rendering without a document context) fails those targets closed.
+     */
+    private readonly documentPath: string | null = null,
   ) {}
 
   parse(): SafeMarkdownParseResult {
@@ -429,10 +435,11 @@ class SafeMarkdownParser {
     if (urlEnd === -1 || urlEnd - urlStart > SAFE_MARKDOWN_LINK_WINDOW) return null;
     const rawUrl = text.slice(urlStart, urlEnd);
     if (!isSafeMarkdownLinkUrl(rawUrl)) {
-      // WUX-C — Vault mode only: a safe ROOT-RELATIVE form becomes an
-      // in-place vault-page link; everything else stays literal text.
+      // WUX-C + S9 — Vault mode only: a safe root-relative or bounded
+      // document-relative form becomes an in-place vault-page link;
+      // everything else stays literal text.
       if (!this.vaultLinks) return null;
-      const target = parseVaultMarkdownHref(rawUrl);
+      const target = resolveVaultMarkdownTarget(rawUrl, this.documentPath);
       if (!target.ok) return null;
       return {
         node: {
@@ -482,12 +489,22 @@ export function parseSafeMarkdown(body: string): SafeMarkdownParseResult {
 
 /**
  * WUX-C — explicit Vault Explorer mode: identical parser and bounds, plus
- * narrowly parameterized recognition of the two closed vault-page link
- * forms (root-relative `[label](/path)` links and `[[target]]` /
- * `[[target|label]]` wikilinks). Ordinary Conversation rendering never uses
- * this mode and its output is unchanged byte-for-byte.
+ * narrowly parameterized recognition of the closed vault-page link forms
+ * (root-relative `[label](/path)` links, S9 bounded document-relative
+ * `[label](plans/x.md)` links resolved only from the current open document,
+ * and `[[target]]` / `[[target|label]]` wikilinks). Ordinary Conversation
+ * rendering never uses this mode and its output is unchanged byte-for-byte.
  */
-export function parseSafeMarkdownWithVaultLinks(body: string): SafeMarkdownParseResult {
+export interface VaultLinksParseOptions {
+  /**
+   * S9 — the current open document's vault-relative path: the only base for
+   * document-relative Markdown destination resolution. Absent = no relative
+   * resolution (those targets fail closed).
+   */
+  documentPath?: string;
+}
+
+export function parseSafeMarkdownWithVaultLinks(body: string, options?: VaultLinksParseOptions): SafeMarkdownParseResult {
   if (body.length > SAFE_MARKDOWN_MAX_INPUT_UTF16) return { ok: false, reason: "over-limit" };
-  return new SafeMarkdownParser(body.split("\n"), true).parse();
+  return new SafeMarkdownParser(body.split("\n"), true, options?.documentPath ?? null).parse();
 }

@@ -1,4 +1,6 @@
 import { parse as parseYaml } from "yaml";
+import { parseVaultDocumentRelativeHref, parseVaultMarkdownHref } from "./vault-links.js";
+import { isSafeMarkdownLinkUrl } from "./safe-markdown.js";
 /**
  * W2 (0.2.0 scope amendment §4; accepted companion split architecture
  * Phase B) — pure Vault Explorer cores: strict fail-closed parsers for the
@@ -264,4 +266,53 @@ export function parseFrontmatterCard(content: string): FrontmatterCard | null {
   let body = rest.slice(closeMatch.index + closeMatch[0].length);
   while (body.startsWith("\n")) body = body.slice(1);
   return { fields, body };
+}
+
+// ---------------------------------------------------------------------------
+// S9 — recognized frontmatter `links` presentation. Only the exact top-level
+// `links` field becomes interactive metadata: internal vault Markdown targets
+// navigate in place and safe absolute HTTP(S) targets are new-tab anchors.
+// Every arbitrary scalar field stays plain text; unsupported/malformed link
+// values stay non-interactive text (never an anchor, never navigation).
+// ---------------------------------------------------------------------------
+
+export type FrontmatterLinkValue =
+  | { kind: "vault"; path: string; label: string }
+  | { kind: "external"; url: string; label: string }
+  | { kind: "text"; text: string };
+
+/** The only frontmatter field presented as interactive links (S9). */
+const FRONTMATTER_LINKS_KEY = "links";
+
+function classifyFrontmatterLinkValue(value: string, documentPath: string | null): FrontmatterLinkValue {
+  if (value.startsWith("/")) {
+    const target = parseVaultMarkdownHref(value);
+    if (target.ok) return { kind: "vault", path: target.path, label: target.path };
+    return { kind: "text", text: value };
+  }
+  if (documentPath !== null) {
+    const target = parseVaultDocumentRelativeHref(value, documentPath);
+    if (target.ok) return { kind: "vault", path: target.path, label: target.path };
+  }
+  if (isSafeMarkdownLinkUrl(value)) return { kind: "external", url: value, label: value };
+  return { kind: "text", text: value };
+}
+
+/**
+ * S9 — classify the values of the recognized top-level `links` field for
+ * interactive metadata presentation. Returns null for any other field (the
+ * caller keeps its ordinary plain-text presentation). A scalar value is one
+ * entry; an array stays individually operable entry by entry.
+ */
+export function presentFrontmatterLinkValues(
+  field: FrontmatterField,
+  documentPath: string | null,
+): readonly FrontmatterLinkValue[] | null {
+  if (field.key !== FRONTMATTER_LINKS_KEY) return null;
+  const values = Array.isArray(field.value) ? field.value : [field.value];
+  return values.map((value) =>
+    typeof value === "string"
+      ? classifyFrontmatterLinkValue(value, documentPath)
+      : { kind: "text", text: String(value) },
+  );
 }

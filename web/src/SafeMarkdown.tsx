@@ -31,11 +31,25 @@ import {
 export function SafeMarkdownBody({
   text,
   onNavigateVaultPath,
+  vaultDocumentPath,
 }: {
   text: string;
   onNavigateVaultPath?: (path: string) => void;
+  /**
+   * S9 — the current open document's vault-relative path: the ONLY base for
+   * bounded document-relative Markdown destination resolution. Only read in
+   * Vault mode (with `onNavigateVaultPath`); Conversation rendering ignores it.
+   */
+  vaultDocumentPath?: string;
 }): ReactElement {
-  const result = onNavigateVaultPath === undefined ? parseSafeMarkdown(text) : parseSafeMarkdownWithVaultLinks(text);
+  let result;
+  if (onNavigateVaultPath === undefined) {
+    result = parseSafeMarkdown(text);
+  } else {
+    const options: { documentPath?: string } = {};
+    if (vaultDocumentPath !== undefined) options.documentPath = vaultDocumentPath;
+    result = parseSafeMarkdownWithVaultLinks(text, options);
+  }
   if (!result.ok) {
     return (
       <>

@@ -96,6 +96,7 @@
     "tests/web-vr3-work-cards-timeline.test.ts",
     "tests/web-vr4-context-continuity-ui.test.ts",
     "tests/vr5-capture-readiness-panel.test.ts",
-    "tests/web-agent-display-names.test.ts"
+    "tests/web-agent-display-names.test.ts",
+    "tests/web-s9-vault-explorer-links.test.ts"
   ]
 }

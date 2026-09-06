@@ -14,6 +14,8 @@ import { parseVaultMarkdownHref, parseVaultWikiLink } from "../web/src/vault-lin
  * Everything else fails closed with an exact reason and stays literal text:
  * traversal, backslashes, protocol-relative/absolute URLs, controls,
  * query/fragment, empty/double-slash paths, and unsupported wiki syntax.
+ * S9: ordinary spaces inside wikilink path segments are now valid vault
+ * paths and are accepted (see tests/web-s9-vault-links.test.ts).
  * Browser-relative links are never converted into vault targets.
  */
 
@@ -120,7 +122,8 @@ describe("parseVaultWikiLink — closed vault wikilink form", () => {
     expect(parseVaultWikiLink("a\\b").ok).toBe(false);
     expect(parseVaultWikiLink("a?b").ok).toBe(false);
     expect(parseVaultWikiLink("a#f").ok).toBe(false);
-    expect(parseVaultWikiLink("a b").ok).toBe(false);
     expect(parseVaultWikiLink("a\u0000b").ok).toBe(false);
+    // S9: "a b" is now a valid spaced vault path — see web-s9-vault-links.test.ts.
+    expect(parseVaultWikiLink("a\tb").ok).toBe(false);
   });
 });
