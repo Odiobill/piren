@@ -5,6 +5,28 @@ All notable changes to Piren are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-09-06
+
+The 0.2.5 release refines the Conversation-native Workbench with steward-alert lifecycle and archive surfaces, safer Vault Explorer navigation, typed Scheduler class scopes, and a coherent premium presentation, and extends handoff workflow budgets with retention and control in Context telemetry.
+
+### Added
+
+- **Workflow budget retention and control:** the gateway-associated workflow-root budget raised from an agent's Context telemetry popup is retained across sessions and surfaced with explicit, server-validated compare-and-set control.
+- **Confirmed archive with inspection:** tasks, sessions, and steward alerts support a confirmed archive action, and archived items stay inspectable read-only; task archive discoverability is covered by command help.
+- **Typed Scheduler class scopes:** Scheduler agent-scope Settings controls use typed class scopes with a gateway-authoritative, fail-closed policy; inconsistent scope reads fail closed.
+
+### Fixed
+
+- Safe interactive model fallback: fallback continuation is safe to interact with while active, without rerouting or re-dispatching.
+- Practical fail-closed Vault Explorer links: vault-relative links with spaces, frontmatter links, and scheme-like targets are handled safely and rejected when unsafe.
+- Ordered-list semantics in rendered Markdown bodies follow authored start markers.
+- Steward-alert lifecycle, Workbench, and archive compatibility fixes.
+- Human-readable first-party agent labels across the Workbench, with canonical agent IDs preserved.
+
+### Changed
+
+- **Coherent premium Workbench presentation:** a shared first-party presentation language across Dashboard, Settings, Vault Explorer, and Steward Alerts, with accessible rendered geometry.
+
 ## [0.2.4] - 2026-08-30
 
 The 0.2.4 release recovers publication from the immutable unpublished v0.2.3 candidate and carries all accepted 0.2.3 work: durable Conversation workflow budgets with bounded authenticated gateway routes and Workbench surfaces, scheduler agent scoping, canonical Conversation message copy, the test-only CI release-readiness stabilization, and a new fail-closed pretag verification lane.

@@ -1,6 +1,9 @@
 const ALERT_PATH = /^steward-inbox\/alerts\/[^/.][^/]*\.md$/;
 const AGENT_NAME = /^[a-z][a-z0-9-]*$/;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+// Legacy read-compatibility grammar for pre-P1b `status: resolved` records:
+// an explicit UTC instant with either second or millisecond precision.
+const LEGACY_RESOLVED_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const SEVERITY_RANK = { urgent: 3, high: 2, normal: 1, low: 0 };
 const MAX_PROJECTED_ALERTS = 100;
 export function isDirectActiveStewardAlertPath(path) {
@@ -14,6 +17,11 @@ function assertActiveAlertPath(path) {
 function assertIsoInstant(value, field) {
     if (!ISO_INSTANT.test(value) || Number.isNaN(Date.parse(value))) {
         throw new Error(`Alert ${field} must be a canonical ISO instant.`);
+    }
+}
+function assertLegacyResolvedInstant(value) {
+    if (!LEGACY_RESOLVED_INSTANT.test(value) || Number.isNaN(Date.parse(value))) {
+        throw new Error("Alert resolved must be a canonical UTC ISO instant.");
     }
 }
 function required(fields, field) {
@@ -60,7 +68,7 @@ export function parseStewardAlert(options) {
         throw new Error("Alert severity is invalid.");
     }
     const status = required(fields, "status");
-    if (status !== "open" && status !== "closed")
+    if (status !== "open" && status !== "closed" && status !== "resolved")
         throw new Error("Alert status is invalid.");
     const created = required(fields, "created");
     assertIsoInstant(created, "created");
@@ -78,11 +86,30 @@ export function parseStewardAlert(options) {
     };
     const closedAt = fields.get("closed_at");
     const closedVia = fields.get("closed_via");
-    if (status === "open") {
+    const resolvedAt = fields.get("resolved");
+    if (status === "resolved") {
+        // Legacy read compatibility only: pre-P1b terminal records are preserved
+        // as `resolved`, never relabeled `closed`. The oldest legitimate shape had
+        // no resolution timestamp; when present, `resolved` must still be an exact
+        // UTC instant. Workbench closure evidence is never accepted or fabricated.
+        if (closedAt !== undefined || closedVia !== undefined)
+            throw new Error("Resolved alert has closure evidence.");
+        if (resolvedAt !== undefined) {
+            if (resolvedAt === "")
+                throw new Error("Alert resolved must not be empty.");
+            assertLegacyResolvedInstant(resolvedAt);
+            alert.resolvedAt = resolvedAt;
+        }
+    }
+    else if (status === "open") {
         if (closedAt !== undefined || closedVia !== undefined)
             throw new Error("Open alert has closure evidence.");
+        if (resolvedAt !== undefined)
+            throw new Error("Open alert has resolved evidence.");
     }
     else {
+        if (resolvedAt !== undefined)
+            throw new Error("Closed alert has resolved evidence.");
         if (closedAt === undefined || closedVia === undefined)
             throw new Error("Closed alert is missing closure evidence.");
         assertIsoInstant(closedAt, "closed_at");
@@ -99,6 +126,8 @@ export function parseStewardAlert(options) {
  */
 export function closeStewardAlert(options) {
     const current = parseStewardAlert(options);
+    if (current.status === "resolved")
+        throw new Error("Resolved alert is not closeable.");
     if (current.status !== "open")
         throw new Error("Alert is already closed.");
     assertIsoInstant(options.closedAt, "closed_at");

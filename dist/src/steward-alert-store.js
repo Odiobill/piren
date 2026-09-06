@@ -1,5 +1,6 @@
-import { mkdir, open, readFile, readdir, rename } from "node:fs/promises";
+import { access, mkdir, open, readFile, readdir, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { planStewardAlertArchive } from "./steward-alert-archive.js";
 import { closeStewardAlert, isDirectActiveStewardAlertPath, parseStewardAlert, projectStewardAlerts, } from "./steward-alerts.js";
 const MAX_ACTIVE_ALERTS = 100;
 export class StewardAlertStoreError extends Error {
@@ -80,13 +81,69 @@ export async function listStewardAlerts(vaultRoot) {
     return projectStewardAlerts(alerts);
 }
 /**
+ * Preview one exact closed alert archive. This adapter only validates current
+ * source evidence and destination vacancy; it never creates or moves anything.
+ */
+export async function previewStoredStewardAlertArchive(vaultRoot, path, now = () => new Date()) {
+    const current = await readStewardAlert(vaultRoot, path);
+    let plan;
+    try {
+        plan = planStewardAlertArchive({ alert: current.alert, archiveAt: now().toISOString() });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new StewardAlertStoreError(`alert cannot be archived: ${message}`, "conflict");
+    }
+    try {
+        await access(resolve(vaultRoot, plan.destinationPath));
+    }
+    catch (error) {
+        const code = error.code;
+        if (code === "ENOENT")
+            return plan;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new StewardAlertStoreError(`cannot inspect archive destination: ${message}`, "bad-request");
+    }
+    throw new StewardAlertStoreError("alert archive destination already exists", "conflict");
+}
+/** Explicitly confirmed basic-filesystem move for one previewed closed alert. */
+export async function archiveStoredStewardAlert(options) {
+    const plan = await previewStoredStewardAlertArchive(options.vaultRoot, options.path, options.now);
+    if (plan.destinationPath !== options.expectedDestination) {
+        throw new StewardAlertStoreError("alert archive destination does not match preview", "conflict");
+    }
+    const source = alertAbsolutePath(options.vaultRoot, plan.sourcePath);
+    const destination = resolve(options.vaultRoot, plan.destinationPath);
+    try {
+        await mkdir(dirname(destination), { recursive: true });
+        try {
+            await access(destination);
+            throw new StewardAlertStoreError("alert archive destination already exists", "conflict");
+        }
+        catch (error) {
+            if (error instanceof StewardAlertStoreError)
+                throw error;
+            if (error.code !== "ENOENT")
+                throw error;
+        }
+        await rename(source, destination);
+        return plan;
+    }
+    catch (error) {
+        if (error instanceof StewardAlertStoreError)
+            throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new StewardAlertStoreError(`cannot archive alert: ${message}`, "bad-request");
+    }
+}
+/**
  * Close one exact open alert. The caller supplies the only accepted expected
  * state; it cannot use this adapter to reopen or edit alert content.
  */
 export async function closeStoredStewardAlert(options) {
     const current = await readStewardAlert(options.vaultRoot, options.path);
     if (current.alert.status !== options.expectedStatus) {
-        throw new StewardAlertStoreError("alert is already closed", "conflict");
+        throw new StewardAlertStoreError(`alert is ${current.alert.status}, not open`, "conflict");
     }
     const closedAt = (options.now ?? (() => new Date()))().toISOString();
     let next;

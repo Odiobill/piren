@@ -62,6 +62,18 @@ export interface DiscordSettingsPatch {
     defaultAgent?: string | null;
     feedbackEnabled?: boolean;
 }
+/**
+ * Per-class agent-scope subset (0.2.5 S7). A present array replaces the
+ * recognized `allow` with that exact canonical subset and clears the
+ * recognized `exclude`; explicit null clears both recognized keys. Absent =
+ * the class is untouched. Duplicate and non-runnable names are gateway
+ * rejections, never parse concerns: this shape stays syntax/shape strict.
+ */
+export interface SchedulerAgentScopePatch {
+    inbox_tasks?: string[] | null;
+    agent_cron?: string[] | null;
+    script_cron?: string[] | null;
+}
 export interface SchedulerSettingsPatch {
     automation?: {
         inbox_tasks?: boolean;
@@ -73,6 +85,7 @@ export interface SchedulerSettingsPatch {
     maxConcurrentAgents?: number;
     /** Explicit null clears the configured device id. */
     deviceId?: string | null;
+    agentScope?: SchedulerAgentScopePatch;
 }
 export interface AgentModelPatch {
     id?: string;
@@ -179,6 +192,13 @@ export interface RedactedSchedulerProjection {
     staleAfterSeconds: number | null;
     maxConcurrentAgents: number | null;
     deviceId: string | null;
+    /**
+     * 0.2.5 S7: the raw declared `scheduler.agent_scope` container (undefined
+     * when absent). Server-internal resolver input for the authoritative
+     * `resolveSchedulerAgentScope` computation; never forwarded to the browser,
+     * which receives only computed effective sets plus bounded warnings.
+     */
+    agentScopeRaw: unknown;
 }
 export interface RedactedLocalConfigProjection {
     available: boolean;

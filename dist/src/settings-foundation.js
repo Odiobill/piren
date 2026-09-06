@@ -141,8 +141,10 @@ const SCHEDULER_KEYS = [
     "staleAfterSeconds",
     "maxConcurrentAgents",
     "deviceId",
+    "agentScope",
 ];
 const AUTOMATION_KEYS = ["inbox_tasks", "agent_cron", "script_cron"];
+const AGENT_SCOPE_CLASSES = AUTOMATION_KEYS;
 const MODEL_KEYS = ["id", "thinking"];
 /** Pi-native durable thinking preference enum; live-session controls stay out of Settings. */
 const AGENT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -260,6 +262,32 @@ function parseSchedulerBlock(block) {
             return "invalid";
         }
     }
+    const agentScope = block.agentScope;
+    if (agentScope !== undefined) {
+        if (!isRecord(agentScope))
+            return "invalid";
+        if (unknownKeys(agentScope, AGENT_SCOPE_CLASSES).length > 0)
+            return "invalid";
+        if (!hasAnyKey(agentScope, AGENT_SCOPE_CLASSES))
+            return "invalid";
+        const closed = {};
+        for (const classKey of AGENT_SCOPE_CLASSES) {
+            const value = agentScope[classKey];
+            if (value === undefined)
+                continue;
+            if (value === null) {
+                closed[classKey] = null;
+                continue;
+            }
+            // Syntax/shape strict only: an array of non-blank strings. Duplicate
+            // and non-runnable names are gateway rejections before any write.
+            if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry.trim() === "")) {
+                return "invalid";
+            }
+            closed[classKey] = value;
+        }
+        patch.agentScope = closed;
+    }
     return patch;
 }
 /**
@@ -307,6 +335,11 @@ export function parseSettingsIntent(raw) {
         if (family === "scheduler") {
             if (unknownKeys(block, SCHEDULER_KEYS).length > 0) {
                 return { ok: false, error: "Unknown field(s) in the scheduler Settings block (closed inventory)." };
+            }
+            // Closed agentScope container: unknown class keys get the same bounded
+            // closed-inventory error as unknown block fields (shape errors stay "invalid").
+            if (isRecord(block.agentScope) && unknownKeys(block.agentScope, AGENT_SCOPE_CLASSES).length > 0) {
+                return { ok: false, error: "Unknown field(s) in the scheduler agentScope block (closed inventory)." };
             }
             if (!hasAnyKey(block, SCHEDULER_KEYS))
                 return { ok: false, error: "The scheduler Settings block changes nothing." };
@@ -540,6 +573,7 @@ export async function readLocalConfigRedacted(io, configPath) {
         staleAfterSeconds: asPositiveIntOrNull(schedulerBlock?.stale_after_seconds),
         maxConcurrentAgents: asPositiveIntOrNull(schedulerBlock?.max_concurrent_agents),
         deviceId: asNonEmptyStringOrNull(schedulerBlock?.device_id),
+        agentScopeRaw: schedulerBlock?.agent_scope,
     };
     return { available: true, telegram, discord, scheduler };
 }
@@ -795,6 +829,35 @@ export async function applyLocalSettingsIntent(io, configPath, intent, deps = {}
         const automation = requireExistingRecord(block, "automation", "Local config scheduler.automation");
         applyPatchEntries(automation, Object.entries(intent.block.automation));
         block.automation = automation;
+    }
+    // 0.2.5 S7 per-class agent scope: an array replaces the recognized `allow`
+    // with that exact subset and clears the recognized `exclude`; explicit null
+    // clears both recognized keys. Untouched classes, unknown keys, and sibling
+    // config are preserved; emptied records are pruned where structurally safe.
+    if (intent.family === "scheduler" && intent.block.agentScope !== undefined) {
+        const agentScope = requireExistingRecord(block, "agent_scope", "Local config scheduler.agent_scope");
+        for (const classKey of AGENT_SCOPE_CLASSES) {
+            const value = intent.block.agentScope[classKey];
+            if (value === undefined)
+                continue;
+            const classRecord = requireExistingRecord(agentScope, classKey, `Local config scheduler.agent_scope.${classKey}`);
+            if (value === null) {
+                delete classRecord.allow;
+                delete classRecord.exclude;
+            }
+            else {
+                classRecord.allow = value;
+                delete classRecord.exclude;
+            }
+            if (Object.keys(classRecord).length > 0)
+                agentScope[classKey] = classRecord;
+            else
+                delete agentScope[classKey];
+        }
+        if (Object.keys(agentScope).length > 0)
+            block.agent_scope = agentScope;
+        else
+            delete block.agent_scope;
     }
     root[familyKey] = block;
     const rendered = stringifyYaml(root);

@@ -1,5 +1,5 @@
 import type { AlertSeverity } from "./alerts.js";
-export type StewardAlertStatus = "open" | "closed";
+export type StewardAlertStatus = "open" | "closed" | "resolved";
 export interface StewardAlert {
     path: string;
     id: string;
@@ -10,6 +10,8 @@ export interface StewardAlert {
     title: string;
     closedAt?: string;
     closedVia?: "workbench";
+    /** Optional legacy terminal evidence when a historical resolved record supplied it. */
+    resolvedAt?: string;
 }
 export interface ParseStewardAlertOptions {
     path: string;

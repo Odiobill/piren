@@ -18,11 +18,15 @@ import { readVersion } from "../src/version.js";
  * the same protected tag-only OIDC workflow from immutable tag `v0.1.6`.
  * `@odiobill/piren@0.1.7` restores Discord gateway availability after transient
  * WebSocket disconnects through the same protected OIDC workflow from `v0.1.7`.
- * `0.2.4` is the current public release (recovery publication carrying all
+ * `0.2.5` is the current public release (Workbench-associated workflow budget
+ * retention/control in Context telemetry, safe interactive model fallback,
+ * steward-alert lifecycle/workbench/archive compatibility, task/session/alert
+ * confirmed archive plus inspection, and coherent premium Workbench
+ * presentation). `0.2.4` remains the recovery publication carrying all
  * accepted 0.2.3 work — durable Conversation workflow budgets, bounded gateway
  * workflow routes, Workbench workflow surfaces, canonical message copy,
  * scheduler agent scope — plus the test-only CI release-readiness
- * stabilization and the fail-closed pretag verification lane). `0.2.2` was
+ * stabilization and the fail-closed pretag verification lane. `0.2.2` was
  * published through the normal OIDC path.
  * `v0.2.0` (incomplete committed artifact), `v0.2.1` (failed CI test gate), and
  * `v0.2.3` (immutable unpublished candidate whose publish-path verification
@@ -38,15 +42,15 @@ function read(rel: string): string {
   return readFileSync(join(repoRoot, rel), "utf8");
 }
 
-describe("scoped @odiobill/piren releases (0.2.4 public release; 0.2.2/0.1.7/0.1.6/0.1.5/0.1.4 OIDC; 0.1.3 bootstrap; 0.2.3/0.2.1/0.2.0 unpublished)", () => {
+describe("scoped @odiobill/piren releases (0.2.5 public release; 0.2.4/0.2.2/0.1.7/0.1.6/0.1.5/0.1.4 OIDC; 0.1.3 bootstrap; 0.2.3/0.2.1/0.2.0 unpublished)", () => {
   it("package.json name is the scoped @odiobill/piren identity", () => {
     const pkg = JSON.parse(read("package.json")) as { name: string };
     expect(pkg.name).toBe("@odiobill/piren");
   });
 
-  it("package.json version is the public 0.2.4 release", () => {
+  it("package.json version is the public 0.2.5 release", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
-    expect(pkg.version).toBe("0.2.4");
+    expect(pkg.version).toBe("0.2.5");
   });
 
   it("the executable bin name stays piren (scoped package, unchanged command)", () => {
@@ -69,8 +73,8 @@ describe("scoped @odiobill/piren releases (0.2.4 public release; 0.2.2/0.1.7/0.1
     expect(pkg.private === undefined || pkg.private === false).toBe(true);
   });
 
-  it("readVersion reports 0.2.4 from the real package.json", () => {
-    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.2.4");
+  it("readVersion reports 0.2.5 from the real package.json", () => {
+    expect(readVersion(join(repoRoot, "package.json"))).toBe("0.2.5");
   });
 
   it("package-lock.json name and version agree with package.json", () => {
@@ -80,12 +84,29 @@ describe("scoped @odiobill/piren releases (0.2.4 public release; 0.2.2/0.1.7/0.1
       packages?: Record<string, { name?: string; version?: string }>;
     };
     expect(lock.name).toBe("@odiobill/piren");
-    expect(lock.version).toBe("0.2.4");
+    expect(lock.version).toBe("0.2.5");
     expect(lock.packages?.[""]?.name).toBe("@odiobill/piren");
-    expect(lock.packages?.[""]?.version).toBe("0.2.4");
+    expect(lock.packages?.[""]?.version).toBe("0.2.5");
   });
 
-  it("CHANGELOG has a dated public [0.2.4] entry above [0.2.3]", () => {
+  it("CHANGELOG has a dated public [0.2.5] entry above [0.2.4]", () => {
+    const cl = read("CHANGELOG.md");
+    const start = cl.indexOf("## [0.2.5]");
+    const next = cl.indexOf("## [0.2.4]");
+    expect(start).toBeGreaterThan(-1);
+    expect(next).toBeGreaterThan(start);
+    const section = cl.slice(start, next);
+    expect(section).toMatch(/## \[0\.2\.5\] - 2026-09-06/);
+    expect(section).toMatch(/workflow budget/i);
+    expect(section).toMatch(/model fallback/i);
+    expect(section).toMatch(/steward alert/i);
+    expect(section).toMatch(/archive/i);
+    expect(section).toMatch(/Workbench/i);
+    expect(section).toMatch(/scheduler/i);
+    expect(section).not.toMatch(/not yet tagged or published|unreleased|internal pilot|candidate/i);
+  });
+
+  it("CHANGELOG retains the dated public [0.2.4] recovery entry above [0.2.3]", () => {
     const cl = read("CHANGELOG.md");
     const start = cl.indexOf("## [0.2.4]");
     const next = cl.indexOf("## [0.2.3]");
@@ -93,6 +114,7 @@ describe("scoped @odiobill/piren releases (0.2.4 public release; 0.2.2/0.1.7/0.1
     expect(next).toBeGreaterThan(start);
     const section = cl.slice(start, next);
     expect(section).toMatch(/## \[0\.2\.4\] - 2026-08-30/);
+    expect(section).toMatch(/recovers publication|recovery/i);
     expect(section).toMatch(/budget/i);
     expect(section).toMatch(/Workbench/i);
     expect(section).toMatch(/scheduler/i);

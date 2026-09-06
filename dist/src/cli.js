@@ -45,6 +45,7 @@ import { createRealSkillCliDeps, scanAllSkills, filterSkills, showSkill, explain
 import { createRealTaskCliDeps, resolveTaskIdOrPath, readVaultFile, readTaskDetail, formatTaskList, formatTaskDetail, isValidCliPriority, CLI_PRIORITIES, } from "./task-cli.js";
 import { sanitizeDeviceId } from "./scheduler-once.js";
 import { createInboxTask, listInboxTasks, claimInboxTask, updateInboxTaskStatus, } from "./inbox.js";
+import { archiveStoredTerminalTasks, previewStoredTerminalTaskArchive } from "./task-archive-store.js";
 const thisDir = dirname(fileURLToPath(import.meta.url));
 // Guided local transport onboarding (ADR-0040). Resolves the local runnable
 // agent set, then drives the interactive configure flow with the real
@@ -682,6 +683,7 @@ try {
             opts: bootstrapOptions(parsed),
             explicitVaultRoot: vaultRoot,
             forceCliAgent: agentName,
+            yes: parsed.yes,
         });
     }
     else {
@@ -1976,6 +1978,27 @@ async function runTaskCommand(args) {
         console.log(formatTaskList(rows));
         return;
     }
+    if (sub === "archive") {
+        const agent = cliAgent ?? opts.env?.PIREN_AGENT;
+        if (!agent) {
+            console.error("Usage: piren task archive --agent <agent> [--yes]");
+            process.exit(2);
+        }
+        const operationTime = new Date();
+        const now = () => operationTime;
+        const preview = await previewStoredTerminalTaskArchive(vaultRoot, agent, now);
+        for (const item of preview.eligible)
+            console.log(`ARCHIVE ${item.sourcePath} -> ${item.destinationPath}`);
+        for (const item of preview.skipped)
+            console.log(`SKIP ${item.sourcePath}: ${item.reason}`);
+        if (!args.yes) {
+            console.log(`Preview only: ${preview.eligible.length} task(s) eligible. Re-run with --yes to archive this exact preview.`);
+            return;
+        }
+        const result = await archiveStoredTerminalTasks({ vaultRoot, agentName: agent, expectedDestinations: preview.eligible.map((item) => item.destinationPath), now });
+        console.log(`Archived ${result.moved.length} task(s).`);
+        return;
+    }
     if (sub === "send") {
         const to = args.positionals[1];
         const title = args.positionals[2];
@@ -2068,7 +2091,7 @@ async function runTaskCommand(args) {
         return;
     }
     // Unknown subcommand
-    console.error("Usage: piren task <list|send|show|claim|complete|cancel> [args]");
+    console.error("Usage: piren task <list|send|show|claim|complete|cancel|archive> [args]");
     process.exit(2);
 }
 //# sourceMappingURL=cli.js.map

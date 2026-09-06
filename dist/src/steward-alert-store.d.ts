@@ -11,6 +11,18 @@ export declare function readStewardAlert(vaultRoot: string, path: string): Promi
 /** Read the bounded direct active-alert directory and produce its projection. */
 export declare function listStewardAlerts(vaultRoot: string): Promise<StewardAlertProjection>;
 /**
+ * Preview one exact closed alert archive. This adapter only validates current
+ * source evidence and destination vacancy; it never creates or moves anything.
+ */
+export declare function previewStoredStewardAlertArchive(vaultRoot: string, path: string, now?: () => Date): Promise<import("./steward-alert-archive.js").StewardAlertArchivePlan>;
+/** Explicitly confirmed basic-filesystem move for one previewed closed alert. */
+export declare function archiveStoredStewardAlert(options: {
+    vaultRoot: string;
+    path: string;
+    expectedDestination: string;
+    now?: () => Date;
+}): Promise<import("./steward-alert-archive.js").StewardAlertArchivePlan>;
+/**
  * Close one exact open alert. The caller supplies the only accepted expected
  * state; it cannot use this adapter to reopen or edit alert content.
  */
