@@ -1003,9 +1003,14 @@ describe("ConversationBroker approval/abort core (C3-C1)", () => {
     const convTwo = await makeConversation(["zai"], "Hello @zai two");
     const stewardOne = await makeStewardEvent(convOne, "Go one");
     const stewardTwo = await makeStewardEvent(convTwo, "Go two");
+    // Deterministic client order: settle convOne's pending client (clients[0])
+    // before launching convTwo, so filesystem scheduling cannot reverse which
+    // fake client each conversation owns. Both pending approvals still overlap
+    // before any response is sent, so the cross-delivery assertions are intact.
     const dispatchOne = broker.dispatchConversationMention({ conversationId: convOne, agent: "zai", text: "Go one", stewardEventId: stewardOne, priorEvents: [] });
+    await waitFor(() => broker.hasPendingApproval(convOne, "zai", "req-1"));
     const dispatchTwo = broker.dispatchConversationMention({ conversationId: convTwo, agent: "zai", text: "Go two", stewardEventId: stewardTwo, priorEvents: [] });
-    await waitFor(() => broker.hasPendingApproval(convOne, "zai", "req-1") && broker.hasPendingApproval(convTwo, "zai", "req-1"));
+    await waitFor(() => broker.hasPendingApproval(convTwo, "zai", "req-1"));
 
     broker.respondToConversationApproval({ conversationId: convOne, agent: "zai", requestId: "req-1", response: { confirmed: true } });
     // Only convOne's client received the response; convTwo's pending request stays.
