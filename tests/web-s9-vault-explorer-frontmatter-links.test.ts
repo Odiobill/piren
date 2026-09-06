@@ -78,10 +78,17 @@ describe("presentFrontmatterLinkValues — safe external HTTP(S) anchors", () =>
 
   it("keeps protocol-relative, credential, unsupported-scheme, and control-bearing URLs non-interactive", () => {
     const result = presentFrontmatterLinkValues(
-      field("links", ["//example.com/x", "https://user:pass@example.com", "javascript:alert(1)", "ftp://example.com"]),
+      field("links", [
+        "//example.com/x",
+        "https://user:pass@example.com",
+        "javascript:alert(1)",
+        "javascript:payload.md",
+        "mailto:notes.md",
+        "ftp://example.com",
+      ]),
       "index.md",
     );
-    expectKinds(result, ["text", "text", "text", "text"]);
+    expectKinds(result, ["text", "text", "text", "text", "text", "text"]);
   });
 
   it("uses the shared safe-URL rule for the external decision", () => {

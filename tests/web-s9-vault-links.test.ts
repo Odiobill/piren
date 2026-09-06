@@ -141,8 +141,11 @@ describe("S9 — bounded document-relative Markdown page resolution", () => {
     expect(parseVaultDocumentRelativeHref("False%ZZ/x.md", DOC).ok).toBe(false);
   });
 
-  it("rejects an absolute-URL target as not document-relative", () => {
+  it("rejects absolute-URL and scheme-like targets as not document-relative", () => {
     expect(parseVaultDocumentRelativeHref("//example.com/x.md", DOC).ok).toBe(false);
+    expect(parseVaultDocumentRelativeHref("javascript:payload.md", DOC).ok).toBe(false);
+    expect(parseVaultDocumentRelativeHref("mailto:notes.md", DOC).ok).toBe(false);
+    expect(parseVaultDocumentRelativeHref("custom+scheme:page.md", DOC).ok).toBe(false);
   });
 });
 

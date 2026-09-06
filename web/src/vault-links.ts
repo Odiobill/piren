@@ -152,6 +152,11 @@ export function parseVaultMarkdownHref(raw: string): VaultMarkdownLinkTarget {
  */
 export function parseVaultDocumentRelativeHref(raw: string, documentPath: string): VaultMarkdownLinkTarget {
   if (raw.startsWith("/")) return { ok: false, reason: "not a document-relative vault link" };
+  // A URI-scheme prefix is never a vault-relative filename. Reject it before
+  // path joining even when the remainder happens to end in `.md`.
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(raw)) {
+    return { ok: false, reason: "contains a URI scheme" };
+  }
   const rawInvalid = rejectRawSpaceOrControl(raw);
   if (rawInvalid !== null) return { ok: false, reason: rawInvalid };
   const decoded = decodeEncodedSpaces(raw);
