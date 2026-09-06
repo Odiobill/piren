@@ -112,6 +112,24 @@ export const SERVICE_MANAGER_LABELS: Record<ServiceManagerKind, string> = {
  * Status chip class per state: only a directly reported active state is
  * success-styled; unknown/unavailable are visible caution states.
  */
+/**
+ * S10 shared pill vocabulary per observed state, mirroring
+ * `serviceStateStatusClass` exactly: only a directly reported active state is
+ * success-styled; unknown/unavailable stay caution pills. Presentation only.
+ */
+export function serviceStatePillClass(state: ServiceObservedState): string {
+  switch (state) {
+    case "active":
+      return "wb-pill wb-pill-ok";
+    case "inactive":
+    case "not-installed":
+      return "wb-pill wb-pill-muted";
+    case "unavailable":
+    case "unknown":
+      return "wb-pill wb-pill-warn";
+  }
+}
+
 export function serviceStateStatusClass(state: ServiceObservedState): string {
   switch (state) {
     case "active":

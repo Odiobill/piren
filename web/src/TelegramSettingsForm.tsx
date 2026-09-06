@@ -147,7 +147,7 @@ export function TelegramSettingsForm({
   }
 
   return (
-    <li className="settings-family">
+    <li className="settings-family wb-surface">
       <div className="settings-family-header">
         <strong>Telegram transport</strong>
         {/* SR-1: truthful uppercase status badge, rendered only once the

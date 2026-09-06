@@ -3291,3 +3291,273 @@ code {
 .associated-workflow-budget-reload-error {
   margin-top: 8px;
 }
+
+/* ===========================================================================
+   0.2.5 S10 — shared Workbench presentation language
+   One first-party visual system for Dashboard, Settings, Vault Explorer, and
+   Steward Alerts: shared page/hero headers, elevated bordered surfaces,
+   status/severity pills, and interactive rows. Presentation only — no
+   behavior, route, authority, or capability change. Every color decision
+   flows through the existing theme tokens (var(--*) and color-mix), so light
+   and dark themes are correct by construction; no light-only hard-coded
+   colors are introduced. Motion is restrained and always disabled under
+   prefers-reduced-motion.
+   =========================================================================== */
+
+/* Shared page/hero header: icon treatment, title/lede hierarchy, action
+   placement. Surfaces that already carry a truthful icon (the Dashboard
+   Piren mark) keep it in the same header slot. */
+.wb-page-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.wb-page-icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+.wb-page-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.wb-page-heading h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.wb-page-lede {
+  margin: 6px 0 0;
+  color: var(--muted);
+  max-width: 64ch;
+}
+
+/* Shared toolbar row (module/navigation toolbars such as the Vault Explorer
+   breadcrumb): one row, wrapping, comfortable gap. */
+.wb-toolbar {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+/* Shared elevated/bordered surface: subtle depth on the existing token
+   system. Applied alongside existing surface classes so each surface keeps
+   its own semantics while sharing one depth/radius/border language. */
+.wb-surface {
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: var(--radius);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text) 7%, transparent),
+    0 4px 16px color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.wb-surface-pad {
+  padding: 16px 18px;
+}
+
+/* Shared status/severity pill vocabulary. Color never carries meaning alone:
+   pills always keep their truthful text label; these classes only align the
+   presentation of the same status facts across surfaces. */
+.wb-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 6%, transparent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.wb-pill-ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.wb-pill-muted {
+  color: var(--muted);
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--muted) 7%, transparent);
+}
+
+.wb-pill-warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.wb-pill-error {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 38%, transparent);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+}
+
+.wb-pill-accent {
+  color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* Shared interactive row: real button semantics stay in the markup; this is
+   one consistent hover/pressed/disabled/focus treatment. */
+button.wb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+button.wb-row:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+
+button.wb-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button.wb-row[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+button.wb-row:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+button.wb-row:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Comfortable reading measure for full-page document canvases. Applied INSIDE
+   the pane's single scroll owner, so it never creates a second scroll
+   region and never hides navigation controls. */
+.wb-reading {
+  max-width: 78ch;
+}
+
+/* S10 surface application — Steward Alerts. The module header, inbox-like
+   rows, and detail canvas share the vocabulary while the module keeps its
+   exact open→closed behavior and no unread inference. */
+.steward-alerts-header button {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.steward-alerts-header button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.steward-alert-list button.wb-row {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+/* Full-page Alerts readability: bound the module's content measure inside
+   its single scroll owner (companion panes are narrower and unaffected). */
+.steward-alerts > * {
+  width: 100%;
+  max-width: 64rem;
+  margin-inline: auto;
+}
+
+/* Truthful time hierarchy under each row title. */
+.steward-alert-list button.wb-row small {
+  font-size: 0.75rem;
+}
+
+/* Distinct terminal states: historical `resolved` (muted pill) stays clearly
+   different from a Workbench `closed` alert (accent pill) without any change
+   to durable meaning — the text label still carries the state. */
+.steward-alert-terminal {
+  width: fit-content;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* S10 surface application — Vault Explorer. Rows stay compact list rows
+   (one scroll owner, unchanged geometry) with the shared hover/disabled/
+   focus treatment; the metadata card shares the elevated surface. */
+.vault-explorer-entry.wb-row {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 7px 12px;
+}
+
+.vault-explorer-entry.wb-row:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.vault-explorer-entry.wb-row:disabled {
+  opacity: 0.55;
+}
+
+.vault-explorer-entry.wb-row:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Document canvas: keep the reading measure comfortable in full-page mode
+   without breaking companion-pane use. */
+.vault-explorer-document .wb-reading > * {
+  max-width: 78ch;
+}
+
+/* Settings family cards share the elevated surface depth (their existing
+   warm accent edges and rounded frames remain). */
+.settings-family.wb-surface {
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text) 6%, transparent),
+    0 3px 12px color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+/* Restrained motion: every shared interactive transition is disabled under
+   prefers-reduced-motion. */
+@media (prefers-reduced-motion: reduce) {
+  button.wb-row,
+  .wb-pill,
+  .wb-surface,
+  .wb-page-icon {
+    transition: none;
+  }
+}

@@ -208,7 +208,7 @@ export function VaultExplorer({
 
   return (
     <section className="vault-explorer" aria-label="Vault Explorer">
-      <nav className="vault-explorer-breadcrumb" aria-label="Vault path">
+      <nav className="vault-explorer-breadcrumb wb-toolbar" aria-label="Vault path">
         <button type="button" onClick={() => loadList(VAULT_ROOT_PATH)}>
           <FolderIcon size={13} />
           Vault
@@ -267,9 +267,9 @@ export function VaultExplorer({
             }
             const card = parseFrontmatterCard(readPhase.response.content);
             return (
-              <>
+              <div className="wb-reading">
                 {card !== null && (
-                  <dl className="vault-explorer-frontmatter">
+                  <dl className="vault-explorer-frontmatter wb-surface">
                     {card.fields.map((field) => (
                       <div className="vault-explorer-frontmatter-row" key={field.key}>
                         <dt>{field.key}</dt>
@@ -289,7 +289,7 @@ export function VaultExplorer({
                   vaultDocumentPath={documentEntry.path}
                   onNavigateVaultPath={openDocumentAt}
                 />
-              </>
+              </div>
             );
           })()}
           {readPhase.kind === "ready" && readPhase.response.capped && (
@@ -319,7 +319,7 @@ export function VaultExplorer({
                   <li key={entry.path}>
                     <button
                       type="button"
-                      className="vault-explorer-entry"
+                      className="vault-explorer-entry wb-row"
                       disabled={entry.type === "other"}
                       aria-label={`${entry.type === "directory" ? "Open directory" : "Read file"} ${entry.name}`}
                       onClick={() => selectEntry(entry)}

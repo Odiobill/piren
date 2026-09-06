@@ -224,7 +224,7 @@ export function SchedulerSettingsForm({
   }
 
   return (
-    <li className="settings-family">
+    <li className="settings-family wb-surface">
       <div className="settings-family-header">
         <strong>Scheduler automation</strong>
         {/* SR-1: truthful uppercase status badge over the existing bounded

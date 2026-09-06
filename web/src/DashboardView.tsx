@@ -7,6 +7,7 @@ import { parseConfiguredModelLabel } from "./conversation-agents";
 import {
   SERVICE_STATE_LABELS,
   SERVICE_TARGET_LABELS,
+  serviceStatePillClass,
   serviceStateStatusClass,
   type ServiceStatusSnapshot,
 } from "./service-observation";
@@ -323,19 +324,19 @@ export function DashboardView({
 
   return (
     <section className="dashboard" aria-label="Dashboard">
-      <header className="dashboard-welcome">
+      <header className="dashboard-welcome wb-page-header">
         {/* D1: the transparent Piren mark only — no white-background wordmark
             on a dark surface; the mark ships as a self-contained transparent PNG. */}
         <img src={logoUrl} alt="" className="dashboard-mark" width={72} height={72} />
-        <div className="dashboard-welcome-text">
+        <div className="dashboard-welcome-text wb-page-heading">
           <h2>Dashboard</h2>
-          <p className="muted">
+          <p className="muted wb-page-lede">
             Start a Conversation with one agent or several peers, or assign a task to exactly one agent.
             Your conversations always live in the sidebar.
           </p>
         </div>
       </header>
-      <section className="card" aria-labelledby="dashboard-agents-heading">
+      <section className="card wb-surface" aria-labelledby="dashboard-agents-heading">
         <h3 id="dashboard-agents-heading">Start a conversation</h3>
         {load.agents.length === 0 ? (
           <p className="muted">No agents are defined in this vault.</p>
@@ -365,9 +366,9 @@ export function DashboardView({
                       <span className="agent-card-title-row">
                         <span className="agent-name">{agentDisplayName(agent.name)}</span>
                         {agent.online ? (
-                          <span className="agent-status status-ok">Online</span>
+                          <span className="agent-status status-ok wb-pill wb-pill-ok">Online</span>
                         ) : (
-                          <span className="agent-status status-muted">Offline</span>
+                          <span className="agent-status status-muted wb-pill wb-pill-muted">Offline</span>
                         )}
                       </span>
                       <span className="agent-card-description">
@@ -466,7 +467,7 @@ export function DashboardView({
           </>
         )}
       </section>
-      <section className="card dashboard-services" aria-labelledby="dashboard-services-heading">
+      <section className="card dashboard-services wb-surface" aria-labelledby="dashboard-services-heading">
         <h3 id="dashboard-services-heading">Services</h3>
         {/* WUX-A: ONE concise service list. Gateway Connected is the
             authenticated Dashboard-load fact; the three targets keep their
@@ -475,20 +476,20 @@ export function DashboardView({
         <ul className="dashboard-service-list">
           <li>
             <span className="dashboard-service-name">Gateway</span>
-            <span className="agent-status status-ok">Connected</span>
+            <span className="agent-status status-ok wb-pill wb-pill-ok">Connected</span>
           </li>
           {observation.phase === "loading" &&
             (['telegram', 'discord', 'scheduler'] as const).map((target) => (
               <li key={target}>
                 <span className="dashboard-service-name">{SERVICE_TARGET_LABELS[target]}</span>
-                <span className="agent-status status-muted">Checking…</span>
+                <span className="agent-status status-muted wb-pill wb-pill-muted">Checking…</span>
               </li>
             ))}
           {observation.phase === "ready" &&
             observation.snapshot.targets.map((entry) => (
               <li key={entry.target}>
                 <span className="dashboard-service-name">{SERVICE_TARGET_LABELS[entry.target]}</span>
-                <span className={`agent-status ${serviceStateStatusClass(entry.state)}`}>
+                <span className={`agent-status ${serviceStateStatusClass(entry.state)} ${serviceStatePillClass(entry.state)}`}>
                   {SERVICE_STATE_LABELS[entry.state]}
                 </span>
               </li>

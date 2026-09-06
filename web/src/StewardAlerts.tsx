@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { closeStewardAlert, fetchStewardAlert, fetchStewardAlerts, UnauthorizedError } from "./api";
 import { SafeMarkdownBody } from "./SafeMarkdown";
+import { AlertIcon } from "./icons";
 import type { StewardAlertDetail, StewardAlertSummary } from "./steward-alerts";
+
+/**
+ * S10 — shared severity pill vocabulary: high/urgent keep their established
+ * error presentation; normal/low share the muted pill. Text always carries
+ * the severity label, so color never encodes meaning alone.
+ */
+function severityPillClass(severity: StewardAlertSummary["severity"]): string {
+  return severity === "high" || severity === "urgent" ? "wb-pill wb-pill-error" : "wb-pill wb-pill-muted";
+}
 
 export function StewardAlerts({
   token,
@@ -91,14 +101,19 @@ export function StewardAlerts({
 
   return (
     <section className="steward-alerts" aria-label="Steward Alerts">
-      <header className="steward-alerts-header">
-        <h2>Steward Alerts</h2>
+      <header className="steward-alerts-header wb-page-header">
+        <span className="wb-page-icon" aria-hidden="true">
+          <AlertIcon size={18} />
+        </span>
+        <div className="wb-page-heading">
+          <h2>Steward Alerts</h2>
+        </div>
         {selected !== null && <button type="button" onClick={() => setSelected(null)}>Back to alerts</button>}
       </header>
       {error !== null && <p className="steward-alerts-error" role="alert">{error}</p>}
       {selected !== null ? (
-        <article className="steward-alert-detail">
-          <p className={`steward-alert-severity severity-${selected.severity}`}>{selected.severity}</p>
+        <article className="steward-alert-detail wb-surface wb-surface-pad">
+          <p className={`steward-alert-severity severity-${selected.severity} ${severityPillClass(selected.severity)}`}>{selected.severity}</p>
           <h3>{selected.title}</h3>
           <time dateTime={selected.created}>{selected.created}</time>
           {selected.status === "open" ? (
@@ -106,16 +121,22 @@ export function StewardAlerts({
               {busy ? "Closing…" : "Close alert"}
             </button>
           ) : selected.status === "resolved" ? (
-            <p role="status">{selected.resolvedAt === undefined ? "Resolved" : `Resolved ${selected.resolvedAt}`}</p>
-          ) : <p role="status">Closed {selected.closedAt ?? ""}</p>}
+            <p role="status" className="steward-alert-terminal steward-alert-terminal-resolved wb-pill wb-pill-muted">
+              {selected.resolvedAt === undefined ? "Resolved" : `Resolved ${selected.resolvedAt}`}
+            </p>
+          ) : (
+            <p role="status" className="steward-alert-terminal steward-alert-terminal-closed wb-pill wb-pill-accent">
+              Closed {selected.closedAt ?? ""}
+            </p>
+          )}
           {selected.content !== "" && <SafeMarkdownBody text={selected.content} />}
         </article>
       ) : loading ? <p className="muted">Loading alerts…</p> : alerts.length === 0 ? <p className="muted">No steward alerts.</p> : (
         <ul className="steward-alert-list">
           {alerts.map((alert) => (
             <li key={alert.path}>
-              <button type="button" onClick={() => void openAlert(alert)}>
-                <span className={`steward-alert-severity severity-${alert.severity}`}>{alert.severity}</span>
+              <button type="button" className="wb-row" onClick={() => void openAlert(alert)}>
+                <span className={`steward-alert-severity severity-${alert.severity} ${severityPillClass(alert.severity)}`}>{alert.severity}</span>
                 <strong>{alert.title}</strong>
                 <small>{alert.status} · {alert.created}</small>
               </button>

@@ -79,14 +79,19 @@ export function SettingsView({
   }
 
   return (
-    <div className="settings-page">
-      <header className="settings-header">
-        <h2>Settings</h2>
-        <p className="muted settings-lede">
-          Welcome. Configure this installation, set how each agent launches in future conversations, and browse the
-          vault's agent groups. Machine-local configuration lives under <code>~/.config/piren/</code>; agent
-          preferences live in each agent's <code>config.yml</code> in the vault.
-        </p>
+    <div className="settings-page wb-page">
+      <header className="settings-header wb-page-header">
+        <span className="wb-page-icon" aria-hidden="true">
+          <GearIcon size={18} />
+        </span>
+        <div className="wb-page-heading">
+          <h2>Settings</h2>
+          <p className="muted settings-lede wb-page-lede">
+            Welcome. Configure this installation, set how each agent launches in future conversations, and browse the
+            vault's agent groups. Machine-local configuration lives under <code>~/.config/piren/</code>; agent
+            preferences live in each agent's <code>config.yml</code> in the vault.
+          </p>
+        </div>
       </header>
 
       <div className="settings-tabs" role="tablist" aria-label="Settings sections">

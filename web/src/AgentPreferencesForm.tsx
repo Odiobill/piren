@@ -325,7 +325,7 @@ export function AgentPreferencesForm({
   }
 
   return (
-    <li className="settings-family">
+    <li className="settings-family wb-surface">
       <strong>Agent preferences</strong>
       <p className="muted">
         Durable future-launch preferences only. Saving never contacts an agent, never alters a running conversation,
